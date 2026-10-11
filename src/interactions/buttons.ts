@@ -11,7 +11,11 @@
  */
 
 import { ButtonInteraction } from 'discord.js';
-import { handleRegistrationButton, handleAdminReviewButton } from './registrationInteractions';
+import {
+  handleRegistrationButton,
+  handleAdminReviewButton,
+  handleProvideInfoButton,
+} from './registrationInteractions';
 
 export async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
   const [action, ...params] = interaction.customId.split(':');
@@ -23,6 +27,11 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
 
   if (action === 'app_review') {
     await handleAdminReviewButton(interaction);
+    return;
+  }
+
+  if (action === 'app_provide_info') {
+    await handleProvideInfoButton(interaction);
     return;
   }
 

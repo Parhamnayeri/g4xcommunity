@@ -17,6 +17,7 @@
     "test:domain": "ts-node src/test/domain_service_suite.ts",
     "test:permissions": "ts-node src/test/permission_authorization_suite.ts",
     "test:registration": "ts-node src/test/discord_registration_suite.ts",
+    "test:recovery": "ts-node src/test/registration_recovery_suite.ts",
     "test:bootstrap": "ts-node src/test/owner_bootstrap_suite.ts",
     "bootstrap:owner": "ts-node scripts/bootstrap-owner.ts"
   },

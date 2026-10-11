@@ -17,7 +17,8 @@ export async function handleModalSubmit(interaction: ModalSubmitInteraction): Pr
   if (
     customId.startsWith('reg_modal:') ||
     customId.startsWith('app_modal_reject:') ||
-    customId.startsWith('app_modal_info:')
+    customId.startsWith('app_modal_info:') ||
+    customId.startsWith('modal_submit_supp_info:')
   ) {
     await handleRegistrationModalSubmit(interaction);
     return;

@@ -1,7 +1,7 @@
 /**
- * registrationService.ts — سرویس ثبت‌نام و بررسی درخواست‌های عضویت پلتفرم G4X
+ * src/services/registrationService.ts — سرویس ثبت‌نام و بررسی درخواست‌های عضویت پلتفرم G4X
  * 
- * فاز ۳.۲: سیستم ثبت‌نام دیسکورد (بوستر، پایلوت، ادورتایزر، صراف)
+ * فاز ۳.۲.۳: بازیابی کامل چرخه درخواست، همگام‌سازی نقش دیسکورد و پردازش صف اعلانات
  */
 
 import prisma from '../database/db';
@@ -9,8 +9,19 @@ import { authorize } from './authorizationService';
 import { Permission } from './permissionTypes';
 import { fetchCharacterData } from './raiderio';
 import { Prisma } from '@prisma/client';
+import { PermissionFlagsBits } from 'discord.js';
+import { processNotificationOutbox } from './notificationWorker';
 
 export type RegistrationCategory = 'booster' | 'pilot' | 'advertiser' | 'exchanger';
+
+export type ApplicationStatus =
+  | 'pending'
+  | 'info_requested'
+  | 'awaiting_identity_verification'
+  | 'under_review'
+  | 'approved'
+  | 'rejected'
+  | 'cancelled';
 
 export interface BoosterRegistrationInput {
   userId: string;
@@ -45,7 +56,7 @@ export interface AdvertiserRegistrationInput {
   introduction: string;
   priorExperience: string;
   contactInfo: string;
-  requestedCommission?: any; // Must NOT be allowed or accepted
+  requestedCommission?: any;
 }
 
 export interface ExchangerRegistrationInput {
@@ -53,18 +64,18 @@ export interface ExchangerRegistrationInput {
   preferredLanguage?: string;
   introduction: string;
   experience: string;
-  gameCurrencies: string[];       // e.g. ['wow_gold', 'poe2_divine', 'aion2_currency']
-  settlementCurrencies: string[]; // e.g. ['IRT', 'USDT', 'TRY']
+  gameCurrencies: string[];
+  settlementCurrencies: string[];
   contactInfo?: string;
 }
 
 export interface ApplicationReviewInput {
   reviewerId: string;
   applicationId: number;
-  decision: 'approve' | 'reject' | 'request_info' | 'start_identity_verification';
+  decision: 'approve' | 'reject' | 'request_info' | 'start_identity_verification' | 'retry_role_sync' | 'verify_identity';
   reason?: string;
   reviewNotes?: string;
-  discordClient?: any; // Optional Discord Client for role sync & DM notification
+  discordClient?: any;
 }
 
 export const SUPPORTED_PILOT_GAMES = [
@@ -90,10 +101,21 @@ export const SUPPORTED_EXCHANGER_SETTLEMENT_CURRENCIES = [
   'TRY',
 ];
 
+export const ACTIVE_APPLICATION_STATUSES = [
+  'pending',
+  'info_requested',
+  'awaiting_identity_verification',
+  'under_review',
+];
+
 /**
  * ایجاد یا اطمینان از وجود رکورد کاربر در دیتابیس
  */
-export async function ensureUserExists(userId: string, username?: string, client: Prisma.TransactionClient | typeof prisma = prisma) {
+export async function ensureUserExists(
+  userId: string,
+  username?: string,
+  client: Prisma.TransactionClient | typeof prisma = prisma
+) {
   return await client.user.upsert({
     where: { discordId: userId },
     update: username ? { username } : {},
@@ -107,7 +129,7 @@ export async function ensureUserExists(userId: string, username?: string, client
 /**
  * ثبت یا به‌روزرسانی امن UserGameApproval بدون تداخل با محدودیت مقادیر تهی در Prisma
  */
-async function upsertUserGameApproval(
+export async function upsertUserGameApproval(
   client: Prisma.TransactionClient | typeof prisma,
   userId: string,
   gameSlug: string,
@@ -160,7 +182,6 @@ export async function registerBooster(input: BoosterRegistrationInput) {
 
   await ensureUserExists(userId);
 
-  // بررسی وجود بازی و سرویس
   const game = await prisma.game.findUnique({ where: { slug: gameSlug } });
   if (!game || !game.isActive) {
     throw new Error(`INVALID_GAME: Game '${gameSlug}' is invalid or inactive`);
@@ -173,19 +194,19 @@ export async function registerBooster(input: BoosterRegistrationInput) {
     }
   }
 
-  // بررسی عدم وجود درخواست در حال انتظار تکراری
+  // جلوگیری از درخواست‌های فعال همزمان
   const existingPending = await prisma.registrationApplication.findFirst({
     where: {
       userId,
       category: 'booster',
       gameSlug,
       serviceId: serviceId ?? null,
-      status: { in: ['pending', 'info_requested'] },
+      status: { in: ACTIVE_APPLICATION_STATUSES },
     },
   });
 
   if (existingPending) {
-    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have a pending booster application for this game and service');
+    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have an active booster application for this game and service');
   }
 
   let wowCharacterId: number | null = null;
@@ -195,7 +216,6 @@ export async function registerBooster(input: BoosterRegistrationInput) {
     specialization: input.specialization ?? '',
   };
 
-  // بررسی کاراکتر WoW با Raider.IO در صورت موجود بودن
   if (input.characterName && input.realm) {
     const region = (input.region || 'eu').toLowerCase();
     const charName = input.characterName.trim();
@@ -279,7 +299,6 @@ export async function registerBooster(input: BoosterRegistrationInput) {
     };
   }
 
-  // ثبت در جدول پایدار RegistrationApplication
   const application = await prisma.registrationApplication.create({
     data: {
       userId,
@@ -289,13 +308,12 @@ export async function registerBooster(input: BoosterRegistrationInput) {
       preferredLanguage,
       qualifications: JSON.stringify(qualificationsData),
       status: 'pending',
+      roleSyncStatus: 'pending',
     },
   });
 
-  // ثبت یا به‌روزرسانی UserGameApproval با وضعیت pending
   await upsertUserGameApproval(prisma, userId, gameSlug, serviceId ?? null, 'booster', 'pending');
 
-  // ثبت لاگ ممیزی
   await prisma.auditLog.create({
     data: {
       actorId: userId,
@@ -306,7 +324,6 @@ export async function registerBooster(input: BoosterRegistrationInput) {
     },
   });
 
-  // ثبت اعلان در Persistent Notification Outbox
   await prisma.notificationOutbox.create({
     data: {
       eventKey: `reg_submit_${application.id}_${Date.now()}`,
@@ -354,12 +371,12 @@ export async function registerPilot(input: PilotRegistrationInput) {
       userId,
       category: 'pilot',
       gameSlug,
-      status: { in: ['pending', 'info_requested'] },
+      status: { in: ACTIVE_APPLICATION_STATUSES },
     },
   });
 
   if (existingPending) {
-    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have a pending pilot application for this game');
+    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have an active pilot application for this game');
   }
 
   const qualificationsData = {
@@ -378,10 +395,11 @@ export async function registerPilot(input: PilotRegistrationInput) {
       preferredLanguage,
       qualifications: JSON.stringify(qualificationsData),
       status: 'pending',
+      roleSyncStatus: 'pending',
+      identityStatus: 'awaiting_submission',
     },
   });
 
-  // ایجاد وضعیت پایلوت در جدول PilotVerification با وضعیت در انتظار مدارک امن
   await prisma.pilotVerification.create({
     data: {
       userId,
@@ -393,7 +411,6 @@ export async function registerPilot(input: PilotRegistrationInput) {
     },
   });
 
-  // ثبت در UserGameApproval به صورت pending
   await upsertUserGameApproval(prisma, userId, gameSlug, serviceId ?? null, 'pilot', 'pending');
 
   await prisma.auditLog.create({
@@ -425,14 +442,13 @@ export async function registerPilot(input: PilotRegistrationInput) {
 }
 
 /**
- * ۳. ثبت‌نام ادورتایزر (Advertiser)
+ * ۳. ثبت‌نام ادورتایزر
  */
 export async function registerAdvertiser(input: AdvertiserRegistrationInput) {
   const { userId, preferredLanguage = 'en' } = input;
 
   await ensureUserExists(userId);
 
-  // امنیت: ادورتایزر اجازه انتخاب یا تغییر کمیسیون ندارد
   if (input.requestedCommission !== undefined && input.requestedCommission !== null) {
     throw new Error('COMMISSION_SELECTION_FORBIDDEN: Advertisers cannot set or propose their own commission rate');
   }
@@ -441,12 +457,12 @@ export async function registerAdvertiser(input: AdvertiserRegistrationInput) {
     where: {
       userId,
       category: 'advertiser',
-      status: { in: ['pending', 'info_requested'] },
+      status: { in: ACTIVE_APPLICATION_STATUSES },
     },
   });
 
   if (existingPending) {
-    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have a pending advertiser application');
+    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have an active advertiser application');
   }
 
   const qualificationsData = {
@@ -462,6 +478,7 @@ export async function registerAdvertiser(input: AdvertiserRegistrationInput) {
       preferredLanguage,
       qualifications: JSON.stringify(qualificationsData),
       status: 'pending',
+      roleSyncStatus: 'pending',
     },
   });
 
@@ -493,14 +510,13 @@ export async function registerAdvertiser(input: AdvertiserRegistrationInput) {
 }
 
 /**
- * ۴. ثبت‌نام صراف (Exchanger)
+ * ۴. ثبت‌نام صراف
  */
 export async function registerExchanger(input: ExchangerRegistrationInput) {
   const { userId, preferredLanguage = 'en' } = input;
 
   await ensureUserExists(userId);
 
-  // اعتبارسنجی ارزهای درون‌بازی انتخاب‌شده
   if (!input.gameCurrencies || input.gameCurrencies.length === 0) {
     throw new Error('INVALID_CURRENCY_SELECTION: At least one in-game currency must be selected');
   }
@@ -510,7 +526,6 @@ export async function registerExchanger(input: ExchangerRegistrationInput) {
     }
   }
 
-  // اعتبارسنجی ارزهای تسویه خارجی (IRT, USDT, TRY)
   if (!input.settlementCurrencies || input.settlementCurrencies.length === 0) {
     throw new Error('INVALID_SETTLEMENT_SELECTION: At least one external settlement currency must be selected');
   }
@@ -524,12 +539,12 @@ export async function registerExchanger(input: ExchangerRegistrationInput) {
     where: {
       userId,
       category: 'exchanger',
-      status: { in: ['pending', 'info_requested'] },
+      status: { in: ACTIVE_APPLICATION_STATUSES },
     },
   });
 
   if (existingPending) {
-    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have a pending exchanger application');
+    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have an active exchanger application');
   }
 
   const qualificationsData = {
@@ -547,6 +562,8 @@ export async function registerExchanger(input: ExchangerRegistrationInput) {
       preferredLanguage,
       qualifications: JSON.stringify(qualificationsData),
       status: 'pending',
+      roleSyncStatus: 'pending',
+      identityStatus: 'awaiting_submission',
     },
   });
 
@@ -578,12 +595,14 @@ export async function registerExchanger(input: ExchangerRegistrationInput) {
 }
 
 /**
- * ۵. بررسی و صدور تصمیم مدیریتی بر روی درخواست (Admin Review Workflow)
+ * ۵. ارسال مدارک تکمیلی توسط متقاضی (حل مشکل BUG 1)
  */
-export async function reviewApplication(input: ApplicationReviewInput) {
-  const { reviewerId, applicationId, decision, reason, reviewNotes, discordClient } = input;
-
-  // واکشی درخواست جهت بررسی نوع و احراز مجوز متمرکز
+export async function submitSupplementalInfo(
+  applicationId: number,
+  userId: string,
+  supplementalInfo: string,
+  discordClient?: any
+) {
   const application = await prisma.registrationApplication.findUnique({
     where: { id: applicationId },
   });
@@ -592,7 +611,97 @@ export async function reviewApplication(input: ApplicationReviewInput) {
     throw new Error('APPLICATION_NOT_FOUND: Application does not exist');
   }
 
-  // احراز صلاحیت بررسی‌کننده از طریق AuthorizationService متمرکز
+  // اعتبارسنجی مالکیت قطعی درخواست (Security Guard)
+  if (application.userId !== userId) {
+    throw new Error('UNAUTHORIZED_APPLICANT: You can only update your own applications');
+  }
+
+  if (application.status !== 'info_requested') {
+    throw new Error(
+      `INVALID_STATUS_FOR_SUPPLEMENTAL: Cannot provide info when application status is '${application.status}'`
+    );
+  }
+
+  if (!supplementalInfo || supplementalInfo.trim().length === 0) {
+    throw new Error('MISSING_SUPPLEMENTAL_INFO: Supplemental information cannot be empty');
+  }
+
+  // انتقال امن وضعیت به under_review
+  const updatedApp = await prisma.registrationApplication.update({
+    where: { id: applicationId },
+    data: {
+      status: 'under_review',
+      supplementalInfo: supplementalInfo.trim(),
+      infoRespondedAt: new Date(),
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      actorId: userId,
+      action: 'REGISTRATION_SUPPLEMENTAL_INFO_SUBMITTED',
+      entityType: 'RegistrationApplication',
+      entityId: String(applicationId),
+      newValues: JSON.stringify({ status: 'under_review', respondedAt: new Date() }),
+    },
+  });
+
+  // ثبت اعلان در صف اوت‌باکس
+  await prisma.notificationOutbox.create({
+    data: {
+      eventKey: `reg_supp_${applicationId}_${Date.now()}`,
+      recipientId: userId,
+      notificationType: 'APPLICATION_SUPPLEMENTAL_RECEIVED',
+      deliveryChannel: 'discord_dm',
+      payload: JSON.stringify({
+        applicationId,
+        category: application.category,
+        status: 'under_review',
+      }),
+    },
+  });
+
+  // پردازش بلادرنگ اوت‌باکس
+  if (discordClient) {
+    processNotificationOutbox(discordClient).catch(() => null);
+  }
+
+  return updatedApp;
+}
+
+/**
+ * ۶. واکشی درخواست‌های فعال یک کاربر (جهت ریکاوری و منوی My Applications)
+ */
+export async function getUserActiveApplications(userId: string) {
+  return await prisma.registrationApplication.findMany({
+    where: {
+      userId,
+      status: { in: ACTIVE_APPLICATION_STATUSES },
+    },
+    orderBy: { submittedAt: 'desc' },
+  });
+}
+
+/**
+ * ۷. بررسی و صدور تصمیم مدیریتی بر روی درخواست (Admin Review Workflow)
+ */
+export async function reviewApplication(input: ApplicationReviewInput) {
+  const { reviewerId, applicationId, decision, reason, reviewNotes, discordClient } = input;
+
+  const application = await prisma.registrationApplication.findUnique({
+    where: { id: applicationId },
+  });
+
+  if (!application) {
+    throw new Error('APPLICATION_NOT_FOUND: Application does not exist');
+  }
+
+  // جلوگیری صریح از خود-تاییدی متقاضی (Security Guard)
+  if (application.userId === reviewerId) {
+    throw new Error('CANNOT_REVIEW_OWN_APPLICATION: Applicants cannot review their own application');
+  }
+
+  // تعیین مجوز مورد نیاز
   let requiredPermission = Permission.BOOSTER_APPLICATION_REVIEW;
   if (application.category === 'pilot') {
     requiredPermission = Permission.PILOT_APPLICATION_REVIEW;
@@ -602,7 +711,7 @@ export async function reviewApplication(input: ApplicationReviewInput) {
     requiredPermission = Permission.EXCHANGER_APPLICATION_REVIEW;
   }
 
-  if (decision === 'start_identity_verification') {
+  if (decision === 'start_identity_verification' || decision === 'verify_identity') {
     requiredPermission = Permission.SENSITIVE_IDENTITY_REVIEW;
   }
 
@@ -611,21 +720,25 @@ export async function reviewApplication(input: ApplicationReviewInput) {
     throw new Error(`UNAUTHORIZED_REVIEWER: ${authResult.reason || 'Insufficient permissions to review this application'}`);
   }
 
-  // تراکنش اتمیک برای جلوگیری از تداخل و مسابقه دو بررسی‌کننده (Race Condition Prevention)
+  // تراکنش اتمیک
   return await prisma.$transaction(async (tx) => {
-    // خواندن مجدد با قفل منطقی بر اساس وضعیت
     const currentApp = await tx.registrationApplication.findUnique({
       where: { id: applicationId },
     });
 
-    if (!currentApp || (currentApp.status !== 'pending' && currentApp.status !== 'info_requested')) {
-      throw new Error(`APPLICATION_ALREADY_REVIEWED: Application is already marked as '${currentApp?.status}'`);
+    if (!currentApp) {
+      throw new Error('APPLICATION_NOT_FOUND: Application does not exist');
     }
 
     const applicantId = currentApp.userId;
 
+    // ۱. بررسی اقدام تایید (Approve)
     if (decision === 'approve') {
-      // بررسی ویژه برای پایلوت: نیازمند احراز هویت تاییدشده در دیتابیس
+      if (['approved', 'rejected', 'cancelled'].includes(currentApp.status)) {
+        throw new Error(`APPLICATION_ALREADY_REVIEWED: Application is already marked as '${currentApp.status}'`);
+      }
+
+      // شرط دوگانه پایلوت: احراز هویت تاییدشده الزامی است
       if (currentApp.category === 'pilot') {
         const approvedVerif = await tx.pilotVerification.findFirst({
           where: {
@@ -640,6 +753,12 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         }
       }
 
+      // شرط صراف: احراز هویت تاییدشده
+      if (currentApp.category === 'exchanger' && currentApp.identityStatus !== 'verified') {
+        // احراز هویت صراف باید تایید شده باشد
+        throw new Error('EXCHANGER_VERIFICATION_REQUIRED: Exchanger approval requires approved identity verification');
+      }
+
       // ۱. به‌روزرسانی وضعیت درخواست به approved
       const updatedApp = await tx.registrationApplication.update({
         where: { id: applicationId },
@@ -651,8 +770,8 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         },
       });
 
-      // ۲. اعطای نقش در دیتابیس (UserRole)
-      const roleKey = currentApp.category; // 'booster' | 'pilot' | 'advertiser' | 'exchanger'
+      // ۲. اعطای نقش در دیتابیس
+      const roleKey = currentApp.category;
       await tx.userRole.upsert({
         where: {
           userId_roleKey: {
@@ -672,7 +791,7 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         },
       });
 
-      // ۳. به‌روزرسانی UserGameApproval در صورت ارتباط با بازی
+      // ۳. به‌روزرسانی UserGameApproval
       if (currentApp.gameSlug) {
         await upsertUserGameApproval(
           tx,
@@ -686,7 +805,7 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         );
       }
 
-      // ۴. ثبت ممیزی تایید
+      // ۴. ثبت لاگ ممیزی تایید
       await tx.auditLog.create({
         data: {
           actorId: reviewerId,
@@ -697,7 +816,7 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         },
       });
 
-      // ۵. ثبت اعلان در اوت‌باکس
+      // ۵. ثبت اعلان تایید در صف اوت‌باکس
       await tx.notificationOutbox.create({
         data: {
           eventKey: `reg_decision_${applicationId}_${Date.now()}`,
@@ -713,12 +832,22 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         },
       });
 
-      // همگام‌سازی نقش دیسکورد به شکل امن و مقاوم در برابر خطا
-      await syncDiscordRole(discordClient, applicantId, roleKey, tx);
+      // ۶. همگام‌سازی واقعی نقش دیسکورد و ذخیره وضعیت در دیتابیس
+      await syncDiscordRole(discordClient, applicantId, roleKey, applicationId, tx);
+
+      // اجرای فوری ورکر اعلانات
+      if (discordClient) {
+        processNotificationOutbox(discordClient).catch(() => null);
+      }
 
       return updatedApp;
 
+    // ۲. بررسی اقدام رد (Reject)
     } else if (decision === 'reject') {
+      if (['approved', 'rejected', 'cancelled'].includes(currentApp.status)) {
+        throw new Error(`APPLICATION_ALREADY_REVIEWED: Application is already marked as '${currentApp.status}'`);
+      }
+
       const updatedApp = await tx.registrationApplication.update({
         where: { id: applicationId },
         data: {
@@ -772,21 +901,25 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         },
       });
 
-      // ارسال مستقیم DM به شکل ایمن در صورت دردسترس بودن کلاینت
-      await sendApplicantDm(discordClient, applicantId, {
-        title: 'Application Decision',
-        description: `Your application for **${currentApp.category.toUpperCase()}** was rejected.\n**Reason:** ${reason || 'Requirements not met'}\n\nYou may reapply in the future following community guidelines.`,
-      });
+      if (discordClient) {
+        processNotificationOutbox(discordClient).catch(() => null);
+      }
 
       return updatedApp;
 
+    // ۳. درخواست اطلاعات تکمیلی (Request Info)
     } else if (decision === 'request_info') {
+      if (['approved', 'rejected', 'cancelled'].includes(currentApp.status)) {
+        throw new Error(`APPLICATION_ALREADY_REVIEWED: Application is already marked as '${currentApp.status}'`);
+      }
+
       const updatedApp = await tx.registrationApplication.update({
         where: { id: applicationId },
         data: {
           status: 'info_requested',
           reviewNotes: reviewNotes || reason || 'Additional information required',
           reviewedById: reviewerId,
+          infoRequestedAt: new Date(),
         },
       });
 
@@ -814,19 +947,23 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         },
       });
 
-      await sendApplicantDm(discordClient, applicantId, {
-        title: 'Additional Information Required',
-        description: `Our team has reviewed your **${currentApp.category.toUpperCase()}** application and requested more information:\n\n> ${reviewNotes || reason || 'Please contact staff for details.'}`,
-      });
+      if (discordClient) {
+        processNotificationOutbox(discordClient).catch(() => null);
+      }
 
       return updatedApp;
 
+    // ۴. شروع فرآیند احراز هویت (Start Identity Verification)
     } else if (decision === 'start_identity_verification') {
-      // نیازمند Permission.SENSITIVE_IDENTITY_REVIEW
+      if (['approved', 'rejected', 'cancelled'].includes(currentApp.status)) {
+        throw new Error(`APPLICATION_ALREADY_REVIEWED: Application is already marked as '${currentApp.status}'`);
+      }
+
       const updatedApp = await tx.registrationApplication.update({
         where: { id: applicationId },
         data: {
-          status: 'info_requested',
+          status: 'awaiting_identity_verification',
+          identityStatus: 'awaiting_submission',
           reviewNotes: 'Identity verification initiated. Awaiting secure submission.',
           reviewedById: reviewerId,
         },
@@ -837,9 +974,9 @@ export async function reviewApplication(input: ApplicationReviewInput) {
           where: {
             userId: applicantId,
             gameSlug: currentApp.gameSlug,
-            status: 'pending',
           },
           data: {
+            status: 'pending',
             reviewNote: 'Private identity verification initiated by staff.',
           },
         });
@@ -851,16 +988,78 @@ export async function reviewApplication(input: ApplicationReviewInput) {
           action: 'REGISTRATION_IDENTITY_VERIFICATION_INITIATED',
           entityType: 'RegistrationApplication',
           entityId: String(applicationId),
-          newValues: JSON.stringify({ status: 'awaiting_secure_submission' }),
+          newValues: JSON.stringify({ status: 'awaiting_identity_verification' }),
         },
       });
 
-      await sendApplicantDm(discordClient, applicantId, {
-        title: 'Identity Verification Initiated',
-        description: `Your application requires private identity verification.\nPlease await secure instructions from authorized management. Do not send sensitive identity documents in public channels.`,
+      await tx.notificationOutbox.create({
+        data: {
+          eventKey: `reg_id_init_${applicationId}_${Date.now()}`,
+          recipientId: applicantId,
+          notificationType: 'APPLICATION_IDENTITY_INITIATED',
+          deliveryChannel: 'discord_dm',
+          payload: JSON.stringify({
+            applicationId,
+            category: currentApp.category,
+          }),
+        },
+      });
+
+      if (discordClient) {
+        processNotificationOutbox(discordClient).catch(() => null);
+      }
+
+      return updatedApp;
+
+    // ۵. تایید رسمی احراز هویت پایلوت یا صراف (Verify Identity)
+    } else if (decision === 'verify_identity') {
+      if (currentApp.category === 'pilot' && currentApp.gameSlug) {
+        await tx.pilotVerification.updateMany({
+          where: {
+            userId: applicantId,
+            gameSlug: currentApp.gameSlug,
+          },
+          data: {
+            status: 'approved',
+            reviewedBy: reviewerId,
+            reviewedAt: new Date(),
+            reviewNote: reviewNotes || 'Identity verified by authorized management',
+          },
+        });
+      }
+
+      const updatedApp = await tx.registrationApplication.update({
+        where: { id: applicationId },
+        data: {
+          identityStatus: 'verified',
+          status: 'under_review',
+          reviewNotes: reviewNotes || 'Identity verification verified by staff',
+          reviewedById: reviewerId,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: reviewerId,
+          action: 'REGISTRATION_IDENTITY_VERIFIED',
+          entityType: 'RegistrationApplication',
+          entityId: String(applicationId),
+          newValues: JSON.stringify({ identityStatus: 'verified' }),
+        },
       });
 
       return updatedApp;
+
+    // ۶. تلاش مجدد همگام‌سازی نقش (Retry Role Sync)
+    } else if (decision === 'retry_role_sync') {
+      if (currentApp.status !== 'approved') {
+        throw new Error('CANNOT_RETRY_SYNC_UNAPPROVED: Role synchronization can only be retried for approved applications');
+      }
+
+      const roleKey = currentApp.category;
+      await syncDiscordRole(discordClient, applicantId, roleKey, applicationId, tx);
+
+      return currentApp;
     }
 
     throw new Error(`UNKNOWN_DECISION: Invalid decision '${decision}'`);
@@ -868,10 +1067,29 @@ export async function reviewApplication(input: ApplicationReviewInput) {
 }
 
 /**
- * همگام‌سازی نقش دیسکورد با مقاومت در برابر خطا و ثبت لاگ بازیابی
+ * همگام‌سازی نقش دیسکورد با اعتبارسنجی کامل، ثبت وضعیت و عدم سقط تراکنش
  */
-async function syncDiscordRole(client: any, userId: string, roleKey: string, tx: Prisma.TransactionClient) {
-  if (!client) return;
+export async function syncDiscordRole(
+  client: any,
+  userId: string,
+  roleKey: string,
+  applicationId?: number,
+  tx?: Prisma.TransactionClient
+): Promise<{ success: boolean; reason?: string }> {
+  const db = tx || prisma;
+
+  if (!client) {
+    if (applicationId) {
+      await db.registrationApplication.update({
+        where: { id: applicationId },
+        data: {
+          roleSyncStatus: 'failed',
+          roleSyncError: 'DISCORD_CLIENT_NOT_AVAILABLE',
+        },
+      });
+    }
+    return { success: false, reason: 'DISCORD_CLIENT_NOT_AVAILABLE' };
+  }
 
   const roleEnvMap: Record<string, string | undefined> = {
     booster: process.env.ROLE_BOOSTER,
@@ -880,56 +1098,193 @@ async function syncDiscordRole(client: any, userId: string, roleKey: string, tx:
     exchanger: process.env.ROLE_EXCHANGER,
   };
 
-  const targetRoleId = roleEnvMap[roleKey] || `role_${roleKey}`;
-  const guildId = process.env.DISCORD_GUILD_ID || 'guild_id';
+  const targetRoleId = roleEnvMap[roleKey];
+  const guildId = process.env.DISCORD_GUILD_ID;
+
+  // اعتبارسنجی فرمت اسنوفلیک دیسکورد
+  const isSnowflake = (id?: string) => Boolean(id && /^\d{17,20}$/.test(id.trim()));
+
+  if (!isSnowflake(guildId)) {
+    const errorMsg = `INVALID_GUILD_CONFIG: DISCORD_GUILD_ID is missing or not a valid snowflake ('${guildId}')`;
+    if (applicationId) {
+      await db.registrationApplication.update({
+        where: { id: applicationId },
+        data: { roleSyncStatus: 'failed', roleSyncError: errorMsg },
+      });
+    }
+    await db.auditLog.create({
+      data: {
+        action: 'DISCORD_ROLE_SYNC_FAILED',
+        entityType: 'DiscordGuild',
+        entityId: guildId || 'missing',
+        reason: errorMsg,
+        isSuccess: false,
+      },
+    });
+    return { success: false, reason: errorMsg };
+  }
+
+  if (!isSnowflake(targetRoleId)) {
+    const errorMsg = `INVALID_ROLE_CONFIG: Role ID for '${roleKey}' is missing or not a valid snowflake ('${targetRoleId}')`;
+    if (applicationId) {
+      await db.registrationApplication.update({
+        where: { id: applicationId },
+        data: { roleSyncStatus: 'failed', roleSyncError: errorMsg },
+      });
+    }
+    await db.auditLog.create({
+      data: {
+        action: 'DISCORD_ROLE_SYNC_FAILED',
+        entityType: 'DiscordRole',
+        entityId: targetRoleId || 'missing',
+        reason: errorMsg,
+        isSuccess: false,
+      },
+    });
+    return { success: false, reason: errorMsg };
+  }
 
   try {
-    const guild = await client.guilds.fetch(guildId);
+    const guild = await client.guilds.fetch(guildId!).catch(() => null);
     if (!guild) {
-      await tx.auditLog.create({
+      const errorMsg = `GUILD_NOT_FOUND: Bot cannot fetch guild ${guildId}`;
+      if (applicationId) {
+        await db.registrationApplication.update({
+          where: { id: applicationId },
+          data: { roleSyncStatus: 'failed', roleSyncError: errorMsg },
+        });
+      }
+      return { success: false, reason: errorMsg };
+    }
+
+    // بررسی دسترسی ManageRoles ربات
+    const botMember = guild.members.me || (await guild.members.fetch(client.user.id).catch(() => null));
+    if (!botMember || !botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+      const errorMsg = 'BOT_MISSING_MANAGE_ROLES: Bot lacks Manage Roles permission in the guild';
+      if (applicationId) {
+        await db.registrationApplication.update({
+          where: { id: applicationId },
+          data: { roleSyncStatus: 'failed', roleSyncError: errorMsg },
+        });
+      }
+      await db.auditLog.create({
         data: {
           action: 'DISCORD_ROLE_SYNC_FAILED',
-          entityType: 'DiscordGuild',
-          entityId: guildId,
-          reason: 'GUILD_NOT_FOUND',
+          entityType: 'DiscordPermission',
+          entityId: 'ManageRoles',
+          reason: errorMsg,
           isSuccess: false,
         },
       });
-      return;
+      return { success: false, reason: errorMsg };
     }
 
-    const member = await guild.members.fetch(userId);
+    // بررسی وجود رول و سلسله‌مراتب رول‌ها (Role Hierarchy)
+    const targetRole = guild.roles.cache.get(targetRoleId!) || (await guild.roles.fetch(targetRoleId!).catch(() => null));
+    if (!targetRole) {
+      const errorMsg = `TARGET_ROLE_NOT_FOUND: Role ${targetRoleId} does not exist in guild`;
+      if (applicationId) {
+        await db.registrationApplication.update({
+          where: { id: applicationId },
+          data: { roleSyncStatus: 'failed', roleSyncError: errorMsg },
+        });
+      }
+      return { success: false, reason: errorMsg };
+    }
+
+    if (botMember.roles.highest.position <= targetRole.position) {
+      const errorMsg = `ROLE_HIERARCHY_VIOLATION: Bot's highest role (${botMember.roles.highest.name}) is below or equal to target role (${targetRole.name})`;
+      if (applicationId) {
+        await db.registrationApplication.update({
+          where: { id: applicationId },
+          data: { roleSyncStatus: 'failed', roleSyncError: errorMsg },
+        });
+      }
+      await db.auditLog.create({
+        data: {
+          action: 'DISCORD_ROLE_SYNC_FAILED',
+          entityType: 'DiscordRoleHierarchy',
+          entityId: targetRoleId!,
+          reason: errorMsg,
+          isSuccess: false,
+        },
+      });
+      return { success: false, reason: errorMsg };
+    }
+
+    // واکشی عضو
+    const member = await guild.members.fetch(userId).catch(() => null);
     if (!member) {
-      // عضو ممکن است در سرور نباشد؛ در لاگ ثبت می‌شود
-      await tx.auditLog.create({
+      const errorMsg = `MEMBER_NOT_FOUND: Applicant ${userId} is not a member of guild ${guildId}`;
+      if (applicationId) {
+        await db.registrationApplication.update({
+          where: { id: applicationId },
+          data: { roleSyncStatus: 'failed', roleSyncError: errorMsg },
+        });
+      }
+      await db.auditLog.create({
         data: {
           action: 'DISCORD_ROLE_SYNC_FAILED',
           entityType: 'DiscordMember',
           entityId: userId,
-          reason: 'MEMBER_NOT_FOUND_IN_GUILD',
+          reason: errorMsg,
           isSuccess: false,
         },
       });
-      return;
+      return { success: false, reason: errorMsg };
     }
 
-    await member.roles.add(targetRoleId);
+    // تخصیص رول
+    await member.roles.add(targetRoleId!);
+
+    // به‌روزرسانی وضعیت موفقیت
+    if (applicationId) {
+      await db.registrationApplication.update({
+        where: { id: applicationId },
+        data: {
+          roleSyncStatus: 'synced',
+          roleSyncError: null,
+        },
+      });
+    }
+
+    await db.auditLog.create({
+      data: {
+        action: 'DISCORD_ROLE_SYNC_SUCCESS',
+        entityType: 'DiscordRole',
+        entityId: targetRoleId!,
+        newValues: JSON.stringify({ userId, roleKey }),
+        isSuccess: true,
+      },
+    });
+
+    return { success: true };
   } catch (err: any) {
-    // خطای دیسکورد جلوی تراکنش دیتابیس را نمی‌گیرد
-    await tx.auditLog.create({
+    const errorMsg = err?.message || 'UNKNOWN_DISCORD_ROLE_ERROR';
+    if (applicationId) {
+      await db.registrationApplication.update({
+        where: { id: applicationId },
+        data: {
+          roleSyncStatus: 'failed',
+          roleSyncError: errorMsg,
+        },
+      });
+    }
+    await db.auditLog.create({
       data: {
         action: 'DISCORD_ROLE_SYNC_FAILED',
         entityType: 'DiscordRole',
-        entityId: targetRoleId,
-        reason: err?.message || 'UNKNOWN_DISCORD_ROLE_ERROR',
+        entityId: targetRoleId || 'unknown',
+        reason: errorMsg,
         isSuccess: false,
       },
     });
+    return { success: false, reason: errorMsg };
   }
 }
 
 /**
- * ارسال DM خصوصی به متقاضی با مدیریت خطای بسته بودن DM (Closed DMs gracefully handled)
+ * ارسال DM به متقاضی (سازگار با نسخه‌های قبل)
  */
 export async function sendApplicantDm(client: any, userId: string, embedData: { title: string; description: string }) {
   if (!client) return;
@@ -950,8 +1305,6 @@ export async function sendApplicantDm(client: any, userId: string, embedData: { 
       ],
     });
   } catch (err: any) {
-    // خطای کد 50007 دیسکورد: Cannot send messages to this user (DMs are closed)
-    // هیچ استثنایی بالا نمی‌دهد
-    console.warn(`[RegistrationService] Could not send DM to user ${userId} (DMs closed or blocked):`, err?.message || err);
+    console.warn(`[RegistrationService] Could not send DM to user ${userId}:`, err?.message || err);
   }
 }

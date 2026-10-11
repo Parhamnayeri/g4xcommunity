@@ -802,11 +802,20 @@ model RegistrationApplication {
   serviceId         Int?      @map("service_id")
   preferredLanguage String    @default("en") @map("preferred_language")
   qualifications    String    @map("qualifications") // JSON payload
-  status            String    @default("pending") @map("status") // pending | approved | rejected | info_requested | cancelled
+  status            String    @default("pending") @map("status")
+  // pending | info_requested | awaiting_identity_verification | under_review | approved | rejected | cancelled
   rejectionReason   String?   @map("rejection_reason")
   reviewNotes       String?   @map("review_notes")
+  supplementalInfo  String?   @map("supplemental_info")
+  reviewChannelId   String?   @map("review_channel_id")
+  reviewMessageId   String?   @map("review_message_id")
+  roleSyncStatus    String    @default("pending") @map("role_sync_status") // pending | synced | failed | skipped
+  roleSyncError     String?   @map("role_sync_error")
+  identityStatus    String    @default("none") @map("identity_status") // none | awaiting_submission | verified | rejected
   reviewedById      String?   @map("reviewed_by_id")
   submittedAt       DateTime  @default(now()) @map("submitted_at")
+  infoRequestedAt   DateTime? @map("info_requested_at")
+  infoRespondedAt   DateTime? @map("info_responded_at")
   reviewedAt        DateTime? @map("reviewed_at")
 
   user       User         @relation("UserRegistrationApplications", fields: [userId], references: [discordId], onDelete: Cascade)
@@ -817,6 +826,7 @@ model RegistrationApplication {
   @@index([userId, status])
   @@index([category, status])
   @@index([status, submittedAt])
+  @@index([roleSyncStatus])
   @@map("registration_applications")
 }
 

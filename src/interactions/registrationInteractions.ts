@@ -27,6 +27,8 @@ import {
   registerAdvertiser,
   registerExchanger,
   reviewApplication,
+  submitSupplementalInfo,
+  getUserActiveApplications,
   SUPPORTED_PILOT_GAMES,
   SUPPORTED_EXCHANGER_GAME_CURRENCIES,
   SUPPORTED_EXCHANGER_SETTLEMENT_CURRENCIES,
@@ -48,7 +50,9 @@ export function buildRegistrationPanelEmbed(): EmbedBuilder {
       '📢 **Become an Advertiser**\n' +
       'Create and manage boost orders for customers on our platform.\n\n' +
       '💱 **Become an Exchanger**\n' +
-      'Exchange in-game currencies (WoW Gold, POE2 Divine Orbs, Aion 2) and settle via IRT, USDT, or TRY.'
+      'Exchange in-game currencies (WoW Gold, POE2 Divine Orbs, Aion 2) and settle via IRT, USDT, or TRY.\n\n' +
+      '📂 **My Applications**\n' +
+      'View your submitted applications, check review statuses, or provide additional requested information.'
     )
     .setColor(0x2f3136)
     .setFooter({ text: 'G4X Community • Secure Platform' })
@@ -79,6 +83,11 @@ export function buildRegistrationPanelButtons(): ActionRowBuilder<ButtonBuilder>
       .setCustomId('reg_start:exchanger')
       .setLabel('Become an Exchanger')
       .setEmoji('💱')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('reg_start:my_apps')
+      .setLabel('My Applications')
+      .setEmoji('📂')
       .setStyle(ButtonStyle.Secondary)
   );
 }
@@ -92,6 +101,10 @@ export async function handleRegistrationButton(interaction: ButtonInteraction): 
   if (prefix !== 'reg_start') return;
 
   switch (track) {
+    case 'my_apps': {
+      await handleMyApplications(interaction);
+      break;
+    }
     case 'booster': {
       // ارسال منوی انتخاب بازی برای بوستر
       const selectMenu = new StringSelectMenuBuilder()
@@ -614,10 +627,7 @@ export async function handleRegistrationModalSubmit(interaction: ModalSubmitInte
         ephemeral: true,
       });
 
-      // به‌روزرسانی پیام بازبینی
-      if (interaction.message) {
-        await updateReviewCard(interaction.message, appId, 'rejected', userId, reason);
-      }
+      await renderOrUpdateStaffReviewCard(interaction.client, appId);
     } else if (customId.startsWith('app_modal_info:')) {
       const appId = Number(customId.replace('app_modal_info:', ''));
       const notes = interaction.fields.getTextInputValue('info_notes');
@@ -635,9 +645,19 @@ export async function handleRegistrationModalSubmit(interaction: ModalSubmitInte
         ephemeral: true,
       });
 
-      if (interaction.message) {
-        await updateReviewCard(interaction.message, appId, 'info_requested', userId, notes);
-      }
+      await renderOrUpdateStaffReviewCard(interaction.client, appId);
+    } else if (customId.startsWith('modal_submit_supp_info:')) {
+      const appId = Number(customId.replace('modal_submit_supp_info:', ''));
+      const supplementalInfo = interaction.fields.getTextInputValue('supplemental_info');
+
+      await submitSupplementalInfo(appId, userId, supplementalInfo, interaction.client);
+
+      await interaction.reply({
+        content: `✅ Supplemental information submitted for Application **#${appId}**! It has been moved back to the review queue.`,
+        ephemeral: true,
+      });
+
+      await renderOrUpdateStaffReviewCard(interaction.client, appId);
     }
   } catch (err: any) {
     const errorMsg = err?.message || 'An unexpected error occurred';
@@ -675,13 +695,11 @@ export async function handleAdminReviewButton(interaction: ButtonInteraction): P
       });
 
       await interaction.reply({
-        content: `✅ Application **#${appId}** has been successfully **Approved**! Database records updated and roles synchronized.`,
+        content: `✅ Application **#${appId}** has been successfully **Approved**! Database records updated and role sync processed.`,
         ephemeral: true,
       });
 
-      if (interaction.message) {
-        await updateReviewCard(interaction.message, appId, 'approved', reviewerId);
-      }
+      await renderOrUpdateStaffReviewCard(interaction.client, appId);
     } else if (action === 'reject') {
       const modal = new ModalBuilder()
         .setCustomId(`app_modal_reject:${appId}`)
@@ -719,118 +737,411 @@ export async function handleAdminReviewButton(interaction: ButtonInteraction): P
       });
 
       await interaction.reply({
-        content: `🔒 Identity verification initiated for Application **#${appId}**. Marked as awaiting secure submission.`,
+        content: `🔒 Identity verification initiated for Application **#${appId}**. Marked as awaiting secure submission. Review controls remain active.`,
         ephemeral: true,
       });
 
-      if (interaction.message) {
-        await updateReviewCard(interaction.message, appId, 'awaiting_secure_submission', reviewerId);
-      }
+      await renderOrUpdateStaffReviewCard(interaction.client, appId);
+    } else if (action === 'refresh') {
+      await renderOrUpdateStaffReviewCard(interaction.client, appId);
+
+      await interaction.reply({
+        content: `🔃 Review card for Application **#${appId}** has been refreshed from database state.`,
+        ephemeral: true,
+      });
+    } else if (action === 'retry_sync') {
+      await reviewApplication({
+        reviewerId,
+        applicationId: appId,
+        decision: 'retry_role_sync',
+        discordClient: interaction.client,
+      });
+
+      await renderOrUpdateStaffReviewCard(interaction.client, appId);
+
+      await interaction.reply({
+        content: `🔄 Role synchronization retried for Application **#${appId}**. Review card updated.`,
+        ephemeral: true,
+      });
     }
   } catch (err: any) {
-    await interaction.reply({
-      content: `❌ Review action failed: ${err?.message || err}`,
-      ephemeral: true,
-    });
+    const errorMsg = err?.message || err;
+    if (!interaction.replied && !interaction.deferred) {
+      await interaction.reply({
+        content: `❌ Review action failed: ${errorMsg}`,
+        ephemeral: true,
+      });
+    } else {
+      await interaction.followUp({
+        content: `❌ Review action failed: ${errorMsg}`,
+        ephemeral: true,
+      });
+    }
   }
 }
 
 /**
- * ارسال کارت بازبینی به کانال خصوصی استاف/مدیریت
+ * مدیریت دکمه "ارسال مدارک تکمیلی" توسط متقاضی
  */
-export async function notifyStaffReview(client: any, applicationId: number): Promise<void> {
+export async function handleProvideInfoButton(interaction: ButtonInteraction): Promise<void> {
+  const [prefix, appIdStr] = interaction.customId.split(':');
+  if (prefix !== 'app_provide_info') return;
+
+  const appId = Number(appIdStr);
+  const userId = interaction.user.id;
+
+  const app = await prisma.registrationApplication.findUnique({
+    where: { id: appId },
+  });
+
+  if (!app) {
+    await interaction.reply({
+      content: '❌ Application not found.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // بررسی امنیتی مالکیت درخواست (Security Guard)
+  if (app.userId !== userId) {
+    await interaction.reply({
+      content: '❌ You are not authorized to submit information for this application.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (app.status !== 'info_requested') {
+    await interaction.reply({
+      content: `❌ This application is currently \`${app.status.toUpperCase()}\` and is not awaiting supplemental information.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`modal_submit_supp_info:${appId}`)
+    .setTitle(`Provide Info for #${appId}`);
+
+  const infoInput = new TextInputBuilder()
+    .setCustomId('supplemental_info')
+    .setLabel('Supplemental Information / Evidence')
+    .setStyle(TextInputStyle.Paragraph)
+    .setPlaceholder('Provide the details, links, or qualifications requested by the reviewer.')
+    .setRequired(true);
+
+  modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(infoInput));
+  await interaction.showModal(modal);
+}
+
+/**
+ * نمایش درخواست‌های فعال کاربر در پاسخ خصوصی (My Applications fallback)
+ */
+export async function handleMyApplications(interaction: ButtonInteraction): Promise<void> {
+  const userId = interaction.user.id;
+  const apps = await getUserActiveApplications(userId);
+
+  if (!apps || apps.length === 0) {
+    await interaction.reply({
+      content: '📁 You currently have no active registration applications.',
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('📁 Your Active Applications')
+    .setDescription(
+      `Found **${apps.length}** active application(s):\n\n` +
+        apps
+          .map((a) => {
+            const statusDisplay = a.status.toUpperCase();
+            let details = `• **#${a.id}** — \`${a.category.toUpperCase()}\` | Status: \`${statusDisplay}\``;
+            if (a.gameSlug) details += ` | Game: \`${a.gameSlug}\``;
+            if (a.status === 'info_requested') {
+              details += `\n  ⚠️ **Action Required**: Additional information requested: *${a.reviewNotes || 'See details'}*`;
+            }
+            return details;
+          })
+          .join('\n\n')
+    )
+    .setColor(0x5865f2);
+
+  const infoRequestedApps = apps.filter((a) => a.status === 'info_requested');
+  const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+
+  if (infoRequestedApps.length > 0) {
+    const row = new ActionRowBuilder<ButtonBuilder>();
+    for (const infoApp of infoRequestedApps.slice(0, 5)) {
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`app_provide_info:${infoApp.id}`)
+          .setLabel(`Provide Info for #${infoApp.id}`)
+          .setEmoji('📝')
+          .setStyle(ButtonStyle.Primary)
+      );
+    }
+    rows.push(row);
+  }
+
+  await interaction.reply({
+    embeds: [embed],
+    components: rows,
+    ephemeral: true,
+  });
+}
+
+/**
+ * ایجاد امبد کارت بازبینی از وضعیت موجود در دیتابیس
+ */
+export function buildReviewCardEmbed(app: any): EmbedBuilder {
+  let parsedQualifications: any = {};
+  try {
+    parsedQualifications =
+      typeof app.qualifications === 'string' ? JSON.parse(app.qualifications) : app.qualifications;
+  } catch {}
+
+  const colorMap: Record<string, number> = {
+    pending: 0x5865f2,
+    under_review: 0x3ba55d,
+    info_requested: 0xfee75c,
+    awaiting_identity_verification: 0x9b59b6,
+    approved: 0x57f287,
+    rejected: 0xed4245,
+    cancelled: 0x747f8d,
+  };
+
+  const statusColor = colorMap[app.status] ?? 0x2f3136;
+
+  const publicSummary =
+    parsedQualifications.experience ||
+    parsedQualifications.intro ||
+    parsedQualifications.introduction ||
+    parsedQualifications.priorExperience ||
+    'N/A';
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📋 Registration Application: #${app.id}`)
+    .setColor(statusColor)
+    .addFields(
+      {
+        name: 'Applicant',
+        value: `<@${app.userId}> (${app.user?.username || app.userId})`,
+        inline: true,
+      },
+      {
+        name: 'Category',
+        value: `\`${app.category.toUpperCase()}\``,
+        inline: true,
+      },
+      {
+        name: 'Game / Service',
+        value: `\`${app.gameSlug || 'N/A'}\``,
+        inline: true,
+      },
+      {
+        name: 'Status',
+        value: `\`${app.status.toUpperCase()}\``,
+        inline: true,
+      },
+      {
+        name: 'Identity Status',
+        value: `\`${(app.identityStatus || 'NONE').toUpperCase()}\``,
+        inline: true,
+      },
+      {
+        name: 'Role Sync',
+        value: `\`${(app.roleSyncStatus || 'PENDING').toUpperCase()}\`${
+          app.roleSyncError ? `\n⚠️ *${app.roleSyncError}*` : ''
+        }`,
+        inline: true,
+      }
+    );
+
+  if (app.reviewNotes || app.supplementalInfo || app.rejectionReason) {
+    let reviewDetails = '';
+    if (app.status === 'info_requested') {
+      reviewDetails += `**Information Requested:** ${app.reviewNotes || 'N/A'}\n`;
+      if (app.infoRequestedAt) {
+        reviewDetails += `*Requested at: <t:${Math.floor(new Date(app.infoRequestedAt).getTime() / 1000)}:R>*\n`;
+      }
+    }
+    if (app.supplementalInfo) {
+      reviewDetails += `**Supplemental Response:** ${app.supplementalInfo}\n`;
+      if (app.infoRespondedAt) {
+        reviewDetails += `*Responded at: <t:${Math.floor(new Date(app.infoRespondedAt).getTime() / 1000)}:R>*\n`;
+      }
+    }
+    if (app.status === 'rejected' && app.rejectionReason) {
+      reviewDetails += `**Rejection Reason:** ${app.rejectionReason}\n`;
+    }
+    if (reviewDetails) {
+      embed.addFields({ name: 'Review & Supplemental Details', value: reviewDetails.trim() });
+    }
+  }
+
+  embed.addFields({
+    name: 'Experience / Qualifications',
+    value: publicSummary.length > 1024 ? publicSummary.slice(0, 1020) + '...' : publicSummary,
+  });
+
+  if (app.reviewedById) {
+    embed.addFields({
+      name: 'Last Reviewer',
+      value: `<@${app.reviewedById}>${
+        app.reviewedAt ? ` (<t:${Math.floor(new Date(app.reviewedAt).getTime() / 1000)}:R>)` : ''
+      }`,
+      inline: true,
+    });
+  }
+
+  embed.setFooter({ text: `Application #${app.id} • Preferred Language: ${app.preferredLanguage}` });
+  embed.setTimestamp(app.submittedAt ? new Date(app.submittedAt) : new Date());
+
+  return embed;
+}
+
+/**
+ * ایجاد دکمه‌های پایدار کارت بازبینی
+ */
+export function buildReviewCardButtons(app: any): ActionRowBuilder<ButtonBuilder>[] {
+  const isTerminal = ['approved', 'rejected', 'cancelled'].includes(app.status);
+
+  if (isTerminal) {
+    const row = new ActionRowBuilder<ButtonBuilder>();
+    if (app.status === 'approved' && app.roleSyncStatus === 'failed') {
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`app_review:retry_sync:${app.id}`)
+          .setLabel('Retry Role Sync')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('🔄')
+      );
+    }
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`app_review:refresh:${app.id}`)
+        .setLabel('Refresh Review')
+        .setStyle(ButtonStyle.Secondary)
+        .setEmoji('🔃')
+    );
+    return [row];
+  }
+
+  // وضعیت‌های غیرنهایی: pending, under_review, info_requested, awaiting_identity_verification
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`app_review:approve:${app.id}`)
+      .setLabel('Approve')
+      .setStyle(ButtonStyle.Success)
+      .setEmoji('✅'),
+    new ButtonBuilder()
+      .setCustomId(`app_review:reject:${app.id}`)
+      .setLabel('Reject')
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji('❌'),
+    new ButtonBuilder()
+      .setCustomId(`app_review:info:${app.id}`)
+      .setLabel('Request Info')
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('ℹ️')
+  );
+
+  if (app.category === 'pilot' || app.category === 'exchanger') {
+    row1.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`app_review:id_verif:${app.id}`)
+        .setLabel(app.identityStatus === 'verified' ? 'ID Verified' : 'Verify ID')
+        .setStyle(app.identityStatus === 'verified' ? ButtonStyle.Success : ButtonStyle.Primary)
+        .setDisabled(app.identityStatus === 'verified')
+        .setEmoji('🔒')
+    );
+  }
+
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`app_review:refresh:${app.id}`)
+      .setLabel('Refresh Review')
+      .setStyle(ButtonStyle.Secondary)
+      .setEmoji('🔃')
+  );
+
+  if (app.roleSyncStatus === 'failed') {
+    row2.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`app_review:retry_sync:${app.id}`)
+        .setLabel('Retry Role Sync')
+        .setStyle(ButtonStyle.Danger)
+        .setEmoji('🔄')
+    );
+  }
+
+  return [row1, row2];
+}
+
+/**
+ * رندر یا به‌روزرسانی کارت بازبینی در کانال استاف
+ */
+export async function renderOrUpdateStaffReviewCard(client: any, applicationId: number): Promise<void> {
   if (!client) return;
 
+  const app = await prisma.registrationApplication.findUnique({
+    where: { id: applicationId },
+    include: { user: true },
+  });
+
+  if (!app) return;
+
+  const embed = buildReviewCardEmbed(app);
+  const components = buildReviewCardButtons(app);
+
+  // اگر پیام بازبینی قبلاً در کانال ثبت شده بود، آن را به‌روزرسانی کن
+  if (app.reviewChannelId && app.reviewMessageId) {
+    try {
+      const channel = (await client.channels.fetch(app.reviewChannelId).catch(() => null)) as TextChannel | null;
+      if (channel) {
+        const msg = await channel.messages.fetch(app.reviewMessageId).catch(() => null);
+        if (msg) {
+          await msg.edit({
+            embeds: [embed],
+            components,
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      console.warn(`[ReviewCard] Could not edit existing review card for #${applicationId}:`, err);
+    }
+  }
+
+  // در غیر این صورت پیام جدید به کانال استاف ارسال کن و شناسه‌ها را ذخیره کن
   const channelId = process.env.CHANNEL_APPLY_REQUESTS;
   if (!channelId) return;
 
   try {
-    const channel = await client.channels.fetch(channelId).catch(() => null) as TextChannel | null;
+    const channel = (await client.channels.fetch(channelId).catch(() => null)) as TextChannel | null;
     if (!channel) return;
 
-    const app = await prisma.registrationApplication.findUnique({
-      where: { id: applicationId },
-      include: { user: true },
+    const sentMsg = await channel.send({
+      embeds: [embed],
+      components,
     });
 
-    if (!app) return;
-
-    let parsedQualifications: any = {};
-    try {
-      parsedQualifications = JSON.parse(app.qualifications);
-    } catch {}
-
-    const embed = new EmbedBuilder()
-      .setTitle(`📋 New Registration Application: #${app.id}`)
-      .setDescription(
-        `**Applicant:** <@${app.userId}> (${app.user?.username || app.userId})\n` +
-        `**Track:** \`${app.category.toUpperCase()}\`\n` +
-        `**Game:** \`${app.gameSlug || 'N/A'}\`\n` +
-        `**Language:** \`${app.preferredLanguage}\`\n` +
-        `**Submitted At:** <t:${Math.floor(app.submittedAt.getTime() / 1000)}:R>\n` +
-        `**Status:** \`PENDING\`\n\n` +
-        `**Summary / Experience:**\n${parsedQualifications.experience || parsedQualifications.intro || parsedQualifications.priorExperience || 'N/A'}`
-      )
-      .setColor(0x5865f2)
-      .setTimestamp();
-
-    const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`app_review:approve:${app.id}`)
-        .setLabel('Approve')
-        .setStyle(ButtonStyle.Success)
-        .setEmoji('✅'),
-      new ButtonBuilder()
-        .setCustomId(`app_review:reject:${app.id}`)
-        .setLabel('Reject')
-        .setStyle(ButtonStyle.Danger)
-        .setEmoji('❌'),
-      new ButtonBuilder()
-        .setCustomId(`app_review:info:${app.id}`)
-        .setLabel('Request Info')
-        .setStyle(ButtonStyle.Secondary)
-        .setEmoji('ℹ️')
-    );
-
-    if (app.category === 'pilot' || app.category === 'exchanger') {
-      buttons.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`app_review:id_verif:${app.id}`)
-          .setLabel('Verify ID')
-          .setStyle(ButtonStyle.Primary)
-          .setEmoji('🔒')
-      );
-    }
-
-    await channel.send({
-      embeds: [embed],
-      components: [buttons],
+    await prisma.registrationApplication.update({
+      where: { id: applicationId },
+      data: {
+        reviewChannelId: channel.id,
+        reviewMessageId: sentMsg.id,
+      },
     });
   } catch (err) {
-    console.warn(`[RegistrationInteractions] Failed to notify staff review channel:`, err);
+    console.warn(`[ReviewCard] Failed to post staff review card for #${applicationId}:`, err);
   }
 }
 
 /**
- * به‌روزرسانی کارت بازبینی پس از تصمیم‌گیری
+ * ارسال کارت بازبینی به کانال خصوصی استاف/مدیریت (نگهدارنده سازگاری با کدهای پیشین)
  */
-async function updateReviewCard(message: any, appId: number, decision: string, reviewerId: string, notes?: string) {
-  try {
-    const existingEmbed = message.embeds[0];
-    if (!existingEmbed) return;
-
-    const updatedEmbed = EmbedBuilder.from(existingEmbed)
-      .setColor(decision === 'approved' ? 0x57f287 : decision === 'rejected' ? 0xed4245 : 0xfee75c)
-      .addFields({
-        name: 'Review Decision',
-        value: `**Decision:** \`${decision.toUpperCase()}\`\n**Reviewer:** <@${reviewerId}>\n**Timestamp:** <t:${Math.floor(Date.now() / 1000)}:R>${notes ? `\n**Notes:** ${notes}` : ''}`,
-      });
-
-    await message.edit({
-      embeds: [updatedEmbed],
-      components: [], // غیرفعال‌سازی دکمه‌ها برای جلوگیری از کلیک‌های بعدی
-    });
-  } catch (err) {
-    console.warn(`[RegistrationInteractions] Failed to edit review card message:`, err);
-  }
+export async function notifyStaffReview(client: any, applicationId: number): Promise<void> {
+  await renderOrUpdateStaffReviewCard(client, applicationId);
 }

@@ -32,10 +32,14 @@ const client = new Client({
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
 
+import { startNotificationWorker } from './services/notificationWorker';
+
 // ─── رویداد آماده بودن ربات ───────────────────────────────────────────────
 client.once('ready', (c) => {
   console.log(`[Bot] ✅ Logged in as ${c.user.tag}`);
   console.log(`[Bot] Serving ${c.guilds.cache.size} guild(s)`);
+  // راه‌اندازی پس‌زمینه ورکر صف اعلانات (Phase 3.2.3 Outbox Worker)
+  startNotificationWorker(client);
 });
 
 // ─── مدیریت پیام‌ها (دستورات با پیشوند G4!) ──────────────────────────────
