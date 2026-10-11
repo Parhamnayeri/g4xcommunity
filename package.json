@@ -16,7 +16,9 @@
     "test:integrity": "ts-node src/test/wallet_ledger_integrity_suite.ts",
     "test:domain": "ts-node src/test/domain_service_suite.ts",
     "test:permissions": "ts-node src/test/permission_authorization_suite.ts",
-    "test:registration": "ts-node src/test/discord_registration_suite.ts"
+    "test:registration": "ts-node src/test/discord_registration_suite.ts",
+    "test:bootstrap": "ts-node src/test/owner_bootstrap_suite.ts",
+    "bootstrap:owner": "ts-node scripts/bootstrap-owner.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"

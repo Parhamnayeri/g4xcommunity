@@ -111,6 +111,25 @@ Create the following channels manually in your Discord server:
    - Populate all variables from Section 2 in the Bot-Hosting.net Environment Variables tab.
    - Ensure `ESCROW_RELEASE_ENABLED=false`.
 
+### 5.1 One-Time Initial Owner Bootstrap (Required for `G4!setup registration`)
+When deploying to a fresh database on Bot-Hosting.net, no user initially holds the `owner` role, which causes `G4!setup registration` to return `Permission Denied`.
+Execute the secure, one-time bootstrap script in the host console:
+
+```bash
+# In Bot-Hosting.net Terminal / Console:
+npm run bootstrap:owner -- <YOUR_DISCORD_USER_ID>
+
+# Or directly with ts-node:
+npx ts-node scripts/bootstrap-owner.ts <YOUR_DISCORD_USER_ID>
+```
+
+**Security Guarantees:**
+- Validates the numeric Discord Snowflake format (17-20 digits).
+- **Single-Owner Lock**: Once an Owner is established, any attempt to register a different owner is strictly blocked (`BOOTSTRAP_LOCKED`).
+- **Idempotent**: Safely returns if the same owner is re-specified.
+- Automatically assigns the `owner` role in the database, granting `SERVICE_CONFIG_MANAGE` permissions.
+- Logs the action in `audit_logs` (`INITIAL_OWNER_BOOTSTRAP`) without logging secrets.
+
 ---
 
 ## 6. Local Development & Testing Instructions (Windows PowerShell)

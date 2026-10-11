@@ -42,7 +42,11 @@ cp .env.example .env
 npx prisma generate
 npx prisma migrate deploy
 
+# Initial Owner Bootstrap (One-time, grants Owner role to your Discord ID)
+npm run bootstrap:owner -- <YOUR_DISCORD_USER_ID>
+
 # Run the test suites
+npm run test:bootstrap
 npm run test:registration
 
 # Start development server
@@ -55,6 +59,7 @@ npm run dev
 
 | Command | Focus Area | Scenarios |
 |---|---|---|
+| `npm run test:bootstrap` | Initial Owner bootstrap, Snowflake check, lock | 8 Passed |
 | `npm run test:security` | Web authentication, CSRF, session isolation | 17 Passed |
 | `npm run test:escrow` | Escrow 72h holding period, holds, disputes | 17 Passed |
 | `npm run test:integrity` | Wallet balance checks, ledger conservation | 14 Passed |
