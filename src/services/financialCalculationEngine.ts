@@ -277,14 +277,26 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
     }
 
     if (currency.toUpperCase() === 'GOLD') {
-      // خط‌مشی مشترک سفارشات طلای ادورتایزر (۱۰٪ سهم G4X)
+      // خط‌مشی مشترک سفارشات طلای ادورتایزر (Shared policy across all gold advertiser orders)
       const goldPolicy = await getFeePolicy({
         platform: 'advertiser',
         feeType: 'g4x_fee',
         listingCategory: 'currency',
       });
-      const goldRate = goldPolicy?.percentageRate ?? 0.10;
-      g4xFeeMinor = Math.round(grossSaleMinor * goldRate);
+      if (
+        !goldPolicy ||
+        goldPolicy.percentageRate === null ||
+        goldPolicy.percentageRate === undefined ||
+        !goldPolicy.isApproved
+      ) {
+        // عدم جایگزینی هرگونه نرخ پیش‌فرض؛ بدون درصد مصوب مدیریت، کارمزد صفر و وضعیت موقت ثبت می‌شود
+        snapshotNotes =
+          'MISSING_SHARED_GOLD_FEE_RATE: Shared advertiser Gold G4X fee policy has not been configured by management. Calculation is provisional.';
+        g4xFeeMinor = 0;
+      } else {
+        const goldRate = goldPolicy.percentageRate;
+        g4xFeeMinor = Math.round(grossSaleMinor * goldRate);
+      }
     } else {
       // در سفارشات USD یا USDT ادورتایزر، نرخ طلا اعمال نمی‌شود و تبدیل ساختگی طلا به دلار ممنوع است
       if (g4xFeeRate !== undefined && g4xFeeRate !== null) {
@@ -597,6 +609,24 @@ export async function finalizeOrderFinancialsAndBoosterAllocation(input: Finaliz
     if (snapshot.notes?.includes('ELDORADO_FEE_UNKNOWN')) {
       throw new Error(
         'ELDORADO_CATEGORY_RATE_UNDEFINED: Cannot finalize Eldorado order with undefined category commission (N/A cannot be assumed 0%)'
+      );
+    }
+  }
+
+  if (snapshot.sourcePlatform === 'advertiser' && snapshot.currency.toUpperCase() === 'GOLD') {
+    const goldPolicy = await getFeePolicy({
+      platform: 'advertiser',
+      feeType: 'g4x_fee',
+      listingCategory: 'currency',
+    });
+    if (
+      !goldPolicy ||
+      goldPolicy.percentageRate === null ||
+      goldPolicy.percentageRate === undefined ||
+      !goldPolicy.isApproved
+    ) {
+      throw new Error(
+        'MISSING_SHARED_GOLD_FEE_RATE: Shared advertiser Gold G4X fee policy has not been configured by management. Finalization blocked.'
       );
     }
   }

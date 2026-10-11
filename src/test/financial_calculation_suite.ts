@@ -18,7 +18,7 @@
  * 14. Missing order-specific G4X fee blocks finalization.
  * 15. G4X fee applies after actual external costs.
  * 16. Advertiser-specific commission rules.
- * 17. Shared Gold G4X fee policy.
+ * 17. Shared Gold G4X fee policy requires explicit management configuration and blocks finalization without it.
  * 18. Equal Mythic+ split among four boosters.
  * 19. Equal split for other team sizes.
  * 20. Idempotent calculation and reconciliation.
@@ -41,6 +41,8 @@ import {
   setAdvertiserCommissionRate,
   getAdvertiserCommissionRate,
   getFeePolicy,
+  configureSharedAdvertiserGoldFeePolicy,
+  reviewAndCorrectUnapprovedPolicies,
 } from '../services/financialPolicyService';
 import { isEscrowReleaseEnabled } from '../services/escrowService';
 
@@ -522,10 +524,13 @@ async function runFinancialEngineTests() {
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // تست ۱۷: Shared Gold G4X fee policy
+    // تست ۱۷: اصلاح خط‌مشی کارمزد طلای ادورتایزر (Phase 3.3.1 Business Rule Correction)
+    // حذف فرض ۱۰٪، ممانعت از نهایی‌سازی بدون درصد مصوب، و اعمال درصد پس از تایید مدیریت
     // ─────────────────────────────────────────────────────────────────────────
     const ordAdvGold = await createTestOrder('ORD-FIN-ADV-GOLD', 1000000, 'GOLD'); // 1,000,000 Gold
-    const snapAdvGold = await calculateOrderFinancialSnapshot({
+
+    // ۱۷.الف: پیش از تنظیم درصد توسط مدیریت، کارمزد صفر و وضعیت provisional ثبت می‌شود (عدم فرض ۱۰٪)
+    const snapAdvGoldBefore = await calculateOrderFinancialSnapshot({
       orderId: ordAdvGold.id,
       sourcePlatform: 'advertiser',
       sourceAmountType: 'gross_sale',
@@ -533,15 +538,72 @@ async function runFinancialEngineTests() {
       advertiserId,
       currency: 'GOLD',
     });
-    // Shared policy for Gold is 10% (from seedStandardFeePolicies).
-    // Advertiser custom rate is 12% = 120,000 gold. G4X fee is 10% = 100,000 gold. Booster pool = 780,000 gold.
+
+    let finalizationBlockedWithoutPolicy = false;
+    try {
+      await finalizeOrderFinancialsAndBoosterAllocation({
+        orderId: ordAdvGold.id,
+        actorId: adminId,
+        participatingBoosterIds: [boosterA],
+        serviceType: 'solo',
+      });
+    } catch (e: any) {
+      if (e.message.includes('MISSING_SHARED_GOLD_FEE_RATE')) {
+        finalizationBlockedWithoutPolicy = true;
+      }
+    }
+
+    // ۱۷.ب: تنظیم درصد توسط کاربر غیرمجاز مسدود می‌شود
+    let unauthorizedConfigBlocked = false;
+    try {
+      await configureSharedAdvertiserGoldFeePolicy({
+        percentageRate: 0.15,
+        actorId: boosterA, // بوستر اجازه تنظیم سیاست مالی ندارد
+        reason: 'Unauthorized attempt',
+      });
+    } catch (e: any) {
+      if (e.message.includes('UNAUTHORIZED_FINANCIAL_ACTION')) {
+        unauthorizedConfigBlocked = true;
+      }
+    }
+
+    // ۱۷.ج: تنظیم درصد مصوب مشترک توسط مدیر مجاز (مثلاً ۱۵٪) با ثبت نسخه‌بندی و ممیزی
+    const configuredPolicy = await configureSharedAdvertiserGoldFeePolicy({
+      percentageRate: 0.15, // نرخ فرضی مصوب مدیریت برای تست
+      actorId: adminId,
+      reason: 'Management approved 15% shared Gold advertiser fee rate',
+    });
+
+    // محاسبه مجدد اسنپ‌شات پس از تایید مدیریت
+    const snapAdvGoldAfter = await calculateOrderFinancialSnapshot({
+      orderId: ordAdvGold.id,
+      sourcePlatform: 'advertiser',
+      sourceAmountType: 'gross_sale',
+      sourceAmountMinor: 1000000,
+      advertiserId,
+      currency: 'GOLD',
+    });
+
+    // نهایی‌سازی موفق پس از تایید درصد
+    const finalizedGoldResult = await finalizeOrderFinancialsAndBoosterAllocation({
+      orderId: ordAdvGold.id,
+      actorId: adminId,
+      participatingBoosterIds: [boosterA],
+      serviceType: 'solo',
+    });
+
     assert(
-      snapAdvGold.currency === 'GOLD' &&
-        snapAdvGold.advertiserFeeMinor === 120000 &&
-        snapAdvGold.g4xFeeMinor === 100000 &&
-        snapAdvGold.boosterPoolMinor === 780000,
-      '17. Shared 10% Gold G4X fee policy applied without fictional Gold-to-USD conversion',
-      `Gold G4X Fee: ${snapAdvGold.g4xFeeMinor}, Booster Pool: ${snapAdvGold.boosterPoolMinor}`
+      snapAdvGoldBefore.g4xFeeMinor === 0 &&
+        Boolean(snapAdvGoldBefore.notes?.includes('MISSING_SHARED_GOLD_FEE_RATE')) &&
+        finalizationBlockedWithoutPolicy &&
+        unauthorizedConfigBlocked &&
+        configuredPolicy.version >= 1 &&
+        snapAdvGoldAfter.g4xFeeMinor === 150000 && // 15% of 1,000,000
+        snapAdvGoldAfter.advertiserFeeMinor === 120000 && // 12% custom
+        snapAdvGoldAfter.boosterPoolMinor === 730000 && // 1,000,000 - 120,000 - 150,000
+        finalizedGoldResult.snapshot.calculationStatus === 'finalized',
+      '17. Shared Gold G4X fee policy requires explicit management configuration and blocks finalization without it',
+      `Before Fee: ${snapAdvGoldBefore.g4xFeeMinor}, Finalization Blocked: ${finalizationBlockedWithoutPolicy}, After Fee: ${snapAdvGoldAfter.g4xFeeMinor}`
     );
 
     // ─────────────────────────────────────────────────────────────────────────

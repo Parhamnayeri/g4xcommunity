@@ -195,24 +195,116 @@ export async function seedStandardFeePolicies(): Promise<void> {
     },
   });
 
-  // ۸. خط‌مشی کارمزد پیش‌فرض مشترک سفارشات طلای ادورتایزر (WoW Gold)
-  await prisma.platformFeePolicy.upsert({
-    where: { id: 8 },
-    update: {},
-    create: {
-      id: 8,
+  // ۸. بررسی و ابطال غیرمخرب خط‌مشی‌های تاییدنشده گذشته (مانند فرض ۱۰٪ طلای ادورتایزر)
+  await reviewAndCorrectUnapprovedPolicies('seed_system');
+}
+
+/**
+ * بررسی غیرمخرب و اصلاح سیاست‌های کارمزد تاییدنشده (Non-destructive Audit & Correction)
+ * هیچ رکوردی از دیتابیس حذف نمی‌شود؛ سیاست‌های تاییدنشده با ثبت لاگ ممیزی لغو (Revoke) می‌شوند.
+ */
+export async function reviewAndCorrectUnapprovedPolicies(actorId?: string): Promise<{
+  reviewed: number;
+  corrected: number;
+  details: string[];
+}> {
+  const details: string[] = [];
+  const unapprovedGoldPolicies = await prisma.platformFeePolicy.findMany({
+    where: {
       platform: 'advertiser',
-      listingCategory: 'currency',
-      feeType: 'g4x_fee',
-      chargingEvent: 'sale',
-      percentageRate: 0.10, // ۱۰ درصد سهم پلتفرم از سفارشات طلای ادورتایزر
-      feeBasis: 'gross_sale',
       currency: 'GOLD',
-      version: 1,
+      feeType: 'g4x_fee',
+      OR: [
+        { percentageRate: 0.10 },
+        { changeReason: { contains: '10%' } },
+      ],
       isApproved: true,
-      changeReason: 'Shared advertiser WoW Gold G4X fee policy (10%)',
     },
   });
+
+  let validActorId: string | null = null;
+  if (actorId) {
+    const user = await prisma.user.findUnique({ where: { discordId: actorId } });
+    if (user) validActorId = actorId;
+  }
+
+  let corrected = 0;
+  for (const policy of unapprovedGoldPolicies) {
+    const updated = await prisma.platformFeePolicy.update({
+      where: { id: policy.id },
+      data: {
+        isApproved: false,
+        effectiveTo: new Date(),
+        changeReason:
+          'REVOKED_UNAPPROVED_RATE: 10% rate was unapproved per Phase 3.3.1 audit. Pending explicit management configuration.',
+      },
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        actorId: validActorId,
+        action: 'FINANCIAL_POLICY_REVOKED',
+        entityType: 'PlatformFeePolicy',
+        entityId: String(policy.id),
+        previousValues: JSON.stringify(policy),
+        newValues: JSON.stringify(updated),
+        reason: 'Unapproved 10% Gold advertiser fee rate revoked per Phase 3.3.1 business rule audit.',
+      },
+    });
+
+    details.push(`Policy #${policy.id} revoked: previously approved with unapproved 10% rate.`);
+    corrected++;
+  }
+
+  return {
+    reviewed: unapprovedGoldPolicies.length,
+    corrected,
+    details,
+  };
+}
+
+/**
+ * واکشی خط‌مشی مشترک مصوب کارمزد سفارشات طلای ادورتایزر
+ */
+export async function getSharedAdvertiserGoldFeePolicy() {
+  return prisma.platformFeePolicy.findFirst({
+    where: {
+      platform: 'advertiser',
+      feeType: 'g4x_fee',
+      listingCategory: 'currency',
+      currency: 'GOLD',
+      isApproved: true,
+    },
+    orderBy: { version: 'desc' },
+  });
+}
+
+/**
+ * تنظیم درصد مصوب مشترک سفارشات طلای ادورتایزر توسط مدیریت مجاز (Versioned & Audited)
+ */
+export async function configureSharedAdvertiserGoldFeePolicy(options: {
+  percentageRate: number;
+  actorId: string;
+  reason?: string;
+}) {
+  const { percentageRate, actorId, reason } = options;
+  if (percentageRate < 0 || percentageRate > 1) {
+    throw new Error('INVALID_FEE_RATE: Percentage rate must be between 0.00 and 1.00');
+  }
+
+  return createOrUpdateFeePolicy(
+    {
+      platform: 'advertiser',
+      feeType: 'g4x_fee',
+      chargingEvent: 'sale',
+      listingCategory: 'currency',
+      currency: 'GOLD',
+      percentageRate,
+      feeBasis: 'gross_sale',
+      changeReason: reason || 'Approved management shared Gold advertiser G4X fee policy',
+    },
+    actorId
+  );
 }
 
 /**
