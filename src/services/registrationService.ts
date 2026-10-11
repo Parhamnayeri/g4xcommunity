@@ -7,7 +7,7 @@
 import prisma from '../database/db';
 import { authorize } from './authorizationService';
 import { Permission } from './permissionTypes';
-import { fetchCharacterData } from './raiderio';
+import { fetchCharacterData, fetchRaiderIOProfile, parseRaiderIOProfileUrl, RaiderIOSnapshot } from './raiderio';
 import { Prisma } from '@prisma/client';
 import { PermissionFlagsBits } from 'discord.js';
 import { processNotificationOutbox } from './notificationWorker';
@@ -34,6 +34,7 @@ export interface BoosterRegistrationInput {
   characterName?: string;
   realm?: string;
   region?: string;
+  raiderioUrl?: string;
 }
 
 export interface PilotRegistrationInput {
@@ -42,6 +43,7 @@ export interface PilotRegistrationInput {
   serviceId?: number;
   preferredLanguage?: string;
   experience?: string;
+  raiderioUrl?: string;
   contactPreferences?: {
     phone?: string;
     whatsapp?: string;
@@ -216,6 +218,32 @@ export async function registerBooster(input: BoosterRegistrationInput) {
     specialization: input.specialization ?? '',
   };
 
+  // الزامات اختصاصی WoW Midnight: اعتبارسنجی و واکشی پروفایل Raider.IO
+  if (gameSlug === 'wow_midnight') {
+    let targetUrl = input.raiderioUrl;
+    if (!targetUrl && input.characterName && input.realm) {
+      const reg = (input.region || 'eu').toLowerCase();
+      targetUrl = `https://raider.io/characters/${reg}/${encodeURIComponent(input.realm.trim())}/${encodeURIComponent(input.characterName.trim())}`;
+    }
+
+    if (!targetUrl) {
+      throw new Error('MISSING_RAIDERIO_URL: World of Warcraft: Midnight booster applications require a valid Raider.IO character profile URL');
+    }
+
+    const parsed = parseRaiderIOProfileUrl(targetUrl);
+    if (!parsed) {
+      throw new Error('INVALID_RAIDERIO_URL: Invalid Raider.IO character profile URL. Format must be https://raider.io/characters/<region>/<realm>/<name>');
+    }
+
+    const rioSnapshot = await fetchRaiderIOProfile(targetUrl);
+    qualificationsData.raiderioSnapshot = rioSnapshot;
+    qualificationsData.raiderioUrl = parsed.canonicalUrl;
+
+    if (!input.characterName) input.characterName = parsed.characterName;
+    if (!input.realm) input.realm = parsed.realm;
+    if (!input.region) input.region = parsed.region;
+  }
+
   if (input.characterName && input.realm) {
     const region = (input.region || 'eu').toLowerCase();
     const charName = input.characterName.trim();
@@ -379,11 +407,29 @@ export async function registerPilot(input: PilotRegistrationInput) {
     throw new Error('DUPLICATE_PENDING_APPLICATION: You already have an active pilot application for this game');
   }
 
-  const qualificationsData = {
+  let rioSnapshot: RaiderIOSnapshot | null = null;
+  let canonicalRioUrl: string | null = null;
+
+  if (gameSlug === 'wow_midnight') {
+    if (!input.raiderioUrl) {
+      throw new Error('MISSING_RAIDERIO_URL: World of Warcraft: Midnight pilot applications require a valid Raider.IO character profile URL');
+    }
+
+    const parsed = parseRaiderIOProfileUrl(input.raiderioUrl);
+    if (!parsed) {
+      throw new Error('INVALID_RAIDERIO_URL: Invalid Raider.IO character profile URL. Format must be https://raider.io/characters/<region>/<realm>/<name>');
+    }
+
+    rioSnapshot = await fetchRaiderIOProfile(input.raiderioUrl);
+    canonicalRioUrl = parsed.canonicalUrl;
+  }
+
+  const qualificationsData: Record<string, any> = {
     experience: input.experience ?? '',
     contactPreferences: input.contactPreferences ?? {},
     notes: input.notes ?? '',
     identityVerificationState: 'awaiting_secure_submission',
+    ...(rioSnapshot ? { raiderioSnapshot: rioSnapshot, raiderioUrl: canonicalRioUrl } : {}),
   };
 
   const application = await prisma.registrationApplication.create({
@@ -1308,3 +1354,90 @@ export async function sendApplicantDm(client: any, userId: string, embedData: { 
     console.warn(`[RegistrationService] Could not send DM to user ${userId}:`, err?.message || err);
   }
 }
+
+/**
+ * دریافت شناسه کانال اختصاصی بازبینی برای هر دسته‌بندی
+ */
+export function getReviewChannelForCategory(
+  category: RegistrationCategory,
+  clientOrGuild?: any
+): string | null {
+  if (category === 'booster') {
+    if (process.env.CHANNEL_APP_BOOSTERS) return process.env.CHANNEL_APP_BOOSTERS;
+  } else if (category === 'advertiser') {
+    if (process.env.CHANNEL_APP_ADVERTISERS || process.env.CHANNEL_APP_ADV) {
+      return process.env.CHANNEL_APP_ADVERTISERS || process.env.CHANNEL_APP_ADV || null;
+    }
+  } else if (category === 'pilot') {
+    if (process.env.CHANNEL_APP_PILOTS) return process.env.CHANNEL_APP_PILOTS;
+  } else if (category === 'exchanger') {
+    if (process.env.CHANNEL_APP_EXCHANGERS) return process.env.CHANNEL_APP_EXCHANGERS;
+  }
+
+  if (clientOrGuild) {
+    const channelCache = clientOrGuild.channels?.cache;
+    if (channelCache) {
+      const targetName =
+        category === 'booster'
+          ? 'app-boosters'
+          : category === 'advertiser'
+          ? 'app-adv'
+          : category === 'pilot'
+          ? 'app-pilots'
+          : 'app-exchangers';
+
+      const found = channelCache.find(
+        (c: any) =>
+          c.name === targetName ||
+          (category === 'advertiser' && c.name === 'app-advertisers')
+      );
+      if (found) return found.id;
+    }
+  }
+
+  return process.env.CHANNEL_APPLY_REQUESTS || null;
+}
+
+/**
+ * دریافت شناسه کانال عمومی ورود ثبت‌نام برای هر دسته‌بندی
+ */
+export function getPublicChannelForCategory(
+  category: RegistrationCategory,
+  clientOrGuild?: any
+): string | null {
+  if (category === 'booster') {
+    if (process.env.CHANNEL_BECOME_BOOSTER) return process.env.CHANNEL_BECOME_BOOSTER;
+  } else if (category === 'advertiser') {
+    if (process.env.CHANNEL_BECOME_ADVERTISER || process.env.CHANNEL_BECOME_ADV) {
+      return process.env.CHANNEL_BECOME_ADVERTISER || process.env.CHANNEL_BECOME_ADV || null;
+    }
+  } else if (category === 'pilot') {
+    if (process.env.CHANNEL_BECOME_PILOT || process.env.CHANNEL_BECOME_PILOT_BOOSTER) {
+      return process.env.CHANNEL_BECOME_PILOT || process.env.CHANNEL_BECOME_PILOT_BOOSTER || null;
+    }
+  } else if (category === 'exchanger') {
+    if (process.env.CHANNEL_BECOME_EXCHANGER) return process.env.CHANNEL_BECOME_EXCHANGER;
+  }
+
+  if (clientOrGuild && clientOrGuild.channels?.cache) {
+    const targetName =
+      category === 'booster'
+        ? 'become-booster'
+        : category === 'advertiser'
+        ? 'become-adv'
+        : category === 'pilot'
+        ? 'become-pilot-booster'
+        : 'become-exchanger';
+
+    const found = clientOrGuild.channels.cache.find(
+      (c: any) =>
+        c.name === targetName ||
+        (category === 'advertiser' && c.name === 'become-advertiser') ||
+        (category === 'pilot' && c.name === 'become-pilot')
+    );
+    if (found) return found.id;
+  }
+
+  return null;
+}
+

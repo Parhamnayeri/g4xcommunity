@@ -29,13 +29,16 @@ import {
   reviewApplication,
   submitSupplementalInfo,
   getUserActiveApplications,
+  getReviewChannelForCategory,
+  RegistrationCategory,
   SUPPORTED_PILOT_GAMES,
   SUPPORTED_EXCHANGER_GAME_CURRENCIES,
   SUPPORTED_EXCHANGER_SETTLEMENT_CURRENCIES,
 } from '../services/registrationService';
+import { parseRaiderIOProfileUrl } from '../services/raiderio';
 
 /**
- * ایجاد امبد پنل عمومی ثبت‌نام
+ * ایجاد امبد پنل عمومی ثبت‌نام (نگهداری جهت سازگاری)
  */
 export function buildRegistrationPanelEmbed(): EmbedBuilder {
   return new EmbedBuilder()
@@ -60,7 +63,7 @@ export function buildRegistrationPanelEmbed(): EmbedBuilder {
 }
 
 /**
- * ایجاد ردیف دکمه‌های پنل ثبت‌نام
+ * ایجاد ردیف دکمه‌های پنل ثبت‌نام تجمیعی
  */
 export function buildRegistrationPanelButtons(): ActionRowBuilder<ButtonBuilder> {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -79,6 +82,144 @@ export function buildRegistrationPanelButtons(): ActionRowBuilder<ButtonBuilder>
       .setLabel('Become an Advertiser')
       .setEmoji('📢')
       .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('reg_start:exchanger')
+      .setLabel('Become an Exchanger')
+      .setEmoji('💱')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('reg_start:my_apps')
+      .setLabel('My Applications')
+      .setEmoji('📂')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+// ─── پنل‌های ثبت‌نام تفکیک‌شده اختصاصی هر کانال (Phase 3.2.4) ─────────────────
+
+/**
+ * ۱. پنل اختصاصی بوستر (#become-booster)
+ */
+export function buildBoosterPanelEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle('🗡️ Become a Booster — G4X Community')
+    .setDescription(
+      'Apply to join the elite boosting roster at **G4X Community**.\n\n' +
+      '• **Supported Games:** World of Warcraft: Midnight, Rainbow Six Siege, and competitive titles.\n' +
+      '• **Automated Raider.IO Verification:** Live score and progression capture for WoW Midnight applicants.\n' +
+      '• **Fair Booster Payouts:** Fully transparent order accounting and equal team distributions.\n\n' +
+      'Click **Register as Booster** below to submit your booster application.\n' +
+      'Use **My Applications** to monitor review status or provide requested information.'
+    )
+    .setColor(0x5865f2)
+    .setFooter({ text: 'G4X Community • Booster Registration' })
+    .setTimestamp();
+}
+
+export function buildBoosterPanelButtons(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('reg_start:booster')
+      .setLabel('Register as Booster')
+      .setEmoji('🗡️')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('reg_start:my_apps')
+      .setLabel('My Applications')
+      .setEmoji('📂')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+/**
+ * ۲. پنل اختصاصی ادورتایزر (#become-adv)
+ */
+export function buildAdvertiserPanelEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle('📢 Become an Advertiser — G4X Community')
+    .setDescription(
+      'Apply to become an authorized customer advertiser for **G4X Community**.\n\n' +
+      '• **Create Orders:** Publish customer boost orders directly to our verified booster rosters.\n' +
+      '• **Commission Transparency:** Admin-configured commission rates with audited tracking.\n' +
+      '• **Dedicated Review:** Fast application processing by platform management.\n\n' +
+      'Click **Become an Advertiser** below to submit your details.\n' +
+      'Use **My Applications** to view your active submissions.'
+    )
+    .setColor(0x3ba55d)
+    .setFooter({ text: 'G4X Community • Advertiser Registration' })
+    .setTimestamp();
+}
+
+export function buildAdvertiserPanelButtons(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('reg_start:advertiser')
+      .setLabel('Become an Advertiser')
+      .setEmoji('📢')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('reg_start:my_apps')
+      .setLabel('My Applications')
+      .setEmoji('📂')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+/**
+ * ۳. پنل اختصاصی پایلوت (#become-pilot-booster)
+ */
+export function buildPilotPanelEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle('✈️ Apply for Pilot Booster — G4X Community')
+    .setDescription(
+      'Apply for verified account-play pilot boosting at **G4X Community**.\n\n' +
+      '• **Account-Play Services:** High-tier Mythic, raiding, and specialized services.\n' +
+      '• **Confidential ID Verification:** Required before pilot approval. Handled strictly in private channels.\n' +
+      '• **Supported Titles:** WoW Midnight, Classic Era/TBC/Pandaria, Aion 2, POE 2, Tarkov.\n\n' +
+      'Click **Apply for Pilot** below to begin your application.\n' +
+      'Use **My Applications** to monitor your verification status.'
+    )
+    .setColor(0x9b59b6)
+    .setFooter({ text: 'G4X Community • Pilot Application' })
+    .setTimestamp();
+}
+
+export function buildPilotPanelButtons(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId('reg_start:pilot')
+      .setLabel('Apply for Pilot')
+      .setEmoji('✈️')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId('reg_start:my_apps')
+      .setLabel('My Applications')
+      .setEmoji('📂')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+/**
+ * ۴. پنل اختصاصی صراف (#become-exchanger)
+ */
+export function buildExchangerPanelEmbed(): EmbedBuilder {
+  return new EmbedBuilder()
+    .setTitle('💱 Become an Exchanger — G4X Community')
+    .setDescription(
+      'Apply to become an authorized in-game currency exchanger for **G4X Community**.\n\n' +
+      '• **Supported Currencies:** WoW Gold, POE2 Divine Orbs, Aion 2 Currency.\n' +
+      '• **Settlement Options:** Iranian Rial (IRT), Tether (USDT), Turkish Lira (TRY).\n' +
+      '• **Secure Escrow:** Integrated platform trading and settlement protection.\n\n' +
+      'Click **Become an Exchanger** below to submit your exchange application.\n' +
+      'Use **My Applications** to track review status.'
+    )
+    .setColor(0xf1c40f)
+    .setFooter({ text: 'G4X Community • Exchanger Registration' })
+    .setTimestamp();
+}
+
+export function buildExchangerPanelButtons(): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId('reg_start:exchanger')
       .setLabel('Become an Exchanger')
@@ -276,25 +417,11 @@ export async function handleRegistrationSelectMenu(interaction: StringSelectMenu
         .setCustomId(`reg_modal:booster:wow_midnight`)
         .setTitle('WoW Midnight Booster Registration');
 
-      const charNameInput = new TextInputBuilder()
-        .setCustomId('char_name')
-        .setLabel('Character Name')
+      const raiderioUrlInput = new TextInputBuilder()
+        .setCustomId('raiderio_url')
+        .setLabel('Raider.IO Character Profile URL')
         .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. Arthas')
-        .setRequired(true);
-
-      const realmInput = new TextInputBuilder()
-        .setCustomId('realm')
-        .setLabel('Realm Name')
-        .setStyle(TextInputStyle.Short)
-        .setPlaceholder('e.g. Twisting Nether')
-        .setRequired(true);
-
-      const regionInput = new TextInputBuilder()
-        .setCustomId('region')
-        .setLabel('Region (eu / us)')
-        .setStyle(TextInputStyle.Short)
-        .setValue('eu')
+        .setPlaceholder('https://raider.io/characters/eu/realm-name/character-name')
         .setRequired(true);
 
       const roleInput = new TextInputBuilder()
@@ -311,12 +438,18 @@ export async function handleRegistrationSelectMenu(interaction: StringSelectMenu
         .setPlaceholder('M+ score history, CE raids, or previous teams.')
         .setRequired(true);
 
+      const langInput = new TextInputBuilder()
+        .setCustomId('language')
+        .setLabel('Preferred Communication Language')
+        .setStyle(TextInputStyle.Short)
+        .setValue('English')
+        .setRequired(true);
+
       modal.addComponents(
-        new ActionRowBuilder<TextInputBuilder>().addComponents(charNameInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(realmInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(regionInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(raiderioUrlInput),
         new ActionRowBuilder<TextInputBuilder>().addComponents(roleInput),
-        new ActionRowBuilder<TextInputBuilder>().addComponents(expInput)
+        new ActionRowBuilder<TextInputBuilder>().addComponents(expInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(langInput)
       );
 
       await interaction.showModal(modal);
@@ -357,54 +490,105 @@ export async function handleRegistrationSelectMenu(interaction: StringSelectMenu
   } else if (customId === 'reg_select:game:pilot') {
     const selectedGame = interaction.values[0];
 
-    const modal = new ModalBuilder()
-      .setCustomId(`reg_modal:pilot:${selectedGame}`)
-      .setTitle('Pilot Booster Application');
+    if (selectedGame === 'wow_midnight') {
+      const modal = new ModalBuilder()
+        .setCustomId(`reg_modal:pilot:wow_midnight`)
+        .setTitle('WoW Midnight Pilot Application');
 
-    const expInput = new TextInputBuilder()
-      .setCustomId('experience')
-      .setLabel('Relevant Pilot Experience')
-      .setStyle(TextInputStyle.Paragraph)
-      .setPlaceholder('Past pilot orders completed, games, security experience.')
-      .setRequired(true);
+      const raiderioUrlInput = new TextInputBuilder()
+        .setCustomId('raiderio_url')
+        .setLabel('Raider.IO Character Profile URL')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('https://raider.io/characters/eu/realm-name/character-name')
+        .setRequired(true);
 
-    const langInput = new TextInputBuilder()
-      .setCustomId('language')
-      .setLabel('Preferred Language')
-      .setStyle(TextInputStyle.Short)
-      .setValue('English')
-      .setRequired(true);
+      const expInput = new TextInputBuilder()
+        .setCustomId('experience')
+        .setLabel('Relevant Pilot Experience')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('Past pilot orders completed, games, security experience.')
+        .setRequired(true);
 
-    const phoneInput = new TextInputBuilder()
-      .setCustomId('contact_phone')
-      .setLabel('Phone Number (Confidential)')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('+1 234 567 8900')
-      .setRequired(true);
+      const phoneInput = new TextInputBuilder()
+        .setCustomId('contact_phone')
+        .setLabel('Phone Number (Confidential)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('+1 234 567 8900')
+        .setRequired(true);
 
-    const socialInput = new TextInputBuilder()
-      .setCustomId('contact_social')
-      .setLabel('WhatsApp or Telegram')
-      .setStyle(TextInputStyle.Short)
-      .setPlaceholder('e.g. @telegram_user')
-      .setRequired(true);
+      const socialInput = new TextInputBuilder()
+        .setCustomId('contact_social')
+        .setLabel('WhatsApp or Telegram')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. @telegram_user')
+        .setRequired(true);
 
-    const notesInput = new TextInputBuilder()
-      .setCustomId('notes')
-      .setLabel('Availability & VPN / Security Details')
-      .setStyle(TextInputStyle.Paragraph)
-      .setPlaceholder('Mention VPN setups or available hours.')
-      .setRequired(false);
+      const langInput = new TextInputBuilder()
+        .setCustomId('language')
+        .setLabel('Preferred Language')
+        .setStyle(TextInputStyle.Short)
+        .setValue('English')
+        .setRequired(true);
 
-    modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(expInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(langInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(phoneInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(socialInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
-    );
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(raiderioUrlInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(expInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(phoneInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(socialInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(langInput)
+      );
 
-    await interaction.showModal(modal);
+      await interaction.showModal(modal);
+    } else {
+      const modal = new ModalBuilder()
+        .setCustomId(`reg_modal:pilot:${selectedGame}`)
+        .setTitle('Pilot Booster Application');
+
+      const expInput = new TextInputBuilder()
+        .setCustomId('experience')
+        .setLabel('Relevant Pilot Experience')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('Past pilot orders completed, games, security experience.')
+        .setRequired(true);
+
+      const langInput = new TextInputBuilder()
+        .setCustomId('language')
+        .setLabel('Preferred Language')
+        .setStyle(TextInputStyle.Short)
+        .setValue('English')
+        .setRequired(true);
+
+      const phoneInput = new TextInputBuilder()
+        .setCustomId('contact_phone')
+        .setLabel('Phone Number (Confidential)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('+1 234 567 8900')
+        .setRequired(true);
+
+      const socialInput = new TextInputBuilder()
+        .setCustomId('contact_social')
+        .setLabel('WhatsApp or Telegram')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. @telegram_user')
+        .setRequired(true);
+
+      const notesInput = new TextInputBuilder()
+        .setCustomId('notes')
+        .setLabel('Availability & VPN / Security Details')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('Mention VPN setups or available hours.')
+        .setRequired(false);
+
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(expInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(langInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(phoneInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(socialInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
+      );
+
+      await interaction.showModal(modal);
+    }
   } else if (customId === 'reg_select:exchanger:currencies') {
     const selectedGameCurrencies = interaction.values.join(',');
 
@@ -495,24 +679,31 @@ export async function handleRegistrationModalSubmit(interaction: ModalSubmitInte
       const gameSlug = customId.replace('reg_modal:booster:', '');
 
       if (gameSlug === 'wow_midnight') {
-        const characterName = interaction.fields.getTextInputValue('char_name');
-        const realm = interaction.fields.getTextInputValue('realm');
-        const region = interaction.fields.getTextInputValue('region');
+        const raiderioUrl = interaction.fields.getTextInputValue('raiderio_url');
         const roleSpec = interaction.fields.getTextInputValue('role_spec');
         const experience = interaction.fields.getTextInputValue('experience');
+        const language = interaction.fields.getTextInputValue('language') || 'English';
+
+        const parsed = parseRaiderIOProfileUrl(raiderioUrl);
+        if (!parsed) {
+          await interaction.reply({
+            content: '❌ **Invalid Raider.IO URL**: Please provide a legitimate Raider.IO character profile URL (e.g. `https://raider.io/characters/eu/realm-name/character-name`).',
+            ephemeral: true,
+          });
+          return;
+        }
 
         const app = await registerBooster({
           userId,
           gameSlug,
-          characterName,
-          realm,
-          region,
+          raiderioUrl,
           mainRole: roleSpec,
           experience,
+          preferredLanguage: language,
         });
 
         await interaction.reply({
-          content: `✅ **Booster Application Submitted!**\nApplication ID: **#${app.id}**\nYour application has been submitted for review. Raider.IO profile sync has been processed.`,
+          content: `✅ **Booster Application Submitted!**\nApplication ID: **#${app.id}**\nYour application has been routed to **#app-boosters** for review. Raider.IO profile verification has been captured.`,
           ephemeral: true,
         });
 
@@ -544,12 +735,26 @@ export async function handleRegistrationModalSubmit(interaction: ModalSubmitInte
       const phone = interaction.fields.getTextInputValue('contact_phone');
       const social = interaction.fields.getTextInputValue('contact_social');
       const notes = interaction.fields.getTextInputValue('notes') || '';
+      let raiderioUrl: string | undefined;
+
+      if (gameSlug === 'wow_midnight') {
+        raiderioUrl = interaction.fields.getTextInputValue('raiderio_url');
+        const parsed = parseRaiderIOProfileUrl(raiderioUrl);
+        if (!parsed) {
+          await interaction.reply({
+            content: '❌ **Invalid Raider.IO URL**: Please provide a legitimate Raider.IO character profile URL (e.g. `https://raider.io/characters/eu/realm-name/character-name`).',
+            ephemeral: true,
+          });
+          return;
+        }
+      }
 
       const app = await registerPilot({
         userId,
         gameSlug,
         preferredLanguage: language,
         experience,
+        raiderioUrl,
         contactPreferences: {
           phone,
           whatsapp: social,
@@ -559,7 +764,7 @@ export async function handleRegistrationModalSubmit(interaction: ModalSubmitInte
       });
 
       await interaction.reply({
-        content: `✅ **Pilot Application Submitted!**\nApplication ID: **#${app.id}**\nYour pilot application is currently **Pending**. Authorized management will initiate private identity verification with you. Do not share identity documents in public channels.`,
+        content: `✅ **Pilot Application Submitted!**\nApplication ID: **#${app.id}**\nYour pilot application is currently **Pending** and routed to **#app-pilots**. Authorized management will initiate private identity verification with you. Do not share identity documents in public channels.`,
         ephemeral: true,
       });
 
@@ -985,6 +1190,35 @@ export function buildReviewCardEmbed(app: any): EmbedBuilder {
     value: publicSummary.length > 1024 ? publicSummary.slice(0, 1020) + '...' : publicSummary,
   });
 
+  if (parsedQualifications.raiderioSnapshot) {
+    const rio = parsedQualifications.raiderioSnapshot;
+    let rioStatusText = '';
+    if (rio.fetchStatus === 'success') {
+      rioStatusText = '✅ Verified via Raider.IO API';
+    } else if (rio.fetchStatus === 'not_found') {
+      rioStatusText = '⚠️ Character not found on Raider.IO (Manual review required)';
+    } else if (rio.fetchStatus === 'api_error') {
+      rioStatusText = `⚠️ Raider.IO API error: ${rio.errorDetails || 'Temporary failure'}`;
+    } else {
+      rioStatusText = 'ℹ️ Stale data';
+    }
+
+    const rioLines = [
+      `**Profile:** [${rio.characterName} - ${rio.realm} (${(rio.region || 'EU').toUpperCase()})](${rio.profileUrl})`,
+      `**Class & Spec:** ${rio.characterClass || 'N/A'} • ${rio.activeSpec || 'N/A'} (${rio.activeRole || 'N/A'})`,
+      `**Item Level:** Equipped: **${rio.itemLevelEquipped ?? 'N/A'}** (Total: ${rio.itemLevelTotal ?? 'N/A'})`,
+      `**Mythic+ Score:** **${rio.mythicScore ?? 'N/A'}** (Tank: ${rio.tankScore ?? '-'}, Healer: ${rio.healerScore ?? '-'}, DPS: ${rio.dpsScore ?? '-'})`,
+      `**Raid Progress:** ${rio.raidProgression || 'No recent raid progress recorded'}`,
+      `**Status:** ${rioStatusText}`,
+      `*Note: Raider.IO profile is for qualification assessment only. It does not verify account ownership or pilot identity.*`,
+    ];
+
+    embed.addFields({
+      name: '🛡️ Raider.IO Character Profile (WoW Midnight)',
+      value: rioLines.join('\n'),
+    });
+  }
+
   if (app.reviewedById) {
     embed.addFields({
       name: 'Last Reviewer',
@@ -1114,9 +1348,12 @@ export async function renderOrUpdateStaffReviewCard(client: any, applicationId: 
     }
   }
 
-  // در غیر این صورت پیام جدید به کانال استاف ارسال کن و شناسه‌ها را ذخیره کن
-  const channelId = process.env.CHANNEL_APPLY_REQUESTS;
-  if (!channelId) return;
+  // هدایت پیام بازبینی به کانال اختصاصی همان دسته‌بندی
+  const channelId = getReviewChannelForCategory(app.category as RegistrationCategory, client);
+  if (!channelId) {
+    console.warn(`[ReviewCard] No review channel configured for category '${app.category}' (App #${applicationId})`);
+    return;
+  }
 
   try {
     const channel = (await client.channels.fetch(channelId).catch(() => null)) as TextChannel | null;

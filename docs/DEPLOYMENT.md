@@ -75,18 +75,30 @@ In [Discord Developer Portal](https://discord.com/developers/applications):
 
 ---
 
-## 4. Discord Channels Setup
+## 4. Discord Channels Architecture (Phase 3.2.4)
 
-Create the following channels manually in your Discord server:
+G4X Community uses two dedicated channel categories for separated public application entry and private administrative review:
 
-1. **`#registration`** (Public or Member visible)
-   - Set channel permissions: `@everyone` can View Channel & Read Message History, but cannot Send Messages.
-   - Run `G4!setup registration` here (must be executed by a user with Owner or Manager role in the database).
-2. **`#application-reviews`** (Private)
-   - Set channel permissions: Visible **only** to staff/management (`Owner`, `Manager`, `Admin`).
-   - Copy this channel's ID and set it as `CHANNEL_APPLY_REQUESTS` in `.env`.
-3. **`#bot-logs`** (Optional / Private)
-   - For system audit and error notifications (`CHANNEL_LOGS`).
+### 4.1 Public Category: `START HERE`
+Contains dedicated registration panels for each role. Regular guild members can view and interact, but cannot send chat messages:
+1. **`#become-booster`** (`CHANNEL_BECOME_BOOSTER`) — Booster registration panel with automated WoW Midnight Raider.IO profile sync.
+2. **`#become-adv`** (`CHANNEL_BECOME_ADVERTISER`) — Customer order advertiser registration panel.
+3. **`#become-pilot-booster`** (`CHANNEL_BECOME_PILOT`) — Verified account-play pilot registration panel.
+4. **`#become-exchanger`** (`CHANNEL_BECOME_EXCHANGER`) — In-game currency exchanger application panel.
+
+### 4.2 Private Category: `APPLICATION MANAGEMENT`
+Restricted strictly to Owner, Manager, and authorized application reviewers (`@everyone` denied View Channel):
+1. **`#app-boosters`** (`CHANNEL_APP_BOOSTERS`) — Private review cards for Booster applications.
+2. **`#app-adv`** (`CHANNEL_APP_ADVERTISERS`) — Private review cards for Advertiser applications.
+3. **`#app-pilots`** (`CHANNEL_APP_PILOTS`) — Private review cards for Pilot applications.
+4. **`#app-exchangers`** (`CHANNEL_APP_EXCHANGERS`) — Private review cards for Exchanger applications.
+
+### 4.3 Automated Channel & Panel Provisioning
+Authorized managers (Owner / Manager) can execute:
+```
+G4!setup registration
+```
+This command automatically resolves the configured channel IDs (or creates missing categories and channels with real permission overwrites) and deploys or refreshes the dedicated panel in each public channel without creating duplicates.
 
 > **How to find Channel IDs and Role IDs:**
 > In Discord, go to **User Settings -> Advanced -> Enable Developer Mode**. Right-click any channel or role and click **Copy ID**.

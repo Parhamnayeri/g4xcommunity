@@ -291,6 +291,7 @@ async function runRegistrationTests() {
       serviceId: pilotService.id,
       experience: '5 years pilot boosting',
       contactPreferences: { phone: '+123456789', telegram: '@pilot_applicant' },
+      raiderioUrl: 'https://raider.io/characters/eu/tarren-mill/Testpilot',
     });
 
     let pilotApprovedWithoutVerif = false;
@@ -494,6 +495,7 @@ async function runRegistrationTests() {
       gameSlug: 'wow_midnight',
       serviceId: mplusService.id,
       experience: 'Testing sync resilience',
+      raiderioUrl: 'https://raider.io/characters/eu/tarren-mill/Regularsync',
     });
 
     const approvedSyncApp = await reviewApplication({

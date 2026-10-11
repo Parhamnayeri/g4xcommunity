@@ -233,6 +233,7 @@ async function runRecoverySuite() {
       gameSlug: 'wow_midnight',
       mainRole: 'DPS',
       experience: 'Mythic raider in past 2 expansions',
+      raiderioUrl: 'https://raider.io/characters/eu/tarren-mill/Recoverybooster',
     });
 
     // تست ۱: Request Info دلیل درخواست را در دیتابیس ثبت می‌کند
@@ -346,6 +347,7 @@ async function runRecoverySuite() {
       userId: uApplicantPilot,
       gameSlug: 'wow_midnight',
       experience: 'Multi-rank 1 Gladiator pilot',
+      raiderioUrl: 'https://raider.io/characters/eu/tarren-mill/Recoverypilot',
     });
 
     // ادمین روی Verify ID کلیک می‌کند
@@ -786,6 +788,7 @@ async function runRecoverySuite() {
       gameSlug: 'wow_midnight',
       mainRole: 'Tank',
       experience: 'Concurrent test tank',
+      raiderioUrl: 'https://raider.io/characters/eu/tarren-mill/Concurrenttank',
     });
 
     // تست ۲۴: دو تصمیم ادمین همزمان روی یک درخواست تضاد ایجاد نمی‌کنند
@@ -851,6 +854,7 @@ async function runRecoverySuite() {
       gameSlug: 'wow_midnight',
       mainRole: 'Healer',
       experience: 'Resilience test healer',
+      raiderioUrl: 'https://raider.io/characters/eu/tarren-mill/Resilienthealer',
     });
 
     const clientThatCrashes = {
@@ -906,6 +910,7 @@ async function runRecoverySuite() {
       gameSlug: 'wow_midnight',
       mainRole: 'DPS',
       experience: 'Admin trying self approval',
+      raiderioUrl: 'https://raider.io/characters/eu/tarren-mill/Adminbooster',
     });
 
     try {

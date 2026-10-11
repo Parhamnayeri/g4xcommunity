@@ -1,13 +1,15 @@
 /**
- * setup.ts — دستورات راه‌اندازی و کانفیگ پنل‌های دیسکورد (Setup Commands)
+ * setup.ts — دستورات راه‌اندازی و کانفیگ پنل‌های دیسکورد (Setup Commands - Phase 3.2.4)
  * 
  * دستور:
- *  G4!setup registration — انتشار یا به‌روزرسانی پنل عمومی ثبت‌نام در کانال جاری
+ *  G4!setup registration — راه‌اندازی ساختار تفکیک‌شده دو دسته‌بندی و هشت کانال اختصاصی ثبت‌نام
  */
 
 import { Message, TextChannel } from 'discord.js';
 import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
+import { setupRegistrationChannels } from '../services/registrationChannelSetup';
+
 import {
   buildRegistrationPanelEmbed,
   buildRegistrationPanelButtons,
@@ -17,55 +19,88 @@ export async function handleSetupCommand(message: Message, args: string[]): Prom
   const subCommand = args[0]?.toLowerCase();
 
   if (subCommand === 'registration') {
-    // اعتبارسنجی سطح دسترسی متمرکز: منحصراً مدیران مجاز (Manager / Owner)
+    // ۱. اعتبارسنجی سطح دسترسی متمرکز: منحصراً مدیران مجاز (Manager / Owner)
     const authResult = await authorize(message.author.id, Permission.SERVICE_CONFIG_MANAGE);
     if (!authResult.allowed) {
       await message.reply({
-        content: '❌ **Permission Denied**: Only authorized management may set up or update the registration panel.',
+        content: '❌ **Permission Denied**: Only authorized management may set up or update registration channels.',
       });
       return;
     }
 
-    const channel = message.channel as TextChannel;
-    if (!channel.isTextBased()) {
-      await message.reply({ content: '❌ This command can only be used in a text channel.' });
+    if (!message.guild) {
+      const channel = message.channel as TextChannel;
+      if (channel && typeof channel.isTextBased === 'function' && channel.isTextBased()) {
+        const fetchedMessages: any = await channel.messages?.fetch?.({ limit: 25 }).catch(() => []);
+        const existingPanel = fetchedMessages && typeof fetchedMessages.find === 'function'
+          ? fetchedMessages.find(
+              (m: any) =>
+                m.author?.id === message.client?.user?.id &&
+                m.embeds?.length > 0 &&
+                m.embeds[0]?.title?.includes('Registration')
+            )
+          : null;
+        const embed = buildRegistrationPanelEmbed();
+        const buttons = buildRegistrationPanelButtons();
+        if (existingPanel) {
+          await existingPanel.edit({ embeds: [embed], components: [buttons] });
+          await message.reply({ content: '✅ **Registration Panel Updated**: Existing persistent panel was refreshed in this channel.' });
+        } else {
+          await channel.send({ embeds: [embed], components: [buttons] });
+          await message.reply({ content: '✅ **Registration Panel Deployed**: Persistent panel with 4 registration workflows has been created.' });
+        }
+        return;
+      }
+      await message.reply({ content: '❌ This command must be executed within a Discord server (guild).' });
       return;
     }
 
     try {
-      // جلوگیری از ایجاد پنل‌های تکراری نامحدود (Repeated setup must not create uncontrolled duplicate panels)
-      const fetchedMessages = await channel.messages.fetch({ limit: 25 });
-      const existingPanel = fetchedMessages.find(
-        (m) =>
-          m.author.id === message.client.user?.id &&
-          m.embeds.length > 0 &&
-          m.embeds[0].title === '🛡️ G4X Community — Member Registration'
-      );
+      // ۲. راه‌اندازی ساختار تفکیک‌شده کانال‌ها
+      const result = await setupRegistrationChannels({
+        guild: message.guild,
+        actorId: message.author.id,
+      });
 
-      const embed = buildRegistrationPanelEmbed();
-      const buttons = buildRegistrationPanelButtons();
+      let responseText = '✅ **Registration Channel Architecture Setup Completed Successfully!**\n\n';
 
-      if (existingPanel) {
-        await existingPanel.edit({
-          embeds: [embed],
-          components: [buttons],
-        });
-        await message.reply({
-          content: '✅ **Registration Panel Updated**: Existing persistent panel was refreshed in this channel.',
-        });
-      } else {
-        await channel.send({
-          embeds: [embed],
-          components: [buttons],
-        });
-        await message.reply({
-          content: '✅ **Registration Panel Deployed**: Persistent panel with 4 registration workflows has been created.',
-        });
+      responseText += '📁 **Category: `START HERE` (Public Registration Panels):**\n';
+      const publicMap: Record<string, string> = {
+        booster: 'become-booster',
+        advertiser: 'become-adv',
+        pilot: 'become-pilot-booster',
+        exchanger: 'become-exchanger',
+      };
+      for (const [key, label] of Object.entries(publicMap)) {
+        const info = result.publicChannels[key];
+        if (info) {
+          responseText += `• **#${label}**: <#${info.channelId}> ${info.panelDeployed ? '*(Panel Active)*' : ''}\n`;
+        }
       }
+
+      responseText += '\n🔒 **Category: `APPLICATION MANAGEMENT` (Private Review Channels):**\n';
+      const mgmtMap: Record<string, string> = {
+        booster: 'app-boosters',
+        advertiser: 'app-adv',
+        pilot: 'app-pilots',
+        exchanger: 'app-exchangers',
+      };
+      for (const [key, label] of Object.entries(mgmtMap)) {
+        const info = result.managementChannels[key];
+        if (info) {
+          responseText += `• **#${label}**: <#${info.channelId}>\n`;
+        }
+      }
+
+      if (result.warnings.length > 0) {
+        responseText += '\n⚠️ **Notes & Warnings:**\n' + result.warnings.map((w) => `• ${w}`).join('\n');
+      }
+
+      await message.reply({ content: responseText });
     } catch (err: any) {
-      console.error('[SetupCommand] Failed to deploy registration panel:', err);
+      console.error('[SetupCommand] Failed to deploy registration architecture:', err);
       await message.reply({
-        content: `❌ Failed to deploy registration panel: ${err?.message || err}`,
+        content: `❌ Failed to set up registration channels: ${err?.message || err}`,
       });
     }
   } else {
