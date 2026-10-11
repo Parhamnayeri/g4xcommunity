@@ -1,0 +1,380 @@
+/**
+ * financialPolicyService.ts — مدیریت خط‌مشی‌ها و نرخ‌های کارمزد پلتفرم‌های واسط و داخلی (G4X Financial Engine)
+ *
+ * پشتیبانی کامل از:
+ *  - G2G (کمیسیون فروش 8.99%، کارمزد دسته برداشت 3.99% + $0.99، انتقال Toobit/BNB $0.30، حداقل برداشت $10)
+ *  - SkyCoach (مبلغ سفارش تغییر نمی‌کند، کارمزد دسته برداشت 5% + $5، انتقال BNB $0.30، حداقل برداشت $50)
+ *  - Eldorado (کمیسیون وابسته به بازی و دسته‌بندی؛ WoW Currency 1.5%؛ عدم فرض 0% برای N/A؛ حداقل برداشت $200؛ انتقال $1.50)
+ *  - Website (کارمزد اختصاصی سفارش G4X مصوب مدیریت؛ فاقد نرخ پیش‌فرض جهانی)
+ *  - Advertiser (کمیسیون اختصاصی ادورتایزر مصوب ادمین؛ عدم امکان تغییر توسط خود ادورتایزر؛ خط‌مشی مشترک WoW Gold)
+ */
+
+import prisma from '../database/db';
+import { authorize } from './authorizationService';
+import { Permission } from './permissionTypes';
+
+export type PlatformType = 'g2g' | 'skycoach' | 'eldorado' | 'website' | 'advertiser';
+export type ListingCategoryType = 'currency' | 'top_ups' | 'items' | 'accounts' | 'boosting';
+
+export interface FeePolicyLookupOptions {
+  platform: PlatformType;
+  feeType: 'sale_commission' | 'withdrawal_fee' | 'transfer_fee' | 'g4x_fee' | 'advertiser_commission';
+  gameSlug?: string;
+  listingCategory?: string;
+  payoutRouteScope?: string;
+}
+
+export interface CreatePolicyInput {
+  platform: PlatformType;
+  feeType: 'sale_commission' | 'withdrawal_fee' | 'transfer_fee' | 'g4x_fee' | 'advertiser_commission';
+  chargingEvent: 'sale' | 'withdrawal';
+  gameSlug?: string;
+  listingCategory?: string;
+  percentageRate?: number;
+  fixedMinor?: number;
+  feeBasis?: 'gross_sale' | 'platform_net' | 'batch_total' | 'external_net';
+  currency?: string;
+  minThresholdMinor?: number;
+  payoutRouteScope?: string;
+  changeReason?: string;
+}
+
+/**
+ * حداقل آستانه‌های مجاز تجمعی برای درخواست برداشت از پلتفرم‌ها (به واحد minor - سنت)
+ */
+export const PLATFORM_WITHDRAWAL_THRESHOLDS_MINOR: Record<string, number> = {
+  g2g: 1000,       // $10.00
+  skycoach: 5000,  // $50.00
+  eldorado: 20000, // $200.00 (مسیر پیش‌فرض جاری مالک)
+};
+
+/**
+ * دریافت حداقل آستانه برداشت پلتفرم
+ */
+export function getPlatformWithdrawalThreshold(platform: string): number {
+  return PLATFORM_WITHDRAWAL_THRESHOLDS_MINOR[platform.toLowerCase()] || 0;
+}
+
+/**
+ * مقداردهی اولیه یا اطمینان از وجود سیاست‌های کارمزد مصوب سیستم
+ */
+export async function seedStandardFeePolicies(): Promise<void> {
+  // ۱. خط‌مشی کمیسیون فروش G2G (8.99%)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 1 },
+    update: {},
+    create: {
+      id: 1,
+      platform: 'g2g',
+      feeType: 'sale_commission',
+      chargingEvent: 'sale',
+      percentageRate: 0.0899,
+      feeBasis: 'gross_sale',
+      currency: 'USD',
+      minThresholdMinor: 1000,
+      version: 1,
+      isApproved: true,
+      changeReason: 'Standard G2G sale commission (8.99%)',
+    },
+  });
+
+  // ۲. خط‌مشی کارمزد دسته برداشت G2G (3.99% + $0.99)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 2 },
+    update: {},
+    create: {
+      id: 2,
+      platform: 'g2g',
+      feeType: 'withdrawal_fee',
+      chargingEvent: 'withdrawal',
+      percentageRate: 0.0399,
+      fixedMinor: 99,
+      feeBasis: 'batch_total',
+      currency: 'USD',
+      minThresholdMinor: 1000,
+      version: 1,
+      isApproved: true,
+      changeReason: 'Standard G2G withdrawal batch fee (3.99% + $0.99)',
+    },
+  });
+
+  // ۳. کارمزد انتقال شبکه Toobit/BNB برای G2G ($0.30)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 3 },
+    update: {},
+    create: {
+      id: 3,
+      platform: 'g2g',
+      feeType: 'transfer_fee',
+      chargingEvent: 'withdrawal',
+      fixedMinor: 30,
+      feeBasis: 'batch_total',
+      currency: 'USD',
+      payoutRouteScope: 'toobit_bnb',
+      version: 1,
+      isApproved: true,
+      changeReason: 'G2G Toobit/BNB transfer fee ($0.30)',
+    },
+  });
+
+  // ۴. کارمزد برداشت دسته SkyCoach (5% + $5.00)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 4 },
+    update: {},
+    create: {
+      id: 4,
+      platform: 'skycoach',
+      feeType: 'withdrawal_fee',
+      chargingEvent: 'withdrawal',
+      percentageRate: 0.05,
+      fixedMinor: 500,
+      feeBasis: 'batch_total',
+      currency: 'USD',
+      minThresholdMinor: 5000,
+      version: 1,
+      isApproved: true,
+      changeReason: 'Standard SkyCoach batch withdrawal fee (5% + $5.00)',
+    },
+  });
+
+  // ۵. کارمزد انتقال BNB برای SkyCoach ($0.30)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 5 },
+    update: {},
+    create: {
+      id: 5,
+      platform: 'skycoach',
+      feeType: 'transfer_fee',
+      chargingEvent: 'withdrawal',
+      fixedMinor: 30,
+      feeBasis: 'batch_total',
+      currency: 'USD',
+      payoutRouteScope: 'bep20_bnb',
+      version: 1,
+      isApproved: true,
+      changeReason: 'SkyCoach BNB transfer fee ($0.30)',
+    },
+  });
+
+  // ۶. خط‌مشی فروش Eldorado برای WoW Currency (1.5%)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 6 },
+    update: {},
+    create: {
+      id: 6,
+      platform: 'eldorado',
+      gameSlug: 'wow',
+      listingCategory: 'currency',
+      feeType: 'sale_commission',
+      chargingEvent: 'sale',
+      percentageRate: 0.015,
+      feeBasis: 'gross_sale',
+      currency: 'USD',
+      version: 1,
+      isApproved: true,
+      changeReason: 'Eldorado WoW Currency sale commission (1.5%)',
+    },
+  });
+
+  // ۷. کارمزد برداشت و انتقال تخمینی مسیر جاری Eldorado ($1.50 BNB / حداقل $200)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 7 },
+    update: {},
+    create: {
+      id: 7,
+      platform: 'eldorado',
+      feeType: 'transfer_fee',
+      chargingEvent: 'withdrawal',
+      fixedMinor: 150,
+      feeBasis: 'batch_total',
+      currency: 'USD',
+      minThresholdMinor: 20000,
+      version: 1,
+      isApproved: true,
+      changeReason: 'Eldorado owner route transfer fee estimate ($1.50, min $200)',
+    },
+  });
+
+  // ۸. خط‌مشی کارمزد پیش‌فرض مشترک سفارشات طلای ادورتایزر (WoW Gold)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 8 },
+    update: {},
+    create: {
+      id: 8,
+      platform: 'advertiser',
+      listingCategory: 'currency',
+      feeType: 'g4x_fee',
+      chargingEvent: 'sale',
+      percentageRate: 0.10, // ۱۰ درصد سهم پلتفرم از سفارشات طلای ادورتایزر
+      feeBasis: 'gross_sale',
+      currency: 'GOLD',
+      version: 1,
+      isApproved: true,
+      changeReason: 'Shared advertiser WoW Gold G4X fee policy (10%)',
+    },
+  });
+}
+
+/**
+ * واکشی خط‌مشی کارمزد مصوب با توجه به پلتفرم، بازی، دسته‌بندی و نوع کارمزد
+ */
+export async function getFeePolicy(options: FeePolicyLookupOptions) {
+  const { platform, feeType, gameSlug, listingCategory, payoutRouteScope } = options;
+
+  // برای پلتفرم Eldorado، اگر نوع کارمزد sale_commission است، بازی و دسته‌بندی باید مشخص باشند
+  if (platform === 'eldorado' && feeType === 'sale_commission') {
+    if (!gameSlug || !listingCategory) {
+      return null;
+    }
+
+    const policy = await prisma.platformFeePolicy.findFirst({
+      where: {
+        platform: 'eldorado',
+        feeType: 'sale_commission',
+        gameSlug: { in: [gameSlug.toLowerCase(), gameSlug.toLowerCase().startsWith('wow') ? 'wow' : gameSlug.toLowerCase()] },
+        listingCategory: listingCategory.toLowerCase(),
+        isApproved: true,
+      },
+      orderBy: { version: 'desc' },
+    });
+
+    return policy;
+  }
+
+  // جستجوی عمومی با تطابق دقیق‌ترین شرایط
+  const policy = await prisma.platformFeePolicy.findFirst({
+    where: {
+      platform: platform.toLowerCase(),
+      feeType,
+      ...(gameSlug ? { gameSlug: gameSlug.toLowerCase() } : {}),
+      ...(listingCategory ? { listingCategory: listingCategory.toLowerCase() } : {}),
+      ...(payoutRouteScope ? { payoutRouteScope } : {}),
+      isApproved: true,
+    },
+    orderBy: { version: 'desc' },
+  });
+
+  return policy;
+}
+
+/**
+ * ایجاد یا ویرایش نسخه‌بندی‌شده یک خط‌مشی کارمزد با کنترل دسترسی و ثبت ممیزی
+ */
+export async function createOrUpdateFeePolicy(input: CreatePolicyInput, actorId: string) {
+  // بررسی امنیتی: فقط Owner یا Manager مجاز به تغییر خط‌مشی‌های مالی هستند
+  const auth = await authorize(actorId, Permission.FINANCIAL_POLICY_MANAGE);
+  if (!auth.allowed) {
+    throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions to manage financial policies'}`);
+  }
+
+  // واکشی آخرین نسخه برای افزایش شماره نسخه (Immutable Versioning)
+  const existing = await prisma.platformFeePolicy.findFirst({
+    where: {
+      platform: input.platform.toLowerCase(),
+      feeType: input.feeType,
+      gameSlug: input.gameSlug?.toLowerCase() ?? null,
+      listingCategory: input.listingCategory?.toLowerCase() ?? null,
+      payoutRouteScope: input.payoutRouteScope ?? null,
+    },
+    orderBy: { version: 'desc' },
+  });
+
+  const nextVersion = existing ? existing.version + 1 : 1;
+
+  // اگر نسخه قبلی وجود دارد، تاریخ انقضای آن ثبت می‌شود
+  if (existing) {
+    await prisma.platformFeePolicy.update({
+      where: { id: existing.id },
+      data: { effectiveTo: new Date() },
+    });
+  }
+
+  const newPolicy = await prisma.platformFeePolicy.create({
+    data: {
+      platform: input.platform.toLowerCase(),
+      feeType: input.feeType,
+      chargingEvent: input.chargingEvent,
+      gameSlug: input.gameSlug?.toLowerCase() ?? null,
+      listingCategory: input.listingCategory?.toLowerCase() ?? null,
+      percentageRate: input.percentageRate ?? null,
+      fixedMinor: input.fixedMinor ?? null,
+      feeBasis: input.feeBasis ?? null,
+      currency: input.currency ?? 'USD',
+      minThresholdMinor: input.minThresholdMinor ?? null,
+      payoutRouteScope: input.payoutRouteScope ?? null,
+      version: nextVersion,
+      isApproved: true,
+      approvedBy: actorId,
+      changeReason: input.changeReason ?? 'Admin policy update',
+      effectiveFrom: new Date(),
+    },
+  });
+
+  // ثبت لاگ ممیزی
+  await prisma.auditLog.create({
+    data: {
+      actorId,
+      action: 'FINANCIAL_POLICY_UPDATED',
+      entityType: 'PlatformFeePolicy',
+      entityId: String(newPolicy.id),
+      previousValues: existing ? JSON.stringify(existing) : null,
+      newValues: JSON.stringify(newPolicy),
+      reason: input.changeReason ?? 'Admin policy update',
+    },
+  });
+
+  return newPolicy;
+}
+
+/**
+ * تنظیم درصد کمیسیون یک ادورتایزر توسط ادمین (جلوگیری از خود-تنظیمی ادورتایزر)
+ */
+export async function setAdvertiserCommissionRate(
+  advertiserId: string,
+  commissionRate: number,
+  actorId: string
+): Promise<void> {
+  // گارد امنیتی: ادورتایزر هرگز نباید بتواند کمیسیون خود را تعیین کند
+  if (advertiserId === actorId) {
+    throw new Error('PERMISSION_DENIED: Advertisers cannot set or modify their own commission rate');
+  }
+
+  const auth = await authorize(actorId, Permission.FINANCIAL_POLICY_MANAGE);
+  if (!auth.allowed) {
+    throw new Error('PERMISSION_DENIED: Only authorized management can configure advertiser commissions');
+  }
+
+  if (commissionRate < 0 || commissionRate > 1) {
+    throw new Error('INVALID_COMMISSION_RATE: Commission rate must be between 0.00 and 1.00');
+  }
+
+  await prisma.wallet.upsert({
+    where: { userId: advertiserId },
+    update: { customCommissionRate: commissionRate },
+    create: {
+      userId: advertiserId,
+      customCommissionRate: commissionRate,
+    },
+  });
+
+  await prisma.auditLog.create({
+    data: {
+      actorId,
+      action: 'ADVERTISER_COMMISSION_SET',
+      entityType: 'UserWallet',
+      entityId: advertiserId,
+      newValues: JSON.stringify({ customCommissionRate: commissionRate }),
+    },
+  });
+}
+
+/**
+ * دریافت درصد کمیسیون ادورتایزر
+ */
+export async function getAdvertiserCommissionRate(advertiserId: string): Promise<number | null> {
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId: advertiserId },
+  });
+
+  return wallet?.customCommissionRate ?? null;
+}

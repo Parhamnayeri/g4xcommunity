@@ -63,6 +63,9 @@ model User {
   notifications     NotificationOutbox[]  @relation("NotificationRecipient")
   registrationApplications RegistrationApplication[] @relation("UserRegistrationApplications")
   reviewedApplications     RegistrationApplication[] @relation("ReviewedRegistrationApplications")
+  reconciledBatches        PlatformWithdrawalBatch[] @relation("BatchReconciledBy")
+  finalizedSnapshots       OrderFinancialSnapshot[]  @relation("SnapshotFinalizedBy")
+  boosterAllocations       BoosterPayoutAllocation[] @relation("BoosterAllocations")
 
   @@map("users")
 }
@@ -308,6 +311,9 @@ model Order {
   orderChannels   OrderChannel[]
   disputes        OrderDispute[]
   escrowHolds     EscrowHold[]
+  financialSnapshot        OrderFinancialSnapshot?
+  withdrawalAllocations    OrderWithdrawalAllocation[]
+  boosterPayoutAllocations BoosterPayoutAllocation[]
 
   @@index([status])
   @@index([gameSlug, status])
@@ -467,6 +473,7 @@ model OrderRun {
   runEvents       RunEvent[]
   proofs          RunProof[]
   disputes        OrderDispute[]
+  boosterPayoutAllocations BoosterPayoutAllocation[]
 
   @@unique([orderId, runNumber])
   @@index([orderId, status])
@@ -828,6 +835,134 @@ model RegistrationApplication {
   @@index([status, submittedAt])
   @@index([roleSyncStatus])
   @@map("registration_applications")
+}
+
+// ─── ۲۶. سیاست‌ها و نرخ‌های کارمزد پلتفرم‌ها (Versioned Platform Fee Policies) ──
+model PlatformFeePolicy {
+  id                 Int       @id @default(autoincrement())
+  platform           String    // g2g | skycoach | eldorado | website | advertiser
+  gameSlug           String?   @map("game_slug")
+  listingCategory    String?   @map("listing_category") // currency | top_ups | items | accounts | boosting
+  feeType            String    @map("fee_type") // sale_commission | withdrawal_fee | transfer_fee | g4x_fee | advertiser_commission
+  chargingEvent      String    @map("charging_event") // sale | withdrawal
+  percentageRate     Float?    @map("percentage_rate")
+  fixedMinor         Int?      @map("fixed_minor")
+  feeBasis           String?   @map("fee_basis") // gross_sale | platform_net | batch_total | external_net
+  currency           String    @default("USD")
+  minThresholdMinor  Int?      @map("min_threshold_minor")
+  payoutRouteScope   String?   @map("payout_route_scope") // e.g. toobit_bnb | bep20_bnb | default
+  effectiveFrom      DateTime  @default(now()) @map("effective_from")
+  effectiveTo        DateTime? @map("effective_to")
+  version            Int       @default(1)
+  isApproved         Boolean   @default(true) @map("is_approved")
+  approvedBy         String?   @map("approved_by")
+  changeReason       String?   @map("change_reason")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([platform, gameSlug, listingCategory])
+  @@index([platform, feeType, isApproved])
+  @@map("platform_fee_policies")
+}
+
+// ─── ۲۷. دسته‌های برداشت از پلتفرم‌ها (Platform Withdrawal Batches) ───────────
+model PlatformWithdrawalBatch {
+  id                      Int       @id @default(autoincrement())
+  batchRef                String    @unique @map("batch_ref")
+  platform                String    // g2g | skycoach | eldorado
+  currency                String    @default("USD")
+  status                  String    @default("draft") // draft | submitted | completed | reconciled | cancelled
+  totalContributionsMinor Int       @map("total_contributions_minor")
+  actualBatchFeeMinor     Int       @map("actual_batch_fee_minor")
+  actualTransferFeeMinor  Int       @default(0) @map("actual_transfer_fee_minor")
+  netReceivedMinor        Int       @map("net_received_minor")
+  externalReceiptRef      String?   @map("external_receipt_ref")
+  externalReceiptNotes    String?   @map("external_receipt_notes")
+  withdrawnAt             DateTime? @map("withdrawn_at")
+  reconciledAt            DateTime? @map("reconciled_at")
+  reconciledBy            String?   @map("reconciled_by")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  allocations OrderWithdrawalAllocation[]
+  reconciler  User?                       @relation("BatchReconciledBy", fields: [reconciledBy], references: [discordId], onDelete: SetNull)
+
+  @@index([platform, status])
+  @@map("platform_withdrawal_batches")
+}
+
+// ─── ۲۸. سهم سفارشات در دسته برداشت (Order Withdrawal Allocations) ───────────
+model OrderWithdrawalAllocation {
+  id                       Int      @id @default(autoincrement())
+  batchId                  Int      @map("batch_id")
+  orderId                  Int      @map("order_id")
+  contributionAmountMinor  Int      @map("contribution_amount_minor")
+  allocatedBatchFeeMinor   Int      @map("allocated_batch_fee_minor")
+  allocatedTransferFeeMinor Int     @default(0) @map("allocated_transfer_fee_minor")
+  netContributionMinor     Int      @map("net_contribution_minor")
+  createdAt                DateTime @default(now()) @map("created_at")
+
+  batch PlatformWithdrawalBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  order Order                   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, orderId])
+  @@index([orderId])
+  @@map("order_withdrawal_allocations")
+}
+
+// ─── ۲۹. اسنپ‌شات محاسبات مالی سفارشات (Order Financial Snapshots) ────────────
+model OrderFinancialSnapshot {
+  id                          Int       @id @default(autoincrement())
+  orderId                     Int       @unique @map("order_id")
+  sourcePlatform              String    @map("source_platform") // g2g | skycoach | eldorado | website | direct
+  sourceAmountType            String    @map("source_amount_type") // gross_sale | platform_net
+  sourceAmountMinor           Int       @map("source_amount_minor")
+  grossSaleMinor              Int?      @map("gross_sale_minor")
+  platformSaleCommissionMinor Int       @default(0) @map("platform_sale_commission_minor")
+  platformOrderNetMinor       Int       @map("platform_order_net_minor")
+  allocatedWithdrawalFeeMinor Int       @default(0) @map("allocated_withdrawal_fee_minor")
+  allocatedTransferFeeMinor   Int       @default(0) @map("allocated_transfer_fee_minor")
+  otherExternalFeesMinor      Int       @default(0) @map("other_external_fees_minor")
+  externalNetBaseMinor        Int       @map("external_net_base_minor")
+  g4xFeeRate                  Float?    @map("g4x_fee_rate")
+  g4xFeeMinor                 Int       @default(0) @map("g4x_fee_minor")
+  advertiserFeeMinor          Int       @default(0) @map("advertiser_fee_minor")
+  boosterPoolMinor            Int       @map("booster_pool_minor")
+  currency                    String    @default("USD")
+  calculationStatus           String    @default("provisional") @map("calculation_status") // provisional | reconciled | finalized
+  policyVersion               Int?      @map("policy_version")
+  listingCategory             String?   @map("listing_category")
+  finalizedBy                 String?   @map("finalized_by")
+  finalizedAt                 DateTime? @map("finalized_at")
+  notes                       String?
+  createdAt                   DateTime  @default(now()) @map("created_at")
+  updatedAt                   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  finalizer User? @relation("SnapshotFinalizedBy", fields: [finalizedBy], references: [discordId], onDelete: SetNull)
+
+  @@index([sourcePlatform, calculationStatus])
+  @@map("order_financial_snapshots")
+}
+
+// ─── ۳۰. تسهیم استخری سهم بوسترها (Booster Payout Allocations) ────────────────
+model BoosterPayoutAllocation {
+  id             Int      @id @default(autoincrement())
+  orderId        Int      @map("order_id")
+  boosterId      String   @map("booster_id")
+  runId          Int?     @map("run_id")
+  allocatedMinor Int      @map("allocated_minor")
+  currency       String   @default("USD")
+  payoutRole     String?  @default("team_member") @map("payout_role") // solo | team_member
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  order   Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  booster User      @relation("BoosterAllocations", fields: [boosterId], references: [discordId], onDelete: Cascade)
+  run     OrderRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@unique([orderId, boosterId])
+  @@index([boosterId])
+  @@map("booster_payout_allocations")
 }
 
 

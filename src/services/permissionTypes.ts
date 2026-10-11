@@ -49,6 +49,7 @@ export enum Permission {
   WALLET_VIEW_OWN = 'WALLET_VIEW_OWN',
   FINANCE_ADMIN_VIEW = 'FINANCE_ADMIN_VIEW',
   FINANCE_ADJUST = 'FINANCE_ADJUST',
+  FINANCIAL_POLICY_MANAGE = 'FINANCIAL_POLICY_MANAGE',
   ESCROW_HOLD_MANAGE = 'ESCROW_HOLD_MANAGE',
   ESCROW_RELEASE_ADMIN = 'ESCROW_RELEASE_ADMIN',
 
@@ -112,6 +113,7 @@ export const ROLE_PERMISSIONS: Record<SystemRoleKey, Permission[]> = {
     Permission.WALLET_VIEW_OWN,
     Permission.FINANCE_ADMIN_VIEW,
     Permission.FINANCE_ADJUST,
+    Permission.FINANCIAL_POLICY_MANAGE,
     Permission.ESCROW_HOLD_MANAGE,
     Permission.ESCROW_RELEASE_ADMIN,
     Permission.SUPPORT_TICKET_CREATE,
@@ -145,6 +147,7 @@ export const ROLE_PERMISSIONS: Record<SystemRoleKey, Permission[]> = {
     Permission.WALLET_VIEW_OWN,
     Permission.FINANCE_ADMIN_VIEW,
     Permission.FINANCE_ADJUST,
+    Permission.FINANCIAL_POLICY_MANAGE,
     Permission.ESCROW_HOLD_MANAGE,
     Permission.ESCROW_RELEASE_ADMIN,
     Permission.SUPPORT_TICKET_CREATE,
