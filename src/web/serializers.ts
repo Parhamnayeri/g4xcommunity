@@ -1,0 +1,127 @@
+/**
+ * serializers.ts — DTO Serializers جهت جلوگیری از افشای فیلدهای حساس و PI داده‌ها
+ */
+
+import { User, Wallet, WowCharacter, Order, GameService } from '@prisma/client';
+
+export interface SerializedUser {
+  discordId: string;
+  username: string;
+  displayName: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  roles: string[];
+}
+
+export function serializeUser(
+  user: User & { userRoles?: { roleKey: string }[] },
+): SerializedUser {
+  return {
+    discordId: user.discordId,
+    username: user.username,
+    displayName: user.displayName,
+    isActive: user.isActive,
+    createdAt: user.createdAt,
+    roles: user.userRoles ? user.userRoles.map((r) => r.roleKey) : [],
+  };
+}
+
+export interface SerializedWallet {
+  userId: string;
+  balanceUsd: number;
+  escrowUsd: number;
+  balanceGold: number;
+  escrowGold: number;
+  balanceUsdt: number;
+  escrowUsdt: number;
+  balanceIrt: number;
+  escrowIrt: number;
+  updatedAt: Date;
+}
+
+export function serializeWallet(wallet: Wallet): SerializedWallet {
+  return {
+    userId: wallet.userId,
+    balanceUsd: wallet.balanceUsd,
+    escrowUsd: wallet.escrowUsd,
+    balanceGold: wallet.balanceGold,
+    escrowGold: wallet.escrowGold,
+    balanceUsdt: wallet.balanceUsdt,
+    escrowUsdt: wallet.escrowUsdt,
+    balanceIrt: wallet.balanceIrt,
+    escrowIrt: wallet.escrowIrt,
+    updatedAt: wallet.updatedAt,
+  };
+}
+
+export interface SerializedWowCharacter {
+  id: number;
+  characterName: string;
+  realm: string;
+  region: string;
+  characterClass: string | null;
+  activeSpec: string | null;
+  itemLevel: number | null;
+  mythicScore: number | null;
+  tankScore: number | null;
+  healerScore: number | null;
+  dpsScore: number | null;
+  raidProgression: string | null;
+  raiderioUrl: string | null;
+  isMain: boolean;
+  syncStatus: string;
+  lastSyncedAt: Date | null;
+}
+
+export function serializeCharacter(character: WowCharacter): SerializedWowCharacter {
+  return {
+    id: character.id,
+    characterName: character.characterName,
+    realm: character.realm,
+    region: character.region,
+    characterClass: character.characterClass,
+    activeSpec: character.activeSpec,
+    itemLevel: character.itemLevel,
+    mythicScore: character.mythicScore,
+    tankScore: character.tankScore,
+    healerScore: character.healerScore,
+    dpsScore: character.dpsScore,
+    raidProgression: character.raidProgression,
+    raiderioUrl: character.raiderioUrl,
+    isMain: character.isMain,
+    syncStatus: character.syncStatus,
+    lastSyncedAt: character.lastSyncedAt,
+  };
+}
+
+export interface SerializedOrderHistory {
+  id: number;
+  orderRef: string;
+  gameSlug: string;
+  serviceName: string;
+  orderType: string;
+  currency: string;
+  grossAmountMinor: number;
+  boosterPoolMinor: number;
+  status: string;
+  completedAt: Date | null;
+  createdAt: Date;
+}
+
+export function serializeOrderHistory(
+  order: Order & { service: GameService },
+): SerializedOrderHistory {
+  return {
+    id: order.id,
+    orderRef: order.orderRef,
+    gameSlug: order.gameSlug,
+    serviceName: order.service.displayName,
+    orderType: order.orderType,
+    currency: order.currency,
+    grossAmountMinor: order.grossAmountMinor,
+    boosterPoolMinor: order.boosterPoolMinor,
+    status: order.status,
+    completedAt: order.completedAt,
+    createdAt: order.createdAt,
+  };
+}

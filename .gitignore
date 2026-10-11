@@ -1,0 +1,39 @@
+# ─── Dependencies ──────────────────────────────────────────────────────────
+node_modules/
+.pnpm-store/
+
+# ─── Production Build Output & Caches ─────────────────────────────────────
+dist/
+build/
+.cache/
+
+# ─── Environment & Secrets ────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── SQLite Databases & Local Storage ─────────────────────────────────────
+data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# ─── Temporary & Scratch Folders ──────────────────────────────────────────
+scratch/
+tmp/
+temp/
+
+# ─── Logs & Runtime Artifacts ─────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ─── OS and Editor Files ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
