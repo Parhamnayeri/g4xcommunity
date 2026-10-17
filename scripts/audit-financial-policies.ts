@@ -36,16 +36,32 @@ async function main() {
   }
   console.log('------------------------------------------------------------------------------------------------------------------------\n');
 
+  const isDryRun = process.argv.includes('--dry-run');
+
+  if (isDryRun) {
+    console.log('🔍 [MODE: DRY RUN] Read-only mode activated. No database modifications or audit records will be written.\n');
+  } else {
+    console.log('⚙️ [MODE: EXECUTE] Production modification mode activated.\n');
+  }
+
   console.log('[Audit] Checking for unapproved Gold advertiser fee policies (e.g. unapproved 10% rate)...');
-  const auditResult = await reviewAndCorrectUnapprovedPolicies('cli_audit_runner');
+  const auditResult = await reviewAndCorrectUnapprovedPolicies('cli_audit_runner', isDryRun);
 
   if (auditResult.corrected > 0) {
-    console.log(`⚠️ Corrected / Revoked ${auditResult.corrected} unapproved policy records safely without deletion.`);
+    if (isDryRun) {
+      console.log(`ℹ️ [DRY RUN] Identified ${auditResult.corrected} unapproved policy record(s) that would be revoked safely.`);
+    } else {
+      console.log(`⚠️ Corrected / Revoked ${auditResult.corrected} unapproved policy records safely without deletion.`);
+    }
     for (const d of auditResult.details) {
       console.log(`  • ${d}`);
     }
   } else {
     console.log('✅ No unapproved active policies found. All active policies conform to approved business specifications.');
+  }
+
+  if (auditResult.flaggedAmbiguous > 0) {
+    console.log(`\n📌 Flagged ${auditResult.flaggedAmbiguous} policy record(s) with 10% rate for human management review (not revoked).`);
   }
 
   console.log('\n=== AUDIT COMPLETE ===');

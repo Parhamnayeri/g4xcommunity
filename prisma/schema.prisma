@@ -66,6 +66,7 @@ model User {
   reconciledBatches        PlatformWithdrawalBatch[] @relation("BatchReconciledBy")
   finalizedSnapshots       OrderFinancialSnapshot[]  @relation("SnapshotFinalizedBy")
   boosterAllocations       BoosterPayoutAllocation[] @relation("BoosterAllocations")
+  createdPlatformTransactions PlatformAccountTransaction[] @relation("PlatformTxCreator")
 
   @@map("users")
 }
@@ -314,6 +315,7 @@ model Order {
   financialSnapshot        OrderFinancialSnapshot?
   withdrawalAllocations    OrderWithdrawalAllocation[]
   boosterPayoutAllocations BoosterPayoutAllocation[]
+  platformTransactions     PlatformAccountTransaction[]
 
   @@index([status])
   @@index([gameSlug, status])
@@ -870,24 +872,39 @@ model PlatformWithdrawalBatch {
   id                      Int       @id @default(autoincrement())
   batchRef                String    @unique @map("batch_ref")
   platform                String    // g2g | skycoach | eldorado
+  platformAccountId       Int?      @map("platform_account_id")
+  accountRef              String?   @map("account_ref")
   currency                String    @default("USD")
-  status                  String    @default("draft") // draft | submitted | completed | reconciled | cancelled
+  status                  String    @default("draft") // draft | ready | submitted | processing | received | reconciled | cancelled | failed | review_required
   totalContributionsMinor Int       @map("total_contributions_minor")
-  actualBatchFeeMinor     Int       @map("actual_batch_fee_minor")
+  actualBatchFeeMinor     Int       @default(0) @map("actual_batch_fee_minor")
   actualTransferFeeMinor  Int       @default(0) @map("actual_transfer_fee_minor")
-  netReceivedMinor        Int       @map("net_received_minor")
+  expectedNetMinor        Int       @default(0) @map("expected_net_minor")
+  netReceivedMinor        Int       @default(0) @map("net_received_minor")
+  actualReceivedMinor     Int?      @map("actual_received_minor")
+  destinationAccountRef   String?   @map("destination_account_ref")
   externalReceiptRef      String?   @map("external_receipt_ref")
   externalReceiptNotes    String?   @map("external_receipt_notes")
+  safeEvidenceRef         String?   @map("safe_evidence_ref")
+  failureReason           String?   @map("failure_reason")
+  reviewNotes             String?   @map("review_notes")
+  submittedAt             DateTime? @map("submitted_at")
+  submittedBy             String?   @map("submitted_by")
+  receiptConfirmedAt      DateTime? @map("receipt_confirmed_at")
+  receiptConfirmedBy      String?   @map("receipt_confirmed_by")
   withdrawnAt             DateTime? @map("withdrawn_at")
   reconciledAt            DateTime? @map("reconciled_at")
   reconciledBy            String?   @map("reconciled_by")
   createdAt               DateTime  @default(now()) @map("created_at")
   updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  allocations OrderWithdrawalAllocation[]
-  reconciler  User?                       @relation("BatchReconciledBy", fields: [reconciledBy], references: [discordId], onDelete: SetNull)
+  platformAccount PlatformAccount?             @relation(fields: [platformAccountId], references: [id], onDelete: SetNull)
+  allocations     OrderWithdrawalAllocation[]
+  transactions    PlatformAccountTransaction[]
+  reconciler      User?                        @relation("BatchReconciledBy", fields: [reconciledBy], references: [discordId], onDelete: SetNull)
 
   @@index([platform, status])
+  @@index([platformAccountId])
   @@map("platform_withdrawal_batches")
 }
 
@@ -963,6 +980,61 @@ model BoosterPayoutAllocation {
   @@unique([orderId, boosterId])
   @@index([boosterId])
   @@map("booster_payout_allocations")
+}
+
+// ─── ۳۱. حساب‌های کاربری پلتفرم‌های خارجی (External Platform Accounts) ───────
+model PlatformAccount {
+  id                   Int       @id @default(autoincrement())
+  accountRef           String    @unique @map("account_ref") // e.g. g2g_main, skycoach_main, eldorado_main
+  platform             String    // g2g | skycoach | eldorado
+  displayName          String    @map("display_name")
+  currency             String    @default("USD")
+  salesCreditedMinor   Int       @default(0) @map("sales_credited_minor")
+  pendingReleaseMinor  Int       @default(0) @map("pending_release_minor")
+  eligibleBalanceMinor Int       @default(0) @map("eligible_balance_minor")
+  reservedBatchMinor   Int       @default(0) @map("reserved_batch_minor")
+  withdrawnTotalMinor  Int       @default(0) @map("withdrawn_total_minor")
+  receivedTotalMinor   Int       @default(0) @map("received_total_minor")
+  isActive             Boolean   @default(true) @map("is_active")
+  notes                String?
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  batches              PlatformWithdrawalBatch[]
+  transactions         PlatformAccountTransaction[]
+
+  @@index([platform, isActive])
+  @@map("platform_accounts")
+}
+
+// ─── ۳۲. تراکنش‌های مالی حساب‌های پلتفرم (Platform Account Transactions) ──────
+model PlatformAccountTransaction {
+  id                   Int       @id @default(autoincrement())
+  transactionRef       String    @unique @map("transaction_ref")
+  accountId            Int       @map("account_id")
+  entryType            String    @map("entry_type")
+  // sale_credit | platform_hold | platform_release | batch_reserve | batch_release | withdrawal_executed | funds_received | manual_adjustment | platform_fee | refund_chargeback
+  amountMinor          Int       @map("amount_minor")
+  currency             String    @default("USD")
+  orderId              Int?      @map("order_id")
+  orderRef             String?   @map("order_ref")
+  batchId              Int?      @map("batch_id")
+  externalTxRef        String?   @map("external_tx_ref")
+  reason               String?
+  balanceSnapshotMinor Int?      @map("balance_snapshot_minor")
+  createdBy            String?   @map("created_by")
+  createdAt            DateTime  @default(now()) @map("created_at")
+
+  account PlatformAccount          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  order   Order?                   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  batch   PlatformWithdrawalBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  creator User?                    @relation("PlatformTxCreator", fields: [createdBy], references: [discordId], onDelete: SetNull)
+
+  @@index([accountId, entryType])
+  @@index([orderId])
+  @@index([batchId])
+  @@index([createdAt])
+  @@map("platform_account_transactions")
 }
 
 

@@ -49,10 +49,104 @@ export const PLATFORM_WITHDRAWAL_THRESHOLDS_MINOR: Record<string, number> = {
 };
 
 /**
- * دریافت حداقل آستانه برداشت پلتفرم
+ * دریافت حداقل آستانه برداشت پلتفرم (Synchronous Fast Lookup / Fallback)
  */
 export function getPlatformWithdrawalThreshold(platform: string): number {
   return PLATFORM_WITHDRAWAL_THRESHOLDS_MINOR[platform.toLowerCase()] || 0;
+}
+
+/**
+ * واکشی برخط حداقل آستانه برداشت پلتفرم از جدول سیاست‌های مصوب سیستم
+ */
+export async function getPlatformWithdrawalThresholdAsync(
+  platform: string,
+  payoutRouteScope?: string
+): Promise<number> {
+  const policy = await prisma.platformFeePolicy.findFirst({
+    where: {
+      platform: platform.toLowerCase(),
+      feeType: { in: ['withdrawal_fee', 'transfer_fee', 'sale_commission'] },
+      minThresholdMinor: { not: null },
+      ...(payoutRouteScope ? { payoutRouteScope } : {}),
+      isApproved: true,
+    },
+    orderBy: { version: 'desc' },
+  });
+
+  if (policy && policy.minThresholdMinor !== null && policy.minThresholdMinor !== undefined) {
+    PLATFORM_WITHDRAWAL_THRESHOLDS_MINOR[platform.toLowerCase()] = policy.minThresholdMinor;
+    return policy.minThresholdMinor;
+  }
+
+  return getPlatformWithdrawalThreshold(platform);
+}
+
+/**
+ * به‌روزرسانی نسخه‌بندی‌شده و ممیزی‌شده حداقل آستانه برداشت پلتفرم توسط مدیر مجاز
+ */
+export async function updatePlatformWithdrawalThreshold(
+  platform: string,
+  newThresholdMinor: number,
+  actorId: string,
+  reason: string
+) {
+  const auth = await authorize(actorId, Permission.FINANCIAL_POLICY_MANAGE);
+  if (!auth.allowed) {
+    throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions to update withdrawal thresholds'}`);
+  }
+
+  if (newThresholdMinor <= 0) {
+    throw new Error('INVALID_THRESHOLD: Minimum withdrawal threshold must be greater than zero');
+  }
+
+  if (!reason || reason.trim().length < 5) {
+    throw new Error('AUDIT_REASON_REQUIRED: A valid audit reason is required for policy threshold updates');
+  }
+
+  const existingPolicy = await prisma.platformFeePolicy.findFirst({
+    where: {
+      platform: platform.toLowerCase(),
+      minThresholdMinor: { not: null },
+      isApproved: true,
+    },
+    orderBy: { version: 'desc' },
+  });
+
+  const nextVersion = existingPolicy ? existingPolicy.version + 1 : 1;
+
+  const newPolicy = await prisma.platformFeePolicy.create({
+    data: {
+      platform: platform.toLowerCase(),
+      feeType: existingPolicy?.feeType || 'withdrawal_fee',
+      chargingEvent: existingPolicy?.chargingEvent || 'withdrawal',
+      percentageRate: existingPolicy?.percentageRate ?? null,
+      fixedMinor: existingPolicy?.fixedMinor ?? null,
+      feeBasis: existingPolicy?.feeBasis || 'batch_total',
+      currency: existingPolicy?.currency || 'USD',
+      minThresholdMinor: newThresholdMinor,
+      version: nextVersion,
+      isApproved: true,
+      approvedBy: actorId,
+      changeReason: reason,
+    },
+  });
+
+  // به‌روزرسانی کش سریع محلی
+  PLATFORM_WITHDRAWAL_THRESHOLDS_MINOR[platform.toLowerCase()] = newThresholdMinor;
+
+  await prisma.auditLog.create({
+    data: {
+      actorId,
+      action: 'PLATFORM_WITHDRAWAL_THRESHOLD_UPDATED',
+      entityType: 'PlatformFeePolicy',
+      entityId: String(newPolicy.id),
+      previousValues: existingPolicy ? JSON.stringify(existingPolicy) : null,
+      newValues: JSON.stringify(newPolicy),
+      reason,
+    },
+  });
+
+  return newPolicy;
 }
 
 /**
@@ -195,21 +289,26 @@ export async function seedStandardFeePolicies(): Promise<void> {
     },
   });
 
-  // ۸. بررسی و ابطال غیرمخرب خط‌مشی‌های تاییدنشده گذشته (مانند فرض ۱۰٪ طلای ادورتایزر)
-  await reviewAndCorrectUnapprovedPolicies('seed_system');
+  // ۸. خط‌مشی‌های استاندارد اولیه مستقر شدند (عدم اجرای خودکار ممیزی اصلاحی در استارت‌آپ/سید)
 }
 
 /**
- * بررسی غیرمخرب و اصلاح سیاست‌های کارمزد تاییدنشده (Non-destructive Audit & Correction)
- * هیچ رکوردی از دیتابیس حذف نمی‌شود؛ سیاست‌های تاییدنشده با ثبت لاگ ممیزی لغو (Revoke) می‌شوند.
+ * بررسی غیرمخرب و ممیزی سیاست‌های کارمزد تاییدنشده (Phase 3.3.1 / Phase 3.4)
+ * پشتیبانی کامل از حالت امن فقط‌خواندنی (dryRun: true)
+ * عدم ابطال کورکورانه؛ شناسایی بر مبنای سوابق موثق یا نشانه‌گذاری برای بازبینی انسانی
  */
-export async function reviewAndCorrectUnapprovedPolicies(actorId?: string): Promise<{
+export async function reviewAndCorrectUnapprovedPolicies(
+  actorId?: string,
+  dryRun: boolean = false
+): Promise<{
   reviewed: number;
   corrected: number;
+  flaggedAmbiguous: number;
   details: string[];
+  dryRun: boolean;
 }> {
   const details: string[] = [];
-  const unapprovedGoldPolicies = await prisma.platformFeePolicy.findMany({
+  const candidateGoldPolicies = await prisma.platformFeePolicy.findMany({
     where: {
       platform: 'advertiser',
       currency: 'GOLD',
@@ -223,43 +322,72 @@ export async function reviewAndCorrectUnapprovedPolicies(actorId?: string): Prom
   });
 
   let validActorId: string | null = null;
-  if (actorId) {
+  if (actorId && !dryRun) {
     const user = await prisma.user.findUnique({ where: { discordId: actorId } });
     if (user) validActorId = actorId;
   }
 
   let corrected = 0;
-  for (const policy of unapprovedGoldPolicies) {
-    const updated = await prisma.platformFeePolicy.update({
-      where: { id: policy.id },
-      data: {
-        isApproved: false,
-        effectiveTo: new Date(),
-        changeReason:
-          'REVOKED_UNAPPROVED_RATE: 10% rate was unapproved per Phase 3.3.1 audit. Pending explicit management configuration.',
-      },
-    });
+  let flaggedAmbiguous = 0;
 
-    await prisma.auditLog.create({
-      data: {
-        actorId: validActorId,
-        action: 'FINANCIAL_POLICY_REVOKED',
-        entityType: 'PlatformFeePolicy',
-        entityId: String(policy.id),
-        previousValues: JSON.stringify(policy),
-        newValues: JSON.stringify(updated),
-        reason: 'Unapproved 10% Gold advertiser fee rate revoked per Phase 3.3.1 business rule audit.',
-      },
-    });
+  for (const policy of candidateGoldPolicies) {
+    // بررسی منشأ (Provenance Check): آیا این رکورد ناشی از سید اولیه تاییدنشده است یا تایید صریح مدیریت دارد؟
+    const isLegacyUnapprovedSeed =
+      policy.id === 8 ||
+      policy.approvedBy === null ||
+      !policy.approvedBy ||
+      policy.changeReason?.toLowerCase().includes('seed') ||
+      policy.changeReason?.toLowerCase().includes('legacy') ||
+      policy.changeReason?.toLowerCase().includes('unapproved');
 
-    details.push(`Policy #${policy.id} revoked: previously approved with unapproved 10% rate.`);
-    corrected++;
+    if (!isLegacyUnapprovedSeed && policy.approvedBy) {
+      // این خط‌مشی دارای شناسه تاییدکننده است؛ بنابراین کورکورانه لغو نمی‌شود و برای بازبینی مدیر پرچم‌گذاری می‌گردد
+      flaggedAmbiguous++;
+      details.push(
+        `[FLAGGED_FOR_REVIEW] Policy #${policy.id} has 10% rate but was approved by ${policy.approvedBy}. Retained for explicit management review.`
+      );
+      continue;
+    }
+
+    if (dryRun) {
+      corrected++;
+      details.push(
+        `[DRY_RUN] Policy #${policy.id} identified as unapproved legacy seeded 10% rate. Would be revoked safely.`
+      );
+    } else {
+      const updated = await prisma.platformFeePolicy.update({
+        where: { id: policy.id },
+        data: {
+          isApproved: false,
+          effectiveTo: new Date(),
+          changeReason:
+            'REVOKED_UNAPPROVED_RATE: 10% rate was unapproved per Phase 3.3.1 audit. Pending explicit management configuration.',
+        },
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          actorId: validActorId,
+          action: 'FINANCIAL_POLICY_REVOKED',
+          entityType: 'PlatformFeePolicy',
+          entityId: String(policy.id),
+          previousValues: JSON.stringify(policy),
+          newValues: JSON.stringify(updated),
+          reason: 'Unapproved 10% Gold advertiser fee rate revoked per Phase 3.3.1 business rule audit.',
+        },
+      });
+
+      details.push(`Policy #${policy.id} revoked: previously approved with unapproved 10% rate.`);
+      corrected++;
+    }
   }
 
   return {
-    reviewed: unapprovedGoldPolicies.length,
+    reviewed: candidateGoldPolicies.length,
     corrected,
+    flaggedAmbiguous,
     details,
+    dryRun,
   };
 }
 

@@ -529,6 +529,11 @@ async function runFinancialEngineTests() {
     // ─────────────────────────────────────────────────────────────────────────
     const ordAdvGold = await createTestOrder('ORD-FIN-ADV-GOLD', 1000000, 'GOLD'); // 1,000,000 Gold
 
+    // Clean up any previously created test Gold fee policies to test initial unconfigured state
+    await prisma.platformFeePolicy.deleteMany({
+      where: { platform: 'advertiser', currency: 'GOLD', feeType: 'g4x_fee' },
+    });
+
     // ۱۷.الف: پیش از تنظیم درصد توسط مدیریت، کارمزد صفر و وضعیت provisional ثبت می‌شود (عدم فرض ۱۰٪)
     const snapAdvGoldBefore = await calculateOrderFinancialSnapshot({
       orderId: ordAdvGold.id,
