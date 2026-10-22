@@ -283,6 +283,13 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
     const customRate = advertiserId ? await getAdvertiserCommissionRate(advertiserId) : null;
     if (customRate !== null && customRate !== undefined) {
       advertiserFeeMinor = Math.round(grossSaleMinor * customRate);
+    } else if (advertiserId) {
+      if (!allowProvisional) {
+        throw new Error(
+          `MISSING_ADVERTISER_COMMISSION_RATE: Advertiser '${advertiserId}' has no authorized commission rate configured by management. Finalization blocked.`
+        );
+      }
+      snapshotNotes = 'MISSING_ADVERTISER_COMMISSION_RATE: Advertiser-specific commission rate has not been configured by authorized management.';
     }
 
     if (currency.toUpperCase() === 'GOLD') {
@@ -449,9 +456,10 @@ export async function createAndReconcileWithdrawalBatch(input: ReconcileWithdraw
   if (platform === 'skycoach') {
     // طبق تصمیم نهایی مالک: کارمزد ۱۰٪ در سطح سفارش شناسایی شده است.
     // کارمزد دسته صفر منظور می‌شود تا کارمزد ۱۰٪ مجدداً کسر نشود و کارمزد ۵ دلاری نیز کسر نگردد.
-    // کارمزد انتقال $0.30 تنها در صورت وقوع تراکنش انتقال خارجی منظور می‌شود.
+    // هزینه انتقال شبکه برون‌سیستمی (BNB $0.30 طبق خط‌مشی مصوب) به عنوان هزینه مجزا در سطح دسته محاسبه می‌شود.
     calculatedBatchFee = 0;
-    calculatedTransferFee = 30; // $0.30 هزینه انتقال BNB در صورت شمول
+    const skyTransferPolicy = await getFeePolicy({ platform: 'skycoach', feeType: 'transfer_fee' });
+    calculatedTransferFee = skyTransferPolicy?.fixedMinor ?? 30;
   } else if (platform === 'g2g') {
     // 3.99% + $0.99 برای دسته
     calculatedBatchFee = Math.round(totalContributionsMinor * 0.0399) + 99;
@@ -639,6 +647,25 @@ export async function finalizeOrderFinancialsAndBoosterAllocation(input: Finaliz
       throw new Error(
         'MISSING_SHARED_GOLD_FEE_RATE: Shared advertiser Gold G4X fee policy has not been configured by management. Finalization blocked.'
       );
+    }
+  }
+
+  if (snapshot.sourcePlatform === 'advertiser') {
+    if (snapshot.notes?.includes('MISSING_ADVERTISER_COMMISSION_RATE')) {
+      throw new Error(
+        'MISSING_ADVERTISER_COMMISSION_RATE: Cannot finalize advertiser order without an approved advertiser commission rate'
+      );
+    }
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+    });
+    if (order?.customerId) {
+      const advRate = await getAdvertiserCommissionRate(order.customerId);
+      if (advRate === null || advRate === undefined) {
+        throw new Error(
+          'MISSING_ADVERTISER_COMMISSION_RATE: Advertiser commission rate must be configured per advertiser by authorized management'
+        );
+      }
     }
   }
 

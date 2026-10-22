@@ -30,8 +30,14 @@ import {
   AdvertiserFundingStatus,
   GoldExchangeTradeStatus,
   LedgerV2EntryType,
+  LedgerV2Direction,
+  LedgerV2AccountType,
 } from './financeV2Types';
-import { creditAvailableCents } from './financeV2WalletService';
+import {
+  creditAvailableCents,
+  assertLiveCreditsEnabled,
+  recordBalancedJournalPosting,
+} from './financeV2WalletService';
 
 export interface DirectUsdtFundingInput {
   advertiserId: string;
@@ -46,7 +52,7 @@ export interface DirectUsdtFundingInput {
 export interface IrtFundingQuote {
   targetUsdCents: number;
   adminUsdIrtRate: number; // نرخ دلار به تومان تعیین‌شده توسط ادمین
-  currencyPurchaseFeeRate: number; // درصد کارمزد خرید ارز (مثلا 0.05 برای ۵٪)
+  currencyPurchaseFeeRate: number; // درصد کارمزد خرید ارز مصوب مدیریت
   baseIrtUnits: number; // مبلغ پایه به تومان
   feeIrtUnits: number; // کارمزد به تومان
   totalIrtPayable: number; // کل مبلغ تومانی قابل پرداخت توسط ادورتایزر
@@ -73,19 +79,25 @@ export interface GoldExchangeFundingInput {
 
 /**
  * ۱. استعلام پیش‌فاکتور محاسبه شارژ تومانی با اعمال دقیق کارمزد خرید ارز
+ * قانون قطعی: نرخ کارمزد خرید ارز پیش‌فرض ۵٪ ندارد و باید صراحتاً توسط مدیریت تصویب و ارسال شود.
  */
 export function calculateIrtFundingQuote(
   targetUsdCents: number,
   adminUsdIrtRate: number,
-  currencyPurchaseFeeRate: number = 0.05
+  currencyPurchaseFeeRate?: number | null
 ): IrtFundingQuote {
-  if (targetUsdCents <= 0) {
-    throw new Error('INVALID_TARGET_AMOUNT: Target USD cents must be greater than zero');
+  if (currencyPurchaseFeeRate === undefined || currencyPurchaseFeeRate === null) {
+    throw new Error(
+      'MISSING_CURRENCY_PURCHASE_FEE_RATE: Advertiser IRT currency-purchase fee rate must be explicitly approved and configured by authorized management (no defaults permitted)'
+    );
   }
-  if (adminUsdIrtRate <= 0) {
+  if (!Number.isSafeInteger(targetUsdCents) || targetUsdCents <= 0) {
+    throw new Error('INVALID_TARGET_AMOUNT: Target USD cents must be a positive safe integer');
+  }
+  if (!Number.isFinite(adminUsdIrtRate) || adminUsdIrtRate <= 0) {
     throw new Error('INVALID_EXCHANGE_RATE: Admin USD/IRT rate must be greater than zero');
   }
-  if (currencyPurchaseFeeRate < 0 || currencyPurchaseFeeRate >= 1) {
+  if (!Number.isFinite(currencyPurchaseFeeRate) || currencyPurchaseFeeRate < 0 || currencyPurchaseFeeRate >= 1) {
     throw new Error('INVALID_FEE_RATE: Currency purchase fee rate must be between 0 and 1');
   }
 
@@ -118,11 +130,32 @@ export async function submitDirectUsdtFunding(input: DirectUsdtFundingInput) {
     adminNotes,
   } = input;
 
-  if (targetUsdCents <= 0) {
-    throw new Error('INVALID_AMOUNT: Target USD cents must be greater than zero');
+  if (!Number.isSafeInteger(targetUsdCents) || targetUsdCents <= 0) {
+    throw new Error('INVALID_AMOUNT: Target USD cents must be a positive safe integer');
   }
   if (!evidenceRef || evidenceRef.trim().length < 6) {
     throw new Error('INVALID_EVIDENCE: Valid blockchain transaction hash or evidence reference is required');
+  }
+
+  const trimmedEvidence = evidenceRef.trim();
+
+  // جلوگیری از ثبت مدارک واریز تکراری (Duplicate deposit evidence rejection)
+  const existingEvidence = await prisma.advertiserFundingRequest.findFirst({
+    where: {
+      evidenceRef: trimmedEvidence,
+      status: {
+        in: [
+          AdvertiserFundingStatus.PENDING_ADMIN_VERIFICATION,
+          AdvertiserFundingStatus.CONFIRMED_CREDITED,
+        ],
+      },
+    },
+  });
+
+  if (existingEvidence) {
+    throw new Error(
+      `DUPLICATE_DEPOSIT_EVIDENCE: Deposit evidence '${trimmedEvidence}' has already been submitted for funding request #${existingEvidence.id}`
+    );
   }
 
   const fundingRef = `FUND_USDT_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
@@ -140,7 +173,7 @@ export async function submitDirectUsdtFunding(input: DirectUsdtFundingInput) {
       exchangeRate: 1.0, // نسبت مبنای ۱ تتر = ۱ دلار
       currencyPurchaseFeeRate: 0,
       feeAmountUnits: '0',
-      evidenceRef,
+      evidenceRef: trimmedEvidence,
       payerIdentifier,
       adminNotes,
     },
@@ -157,6 +190,8 @@ export async function adminVerifyAndCreditUsdtFunding(
   actorId: string,
   adminNotes?: string
 ) {
+  assertLiveCreditsEnabled();
+
   const auth = await authorize(actorId, Permission.FINANCE_ADJUST);
   if (!auth.allowed) {
     throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions to verify funding'}`);
@@ -191,26 +226,56 @@ export async function adminVerifyAndCreditUsdtFunding(
       },
     });
 
-    // ۲. شارژ معادل سنتی به موجودی در دسترس والت ادورتایزر
-    const walletResult = await creditAvailableCents(
-      fundingRequest.advertiserId,
-      fundingRequest.targetUsdCents,
-      LedgerV2EntryType.ADVERTISER_DEPOSIT,
+    const postingGroupId = `POSTING_GRP_USDT_DEP_${fundingRequest.fundingRef}`;
+
+    // ۲. ثبت سند متعادل دوطرفه (Double-Entry Balanced Journal Posting)
+    // بستانکار: تعهد کیف‌پول کاربر | بدهکار: دارایی حساب تسویه خارجی تتر
+    await recordBalancedJournalPosting(
       {
-        entryRef: `LEDGER_DEP_USDT_${fundingRequest.fundingRef}`,
-        fundingRequestId: fundingRequest.id,
-        description: `Advertiser USDT deposit confirmed by admin (${fundingRequest.targetUsdCents} cents)`,
-        metadata: {
-          fundingRef: fundingRequest.fundingRef,
-          externalAmountUnits: fundingRequest.externalAmountUnits,
-          evidenceRef: fundingRequest.evidenceRef,
-          network: fundingRequest.network,
-          actorId,
-        },
-        createdBy: actorId,
+        postingGroupId,
+        referenceType: 'AdvertiserFundingRequest',
+        referenceId: fundingRequest.id,
+        legs: [
+          {
+            amountCents: fundingRequest.targetUsdCents,
+            direction: LedgerV2Direction.DEBIT,
+            accountType: LedgerV2AccountType.ASSET_EXTERNAL_USDT_CLEARING,
+            entryType: LedgerV2EntryType.ADVERTISER_DEPOSIT,
+            fundingRequestId: fundingRequest.id,
+            description: `External USDT asset clearing for funding #${fundingRequest.id}`,
+            createdBy: actorId,
+          },
+          {
+            userId: fundingRequest.advertiserId,
+            amountCents: fundingRequest.targetUsdCents,
+            direction: LedgerV2Direction.CREDIT,
+            accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
+            entryType: LedgerV2EntryType.ADVERTISER_DEPOSIT,
+            fundingRequestId: fundingRequest.id,
+            description: `Advertiser USDT deposit confirmed by admin (${fundingRequest.targetUsdCents} cents)`,
+            createdBy: actorId,
+            metadata: {
+              fundingRef: fundingRequest.fundingRef,
+              externalAmountUnits: fundingRequest.externalAmountUnits,
+              evidenceRef: fundingRequest.evidenceRef,
+              network: fundingRequest.network,
+              actorId,
+            },
+          },
+        ],
       },
       tx
     );
+
+    // به‌روزرسانی مانده والت
+    const wallet = await tx.walletV2.findUnique({
+      where: { userId: fundingRequest.advertiserId },
+    });
+    const newAvailable = (wallet?.availableCents ?? 0) + fundingRequest.targetUsdCents;
+    const updatedWallet = await tx.walletV2.update({
+      where: { userId: fundingRequest.advertiserId },
+      data: { availableCents: newAvailable },
+    });
 
     // ۳. ثبت لاگ ممیزی
     await tx.auditLog.create({
@@ -223,11 +288,12 @@ export async function adminVerifyAndCreditUsdtFunding(
           fundingRef: fundingRequest.fundingRef,
           targetUsdCents: fundingRequest.targetUsdCents,
           advertiserId: fundingRequest.advertiserId,
+          postingGroupId,
         }),
       },
     });
 
-    return { request: updatedRequest, wallet: walletResult.wallet };
+    return { request: updatedRequest, wallet: updatedWallet };
   });
 }
 
@@ -239,16 +305,54 @@ export async function submitDirectIrtFunding(input: DirectIrtFundingInput) {
     advertiserId,
     targetUsdCents,
     adminUsdIrtRate,
-    currencyPurchaseFeeRate = 0.05,
     evidenceRef,
     payerIdentifier,
     adminNotes,
   } = input;
 
-  const quote = calculateIrtFundingQuote(targetUsdCents, adminUsdIrtRate, currencyPurchaseFeeRate);
+  let feeRate = input.currencyPurchaseFeeRate;
+
+  // در صورت عدم ارسال نرخ، بررسی تنظیمات مصوب مدیریت در دیتابیس
+  if (feeRate === undefined || feeRate === null) {
+    const config = await prisma.systemFinancialConfig.findUnique({
+      where: { key: 'advertiser_irt_purchase_fee_rate' },
+    });
+    if (!config || !config.value) {
+      throw new Error(
+        'MISSING_CURRENCY_PURCHASE_FEE_RATE: Advertiser IRT currency-purchase fee rate is not configured. Missing required rate blocks financial quote approval and request creation'
+      );
+    }
+    feeRate = Number(config.value);
+    if (isNaN(feeRate) || feeRate < 0 || feeRate >= 1) {
+      throw new Error(`INVALID_CONFIGURED_FEE_RATE: Configured rate '${config.value}' is invalid`);
+    }
+  }
+
+  const quote = calculateIrtFundingQuote(targetUsdCents, adminUsdIrtRate, feeRate);
 
   if (!evidenceRef || evidenceRef.trim().length < 4) {
     throw new Error('INVALID_EVIDENCE: Bank transaction tracking reference is required');
+  }
+
+  const trimmedEvidence = evidenceRef.trim();
+
+  // جلوگیری از ثبت مدارک واریز تکراری تومانی (Duplicate deposit evidence rejection)
+  const existingEvidence = await prisma.advertiserFundingRequest.findFirst({
+    where: {
+      evidenceRef: trimmedEvidence,
+      status: {
+        in: [
+          AdvertiserFundingStatus.PENDING_ADMIN_VERIFICATION,
+          AdvertiserFundingStatus.CONFIRMED_CREDITED,
+        ],
+      },
+    },
+  });
+
+  if (existingEvidence) {
+    throw new Error(
+      `DUPLICATE_DEPOSIT_EVIDENCE: Deposit evidence '${trimmedEvidence}' has already been submitted for funding request #${existingEvidence.id}`
+    );
   }
 
   const fundingRef = `FUND_IRT_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
@@ -263,9 +367,9 @@ export async function submitDirectIrtFunding(input: DirectIrtFundingInput) {
       externalCurrency: 'IRT',
       externalAmountUnits: String(quote.totalIrtPayable),
       exchangeRate: adminUsdIrtRate,
-      currencyPurchaseFeeRate,
+      currencyPurchaseFeeRate: feeRate,
       feeAmountUnits: String(quote.feeIrtUnits),
-      evidenceRef,
+      evidenceRef: trimmedEvidence,
       payerIdentifier,
       adminNotes,
     },
@@ -282,6 +386,8 @@ export async function adminVerifyAndCreditIrtFunding(
   actorId: string,
   adminNotes?: string
 ) {
+  assertLiveCreditsEnabled();
+
   const auth = await authorize(actorId, Permission.FINANCE_ADJUST);
   if (!auth.allowed) {
     throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions to verify funding'}`);
@@ -315,26 +421,56 @@ export async function adminVerifyAndCreditIrtFunding(
       },
     });
 
-    const walletResult = await creditAvailableCents(
-      fundingRequest.advertiserId,
-      fundingRequest.targetUsdCents,
-      LedgerV2EntryType.ADVERTISER_DEPOSIT,
+    const postingGroupId = `POSTING_GRP_IRT_DEP_${fundingRequest.fundingRef}`;
+
+    // سند حسابداری متعادل دوطرفه برای شارژ تومانی
+    await recordBalancedJournalPosting(
       {
-        entryRef: `LEDGER_DEP_IRT_${fundingRequest.fundingRef}`,
-        fundingRequestId: fundingRequest.id,
-        description: `Advertiser IRT deposit confirmed by admin (${fundingRequest.targetUsdCents} cents)`,
-        metadata: {
-          fundingRef: fundingRequest.fundingRef,
-          totalIrtPaid: fundingRequest.externalAmountUnits,
-          exchangeRate: fundingRequest.exchangeRate,
-          currencyPurchaseFeeRate: fundingRequest.currencyPurchaseFeeRate,
-          evidenceRef: fundingRequest.evidenceRef,
-          actorId,
-        },
-        createdBy: actorId,
+        postingGroupId,
+        referenceType: 'AdvertiserFundingRequest',
+        referenceId: fundingRequest.id,
+        legs: [
+          {
+            amountCents: fundingRequest.targetUsdCents,
+            direction: LedgerV2Direction.DEBIT,
+            accountType: LedgerV2AccountType.ASSET_EXTERNAL_BANK_CLEARING,
+            entryType: LedgerV2EntryType.ADVERTISER_DEPOSIT,
+            fundingRequestId: fundingRequest.id,
+            description: `External bank asset clearing for IRT funding #${fundingRequest.id}`,
+            createdBy: actorId,
+          },
+          {
+            userId: fundingRequest.advertiserId,
+            amountCents: fundingRequest.targetUsdCents,
+            direction: LedgerV2Direction.CREDIT,
+            accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
+            entryType: LedgerV2EntryType.ADVERTISER_DEPOSIT,
+            fundingRequestId: fundingRequest.id,
+            description: `Advertiser IRT deposit confirmed by admin (${fundingRequest.targetUsdCents} cents)`,
+            createdBy: actorId,
+            metadata: {
+              fundingRef: fundingRequest.fundingRef,
+              totalIrtPaid: fundingRequest.externalAmountUnits,
+              exchangeRate: fundingRequest.exchangeRate,
+              currencyPurchaseFeeRate: fundingRequest.currencyPurchaseFeeRate,
+              evidenceRef: fundingRequest.evidenceRef,
+              actorId,
+            },
+          },
+        ],
       },
       tx
     );
+
+    // به‌روزرسانی مانده والت
+    const wallet = await tx.walletV2.findUnique({
+      where: { userId: fundingRequest.advertiserId },
+    });
+    const newAvailable = (wallet?.availableCents ?? 0) + fundingRequest.targetUsdCents;
+    const updatedWallet = await tx.walletV2.update({
+      where: { userId: fundingRequest.advertiserId },
+      data: { availableCents: newAvailable },
+    });
 
     await tx.auditLog.create({
       data: {
@@ -347,11 +483,12 @@ export async function adminVerifyAndCreditIrtFunding(
           targetUsdCents: fundingRequest.targetUsdCents,
           totalIrtUnits: fundingRequest.externalAmountUnits,
           exchangeRate: fundingRequest.exchangeRate,
+          postingGroupId,
         }),
       },
     });
 
-    return { request: updatedRequest, wallet: walletResult.wallet };
+    return { request: updatedRequest, wallet: updatedWallet };
   });
 }
 
@@ -359,7 +496,10 @@ export async function adminVerifyAndCreditIrtFunding(
  * ۶. ایجاد سفارش گردش‌کار مبادله طلا برای شارژ ادورتایزر (Gold Exchange Funding Workflow)
  * قید اکید: ایجاد سفارش با وضعیت تاییدنشده و مسدودی شارژ والت
  */
-export async function createGoldExchangeFundingWorkflow(input: GoldExchangeFundingInput) {
+export async function createGoldExchangeFundingWorkflow(
+  input: GoldExchangeFundingInput,
+  actorId?: string
+) {
   const {
     advertiserId,
     exchangerId,
@@ -369,8 +509,43 @@ export async function createGoldExchangeFundingWorkflow(input: GoldExchangeFundi
     externalPaymentAmount,
   } = input;
 
-  if (goldQuantity <= 0) {
-    throw new Error('INVALID_GOLD_QUANTITY: Gold quantity must be greater than zero');
+  // احراز هویت متقاضی یا مدیر مالی
+  if (actorId && actorId !== advertiserId) {
+    const auth = await authorize(actorId, Permission.FINANCE_ADJUST);
+    if (!auth.allowed) {
+      throw new Error(`UNAUTHORIZED: Applicant does not own the funding request and lacks finance permission`);
+    }
+  }
+
+  // جلوگیری از خودصرافی (Advertiser cannot be their own Exchanger)
+  if (advertiserId === exchangerId) {
+    throw new Error('SELF_EXCHANGE_FORBIDDEN: Advertiser cannot act as the exchanger on their own trade');
+  }
+
+  // اعتبارسنجی وجود صراف و ادورتایزر در دیتابیس و بررسی نقش مصوب صراف
+  const [advertiser, exchanger] = await Promise.all([
+    prisma.user.findUnique({ where: { discordId: advertiserId } }),
+    prisma.user.findUnique({
+      where: { discordId: exchangerId },
+      include: { userRoles: true },
+    }),
+  ]);
+
+  if (!advertiser || !advertiser.isActive) {
+    throw new Error(`ADVERTISER_NOT_FOUND: Advertiser '${advertiserId}' does not exist or is inactive`);
+  }
+  if (
+    !exchanger ||
+    !exchanger.isActive ||
+    !exchanger.userRoles.some((r) => r.roleKey === 'exchanger' || r.roleKey === 'owner')
+  ) {
+    throw new Error(
+      `INVALID_OR_INACTIVE_EXCHANGER: Exchanger '${exchangerId}' is not an active approved exchanger`
+    );
+  }
+
+  if (!Number.isSafeInteger(goldQuantity) || goldQuantity <= 0) {
+    throw new Error('INVALID_GOLD_QUANTITY: Gold quantity must be a positive safe integer');
   }
 
   const fundingRef = `FUND_GOLD_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
@@ -419,13 +594,82 @@ export async function recordInGameGoldTradeCompletion(
   actorId: string,
   tradeEvidenceRef: string
 ) {
+  const trade = await prisma.goldExchangeTradeOrder.findUnique({
+    where: { id: tradeId },
+  });
+
+  if (!trade) {
+    throw new Error(`TRADE_NOT_FOUND: Gold exchange trade #${tradeId} does not exist`);
+  }
+
+  if (trade.status !== GoldExchangeTradeStatus.TRADE_PENDING) {
+    throw new Error(
+      `INVALID_TRADE_STATUS: Cannot record in-game completion for trade in status '${trade.status}' (expected TRADE_PENDING)`
+    );
+  }
+
+  if (!tradeEvidenceRef || tradeEvidenceRef.trim().length < 6) {
+    throw new Error('INVALID_TRADE_EVIDENCE: Valid in-game trade evidence reference is required');
+  }
+
+  // بررسی دسترسی طرفین یا استف
+  if (actorId !== trade.advertiserId && actorId !== trade.exchangerId) {
+    const auth = await authorize(actorId, Permission.PROOF_REVIEW);
+    if (!auth.allowed) {
+      throw new Error('UNAUTHORIZED_TRADE_ACTOR: Only participating advertiser, exchanger, or staff may record trade completion');
+    }
+  }
+
   return await prisma.goldExchangeTradeOrder.update({
     where: { id: tradeId },
     data: {
       status: GoldExchangeTradeStatus.TRADE_COMPLETED_IN_GAME,
-      tradeEvidenceRef,
+      tradeEvidenceRef: tradeEvidenceRef.trim(),
       verifiedBy: actorId,
       verifiedAt: new Date(),
+    },
+  });
+}
+
+/**
+ * ۷.ب. بررسی و تایید مستقل مدارک تبادل طلا توسط ناظر (Staff Independent Verification)
+ */
+export async function verifyInGameGoldTrade(
+  tradeId: number,
+  verifierId: string,
+  notes?: string
+) {
+  const trade = await prisma.goldExchangeTradeOrder.findUnique({
+    where: { id: tradeId },
+  });
+
+  if (!trade) {
+    throw new Error(`TRADE_NOT_FOUND: Gold exchange trade #${tradeId} does not exist`);
+  }
+
+  if (trade.status !== GoldExchangeTradeStatus.TRADE_COMPLETED_IN_GAME) {
+    throw new Error(
+      `INVALID_TRADE_STATUS: Cannot verify trade in status '${trade.status}' (expected TRADE_COMPLETED_IN_GAME)`
+    );
+  }
+
+  // شرط استقلال ناظر: طرفین معامله حق تایید خود را ندارند (No self-verification)
+  if (verifierId === trade.advertiserId || verifierId === trade.exchangerId) {
+    throw new Error('SELF_VERIFICATION_FORBIDDEN: Advertiser or exchanger cannot verify their own trade completion');
+  }
+
+  const auth = await authorize(verifierId, Permission.PROOF_REVIEW);
+  if (!auth.allowed) {
+    throw new Error(`UNAUTHORIZED: ${auth.reason || 'Insufficient permissions to verify trade evidence'}`);
+  }
+
+  return await prisma.goldExchangeTradeOrder.update({
+    where: { id: tradeId },
+    data: {
+      status: GoldExchangeTradeStatus.TRADE_VERIFIED,
+      verifiedBy: verifierId,
+      verifiedAt: new Date(),
+      rejectionReason: notes ? `Notes: ${notes}` : undefined,
     },
   });
 }
@@ -438,11 +682,49 @@ export async function confirmExternalGoldTradePayment(
   actorId: string,
   externalPaymentRef: string
 ) {
+  const trade = await prisma.goldExchangeTradeOrder.findUnique({
+    where: { id: tradeId },
+  });
+
+  if (!trade) {
+    throw new Error(`TRADE_NOT_FOUND: Gold exchange trade #${tradeId} does not exist`);
+  }
+
+  if (
+    trade.status === GoldExchangeTradeStatus.PAYMENT_CONFIRMED ||
+    trade.status === GoldExchangeTradeStatus.RECONCILED
+  ) {
+    throw new Error('DUPLICATE_PAYMENT_CONFIRMATION: External payment for this trade has already been confirmed');
+  }
+
+  if (
+    trade.status !== GoldExchangeTradeStatus.TRADE_COMPLETED_IN_GAME &&
+    trade.status !== GoldExchangeTradeStatus.TRADE_VERIFIED
+  ) {
+    throw new Error(
+      `INVALID_TRADE_STATUS: Cannot confirm payment for trade in status '${trade.status}' (expected TRADE_COMPLETED_IN_GAME or TRADE_VERIFIED)`
+    );
+  }
+
+  // عدم امکان خودتاییدی پرداخت توسط ادورتایزر یا صراف (الزام استقلال بررسی)
+  if (actorId === trade.advertiserId || actorId === trade.exchangerId) {
+    throw new Error('SELF_REVIEW_NOT_PERMITTED: Self-verification not permitted. Independent review required to confirm external payment');
+  }
+
+  const auth = await authorize(actorId, Permission.FINANCE_ADJUST);
+  if (!auth.allowed) {
+    throw new Error(`UNAUTHORIZED: ${auth.reason || 'Insufficient permissions to confirm external trade payment'}`);
+  }
+
+  if (!externalPaymentRef || externalPaymentRef.trim().length < 6) {
+    throw new Error('INVALID_PAYMENT_REF: Valid payment reference or bank tracking code is required');
+  }
+
   return await prisma.goldExchangeTradeOrder.update({
     where: { id: tradeId },
     data: {
       status: GoldExchangeTradeStatus.PAYMENT_CONFIRMED,
-      externalPaymentRef,
+      externalPaymentRef: externalPaymentRef.trim(),
       externalPaymentConfirmedAt: new Date(),
     },
   });

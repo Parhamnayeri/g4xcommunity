@@ -72,8 +72,36 @@ export async function getOrCreateG4XBoostReleaseTracker(orderId: number) {
 /**
  * ۲. ثبت ارسال شواهد و اسکرین‌شات اتمام ران (PROOF_SUBMITTED)
  */
-export async function recordProofSubmitted(orderId: number) {
+export async function recordProofSubmitted(orderId: number, actorId?: string) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      runs: {
+        where: { status: 'completed' },
+      },
+    },
+  });
+
+  if (!order) {
+    throw new Error(`ORDER_NOT_FOUND: Order #${orderId} does not exist`);
+  }
+
+  if (order.creatorType !== 'g4x') {
+    throw new Error(
+      `NOT_G4X_PUBLISHED_BOOST: Order creator type is '${order.creatorType}'. The 24-hour hold policy applies strictly to G4X-published boosts.`
+    );
+  }
+
+  if (!order.runs || order.runs.length === 0) {
+    throw new Error('NO_COMPLETED_RUNS: Cannot submit proof for an order with no completed runs');
+  }
+
   const tracker = await getOrCreateG4XBoostReleaseTracker(orderId);
+
+  // بررسی وضعیت‌های قبلی — جلوگیری از بازگشت پس از تایید نهایی بدون ممیزی
+  if (tracker.stage === G4XBoostReleaseStage.HOLD_24_HOURS || tracker.stage === G4XBoostReleaseStage.AVAILABLE) {
+    throw new Error(`INVALID_STAGE_TRANSITION: Cannot resubmit proof when order is already in '${tracker.stage}'`);
+  }
 
   return await prisma.g4XBoostReleaseTracker.update({
     where: { id: tracker.id },
@@ -97,7 +125,28 @@ export async function recordStaffReview(
     throw new Error(`UNAUTHORIZED: ${auth.reason || 'Insufficient permissions to review proof'}`);
   }
 
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+  });
+
+  if (!order) {
+    throw new Error(`ORDER_NOT_FOUND: Order #${orderId} does not exist`);
+  }
+
+  if (order.creatorType !== 'g4x') {
+    throw new Error(
+      `NOT_G4X_PUBLISHED_BOOST: Order creator type is '${order.creatorType}'. The 24-hour hold policy applies strictly to G4X-published boosts.`
+    );
+  }
+
   const tracker = await getOrCreateG4XBoostReleaseTracker(orderId);
+
+  // عدم امکان پرش از روی مرحله ثبت مدارک (Cannot skip PROOF_SUBMITTED stage)
+  if (!tracker.proofSubmittedAt && tracker.stage === G4XBoostReleaseStage.RUN_COMPLETED) {
+    throw new Error(
+      'INVALID_STAGE_TRANSITION: Cannot conduct staff review before valid proof record is submitted (expected PROOF_SUBMITTED)'
+    );
+  }
 
   return await prisma.g4XBoostReleaseTracker.update({
     where: { id: tracker.id },
@@ -112,7 +161,14 @@ export async function recordStaffReview(
 
 /**
  * ۴. تایید نهایی و حاکمیتی ادمین و آغاز رسمی دوره هولد ۲۴ ساعته (ADMIN_FINAL_APPROVED -> HOLD_24_HOURS)
- * آغاز دقیق شمارش معکوس ۲۴ ساعت از این تایم‌استمپ موثق
+ * الزامات قطعی امنیت و استیت ماشین:
+ *  - احراز هویت و دسترسی ادمین مالی
+ *  - تعلق انحصاری سفارش به گردش‌کار بوست‌های منتشرشده G4X (creatorType === 'g4x')
+ *  - اتمام واقعی ران‌ها
+ *  - ثبت معتبر مدارک (proofSubmittedAt)
+ *  - انجام و ثبت معتبر بررسی توسط استف (staffReviewedAt)
+ *  - جلوگیری اکید از پرش مستقیم به تایید نهایی
+ *  - رد درخواست‌های تکراری و جلوگیری از ری‌استارت تصادفی ساعت ۲۴ ساعته هولد
  */
 export async function recordAdminFinalApproval(
   orderId: number,
@@ -124,7 +180,65 @@ export async function recordAdminFinalApproval(
     throw new Error(`UNAUTHORIZED: ${auth.reason || 'Insufficient permissions for final order approval'}`);
   }
 
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      runs: {
+        where: { status: 'completed' },
+      },
+      disputes: {
+        where: { status: { in: ['open', 'under_review', 'waiting_for_evidence'] } },
+      },
+      escrowHolds: {
+        where: { status: 'active' },
+      },
+    },
+  });
+
+  if (!order) {
+    throw new Error(`ORDER_NOT_FOUND: Order #${orderId} does not exist`);
+  }
+
+  // ۱. بررسی انحصاری بودن خط‌مشی برای بوست‌های منتشره G4X
+  if (order.creatorType !== 'g4x') {
+    throw new Error(
+      `NOT_G4X_PUBLISHED_BOOST: Order creator type is '${order.creatorType}'. The 24-hour hold policy applies strictly to G4X-published boosts.`
+    );
+  }
+
+  // ۲. بررسی اتمام واقعی ران‌ها
+  if (!order.runs || order.runs.length === 0) {
+    throw new Error('NO_COMPLETED_RUNS: Cannot grant Admin Final Approval for order with no completed runs');
+  }
+
+  // ۳. بررسی عدم وجود اختلاف یا توقیف فعال
+  if (order.disputes && order.disputes.length > 0) {
+    throw new Error(`ACTIVE_DISPUTE: Cannot grant Admin Final Approval while order has ${order.disputes.length} active dispute(s)`);
+  }
+  if (order.escrowHolds && order.escrowHolds.length > 0) {
+    throw new Error(`ACTIVE_ESCROW_HOLD: Cannot grant Admin Final Approval while order has ${order.escrowHolds.length} active escrow hold(s)`);
+  }
+
   const tracker = await getOrCreateG4XBoostReleaseTracker(orderId);
+
+  // ۴. جلوگیری از تایید تکراری و راه‌اندازی مجدد ساعت ۲۴ ساعته (Duplicate Approval Clock-Restart Guard)
+  if (
+    tracker.adminFinalApprovedAt !== null ||
+    tracker.stage === G4XBoostReleaseStage.HOLD_24_HOURS ||
+    tracker.stage === G4XBoostReleaseStage.ELIGIBLE_FOR_RELEASE ||
+    tracker.stage === G4XBoostReleaseStage.AVAILABLE
+  ) {
+    throw new Error(
+      'ALREADY_FINAL_APPROVED: Order has already received Admin Final Approval. 24-hour clock cannot be restarted without an audited reopening process.'
+    );
+  }
+
+  // ۵. جلوگیری اکید از پرش از روی مراحل بررسی مدارک و استف (No skipping to ADMIN_FINAL_APPROVED)
+  if (!tracker.proofSubmittedAt || !tracker.staffReviewedAt || tracker.stage !== G4XBoostReleaseStage.STAFF_REVIEW) {
+    throw new Error(
+      `INVALID_STAGE_TRANSITION: Cannot grant final approval before proof submission and staff review stages are completed (Current stage: ${tracker.stage})`
+    );
+  }
 
   const approvedAt = new Date();
   const holdHours = tracker.holdDurationHours || FINANCE_V2_CONSTANTS.G4X_BOOST_HOLD_HOURS;
@@ -238,7 +352,7 @@ export async function evaluateG4XReleaseEligibility(
   // شرط ۳: وصول و تسویه قطعی وجوه
   let isFundsReconciled = false;
   if (order.sourceType === 'internal') {
-    isFundsReconciled = order.paymentStatus === 'verified' || order.paymentStatus === 'unneeded';
+    isFundsReconciled = order.paymentStatus === 'verified' || order.paymentStatus === 'paid';
   } else {
     // پلتفرم‌های خارجی نیازمند تسویه دسته برداشت هستند
     isFundsReconciled = order.financialSnapshot?.calculationStatus === 'reconciled' ||
@@ -246,7 +360,7 @@ export async function evaluateG4XReleaseEligibility(
   }
 
   if (!isFundsReconciled) {
-    reasons.push('UNRECONCILED_FUNDS: Order funds have not been reconciled via external platform receipt');
+    reasons.push('UNRECONCILED_FUNDS: Order funds have not been reconciled via actual verified receipt');
   }
 
   // شرط ۴: نهایی‌سازی محاسبات مالی
@@ -292,9 +406,22 @@ export async function evaluateG4XReleaseEligibility(
 
 /**
  * ۶. تلاش برای آزادسازی نهایی موجودی به والت در دسترس (Release Execution)
- * قید غیرقابل دورزدن: منوط به ESCROW_RELEASE_ENABLED=true در متغیرهای محیطی
+ * قید غیرقابل دورزدن: احراز هویت، Idempotency، و قفل fail-closed منوط به ESCROW_RELEASE_ENABLED=true
  */
 export async function executeG4XBoostRelease(orderId: number, actorId: string) {
+  const auth = await authorize(actorId, Permission.ORDER_FINAL_APPROVE);
+  if (!auth.allowed) {
+    throw new Error(`UNAUTHORIZED: ${auth.reason || 'Insufficient permissions to execute boost release'}`);
+  }
+
+  const tracker = await prisma.g4XBoostReleaseTracker.findUnique({
+    where: { orderId },
+  });
+
+  if (tracker?.isReleased || tracker?.stage === G4XBoostReleaseStage.AVAILABLE) {
+    throw new Error(`ALREADY_RELEASED: Order #${orderId} boost earnings have already been released`);
+  }
+
   const evalResult = await evaluateG4XReleaseEligibility(orderId);
 
   if (!evalResult.eligible) {

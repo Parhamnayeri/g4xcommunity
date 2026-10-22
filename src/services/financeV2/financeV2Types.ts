@@ -38,6 +38,60 @@ export enum LedgerV2Direction {
   DEBIT = 'DEBIT',
 }
 
+export enum LedgerV2AccountType {
+  USER_WALLET = 'USER_WALLET',
+  LIABILITY_USER_WALLET_AVAILABLE = 'LIABILITY_USER_WALLET_AVAILABLE',
+  LIABILITY_USER_WALLET_RESERVED = 'LIABILITY_USER_WALLET_RESERVED',
+  LIABILITY_USER_WALLET_CONFIRMED = 'LIABILITY_USER_WALLET_CONFIRMED',
+  LIABILITY_USER_WALLET_PENDING = 'LIABILITY_USER_WALLET_PENDING',
+  ASSET_EXTERNAL_USDT_CLEARING = 'ASSET_EXTERNAL_USDT_CLEARING',
+  ASSET_EXTERNAL_BANK_CLEARING = 'ASSET_EXTERNAL_BANK_CLEARING',
+  REVENUE_PLATFORM_FEE = 'REVENUE_PLATFORM_FEE',
+  EXPENSE_NETWORK_TRANSFER = 'EXPENSE_NETWORK_TRANSFER',
+}
+
+export const FINANCE_V2_FEATURE_GATES = {
+  ESCROW_RELEASE_ENABLED: false,
+  FINANCE_V2_LIVE_CREDITS_ENABLED: false,
+  FINANCE_V2_LIVE_PAYOUTS_ENABLED: false,
+} as const;
+
+export interface BalancedJournalLeg {
+  walletId?: string | null;
+  userId?: string | null;
+  entryRef?: string;
+  entryType: LedgerV2EntryType;
+  direction: LedgerV2Direction;
+  amountCents: number;
+  accountType: LedgerV2AccountType;
+  orderId?: number | null;
+  fundingRequestId?: number | null;
+  withdrawalRequestId?: number | null;
+  reversalOfEntryRef?: string | null;
+  idempotencyKey?: string | null;
+  description?: string | null;
+  metadata?: Record<string, any> | null;
+  createdBy?: string | null;
+}
+
+export interface BalancedJournalPosting {
+  postingGroupId: string;
+  idempotencyKey?: string | null;
+  referenceType?: string | null;
+  referenceId?: string | number | null;
+  description?: string | null;
+  createdBy?: string | null;
+  legs: BalancedJournalLeg[];
+}
+
+export interface BalancedJournalPostingResult {
+  postingGroupId: string;
+  balanced: boolean;
+  totalDebitsCents: number;
+  totalCreditsCents: number;
+  entries: any[];
+}
+
 export enum AdvertiserFundingMethod {
   USDT = 'USDT',
   IRT = 'IRT',

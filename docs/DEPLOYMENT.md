@@ -43,16 +43,15 @@ Configure the following variables in your hosting dashboard or local `.env` file
 | `SESSION_SECRET` | Strong random string (min 64 chars) | *Cryptographic secret* | Dev & Prod |
 | `DISCORD_REDIRECT_URI` | OAuth2 callback redirect URL | `https://g4x.online/auth/callback` | Dev & Prod |
 | `DATABASE_URL` | SQLite database file URI | `file:../data/g4x_dev.db` | Dev & Prod |
-| `ESCROW_RELEASE_ENABLED`| Automatic escrow settlement switch | **`false`** (Must remain false in production during testing) | Dev & Prod |
+| `ESCROW_RELEASE_ENABLED`| Automatic escrow settlement switch | **`false`** (Must remain false; releases strictly disabled) | Dev & Prod |
+| `FINANCE_V2_LIVE_CREDITS_ENABLED` | Real advertiser funding credit execution switch | **`false`** (Default false; live credits strictly disabled) | Dev & Prod |
+| `FINANCE_V2_LIVE_PAYOUTS_ENABLED` | Real booster withdrawal payout execution switch | **`false`** (Default false; live payouts strictly disabled) | Dev & Prod |
 | `G4X_BOOST_HOLD_HOURS` | Holding period for G4X published boosts from Admin Final Approval | `24` | Dev & Prod |
 | `BOOSTER_USDT_WITHDRAWAL_FEE_CENTS` | Fixed fee for booster USDT BEP-20 withdrawals | `40` ($0.40) | Dev & Prod |
 | `BOOSTER_IRT_WITHDRAWAL_FEE_CENTS` | Fixed fee for booster IRT bank withdrawals | `130` ($1.30) | Dev & Prod |
 | `BOOSTER_IRT_RATE_DISCOUNT_PER_USD` | Rate discount per USD for booster IRT withdrawals | `3000` (3,000 IRT) | Dev & Prod |
-| `ADVERTISER_IRT_PURCHASE_FEE_RATE` | Currency purchase fee for advertiser IRT funding | `0.05` (5%) | Dev & Prod |
-| `IRT_PAYOUT_TIMEZONE_OFFSET` | Timezone offset for IRT payout scheduling (Iran Standard Time) | `3.5` (UTC+3.5) | Dev & Prod |
-| `IRT_PAYOUT_TUESDAY_CUTOFF_HOUR` | Tuesday morning cutoff hour for Wednesday payout window | `10` (Requires owner approval) | Dev & Prod |
-| `PLATFORM_FEE_RATE` | Legacy fallback platform fee fraction | `0.10` | Dev & Prod |
-| `DEFAULT_COMMISSION_RATE` | Default commission rate | `0.15` | Dev & Prod |
+| `ADVERTISER_IRT_PURCHASE_FEE_RATE` | Currency purchase fee for advertiser IRT funding | *No default. Must be explicitly approved by management* | Admin Config |
+| `IRT_PAYOUT_TUESDAY_CUTOFF_HOUR` | Tuesday morning cutoff hour for Wednesday payout window | *Unapproved by owner. Missing cutoff blocks scheduling* | Admin Config |
 | `PRESIGN_TIMER_MINUTES` | Pre-sign window timer | `10` | Dev & Prod |
 
 ---
@@ -242,7 +241,7 @@ G4X Community Finance V2 is a clean redesign of the financial domain. Because th
    - No Gold wallet balance is created or maintained.
 3. **Advertiser Funding Workflows**:
    - **Direct USDT**: Recorded under admin verification with approved 1:1 USD valuation; credited only upon verified receipt.
-   - **Direct IRT**: Admin sets USD/IRT rate manually; applies currency purchase fee (5%); credited with exact integer arithmetic.
+   - **Direct IRT**: Admin sets USD/IRT rate manually; currency-purchase fee rate must be explicitly approved and configured (no unauthorized 5% default); credited with exact integer arithmetic.
    - **Gold Exchange Workflow**: Dedicated trade order; in-game trade completed and evidence verified; external payment confirmed.
    - **Strict Safeguard**: Automatic wallet credits from Gold Exchange remain strictly blocked (`GOLD_EXCHANGE_DIRECTION_UNAPPROVED`) pending owner business confirmation on payment and delivery direction.
 4. **SkyCoach 10% Fee Policy**:
@@ -259,9 +258,9 @@ G4X Community Finance V2 is a clean redesign of the financial domain. Because th
    - Applies strictly to G4X-published boosts (`creatorType === 'g4x'`); other orders are excluded.
    - Production safety switch `ESCROW_RELEASE_ENABLED=false` blocks actual automated balance releases.
 7. **Booster Withdrawals**:
-   - **USDT**: BEP-20 only; fixed fee $0.40; Net USD = Requested - $0.40; manual payout with transaction hash.
+   - **USDT**: BEP-20 only; strict EIP-55 EVM address validation; fixed fee $0.40; Net USD = Requested - $0.40; manual payout with transaction hash.
    - **IRT**: Fixed fee $1.30; Effective Rate = Admin Rate - 3,000 IRT; Net IRT = `(Requested USD - $1.30) * Effective Rate`; no percentage fee.
-   - **Scheduling**: Saturday 08:00 to Tuesday morning cutoff paid on Wednesday; after cutoff paid on Saturday. Missing Tuesday cutoff config blocks automated scheduling finalization.
+   - **Scheduling**: Saturday 08:00 to Tuesday morning cutoff paid on Wednesday; after cutoff paid on Saturday using Tehran timezone (`Asia/Tehran`). Missing Tuesday cutoff config blocks automated scheduling finalization.
 
 ### 9.2 Legacy Table Isolation
 - Legacy tables (`wallets`, `ledger_transactions`, `platform_fee_policies`) are preserved and retired from active execution paths to maintain complete migration history on Bot-Hosting.net.
@@ -300,4 +299,46 @@ Remove-Item -Path "data\disposable_test.db-journal" -Force -ErrorAction Silently
 # 5. Restore standard development database environment variable
 $env:DATABASE_URL="file:../data/g4x_dev.db"
 ```
+
+---
+
+## 11. Security, Privacy & Archive Export Procedures
+
+### 11.1 Safe Clean Source Export Procedure
+To share source code for external audit or review without inadvertently leaking secrets, database records, or local development git histories:
+
+```bash
+# Run the automated clean-source exporter:
+npm run export:clean-source
+```
+
+This script:
+1. Creates a clean, timestamped archive in `export/g4x-community-clean-source-<timestamp>.zip`.
+2. Strictly excludes:
+   - All environment files (`.env`, `.env.local`, `.env.production`)
+   - All SQLite database files and backups (`*.db`, `*.db-journal`, `*.sqlite`, `data/backups/`)
+   - Version control metadata (`.git/`)
+   - Build outputs (`dist/`) and dependencies (`node_modules/`)
+   - Temporary artifacts, cache, and IDE folders (`.agents/`, `.gemini/`, `.vscode/`)
+
+### 11.2 Credential Rotation Checklist
+If any source distribution archive previously exposed sensitive configuration files, follow this emergency rotation protocol immediately:
+1. **Discord Bot Token**:
+   - Navigate to Discord Developer Portal -> Bot -> Click **Reset Token**.
+   - Update `DISCORD_BOT_TOKEN` in host environment variables.
+2. **Discord OAuth2 Client Secret**:
+   - Navigate to Discord Developer Portal -> OAuth2 -> Click **Reset Secret**.
+   - Update `DISCORD_CLIENT_SECRET` in host environment variables.
+3. **Session Secret**:
+   - Generate a new 64-character high-entropy secret (`openssl rand -hex 32`).
+   - Update `SESSION_SECRET` in host environment variables to invalidate any existing web sessions.
+4. **Administrative Credentials**:
+   - Rotate any admin portal passwords or database access credentials.
+5. **Verify Bot Startup**:
+   - Restart the application and verify clean connection without authentication errors.
+
+### 11.3 Database Restoration Caution
+> ⚠️ **CRITICAL WARNING**:
+> Never blindly restore a stale SQLite backup over a running production database that contains recent user registrations, financial transactions, or audit logs. Restoring a stale backup will irrevocably overwrite all state changes that occurred after the backup timestamp. If recovery is required, extract and replay specific records using transactional migration scripts rather than wholesale file replacement.
+
 

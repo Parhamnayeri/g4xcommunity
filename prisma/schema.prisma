@@ -239,7 +239,7 @@ model Wallet {
   escrowUsdt           Int      @default(0) @map("escrow_usdt")
   balanceIrt           Int      @default(0) @map("balance_irt")
   escrowIrt            Int      @default(0) @map("escrow_irt")
-  customCommissionRate Float?   @default(0.15) @map("custom_commission_rate")
+  customCommissionRate Float?   @map("custom_commission_rate")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [discordId], onDelete: Cascade)
@@ -1060,7 +1060,7 @@ model WalletV2 {
   confirmedEarningsCents Int      @default(0) @map("confirmed_earnings_cents")
   paidCents              Int      @default(0) @map("paid_cents")
   refundedCents          Int      @default(0) @map("refunded_cents")
-  customCommissionRate   Float?   @default(0.15) @map("custom_commission_rate")
+  customCommissionRate   Float?   @map("custom_commission_rate")
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
 
@@ -1073,6 +1073,8 @@ model WalletV2 {
 model LedgerEntryV2 {
   id                         Int      @id @default(autoincrement())
   entryRef                   String   @unique @map("entry_ref")
+  postingGroupId             String?  @map("posting_group_id")
+  accountType                String?  @default("USER_WALLET") @map("account_type")
   userId                     String?  @map("user_id")
   orderId                    Int?     @map("order_id")
   fundingRequestId           Int?     @map("funding_request_id")
@@ -1083,6 +1085,8 @@ model LedgerEntryV2 {
   direction                  String   @map("direction") // CREDIT | DEBIT
   balanceAfterAvailableCents Int?     @map("balance_after_available_cents")
   balanceAfterReservedCents  Int?     @map("balance_after_reserved_cents")
+  reversalOfEntryRef         String?  @map("reversal_of_entry_ref")
+  idempotencyKey             String?  @unique @map("idempotency_key")
   description                String?
   metadata                   String?
   createdBy                  String?  @map("created_by")
@@ -1096,6 +1100,7 @@ model LedgerEntryV2 {
   @@index([userId])
   @@index([orderId])
   @@index([entryType])
+  @@index([postingGroupId])
   @@index([createdAt])
   @@map("ledger_entries_v2")
 }
@@ -1186,6 +1191,10 @@ model BoosterWithdrawalRequest {
   quotedNetPayoutAmount    String    @map("quoted_net_payout_amount")
   quotedCurrency           String    @map("quoted_currency")
   quoteExpiresAt           DateTime? @map("quote_expires_at")
+  quoteVersion             Int       @default(1) @map("quote_version")
+  quoteHash                String?   @map("quote_hash")
+  policyVersion            Int?      @map("policy_version")
+  revalidatedAt            DateTime? @map("revalidated_at")
   userConfirmedAt          DateTime? @map("user_confirmed_at")
   destinationAddress       String    @map("destination_address")
   destinationAccountHolder String?   @map("destination_account_holder")

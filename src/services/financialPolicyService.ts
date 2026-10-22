@@ -606,6 +606,17 @@ export async function setAdvertiserCommissionRate(
     },
   });
 
+  // به‌روزرسانی یا تنظیم نرخ در والت نسل دوم (WalletV2) در صورت وجود
+  const walletV2 = await prisma.walletV2.findUnique({
+    where: { userId: advertiserId },
+  });
+  if (walletV2) {
+    await prisma.walletV2.update({
+      where: { userId: advertiserId },
+      data: { customCommissionRate: commissionRate },
+    });
+  }
+
   await prisma.auditLog.create({
     data: {
       actorId,
@@ -619,8 +630,16 @@ export async function setAdvertiserCommissionRate(
 
 /**
  * دریافت درصد کمیسیون ادورتایزر
+ * اولویت با والت نسل دوم (WalletV2) و در صورت عدم وجود والت نسخه اول است.
  */
 export async function getAdvertiserCommissionRate(advertiserId: string): Promise<number | null> {
+  const walletV2 = await prisma.walletV2.findUnique({
+    where: { userId: advertiserId },
+  });
+  if (walletV2 && walletV2.customCommissionRate !== null && walletV2.customCommissionRate !== undefined) {
+    return walletV2.customCommissionRate;
+  }
+
   const wallet = await prisma.wallet.findUnique({
     where: { userId: advertiserId },
   });

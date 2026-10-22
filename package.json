@@ -21,13 +21,16 @@
     "test:bootstrap": "ts-node src/test/owner_bootstrap_suite.ts",
     "test:finance": "ts-node src/test/financial_calculation_suite.ts",
     "test:finance:v2": "ts-node src/test/finance_v2_suite.ts",
+    "test:finance:v2:1": "ts-node src/test/finance_v2_1_hardening_suite.ts",
     "test:channels": "ts-node src/test/separate_registration_channels_suite.ts",
     "test:platform:reconciliation": "ts-node src/test/platform_balances_and_reconciliation_suite.ts",
-    "test": "ts-node src/test/financial_calculation_suite.ts && ts-node src/test/platform_balances_and_reconciliation_suite.ts && ts-node src/test/finance_v2_suite.ts",
+    "test:platform": "ts-node src/test/platform_balances_and_reconciliation_suite.ts",
+    "test": "ts-node src/test/financial_calculation_suite.ts && ts-node src/test/platform_balances_and_reconciliation_suite.ts && ts-node src/test/finance_v2_suite.ts && ts-node src/test/finance_v2_1_hardening_suite.ts",
     "bootstrap:owner": "ts-node scripts/bootstrap-owner.ts",
     "audit:policies": "ts-node scripts/audit-financial-policies.ts",
     "audit": "ts-node scripts/audit-financial-policies.ts",
-    "finance:cli": "ts-node scripts/platform-finance-cli.ts"
+    "finance:cli": "ts-node scripts/platform-finance-cli.ts",
+    "export:clean-source": "ts-node scripts/export-clean-source.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"
@@ -39,6 +42,7 @@
     "dotenv": "^16.4.5",
     "express": "^4.18.3",
     "express-session": "^1.19.0",
+    "js-sha3": "^0.13.0",
     "node-cron": "^3.0.3",
     "prisma": "6.19.3",
     "uuid": "^9.0.1"

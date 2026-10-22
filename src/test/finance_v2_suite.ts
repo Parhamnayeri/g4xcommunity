@@ -107,6 +107,13 @@ async function runFinanceV2TestSuite() {
       create: { userId: testAdminId, roleKey: 'owner' },
     });
 
+    // Assign exchanger role to test exchanger
+    await prisma.userRole.upsert({
+      where: { userId_roleKey: { userId: testExchangerId, roleKey: 'exchanger' } },
+      update: {},
+      create: { userId: testExchangerId, roleKey: 'exchanger' },
+    });
+
     // =========================================================================
     // TEST 1: Unified USD Wallet (wallets_v2) - Integer cents only, no Gold
     // =========================================================================
@@ -188,6 +195,26 @@ async function runFinanceV2TestSuite() {
       `Status: ${usdtFundingReq.status}, Target: ${usdtFundingReq.targetUsdCents} cents ($100)`
     );
 
+    // 4b-1. Verify fail-closed live credit gate blocks execution by default
+    let liveCreditBlocked = false;
+    try {
+      await adminVerifyAndCreditUsdtFunding(
+        usdtFundingReq.id,
+        testAdminId,
+        'Verified on BscScan'
+      );
+    } catch (err: any) {
+      if (err.message.includes('LIVE_CREDITS_DISABLED')) {
+        liveCreditBlocked = true;
+      }
+    }
+    assert(
+      liveCreditBlocked,
+      '4b-1. Direct USDT funding credit strictly blocked under default fail-closed configuration'
+    );
+
+    // Isolated test execution with explicit gate activation
+    process.env.FINANCE_V2_LIVE_CREDITS_ENABLED = 'true';
     const balBeforeUsdt = (await getOrCreateWalletV2(testUserId)).availableCents;
     const verifiedUsdtFunding = await adminVerifyAndCreditUsdtFunding(
       usdtFundingReq.id,
@@ -195,6 +222,7 @@ async function runFinanceV2TestSuite() {
       'Verified on BscScan'
     );
     const balAfterUsdt = (await getOrCreateWalletV2(testUserId)).availableCents;
+    process.env.FINANCE_V2_LIVE_CREDITS_ENABLED = 'false';
 
     assert(
       verifiedUsdtFunding.request.status === 'CONFIRMED_CREDITED' &&
@@ -228,6 +256,7 @@ async function runFinanceV2TestSuite() {
       payerIdentifier: 'Parham Nayeri',
     });
 
+    process.env.FINANCE_V2_LIVE_CREDITS_ENABLED = 'true';
     const balBeforeIrt = (await getOrCreateWalletV2(testUserId)).availableCents;
     await adminVerifyAndCreditIrtFunding(
       irtFundingReq.request.id,
@@ -235,6 +264,7 @@ async function runFinanceV2TestSuite() {
       'Bank receipt verified'
     );
     const balAfterIrt = (await getOrCreateWalletV2(testUserId)).availableCents;
+    process.env.FINANCE_V2_LIVE_CREDITS_ENABLED = 'false';
 
     assert(
       balAfterIrt === balBeforeIrt + 9500,
@@ -383,6 +413,14 @@ async function runFinanceV2TestSuite() {
       },
     });
 
+    await prisma.orderRun.create({
+      data: {
+        orderId: testOrderG4X.id,
+        runNumber: 1,
+        status: 'completed',
+      },
+    });
+
     const releaseTracker = await getOrCreateG4XBoostReleaseTracker(testOrderG4X.id);
     assert(
       releaseTracker.stage === G4XBoostReleaseStage.RUN_COMPLETED,
@@ -435,14 +473,7 @@ async function runFinanceV2TestSuite() {
     );
 
     // 9d-2. Even after 24h expires, ESCROW_RELEASE_ENABLED=false blocks wallet release
-    // Create completed run & finalized snapshot & set holdExpiresAt in the past
-    await prisma.orderRun.create({
-      data: {
-        orderId: testOrderG4X.id,
-        runNumber: 1,
-        status: 'completed',
-      },
-    });
+    // Create finalized snapshot & set holdExpiresAt in the past
 
     await prisma.orderFinancialSnapshot.create({
       data: {
@@ -545,12 +576,32 @@ async function runFinanceV2TestSuite() {
       `Available: ${boosterBalAfterRequest.availableCents}, Reserved: ${boosterBalAfterRequest.reservedCents}`
     );
 
-    // Admin manual payout with valid TxHash
+    // 10c-1. Verify fail-closed live payout gate blocks execution by default
+    let livePayoutBlocked = false;
+    try {
+      await adminExecuteManualPayout(
+        confirmedReq.id,
+        testAdminId,
+        { externalTxHash: '0xabcdef9876543210abcdef9876543210', notes: 'Paid on BSC' }
+      );
+    } catch (err: any) {
+      if (err.message.includes('LIVE_PAYOUTS_DISABLED')) {
+        livePayoutBlocked = true;
+      }
+    }
+    assert(
+      livePayoutBlocked,
+      '10c-1. Manual payout execution strictly blocked under default fail-closed configuration'
+    );
+
+    // Admin manual payout with valid TxHash under isolated test gate
+    process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED = 'true';
     const { request: paidReq } = await adminExecuteManualPayout(
       confirmedReq.id,
       testAdminId,
       { externalTxHash: '0xabcdef9876543210abcdef9876543210', notes: 'Paid on BSC' }
     );
+    process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED = 'false';
 
     const boosterBalAfterPaid = await getOrCreateWalletV2(testBooster1);
     assert(

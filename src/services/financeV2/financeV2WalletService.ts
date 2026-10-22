@@ -14,6 +14,11 @@ import { Prisma } from '@prisma/client';
 import {
   LedgerV2EntryType,
   LedgerV2Direction,
+  LedgerV2AccountType,
+  BalancedJournalPosting,
+  BalancedJournalPostingResult,
+  BalancedJournalLeg,
+  FINANCE_V2_FEATURE_GATES,
 } from './financeV2Types';
 
 export interface WalletV2Summary {
@@ -38,6 +43,124 @@ export interface LedgerEntryOptions {
   description?: string;
   metadata?: Record<string, any>;
   createdBy?: string;
+  postingGroupId?: string;
+  accountType?: LedgerV2AccountType;
+  reversalOfEntryRef?: string;
+  idempotencyKey?: string;
+  isSimulated?: boolean;
+}
+
+/**
+ * بررسی سوئیچ‌های ایمنی پروداکشن (Fail-Closed Production Feature Gates)
+ */
+export function assertLiveCreditsEnabled(): void {
+  if (process.env.FINANCE_V2_LIVE_CREDITS_ENABLED !== 'true') {
+    throw new Error(
+      'LIVE_CREDITS_DISABLED: Real money credits to live wallets are strictly disabled in this phase (FINANCE_V2_LIVE_CREDITS_ENABLED != true)'
+    );
+  }
+}
+
+export function assertLivePayoutsEnabled(): void {
+  if (process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED !== 'true') {
+    throw new Error(
+      'LIVE_PAYOUTS_DISABLED: Real money payout settlements from user wallets are strictly disabled in this phase (FINANCE_V2_LIVE_PAYOUTS_ENABLED != true)'
+    );
+  }
+}
+
+export function assertEscrowReleaseEnabled(): void {
+  if (process.env.ESCROW_RELEASE_ENABLED !== 'true') {
+    throw new Error(
+      'ESCROW_RELEASE_DISABLED: Real payout and escrow release to withdrawable wallet balance is strictly disabled in this phase (ESCROW_RELEASE_ENABLED != true)'
+    );
+  }
+}
+
+/**
+ * ثبت سند دفتر کل متعادل دوطرفه (Balanced Double-Entry Journal Posting)
+ * ناوردا: مجموع اقلام بدهکار (Debits) باید دقیقاً با مجموع اقلام بستانکار (Credits) برابر باشد.
+ */
+export async function recordBalancedJournalPosting(
+  posting: BalancedJournalPosting,
+  tx?: Prisma.TransactionClient
+): Promise<BalancedJournalPostingResult> {
+  if (!posting.legs || posting.legs.length < 2) {
+    throw new Error('INVALID_JOURNAL_POSTING: A balanced journal posting must contain at least 2 legs');
+  }
+
+  let totalDebits = 0;
+  let totalCredits = 0;
+
+  for (const leg of posting.legs) {
+    if (!Number.isSafeInteger(leg.amountCents) || leg.amountCents <= 0) {
+      throw new Error(`INVALID_JOURNAL_AMOUNT: Leg amount must be a positive safe integer, got ${leg.amountCents}`);
+    }
+    if (leg.direction === LedgerV2Direction.DEBIT) {
+      totalDebits += leg.amountCents;
+    } else if (leg.direction === LedgerV2Direction.CREDIT) {
+      totalCredits += leg.amountCents;
+    } else {
+      throw new Error(`INVALID_DIRECTION: Direction must be CREDIT or DEBIT`);
+    }
+  }
+
+  if (totalDebits !== totalCredits) {
+    throw new Error(
+      `UNBALANCED_JOURNAL_POSTING: Sum of debits (${totalDebits} cents) does not match sum of credits (${totalCredits} cents) for posting group '${posting.postingGroupId}'`
+    );
+  }
+
+  const runWithTx = async (dbTx: Prisma.TransactionClient) => {
+    const createdEntries = [];
+    for (const leg of posting.legs) {
+      const entryRef = leg.entryRef || `LEDGER_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+      // در صورت وجود idempotencyKey، از ثبت تکراری جلوگیری می‌شود
+      if (leg.idempotencyKey) {
+        const existing = await dbTx.ledgerEntryV2.findUnique({
+          where: { idempotencyKey: leg.idempotencyKey },
+        });
+        if (existing) {
+          throw new Error(`DUPLICATE_IDEMPOTENCY_KEY: Ledger entry with idempotency key '${leg.idempotencyKey}' already exists`);
+        }
+      }
+
+      const entry = await dbTx.ledgerEntryV2.create({
+        data: {
+          entryRef,
+          postingGroupId: posting.postingGroupId,
+          accountType: leg.accountType || LedgerV2AccountType.USER_WALLET,
+          userId: leg.userId || null,
+          orderId: leg.orderId || null,
+          fundingRequestId: leg.fundingRequestId || null,
+          withdrawalRequestId: leg.withdrawalRequestId || null,
+          amountCents: leg.amountCents,
+          entryType: leg.entryType,
+          direction: leg.direction,
+          reversalOfEntryRef: leg.reversalOfEntryRef || null,
+          idempotencyKey: leg.idempotencyKey || null,
+          description: leg.description || `Journal leg for group ${posting.postingGroupId}`,
+          metadata: leg.metadata ? JSON.stringify(leg.metadata) : null,
+          createdBy: leg.createdBy || null,
+        },
+      });
+      createdEntries.push(entry);
+    }
+
+    return {
+      postingGroupId: posting.postingGroupId,
+      balanced: true,
+      totalDebitsCents: totalDebits,
+      totalCreditsCents: totalCredits,
+      entries: createdEntries,
+    };
+  };
+
+  if (tx) {
+    return await runWithTx(tx);
+  }
+  return await prisma.$transaction(runWithTx);
 }
 
 /**
@@ -104,6 +227,7 @@ export async function getOrCreateWalletV2(
       confirmedEarningsCents: 0,
       paidCents: 0,
       refundedCents: 0,
+      customCommissionRate: null,
     },
   });
 }
@@ -141,8 +265,8 @@ export async function creditAvailableCents(
   options: LedgerEntryOptions = {},
   externalTx?: Prisma.TransactionClient
 ) {
-  if (amountCents <= 0) {
-    throw new Error(`INVALID_AMOUNT: Credit amount must be positive, got ${amountCents}`);
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+    throw new Error(`INVALID_AMOUNT: Credit amount must be a positive safe integer, got ${amountCents}`);
   }
 
   const runWithTx = async (tx: Prisma.TransactionClient) => {
@@ -160,9 +284,20 @@ export async function creditAvailableCents(
 
     const entryRef = options.entryRef || `LEDGER_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+    if (options.idempotencyKey) {
+      const existing = await tx.ledgerEntryV2.findUnique({
+        where: { idempotencyKey: options.idempotencyKey },
+      });
+      if (existing) {
+        throw new Error(`DUPLICATE_IDEMPOTENCY_KEY: Ledger entry with idempotency key '${options.idempotencyKey}' already exists`);
+      }
+    }
+
     const ledgerEntry = await tx.ledgerEntryV2.create({
       data: {
         entryRef,
+        postingGroupId: options.postingGroupId || null,
+        accountType: options.accountType || LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
         userId,
         orderId: options.orderId,
         fundingRequestId: options.fundingRequestId,
@@ -172,6 +307,8 @@ export async function creditAvailableCents(
         direction: LedgerV2Direction.CREDIT,
         balanceAfterAvailableCents: newAvailable,
         balanceAfterReservedCents: updatedWallet.reservedCents,
+        reversalOfEntryRef: options.reversalOfEntryRef || null,
+        idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Credit ${amountCents} cents to available balance`,
         metadata: options.metadata ? JSON.stringify(options.metadata) : null,
         createdBy: options.createdBy,
@@ -198,8 +335,8 @@ export async function reserveAvailableCents(
   options: LedgerEntryOptions = {},
   externalTx?: Prisma.TransactionClient
 ) {
-  if (amountCents <= 0) {
-    throw new Error(`INVALID_AMOUNT: Reservation amount must be positive, got ${amountCents}`);
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+    throw new Error(`INVALID_AMOUNT: Reservation amount must be a positive safe integer, got ${amountCents}`);
   }
 
   const runWithTx = async (tx: Prisma.TransactionClient) => {
@@ -226,9 +363,20 @@ export async function reserveAvailableCents(
 
     const entryRef = options.entryRef || `LEDGER_RES_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+    if (options.idempotencyKey) {
+      const existing = await tx.ledgerEntryV2.findUnique({
+        where: { idempotencyKey: options.idempotencyKey },
+      });
+      if (existing) {
+        throw new Error(`DUPLICATE_IDEMPOTENCY_KEY: Ledger entry with idempotency key '${options.idempotencyKey}' already exists`);
+      }
+    }
+
     const ledgerEntry = await tx.ledgerEntryV2.create({
       data: {
         entryRef,
+        postingGroupId: options.postingGroupId || null,
+        accountType: options.accountType || LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
         userId,
         orderId: options.orderId,
         withdrawalRequestId: options.withdrawalRequestId,
@@ -237,6 +385,8 @@ export async function reserveAvailableCents(
         direction: LedgerV2Direction.DEBIT,
         balanceAfterAvailableCents: newAvailable,
         balanceAfterReservedCents: newReserved,
+        reversalOfEntryRef: options.reversalOfEntryRef || null,
+        idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Reserved ${amountCents} cents for withdrawal`,
         metadata: options.metadata ? JSON.stringify(options.metadata) : null,
         createdBy: options.createdBy,
@@ -262,8 +412,8 @@ export async function settleReservedCents(
   options: LedgerEntryOptions = {},
   externalTx?: Prisma.TransactionClient
 ) {
-  if (amountCents <= 0) {
-    throw new Error(`INVALID_AMOUNT: Settlement amount must be positive, got ${amountCents}`);
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+    throw new Error(`INVALID_AMOUNT: Settlement amount must be a positive safe integer, got ${amountCents}`);
   }
 
   const runWithTx = async (tx: Prisma.TransactionClient) => {
@@ -290,9 +440,20 @@ export async function settleReservedCents(
 
     const entryRef = options.entryRef || `LEDGER_SETTLE_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+    if (options.idempotencyKey) {
+      const existing = await tx.ledgerEntryV2.findUnique({
+        where: { idempotencyKey: options.idempotencyKey },
+      });
+      if (existing) {
+        throw new Error(`DUPLICATE_IDEMPOTENCY_KEY: Ledger entry with idempotency key '${options.idempotencyKey}' already exists`);
+      }
+    }
+
     const ledgerEntry = await tx.ledgerEntryV2.create({
       data: {
         entryRef,
+        postingGroupId: options.postingGroupId || null,
+        accountType: options.accountType || LedgerV2AccountType.LIABILITY_USER_WALLET_RESERVED,
         userId,
         withdrawalRequestId: options.withdrawalRequestId,
         amountCents,
@@ -300,6 +461,8 @@ export async function settleReservedCents(
         direction: LedgerV2Direction.DEBIT,
         balanceAfterAvailableCents: updatedWallet.availableCents,
         balanceAfterReservedCents: newReserved,
+        reversalOfEntryRef: options.reversalOfEntryRef || null,
+        idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Settled ${amountCents} cents withdrawal payout`,
         metadata: options.metadata ? JSON.stringify(options.metadata) : null,
         createdBy: options.createdBy,
@@ -325,8 +488,8 @@ export async function reverseReservedCents(
   options: LedgerEntryOptions = {},
   externalTx?: Prisma.TransactionClient
 ) {
-  if (amountCents <= 0) {
-    throw new Error(`INVALID_AMOUNT: Reversal amount must be positive, got ${amountCents}`);
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+    throw new Error(`INVALID_AMOUNT: Reversal amount must be a positive safe integer, got ${amountCents}`);
   }
 
   const runWithTx = async (tx: Prisma.TransactionClient) => {
@@ -353,9 +516,20 @@ export async function reverseReservedCents(
 
     const entryRef = options.entryRef || `LEDGER_REV_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+    if (options.idempotencyKey) {
+      const existing = await tx.ledgerEntryV2.findUnique({
+        where: { idempotencyKey: options.idempotencyKey },
+      });
+      if (existing) {
+        throw new Error(`DUPLICATE_IDEMPOTENCY_KEY: Ledger entry with idempotency key '${options.idempotencyKey}' already exists`);
+      }
+    }
+
     const ledgerEntry = await tx.ledgerEntryV2.create({
       data: {
         entryRef,
+        postingGroupId: options.postingGroupId || null,
+        accountType: options.accountType || LedgerV2AccountType.LIABILITY_USER_WALLET_RESERVED,
         userId,
         withdrawalRequestId: options.withdrawalRequestId,
         amountCents,
@@ -363,6 +537,8 @@ export async function reverseReservedCents(
         direction: LedgerV2Direction.CREDIT,
         balanceAfterAvailableCents: newAvailable,
         balanceAfterReservedCents: newReserved,
+        reversalOfEntryRef: options.reversalOfEntryRef || null,
+        idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Reversed ${amountCents} cents to available balance: ${reason}`,
         metadata: options.metadata ? JSON.stringify(options.metadata) : null,
         createdBy: options.createdBy,
@@ -387,8 +563,8 @@ export async function recordPendingEarnings(
   options: LedgerEntryOptions = {},
   externalTx?: Prisma.TransactionClient
 ) {
-  if (amountCents <= 0) {
-    throw new Error(`INVALID_AMOUNT: Pending earnings must be positive, got ${amountCents}`);
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+    throw new Error(`INVALID_AMOUNT: Pending earnings must be a positive safe integer, got ${amountCents}`);
   }
 
   const runWithTx = async (tx: Prisma.TransactionClient) => {
@@ -406,9 +582,20 @@ export async function recordPendingEarnings(
 
     const entryRef = options.entryRef || `LEDGER_PEND_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+    if (options.idempotencyKey) {
+      const existing = await tx.ledgerEntryV2.findUnique({
+        where: { idempotencyKey: options.idempotencyKey },
+      });
+      if (existing) {
+        throw new Error(`DUPLICATE_IDEMPOTENCY_KEY: Ledger entry with idempotency key '${options.idempotencyKey}' already exists`);
+      }
+    }
+
     const ledgerEntry = await tx.ledgerEntryV2.create({
       data: {
         entryRef,
+        postingGroupId: options.postingGroupId || null,
+        accountType: options.accountType || LedgerV2AccountType.LIABILITY_USER_WALLET_PENDING,
         userId,
         orderId: options.orderId,
         amountCents,
@@ -416,6 +603,8 @@ export async function recordPendingEarnings(
         direction: LedgerV2Direction.CREDIT,
         balanceAfterAvailableCents: wallet.availableCents,
         balanceAfterReservedCents: wallet.reservedCents,
+        reversalOfEntryRef: options.reversalOfEntryRef || null,
+        idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Recorded pending earnings: ${amountCents} cents`,
         metadata: options.metadata ? JSON.stringify(options.metadata) : null,
         createdBy: options.createdBy,
@@ -440,8 +629,8 @@ export async function confirmPendingEarnings(
   options: LedgerEntryOptions = {},
   externalTx?: Prisma.TransactionClient
 ) {
-  if (amountCents <= 0) {
-    throw new Error(`INVALID_AMOUNT: Confirmation amount must be positive, got ${amountCents}`);
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+    throw new Error(`INVALID_AMOUNT: Confirmation amount must be a positive safe integer, got ${amountCents}`);
   }
 
   const runWithTx = async (tx: Prisma.TransactionClient) => {
@@ -468,9 +657,20 @@ export async function confirmPendingEarnings(
 
     const entryRef = options.entryRef || `LEDGER_CONF_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+    if (options.idempotencyKey) {
+      const existing = await tx.ledgerEntryV2.findUnique({
+        where: { idempotencyKey: options.idempotencyKey },
+      });
+      if (existing) {
+        throw new Error(`DUPLICATE_IDEMPOTENCY_KEY: Ledger entry with idempotency key '${options.idempotencyKey}' already exists`);
+      }
+    }
+
     const ledgerEntry = await tx.ledgerEntryV2.create({
       data: {
         entryRef,
+        postingGroupId: options.postingGroupId || null,
+        accountType: options.accountType || LedgerV2AccountType.LIABILITY_USER_WALLET_CONFIRMED,
         userId,
         orderId: options.orderId,
         amountCents,
@@ -478,6 +678,8 @@ export async function confirmPendingEarnings(
         direction: LedgerV2Direction.CREDIT,
         balanceAfterAvailableCents: wallet.availableCents,
         balanceAfterReservedCents: wallet.reservedCents,
+        reversalOfEntryRef: options.reversalOfEntryRef || null,
+        idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Confirmed earnings: ${amountCents} cents`,
         metadata: options.metadata ? JSON.stringify(options.metadata) : null,
         createdBy: options.createdBy,
@@ -503,14 +705,10 @@ export async function releaseConfirmedEarningsToAvailable(
   options: LedgerEntryOptions = {},
   externalTx?: Prisma.TransactionClient
 ) {
-  if (process.env.ESCROW_RELEASE_ENABLED !== 'true') {
-    throw new Error(
-      'ESCROW_RELEASE_DISABLED: Real payout and escrow release to withdrawable wallet balance is strictly disabled in this phase (ESCROW_RELEASE_ENABLED != true)'
-    );
-  }
+  assertEscrowReleaseEnabled();
 
-  if (amountCents <= 0) {
-    throw new Error(`INVALID_AMOUNT: Release amount must be positive, got ${amountCents}`);
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+    throw new Error(`INVALID_AMOUNT: Release amount must be a positive safe integer, got ${amountCents}`);
   }
 
   const runWithTx = async (tx: Prisma.TransactionClient) => {
@@ -537,9 +735,20 @@ export async function releaseConfirmedEarningsToAvailable(
 
     const entryRef = options.entryRef || `LEDGER_REL_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+    if (options.idempotencyKey) {
+      const existing = await tx.ledgerEntryV2.findUnique({
+        where: { idempotencyKey: options.idempotencyKey },
+      });
+      if (existing) {
+        throw new Error(`DUPLICATE_IDEMPOTENCY_KEY: Ledger entry with idempotency key '${options.idempotencyKey}' already exists`);
+      }
+    }
+
     const ledgerEntry = await tx.ledgerEntryV2.create({
       data: {
         entryRef,
+        postingGroupId: options.postingGroupId || null,
+        accountType: options.accountType || LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
         userId,
         orderId: options.orderId,
         amountCents,
@@ -547,6 +756,8 @@ export async function releaseConfirmedEarningsToAvailable(
         direction: LedgerV2Direction.CREDIT,
         balanceAfterAvailableCents: newAvailable,
         balanceAfterReservedCents: wallet.reservedCents,
+        reversalOfEntryRef: options.reversalOfEntryRef || null,
+        idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Released ${amountCents} cents to available balance`,
         metadata: options.metadata ? JSON.stringify(options.metadata) : null,
         createdBy: options.createdBy,
@@ -561,3 +772,6 @@ export async function releaseConfirmedEarningsToAvailable(
   }
   return await prisma.$transaction(runWithTx);
 }
+
+
+

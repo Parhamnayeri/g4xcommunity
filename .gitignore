@@ -37,3 +37,13 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# ─── Archives & Export Folders ────────────────────────────────────────────
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+New folder/
+export/
+dist-export/
+
