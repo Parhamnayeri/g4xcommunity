@@ -77,6 +77,14 @@ export function assertEscrowReleaseEnabled(): void {
   }
 }
 
+export function assertP2pSettlementEnabled(): void {
+  if (process.env.FINANCE_V2_P2P_SETTLEMENT_ENABLED !== 'true') {
+    throw new Error(
+      'P2P_SETTLEMENT_DISABLED: P2P wallet transfers and settlements are strictly disabled in this phase (FINANCE_V2_P2P_SETTLEMENT_ENABLED != true)'
+    );
+  }
+}
+
 /**
  * ثبت سند دفتر کل متعادل دوطرفه (Balanced Double-Entry Journal Posting)
  * ناوردا: مجموع اقلام بدهکار (Debits) باید دقیقاً با مجموع اقلام بستانکار (Credits) برابر باشد.
@@ -135,6 +143,7 @@ export async function recordBalancedJournalPosting(
           orderId: leg.orderId || null,
           fundingRequestId: leg.fundingRequestId || null,
           withdrawalRequestId: leg.withdrawalRequestId || null,
+          goldTradeId: leg.goldTradeId || null,
           amountCents: leg.amountCents,
           entryType: leg.entryType,
           direction: leg.direction,

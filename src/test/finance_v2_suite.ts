@@ -628,6 +628,13 @@ async function runFinanceV2TestSuite() {
       { description: 'Booster2 test earnings', createdBy: testAdminId }
     );
 
+    // Ensure authoritative rate is 95,000 for this test
+    await prisma.systemFinancialConfig.upsert({
+      where: { key: 'admin_usd_irt_rate' },
+      update: { value: '95000', updatedBy: testAdminId },
+      create: { key: 'admin_usd_irt_rate', value: '95000', description: 'Authoritative Admin USD/IRT rate', updatedBy: testAdminId },
+    });
+
     const irtWithdrawQuote = await generateIrtWithdrawalQuote({
       boosterId: testBooster2,
       requestedUsdCents: 10000,

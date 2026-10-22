@@ -28,8 +28,13 @@ import {
   serializeCharacter,
   serializeOrderHistory,
 } from './serializers';
+import { getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
+import { marketplaceRouter } from './marketplaceRoutes';
 
 export const router = Router();
+
+// ─── روت‌های بازار مبادله، معاملات طلا و شارژ همتا‌به‌همتا (Finance V2.2) ──────
+router.use('/marketplace', marketplaceRouter);
 
 // ─── ثابت‌های OAuth2 ────────────────────────────────────────────────────────
 const DISCORD_API = 'https://discord.com/api/v10';
@@ -229,6 +234,22 @@ router.get('/wallet', requireAuth, async (req: Request, res: Response): Promise<
   }
 
   res.json(serializeWallet(wallet));
+});
+
+// ─── موجودی کیف‌پول دلاری نسل دوم (Unified USD Wallet V2) ───────────────────
+router.get('/wallet/v2', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { user } = req as AuthenticatedRequest;
+  const walletV2 = await getOrCreateWalletV2(user.discordId);
+  res.json({
+    userId: walletV2.userId,
+    availableCents: walletV2.availableCents,
+    reservedCents: walletV2.reservedCents,
+    pendingEarningsCents: walletV2.pendingEarningsCents,
+    confirmedEarningsCents: walletV2.confirmedEarningsCents,
+    paidCents: walletV2.paidCents,
+    refundedCents: walletV2.refundedCents,
+    totalUsd: ((walletV2.availableCents + walletV2.reservedCents) / 100).toFixed(2),
+  });
 });
 
 // ─── کاراکترهای WoW کاربر جاری ───────────────────────────────────────────────

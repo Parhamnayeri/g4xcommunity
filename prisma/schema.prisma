@@ -79,6 +79,10 @@ model User {
   processedWithdrawals     BoosterWithdrawalRequest[] @relation("ProcessedWithdrawals")
   staffReviewedReleases    G4XBoostReleaseTracker[]   @relation("StaffReviewedReleases")
   adminApprovedReleases    G4XBoostReleaseTracker[]   @relation("AdminApprovedReleases")
+  exchangerFeeOffers       ExchangerFeeOffer[]        @relation("ExchangerOffers")
+  goldTradesAsSeller       GoldTrade[]                @relation("SellerGoldTrades")
+  goldTradesAsBuyer        GoldTrade[]                @relation("BuyerGoldTrades")
+  verifiedGoldTradesV2     GoldTrade[]                @relation("VerifiedGoldTradesV2")
 
   @@map("users")
 }
@@ -1079,9 +1083,10 @@ model LedgerEntryV2 {
   orderId                    Int?     @map("order_id")
   fundingRequestId           Int?     @map("funding_request_id")
   withdrawalRequestId        Int?     @map("withdrawal_request_id")
+  goldTradeId                Int?     @map("gold_trade_id")
   amountCents                Int      @map("amount_cents")
   entryType                  String   @map("entry_type")
-  // EARNING_PENDING | EARNING_CONFIRMED | AVAILABLE_RELEASE | WITHDRAWAL_RESERVE | WITHDRAWAL_SETTLE | WITHDRAWAL_REVERSE | ADVERTISER_DEPOSIT | MANUAL_ADJUSTMENT
+  // EARNING_PENDING | EARNING_CONFIRMED | AVAILABLE_RELEASE | WITHDRAWAL_RESERVE | WITHDRAWAL_SETTLE | WITHDRAWAL_REVERSE | ADVERTISER_DEPOSIT | MANUAL_ADJUSTMENT | GOLD_TRADE_SETTLE | P2P_FUNDING_SETTLE
   direction                  String   @map("direction") // CREDIT | DEBIT
   balanceAfterAvailableCents Int?     @map("balance_after_available_cents")
   balanceAfterReservedCents  Int?     @map("balance_after_reserved_cents")
@@ -1096,11 +1101,13 @@ model LedgerEntryV2 {
   order             Order?                     @relation(fields: [orderId], references: [id], onDelete: SetNull)
   fundingRequest    AdvertiserFundingRequest?  @relation(fields: [fundingRequestId], references: [id], onDelete: SetNull)
   withdrawalRequest BoosterWithdrawalRequest?  @relation(fields: [withdrawalRequestId], references: [id], onDelete: SetNull)
+  goldTrade         GoldTrade?                 @relation(fields: [goldTradeId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([orderId])
   @@index([entryType])
   @@index([postingGroupId])
+  @@index([goldTradeId])
   @@index([createdAt])
   @@map("ledger_entries_v2")
 }
@@ -1263,6 +1270,109 @@ model SystemFinancialConfig {
   updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("system_financial_configs")
+}
+
+// ─── ۴۰. پیشنهادات کارمزد و خدمات صراف (Exchanger Fee Offers) ───────────────────
+model ExchangerFeeOffer {
+  id                   Int         @id @default(autoincrement())
+  offerRef             String      @unique @map("offer_ref")
+  exchangerId          String      @map("exchanger_id")
+  serviceType          String      @map("service_type")
+  // IRT_TO_USD_FUNDING | GOLD_PURCHASE_IRT | GOLD_PURCHASE_USDT | GOLD_PURCHASE_WALLET
+  settlementCurrency   String      @map("settlement_currency") // IRT | USDT | USD
+  commissionPercentage Float       @map("commission_percentage") // e.g. 0.035 for 3.5%
+  feeCalculationBasis  String      @default("GROSS_INPUT") @map("fee_calculation_basis") // GROSS_INPUT | NET_OUTPUT | AGREED_VALUATION
+  feePayer             String      @default("ADVERTISER") @map("fee_payer") // ADVERTISER | EXCHANGER
+  referenceFxPolicy    String?     @default("ADMIN_USD_IRT_REFERENCE") @map("reference_fx_policy")
+  minAmount            Float?      @map("min_amount")
+  maxAmount            Float?      @map("max_amount")
+  offerVersion         Int         @default(1) @map("offer_version")
+  status               String      @default("ACTIVE") @map("status") // DRAFT | ACTIVE | PAUSED | REVOKED
+  terms                String?     @map("terms")
+  effectiveDate        DateTime    @default(now()) @map("effective_date")
+  suspendedReason      String?     @map("suspended_reason")
+  suspendedBy          String?     @map("suspended_by")
+  suspendedAt          DateTime?   @map("suspended_at")
+  createdAt            DateTime    @default(now()) @map("created_at")
+  updatedAt            DateTime    @updatedAt @map("updated_at")
+
+  exchanger            User        @relation("ExchangerOffers", fields: [exchangerId], references: [discordId], onDelete: Cascade)
+  goldTrades           GoldTrade[]
+
+  @@index([exchangerId])
+  @@index([serviceType, status])
+  @@map("exchanger_fee_offers")
+}
+
+// ─── ۴۱. معاملات بازار طلا (Marketplace Gold Trades) ───────────────────────────
+model GoldTrade {
+  id                         Int                @id @default(autoincrement())
+  tradeRef                   String             @unique @map("trade_ref")
+  sellerId                   String             @map("seller_id") // Advertiser selling Gold
+  buyerId                    String             @map("buyer_id") // Exchanger buying Gold
+  gameSlug                   String             @default("wow_midnight") @map("game_slug")
+  region                     String?            @default("EU") @map("region")
+  realm                      String?            @map("realm")
+  faction                    String?            @map("faction")
+  goldQuantity               Int                @map("gold_quantity")
+  goldUnit                   String             @default("RAW_GOLD") @map("gold_unit")
+  agreedValuationUsdCents    Int                @map("agreed_valuation_usd_cents")
+  settlementMethod           String             @map("settlement_method")
+  // IRT_DIRECT | USDT_DIRECT | USD_WALLET
+  commissionPercentage       Float?             @map("commission_percentage")
+  commissionAmountUnits      String?            @map("commission_amount_units")
+  feePayer                   String?            @map("fee_payer")
+  referenceFxRate            Float?             @map("reference_fx_rate")
+  quotedPayableAmount        String?            @map("quoted_payable_amount")
+  quotedPayableCurrency      String?            @map("quoted_payable_currency")
+  acceptedOfferId            Int?               @map("accepted_offer_id")
+  acceptedOfferVersion       Int?               @map("accepted_offer_version")
+  quoteExpiresAt             DateTime?          @map("quote_expires_at")
+  quoteHash                  String?            @map("quote_hash")
+  goldDeliveryStatus         String             @default("PENDING") @map("gold_delivery_status")
+  // PENDING | DELIVERED | VERIFIED | DISPUTED
+  paymentStatus              String             @default("PENDING") @map("payment_status")
+  // PENDING | SUBMITTED | VERIFIED | CONFIRMED | DISPUTED
+  tradeStatus                String             @default("DRAFT") @map("trade_status")
+  // DRAFT | QUOTED | ACCEPTED | FUNDS_RESERVED | GOLD_DELIVERY_PENDING | GOLD_DELIVERED | DELIVERY_VERIFIED | PAYMENT_PENDING | PAYMENT_VERIFIED | READY_TO_SETTLE | SETTLED | DISPUTED | CANCELLED | REJECTED
+  walletReservationId        String?            @map("wallet_reservation_id")
+  deliveryEvidenceRef        String?            @map("delivery_evidence_ref")
+  deliveryReportedAt         DateTime?          @map("delivery_reported_at")
+  deliveryVerifiedBy         String?            @map("delivery_verified_by")
+  deliveryVerifiedAt         DateTime?          @map("delivery_verified_at")
+  externalPaymentMethod      String?            @map("external_payment_method")
+  externalPaymentRef         String?            @map("external_payment_ref")
+  externalPaymentAmount      String?            @map("external_payment_amount")
+  paymentSubmittedAt         DateTime?          @map("payment_submitted_at")
+  paymentVerifiedBy          String?            @map("payment_verified_by")
+  paymentVerifiedAt          DateTime?          @map("payment_verified_at")
+  advertiserConfirmedReceiptAt DateTime?        @map("advertiser_confirmed_receipt_at")
+  actualSettlementRef        String?            @map("actual_settlement_ref")
+  settledAt                  DateTime?          @map("settled_at")
+  settledBy                  String?            @map("settled_by")
+  disputeReason              String?            @map("dispute_reason")
+  disputedBy                 String?            @map("disputed_by")
+  disputedAt                 DateTime?          @map("disputed_at")
+  cancellationReason         String?            @map("cancellation_reason")
+  cancelledBy                String?            @map("cancelled_by")
+  cancelledAt                DateTime?          @map("cancelled_at")
+  legacyOrderId              Int?               @map("legacy_order_id")
+  notes                      String?            @map("notes")
+  createdAt                  DateTime           @default(now()) @map("created_at")
+  updatedAt                  DateTime           @updatedAt @map("updated_at")
+
+  seller                     User               @relation("SellerGoldTrades", fields: [sellerId], references: [discordId], onDelete: Cascade)
+  buyer                      User               @relation("BuyerGoldTrades", fields: [buyerId], references: [discordId], onDelete: Cascade)
+  deliveryVerifier           User?              @relation("VerifiedGoldTradesV2", fields: [deliveryVerifiedBy], references: [discordId], onDelete: SetNull)
+  acceptedOffer              ExchangerFeeOffer? @relation(fields: [acceptedOfferId], references: [id], onDelete: SetNull)
+  ledgerEntries              LedgerEntryV2[]
+
+  @@index([sellerId])
+  @@index([buyerId])
+  @@index([tradeStatus])
+  @@index([settlementMethod])
+  @@index([createdAt])
+  @@map("gold_trades")
 }
 
 

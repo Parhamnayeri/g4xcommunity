@@ -31,6 +31,12 @@ export enum LedgerV2EntryType {
   ADVERTISER_DEPOSIT = 'ADVERTISER_DEPOSIT',
   MANUAL_ADJUSTMENT = 'MANUAL_ADJUSTMENT',
   ORDER_FEE_COLLECTION = 'ORDER_FEE_COLLECTION',
+  GOLD_TRADE_RESERVE = 'GOLD_TRADE_RESERVE',
+  GOLD_TRADE_SETTLE = 'GOLD_TRADE_SETTLE',
+  GOLD_TRADE_UNRESERVE = 'GOLD_TRADE_UNRESERVE',
+  P2P_FUNDING_RESERVE = 'P2P_FUNDING_RESERVE',
+  P2P_FUNDING_SETTLE = 'P2P_FUNDING_SETTLE',
+  P2P_FUNDING_UNRESERVE = 'P2P_FUNDING_UNRESERVE',
 }
 
 export enum LedgerV2Direction {
@@ -54,6 +60,7 @@ export const FINANCE_V2_FEATURE_GATES = {
   ESCROW_RELEASE_ENABLED: false,
   FINANCE_V2_LIVE_CREDITS_ENABLED: false,
   FINANCE_V2_LIVE_PAYOUTS_ENABLED: false,
+  FINANCE_V2_P2P_SETTLEMENT_ENABLED: false,
 } as const;
 
 export interface BalancedJournalLeg {
@@ -67,11 +74,107 @@ export interface BalancedJournalLeg {
   orderId?: number | null;
   fundingRequestId?: number | null;
   withdrawalRequestId?: number | null;
+  goldTradeId?: number | null;
   reversalOfEntryRef?: string | null;
   idempotencyKey?: string | null;
   description?: string | null;
   metadata?: Record<string, any> | null;
   createdBy?: string | null;
+}
+
+export enum ExchangerOfferServiceType {
+  IRT_TO_USD_FUNDING = 'IRT_TO_USD_FUNDING',
+  GOLD_PURCHASE_IRT = 'GOLD_PURCHASE_IRT',
+  GOLD_PURCHASE_USDT = 'GOLD_PURCHASE_USDT',
+  GOLD_PURCHASE_WALLET = 'GOLD_PURCHASE_WALLET',
+}
+
+export enum ExchangerOfferStatus {
+  DRAFT = 'DRAFT',
+  ACTIVE = 'ACTIVE',
+  PAUSED = 'PAUSED',
+  REVOKED = 'REVOKED',
+}
+
+export enum GoldTradeSettlementMethod {
+  IRT_DIRECT = 'IRT_DIRECT',
+  USDT_DIRECT = 'USDT_DIRECT',
+  USD_WALLET = 'USD_WALLET',
+}
+
+export enum GoldTradeStatus {
+  DRAFT = 'DRAFT',
+  QUOTED = 'QUOTED',
+  ACCEPTED = 'ACCEPTED',
+  FUNDS_RESERVED = 'FUNDS_RESERVED',
+  GOLD_DELIVERY_PENDING = 'GOLD_DELIVERY_PENDING',
+  GOLD_DELIVERED = 'GOLD_DELIVERED',
+  DELIVERY_VERIFIED = 'DELIVERY_VERIFIED',
+  PAYMENT_PENDING = 'PAYMENT_PENDING',
+  PAYMENT_VERIFIED = 'PAYMENT_VERIFIED',
+  READY_TO_SETTLE = 'READY_TO_SETTLE',
+  SETTLED = 'SETTLED',
+  DISPUTED = 'DISPUTED',
+  CANCELLED = 'CANCELLED',
+  REJECTED = 'REJECTED',
+}
+
+export enum GoldDeliveryStatus {
+  PENDING = 'PENDING',
+  DELIVERED = 'DELIVERED',
+  VERIFIED = 'VERIFIED',
+  DISPUTED = 'DISPUTED',
+}
+
+export enum GoldPaymentStatus {
+  PENDING = 'PENDING',
+  SUBMITTED = 'SUBMITTED',
+  VERIFIED = 'VERIFIED',
+  CONFIRMED = 'CONFIRMED',
+  DISPUTED = 'DISPUTED',
+}
+
+export interface CreateExchangerOfferInput {
+  exchangerId: string;
+  serviceType: ExchangerOfferServiceType | string;
+  settlementCurrency: string;
+  commissionPercentage: number;
+  feeCalculationBasis?: string;
+  feePayer?: string;
+  referenceFxPolicy?: string;
+  minAmount?: number;
+  maxAmount?: number;
+  terms?: string;
+}
+
+export interface UpdateExchangerOfferInput {
+  commissionPercentage?: number;
+  minAmount?: number;
+  maxAmount?: number;
+  terms?: string;
+  status?: ExchangerOfferStatus | string;
+}
+
+export interface GoldTradeQuoteResult {
+  tradeRef: string;
+  sellerId: string;
+  buyerId: string;
+  gameSlug: string;
+  region: string;
+  realm?: string;
+  faction?: string;
+  goldQuantity: number;
+  agreedValuationUsdCents: number;
+  settlementMethod: GoldTradeSettlementMethod | string;
+  commissionPercentage: number;
+  feePayer: string;
+  referenceFxRate?: number;
+  quotedPayableAmount: string;
+  quotedPayableCurrency: string;
+  acceptedOfferId?: number;
+  offerVersion?: number;
+  quoteHash: string;
+  quoteExpiresAt: Date;
 }
 
 export interface BalancedJournalPosting {

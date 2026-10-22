@@ -3,19 +3,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>G4X Community — Booster & Member Portal</title>
-  <meta name="description" content="G4X Community booster portal. Securely track orders, earnings, and character statuses." />
+  <title>G4X Community — Marketplace, Gold Trading & Member Portal</title>
+  <meta name="description" content="G4X Community Member Portal. Unified USD wallets, P2P funding, and Exchanger Marketplace." />
   <style>
     :root {
-      --bg-dark: #0f1117;
-      --card-bg: #181c27;
-      --card-border: #262c3d;
+      --bg-dark: #0a0c10;
+      --card-bg: #141721;
+      --card-border: #23293a;
       --primary: #5865f2;
       --primary-hover: #4752c4;
       --text-main: #f3f4f6;
       --text-muted: #9ca3af;
       --accent-green: #10b981;
+      --accent-amber: #f59e0b;
       --accent-red: #ef4444;
+      --accent-blue: #3b82f6;
       --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
 
@@ -66,6 +68,7 @@
     .btn {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 0.5rem;
       padding: 0.5rem 1.25rem;
       font-size: 0.9rem;
@@ -81,13 +84,18 @@
       transform: scale(0.98);
     }
 
-    .btn-discord {
+    .btn-primary {
       background-color: var(--primary);
       color: #fff;
     }
 
-    .btn-discord:hover {
+    .btn-primary:hover {
       background-color: var(--primary-hover);
+    }
+
+    .btn-success {
+      background-color: var(--accent-green);
+      color: #fff;
     }
 
     .btn-secondary {
@@ -111,9 +119,9 @@
 
     main {
       flex: 1;
-      max-width: 1100px;
+      max-width: 1200px;
       width: 100%;
-      margin: 2rem auto;
+      margin: 1.5rem auto;
       padding: 0 1.5rem;
     }
 
@@ -136,16 +144,44 @@
     .hero-desc {
       color: var(--text-muted);
       font-size: 1.1rem;
-      max-width: 600px;
+      max-width: 650px;
       margin: 0 auto 2rem auto;
       line-height: 1.6;
     }
 
+    .tab-nav {
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--card-border);
+      margin-bottom: 1.5rem;
+      overflow-x: auto;
+      padding-bottom: 0.25rem;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 0.6rem 1.2rem;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border-radius: 6px 6px 0 0;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s ease;
+    }
+
+    .tab-btn.active {
+      color: #fff;
+      border-bottom-color: var(--primary);
+      background: rgba(88, 101, 242, 0.08);
+    }
+
     .dashboard-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
       gap: 1.5rem;
-      margin-top: 1.5rem;
+      margin-bottom: 1.5rem;
     }
 
     .card {
@@ -202,6 +238,65 @@
       color: var(--accent-green);
     }
 
+    .badge-amber {
+      background: rgba(245, 158, 11, 0.15);
+      color: var(--accent-amber);
+    }
+
+    .badge-blue {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--accent-blue);
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+      color: var(--text-muted);
+    }
+
+    .form-control {
+      width: 100%;
+      padding: 0.6rem 0.8rem;
+      background: #0f121a;
+      border: 1px solid var(--card-border);
+      border-radius: 6px;
+      color: #fff;
+      font-size: 0.95rem;
+    }
+
+    .form-control:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    .table-container {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      padding: 0.75rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    th {
+      color: var(--text-muted);
+      font-weight: 600;
+      background: rgba(0, 0, 0, 0.1);
+    }
+
     .loading-spinner {
       display: inline-block;
       width: 20px;
@@ -229,7 +324,7 @@
 <body>
   <header>
     <div class="brand">
-      G4X <span>COMMUNITY</span>
+      G4X <span>MARKETPLACE &amp; FINANCE</span>
     </div>
     <div class="user-nav" id="nav-container">
       <div class="loading-spinner"></div>
@@ -237,16 +332,17 @@
   </header>
 
   <main id="main-content">
-    <!-- Rendered dynamically -->
+    <!-- Rendered dynamically via JavaScript -->
   </main>
 
   <footer>
-    &copy; 2026 G4X Community. High Performance Operations & Security.
+    &copy; 2026 G4X Community. Balanced Double-Entry Accounting &amp; Marketplace Security.
   </footer>
 
   <script>
     let currentUser = null;
     let csrfToken = null;
+    let activeTab = 'overview';
 
     async function fetchCsrfToken() {
       try {
@@ -297,7 +393,7 @@
     function renderLogin() {
       const nav = document.getElementById('nav-container');
       nav.innerHTML = `
-        <a href="/auth/discord" class="btn btn-discord" id="login-btn">
+        <a href="/auth/discord" class="btn btn-primary" id="login-btn">
           Login with Discord
         </a>
       `;
@@ -305,19 +401,27 @@
       const main = document.getElementById('main-content');
       main.innerHTML = `
         <div class="hero-card">
-          <h1 class="hero-title">Welcome to G4X Community</h1>
+          <h1 class="hero-title">G4X Exchanger Marketplace &amp; Finance V2.2</h1>
           <p class="hero-desc">
-            The premier platform for high-tier game operations, Mythic+ boosting, and automated escrow settlement.
-            Please authenticate using your verified Discord account to access your dashboard.
+            A hardened financial infrastructure featuring verified P2P funding, independent Exchanger commissions, and Gold trade settlement workflows.
+            Authenticate with Discord to manage your wallet, view exchange offers, or execute trades.
           </p>
-          <a href="/auth/discord" class="btn btn-discord" style="font-size: 1.05rem; padding: 0.8rem 2rem;">
+          <a href="/auth/discord" class="btn btn-primary" style="font-size: 1.05rem; padding: 0.8rem 2rem;">
             Authenticate via Discord OAuth2
           </a>
         </div>
       `;
     }
 
-    async function renderDashboard() {
+    function isExchanger() {
+      return currentUser && currentUser.roles && (currentUser.roles.includes('exchanger') || currentUser.roles.includes('owner'));
+    }
+
+    function isAdmin() {
+      return currentUser && currentUser.roles && (currentUser.roles.includes('admin') || currentUser.roles.includes('manager') || currentUser.roles.includes('owner'));
+    }
+
+    function renderDashboard() {
       const nav = document.getElementById('nav-container');
       nav.innerHTML = `
         <span style="font-size: 0.9rem; font-weight: 600;">${currentUser.displayName || currentUser.username}</span>
@@ -326,77 +430,593 @@
 
       const main = document.getElementById('main-content');
       main.innerHTML = `
-        <div style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center;">
+        <div style="margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
           <div>
-            <h2 style="font-size: 1.75rem; font-weight: 800;">Member Dashboard</h2>
+            <h2 style="font-size: 1.75rem; font-weight: 800;">Financial &amp; Marketplace Hub</h2>
             <p style="color: var(--text-muted); font-size: 0.95rem;">Authenticated as @${currentUser.username} (${currentUser.discordId})</p>
           </div>
-          <div>
-            <span class="badge badge-green">Session Active</span>
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            ${currentUser.roles.map(r => `<span class="badge badge-green">${r}</span>`).join('')}
           </div>
         </div>
 
+        <!-- Unified USD Wallet V2 Card -->
         <div class="dashboard-grid">
           <div class="card" id="wallet-card">
             <div class="card-title">
-              <span>Financial Balances</span>
-              <span class="badge">Escrow 72h</span>
+              <span>Unified USD Wallet (V2)</span>
+              <span class="badge badge-blue">USD Cents Only</span>
             </div>
             <div id="wallet-data">
               <div class="loading-spinner"></div>
             </div>
           </div>
 
-          <div class="card" id="roles-card">
+          <div class="card">
             <div class="card-title">
-              <span>Account Roles</span>
-              <span class="badge">Security RBAC</span>
+              <span>Security &amp; Policy Baseline</span>
+              <span class="badge badge-green">Hardened V2.2</span>
             </div>
-            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem;">
-              ${currentUser.roles && currentUser.roles.length > 0 
-                ? currentUser.roles.map(r => `<span class="badge badge-green">${r}</span>`).join('') 
-                : '<span style="color: var(--text-muted); font-size: 0.9rem;">Standard Member</span>'}
+            <div class="stat-row">
+              <span class="stat-label">Double-Entry Accounting</span>
+              <span class="stat-val">Balanced Posting</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">P2P Settlement Gate</span>
+              <span class="stat-val" style="color: var(--accent-amber);">FAIL_CLOSED (Safe)</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Live Wallet Credits</span>
+              <span class="stat-val" style="color: var(--accent-amber);">DISABLED (Testing)</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Gold Wallet Balance</span>
+              <span class="stat-val">Item Only (No Balance)</span>
             </div>
           </div>
         </div>
+
+        <!-- Navigation Tabs -->
+        <div class="tab-nav">
+          <button class="tab-btn ${activeTab === 'overview' ? 'active' : ''}" onclick="switchTab('overview')">Active Offers</button>
+          <button class="tab-btn ${activeTab === 'sell-gold' ? 'active' : ''}" onclick="switchTab('sell-gold')">Sell Gold (Advertiser)</button>
+          <button class="tab-btn ${activeTab === 'p2p-funding' ? 'active' : ''}" onclick="switchTab('p2p-funding')">P2P IRT Funding</button>
+          ${isExchanger() ? `<button class="tab-btn ${activeTab === 'exchanger' ? 'active' : ''}" onclick="switchTab('exchanger')">Exchanger Portal</button>` : ''}
+          ${isAdmin() ? `<button class="tab-btn ${activeTab === 'admin' ? 'active' : ''}" onclick="switchTab('admin')">Admin Review Hub</button>` : ''}
+        </div>
+
+        <div id="tab-content">
+          <!-- Rendered via switchTab -->
+        </div>
       `;
 
-      loadWallet();
+      loadWalletV2();
+      switchTab(activeTab);
     }
 
-    async function loadWallet() {
+    async function loadWalletV2() {
       const container = document.getElementById('wallet-data');
       try {
-        const res = await fetch('/api/wallet', { credentials: 'include' });
+        const res = await fetch('/api/wallet/v2', { credentials: 'include' });
         if (res.ok) {
           const w = await res.json();
           container.innerHTML = `
             <div class="stat-row">
-              <span class="stat-label">Available Balance (USD)</span>
-              <span class="stat-val">$${(w.balanceUsd / 100).toFixed(2)}</span>
+              <span class="stat-label">Available Balance</span>
+              <span class="stat-val" style="color: var(--accent-green); font-size: 1.1rem;">$${(w.availableCents / 100).toFixed(2)}</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">Escrow Locked (USD)</span>
-              <span class="stat-val">$${(w.escrowUsd / 100).toFixed(2)}</span>
+              <span class="stat-label">Reserved (In-Trade / Withdrawal)</span>
+              <span class="stat-val" style="color: var(--accent-amber);">$${(w.reservedCents / 100).toFixed(2)}</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">Gold Balance</span>
-              <span class="stat-val">${w.balanceGold.toLocaleString()} g</span>
+              <span class="stat-label">Pending Earnings (Hold)</span>
+              <span class="stat-val">$${(w.pendingEarningsCents / 100).toFixed(2)}</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">IRT Balance</span>
-              <span class="stat-val">${w.balanceIrt.toLocaleString()} IRT</span>
+              <span class="stat-label">Confirmed Earnings</span>
+              <span class="stat-val">$${(w.confirmedEarningsCents / 100).toFixed(2)}</span>
             </div>
           `;
         } else {
-          container.innerHTML = `<span style="color: var(--accent-red); font-size: 0.9rem;">Failed to load wallet.</span>`;
+          container.innerHTML = `<span style="color: var(--accent-red);">Failed to load Wallet V2.</span>`;
         }
       } catch (err) {
-        container.innerHTML = `<span style="color: var(--accent-red); font-size: 0.9rem;">Wallet service unavailable.</span>`;
+        container.innerHTML = `<span style="color: var(--accent-red);">Wallet service unavailable.</span>`;
       }
     }
 
-    // Initialize application
+    async function switchTab(tab) {
+      activeTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+      const activeBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.textContent.toLowerCase().includes(tab.replace('-', ' ')));
+      if (activeBtn) activeBtn.classList.add('active');
+
+      const content = document.getElementById('tab-content');
+      content.innerHTML = '<div class="loading-spinner"></div>';
+
+      if (tab === 'overview') {
+        renderOffersTab(content);
+      } else if (tab === 'sell-gold') {
+        renderSellGoldTab(content);
+      } else if (tab === 'p2p-funding') {
+        renderP2pFundingTab(content);
+      } else if (tab === 'exchanger' && isExchanger()) {
+        renderExchangerTab(content);
+      } else if (tab === 'admin' && isAdmin()) {
+        renderAdminTab(content);
+      }
+    }
+
+    async function renderOffersTab(container) {
+      try {
+        const res = await fetch('/api/marketplace/offers');
+        const data = await res.json();
+        const offers = data.offers || [];
+
+        container.innerHTML = `
+          <div class="card">
+            <div class="card-title">
+              <span>Active Exchanger Published Offers</span>
+              <span class="badge badge-green">${offers.length} Active</span>
+            </div>
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Offer Ref</th>
+                    <th>Exchanger</th>
+                    <th>Service Type</th>
+                    <th>Currency</th>
+                    <th>Commission</th>
+                    <th>Terms / Limits</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${offers.length === 0 ? '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No active offers published yet.</td></tr>' : 
+                    offers.map(o => `
+                      <tr>
+                        <td><code>${o.offerRef}</code></td>
+                        <td><strong>${o.exchanger.displayName || o.exchanger.username}</strong></td>
+                        <td><span class="badge">${o.serviceType}</span></td>
+                        <td><strong>${o.settlementCurrency}</strong></td>
+                        <td style="color: var(--accent-green); font-weight: 700;">${(o.commissionPercentage * 100).toFixed(2)}%</td>
+                        <td style="color: var(--text-muted);">${o.terms || 'Standard terms'}</td>
+                      </tr>
+                    `).join('')
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = `<div class="card"><p style="color: var(--accent-red);">Failed to load exchange offers.</p></div>`;
+      }
+    }
+
+    async function renderSellGoldTab(container) {
+      container.innerHTML = `
+        <div class="card">
+          <div class="card-title">
+            <span>Sell Gold to Approved Exchanger (Workflow A &amp; B)</span>
+            <span class="badge badge-blue">Advertiser is Seller</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1.5rem;">
+            Advertiser sells in-game Gold. Select an approved Exchanger buyer and your preferred settlement method:
+            <strong>External IRT Card/Bank (Workflow A)</strong>, <strong>External USDT (Workflow A)</strong>, or <strong>Exchanger Prepaid USD Wallet (Workflow B)</strong>.
+          </p>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
+            <div class="form-group">
+              <label>Exchanger Discord ID (Buyer)</label>
+              <input type="text" class="form-control" id="gold-buyer-id" placeholder="e.g. 1234567890" />
+            </div>
+            <div class="form-group">
+              <label>Game Slug</label>
+              <input type="text" class="form-control" id="gold-game-slug" value="wow_midnight" />
+            </div>
+            <div class="form-group">
+              <label>Gold Quantity</label>
+              <input type="number" class="form-control" id="gold-quantity" placeholder="e.g. 1000000" />
+            </div>
+            <div class="form-group">
+              <label>Agreed Valuation in USD Cents</label>
+              <input type="number" class="form-control" id="gold-valuation-cents" placeholder="e.g. 8000 ($80.00)" />
+            </div>
+            <div class="form-group">
+              <label>Settlement Method</label>
+              <select class="form-control" id="gold-settlement-method">
+                <option value="IRT_DIRECT">External Direct IRT Bank/Card (Workflow A)</option>
+                <option value="USDT_DIRECT">External Direct USDT BEP-20 (Workflow A)</option>
+                <option value="USD_WALLET">Exchanger Prepaid USD Wallet (Workflow B)</option>
+              </select>
+            </div>
+          </div>
+
+          <button class="btn btn-primary" onclick="requestGoldQuote()" style="margin-top: 1rem;">
+            Generate Immutable Quote
+          </button>
+
+          <div id="gold-quote-result" style="margin-top: 1.5rem;"></div>
+        </div>
+      `;
+    }
+
+    window.requestGoldQuote = async function() {
+      const buyerId = document.getElementById('gold-buyer-id').value.trim();
+      const gameSlug = document.getElementById('gold-game-slug').value.trim();
+      const goldQuantity = Number(document.getElementById('gold-quantity').value);
+      const agreedValuationUsdCents = Number(document.getElementById('gold-valuation-cents').value);
+      const settlementMethod = document.getElementById('gold-settlement-method').value;
+      const resContainer = document.getElementById('gold-quote-result');
+
+      resContainer.innerHTML = '<div class="loading-spinner"></div> Calculating quote...';
+
+      try {
+        const res = await fetch('/api/marketplace/advertiser/trades/quote', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            buyerId,
+            gameSlug,
+            goldQuantity,
+            agreedValuationUsdCents,
+            settlementMethod
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          resContainer.innerHTML = `<div style="color: var(--accent-red); padding: 1rem; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">Quote Error: ${data.error}</div>`;
+          return;
+        }
+
+        const q = data.quote;
+        window.currentGoldQuote = q;
+
+        resContainer.innerHTML = `
+          <div style="background: rgba(88, 101, 242, 0.1); border: 1px solid var(--primary); padding: 1.5rem; border-radius: 8px;">
+            <h4 style="color: #fff; margin-bottom: 0.5rem;">Official Gold Trade Quote</h4>
+            <div class="stat-row"><span class="stat-label">Trade Reference</span><span class="stat-val"><code>${q.tradeRef}</code></span></div>
+            <div class="stat-row"><span class="stat-label">Agreed USD Valuation</span><span class="stat-val">$${(q.agreedValuationUsdCents / 100).toFixed(2)}</span></div>
+            <div class="stat-row"><span class="stat-label">Net Payable Amount</span><span class="stat-val" style="color: var(--accent-green); font-size: 1.1rem;">${q.quotedPayableAmount} ${q.quotedPayableCurrency}</span></div>
+            <div class="stat-row"><span class="stat-label">Settlement Route</span><span class="stat-val">${q.settlementMethod}</span></div>
+            <div class="stat-row"><span class="stat-label">Quote Anti-Tamper Hash</span><span class="stat-val"><code style="font-size: 0.75rem;">${q.quoteHash.substring(0, 16)}...</code></span></div>
+            
+            <button class="btn btn-success" onclick="acceptGoldTradeQuote()" style="margin-top: 1rem;">
+              Accept Quote &amp; Confirm Trade
+            </button>
+          </div>
+        `;
+      } catch (err) {
+        resContainer.innerHTML = `<span style="color: var(--accent-red);">Request failed.</span>`;
+      }
+    };
+
+    window.acceptGoldTradeQuote = async function() {
+      if (!window.currentGoldQuote) return;
+      const resContainer = document.getElementById('gold-quote-result');
+      try {
+        const res = await fetch('/api/marketplace/advertiser/trades/accept', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({ quote: window.currentGoldQuote })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          resContainer.innerHTML = `
+            <div style="background: rgba(16, 185, 129, 0.15); border: 1px solid var(--accent-green); padding: 1.5rem; border-radius: 8px;">
+              <h4 style="color: var(--accent-green);">Trade Successfully Created &amp; Confirmed!</h4>
+              <p style="margin-top: 0.5rem; font-size: 0.95rem;">Status: <strong>${data.trade.tradeStatus}</strong> | Trade Ref: <code>${data.trade.tradeRef}</code></p>
+              ${data.trade.walletReservationId ? `<p style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.25rem;">Exchanger USD Wallet Reservation: <code>${data.trade.walletReservationId}</code></p>` : ''}
+              <p style="font-size: 0.9rem; margin-top: 0.5rem;">Next Step: Deliver the agreed Gold in-game and submit evidence reference.</p>
+            </div>
+          `;
+          loadWalletV2();
+        } else {
+          alert('Failed to accept trade: ' + data.error);
+        }
+      } catch (err) {
+        alert('Accept trade error');
+      }
+    };
+
+    async function renderP2pFundingTab(container) {
+      container.innerHTML = `
+        <div class="card">
+          <div class="card-title">
+            <span>P2P IRT-to-USD Wallet Funding (Workflow C)</span>
+            <span class="badge badge-amber">Exchanger-Backed USD</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1.5rem;">
+            Deposit Tomans (IRT) directly to an approved Exchanger to fund your USD Wallet.
+            <strong>Security Invariant:</strong> External IRT payments alone cannot mint USD credits; the Exchanger must have verified USD balance in G4X which is reserved before transfer.
+          </p>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
+            <div class="form-group">
+              <label>Exchanger Discord ID</label>
+              <input type="text" class="form-control" id="p2p-exchanger-id" placeholder="Exchanger User ID" />
+            </div>
+            <div class="form-group">
+              <label>Exchanger Offer ID</label>
+              <input type="number" class="form-control" id="p2p-offer-id" placeholder="Offer # ID" />
+            </div>
+            <div class="form-group">
+              <label>Target USD Funding in Cents</label>
+              <input type="number" class="form-control" id="p2p-usd-cents" placeholder="e.g. 5000 ($50.00)" />
+            </div>
+          </div>
+
+          <button class="btn btn-primary" onclick="requestP2pQuote()" style="margin-top: 1rem;">
+            Calculate P2P Funding Quote
+          </button>
+
+          <div id="p2p-quote-result" style="margin-top: 1.5rem;"></div>
+        </div>
+      `;
+    }
+
+    window.requestP2pQuote = async function() {
+      const exchangerId = document.getElementById('p2p-exchanger-id').value.trim();
+      const offerId = Number(document.getElementById('p2p-offer-id').value);
+      const targetUsdCents = Number(document.getElementById('p2p-usd-cents').value);
+      const resContainer = document.getElementById('p2p-quote-result');
+
+      resContainer.innerHTML = '<div class="loading-spinner"></div> Calculating quote...';
+
+      try {
+        const res = await fetch('/api/marketplace/advertiser/p2p-funding/quote', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ exchangerId, offerId, targetUsdCents })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          resContainer.innerHTML = `<div style="color: var(--accent-red); padding: 1rem; background: rgba(239, 68, 68, 0.1); border-radius: 6px;">Error: ${data.error}</div>`;
+          return;
+        }
+
+        const q = data.quote;
+        window.currentP2pQuote = q;
+
+        resContainer.innerHTML = `
+          <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid var(--accent-amber); padding: 1.5rem; border-radius: 8px;">
+            <h4 style="color: #fff; margin-bottom: 0.5rem;">P2P Funding Quote Details</h4>
+            <div class="stat-row"><span class="stat-label">Target USD</span><span class="stat-val">$${(q.targetUsdCents / 100).toFixed(2)}</span></div>
+            <div class="stat-row"><span class="stat-label">Admin Reference Rate</span><span class="stat-val">${q.referenceRate.toLocaleString()} IRT / USD</span></div>
+            <div class="stat-row"><span class="stat-label">Exchanger Commission</span><span class="stat-val">${(q.commissionPercentage * 100).toFixed(2)}% (${q.commissionIrt.toLocaleString()} IRT)</span></div>
+            <div class="stat-row"><span class="stat-label">Total IRT Payable</span><span class="stat-val" style="color: var(--accent-green); font-size: 1.15rem;">${q.totalIrtPayable.toLocaleString()} IRT</span></div>
+            
+            <button class="btn btn-success" onclick="acceptP2pFunding()" style="margin-top: 1rem;">
+              Accept Quote &amp; Reserve USD from Exchanger
+            </button>
+          </div>
+        `;
+      } catch (err) {
+        resContainer.innerHTML = `<span style="color: var(--accent-red);">Failed to request quote.</span>`;
+      }
+    };
+
+    window.acceptP2pFunding = async function() {
+      if (!window.currentP2pQuote) return;
+      try {
+        const res = await fetch('/api/marketplace/advertiser/p2p-funding/accept', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({ quote: window.currentP2pQuote })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert('P2P Funding Request Created! Ref: ' + data.fundingRequest.fundingRef);
+          switchTab('p2p-funding');
+        } else {
+          alert('Failed to initiate funding: ' + data.error);
+        }
+      } catch (err) {
+        alert('Funding request error');
+      }
+    };
+
+    async function renderExchangerTab(container) {
+      container.innerHTML = `
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title">
+            <span>Publish New Fee Offer (Exchanger-Controlled Commission)</span>
+            <span class="badge badge-green">Authorized Exchanger</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem;">
+            <div class="form-group">
+              <label>Service Type</label>
+              <select class="form-control" id="new-offer-service">
+                <option value="IRT_TO_USD_FUNDING">IRT to USD Funding</option>
+                <option value="GOLD_PURCHASE_IRT">Gold Purchase (IRT Direct)</option>
+                <option value="GOLD_PURCHASE_USDT">Gold Purchase (USDT Direct)</option>
+                <option value="GOLD_PURCHASE_WALLET">Gold Purchase (Prepaid Wallet)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Settlement Currency</label>
+              <select class="form-control" id="new-offer-currency">
+                <option value="IRT">IRT (Toman)</option>
+                <option value="USDT">USDT (BEP-20)</option>
+                <option value="USD">USD (Wallet)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Commission Rate (e.g. 0.035 for 3.5%)</label>
+              <input type="number" step="0.001" class="form-control" id="new-offer-rate" placeholder="0.035" />
+            </div>
+            <div class="form-group">
+              <label>Terms / Notes</label>
+              <input type="text" class="form-control" id="new-offer-terms" placeholder="Fast card-to-card transfer" />
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="submitNewOffer()" style="margin-top: 1rem;">Publish Offer</button>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>My Gold Purchase Trades (As Buyer)</span>
+          </div>
+          <div id="exchanger-trades-list"><div class="loading-spinner"></div> Loading trades...</div>
+        </div>
+      `;
+
+      loadExchangerTrades();
+    }
+
+    window.submitNewOffer = async function() {
+      const serviceType = document.getElementById('new-offer-service').value;
+      const settlementCurrency = document.getElementById('new-offer-currency').value;
+      const commissionPercentage = Number(document.getElementById('new-offer-rate').value);
+      const terms = document.getElementById('new-offer-terms').value.trim();
+
+      try {
+        const res = await fetch('/api/marketplace/exchanger/offers', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({
+            serviceType,
+            settlementCurrency,
+            commissionPercentage,
+            terms
+          })
+        });
+        const data = await res.json();
+        if (res.ok) {
+          alert('Offer published successfully: ' + data.offer.offerRef);
+          switchTab('exchanger');
+        } else {
+          alert('Failed to publish offer: ' + data.error);
+        }
+      } catch (err) {
+        alert('Publish offer error');
+      }
+    };
+
+    async function loadExchangerTrades() {
+      const container = document.getElementById('exchanger-trades-list');
+      try {
+        const res = await fetch('/api/marketplace/exchanger/trades', { credentials: 'include' });
+        const data = await res.json();
+        const trades = data.trades || [];
+
+        if (trades.length === 0) {
+          container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">No active purchases assigned to you.</p>`;
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Trade Ref</th>
+                  <th>Seller</th>
+                  <th>Gold Qty</th>
+                  <th>Route</th>
+                  <th>Status</th>
+                  <th>Delivery</th>
+                  <th>Payment</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${trades.map(t => `
+                  <tr>
+                    <td><code>${t.tradeRef}</code></td>
+                    <td>${t.seller ? t.seller.username : t.sellerId}</td>
+                    <td><strong>${t.goldQuantity.toLocaleString()} g</strong></td>
+                    <td><span class="badge">${t.settlementMethod}</span></td>
+                    <td><span class="badge badge-amber">${t.tradeStatus}</span></td>
+                    <td>${t.goldDeliveryStatus}</td>
+                    <td>${t.paymentStatus}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = `<p style="color: var(--accent-red);">Failed to load purchases.</p>`;
+      }
+    }
+
+    async function renderAdminTab(container) {
+      container.innerHTML = `
+        <div class="card">
+          <div class="card-title">
+            <span>Admin Marketplace &amp; Trade Review Hub</span>
+            <span class="badge badge-green">Privileged Auditor</span>
+          </div>
+          <div id="admin-trades-table"><div class="loading-spinner"></div> Loading trades across all workflows...</div>
+        </div>
+      `;
+
+      try {
+        const res = await fetch('/api/marketplace/admin/trades', { credentials: 'include' });
+        const data = await res.json();
+        const trades = data.trades || [];
+
+        const tableContainer = document.getElementById('admin-trades-table');
+        if (trades.length === 0) {
+          tableContainer.innerHTML = '<p style="color: var(--text-muted);">No recorded trades yet.</p>';
+          return;
+        }
+
+        tableContainer.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ref</th>
+                  <th>Seller (Adv)</th>
+                  <th>Buyer (Exch)</th>
+                  <th>Valuation</th>
+                  <th>Method</th>
+                  <th>Status</th>
+                  <th>Delivery</th>
+                  <th>Payment</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${trades.map(t => `
+                  <tr>
+                    <td><code>${t.tradeRef}</code></td>
+                    <td>${t.seller ? t.seller.username : t.sellerId}</td>
+                    <td>${t.buyer ? t.buyer.username : t.buyerId}</td>
+                    <td>$${(t.agreedValuationUsdCents / 100).toFixed(2)}</td>
+                    <td><span class="badge">${t.settlementMethod}</span></td>
+                    <td><span class="badge ${t.tradeStatus === 'SETTLED' ? 'badge-green' : 'badge-amber'}">${t.tradeStatus}</span></td>
+                    <td>${t.goldDeliveryStatus}</td>
+                    <td>${t.paymentStatus}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = `<p style="color: var(--accent-red);">Failed to load admin overview.</p>`;
+      }
+    }
+
+    // Start authentication check on load
     checkAuth();
   </script>
 </body>
