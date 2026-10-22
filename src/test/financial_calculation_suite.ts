@@ -163,7 +163,7 @@ async function runFinancialEngineTests() {
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // تست ۳: SkyCoach displayed order amount remains unchanged before withdrawal
+    // تست ۳: SkyCoach 10% order fee accurately calculated at order level (replaces 5% + $5)
     // ─────────────────────────────────────────────────────────────────────────
     const ordSky_1 = await createTestOrder('ORD-FIN-SKY-01', 8000); // $80.00
     const snapSky_1 = await calculateOrderFinancialSnapshot({
@@ -172,44 +172,47 @@ async function runFinancialEngineTests() {
       sourceAmountType: 'gross_sale',
       sourceAmountMinor: 8000,
     });
-    // No 5% or $5 deducted at creation!
+    // 10% per order replaces old 5% + $5. Never charge both. No $5 flat fee on every order!
     assert(
-      snapSky_1.platformOrderNetMinor === 8000 &&
-        snapSky_1.platformSaleCommissionMinor === 0 &&
+      snapSky_1.grossSaleMinor === 8000 &&
+        snapSky_1.platformSaleCommissionMinor === 800 &&
+        snapSky_1.platformOrderNetMinor === 7200 &&
         snapSky_1.allocatedWithdrawalFeeMinor === 0,
-      '3. SkyCoach displayed order amount remains unchanged before withdrawal (no fee deducted at creation)',
-      `Platform Net: ${snapSky_1.platformOrderNetMinor}`
+      '3. SkyCoach 10% fee is accurately applied per order, replacing legacy 5% plus $5',
+      `Platform Net: ${snapSky_1.platformOrderNetMinor}, Commission: ${snapSky_1.platformSaleCommissionMinor}`
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // تست ۴: SkyCoach 5% plus $5 is charged once per withdrawal batch
+    // تست ۴: SkyCoach batch reconciliation does not double-count 10% or charge $5 flat fee
     // ─────────────────────────────────────────────────────────────────────────
     const ordSky_2 = await createTestOrder('ORD-FIN-SKY-02', 12000); // $120.00
-    await calculateOrderFinancialSnapshot({
+    const snapSky_2 = await calculateOrderFinancialSnapshot({
       orderId: ordSky_2.id,
       sourcePlatform: 'skycoach',
       sourceAmountType: 'gross_sale',
       sourceAmountMinor: 12000,
     });
+    assert(
+      snapSky_2.platformSaleCommissionMinor === 1200 && snapSky_2.platformOrderNetMinor === 10800,
+      '4a. Second SkyCoach order has 10% commission ($12.00) recognized at order level',
+      `Order 2 Net: ${snapSky_2.platformOrderNetMinor}`
+    );
 
-    // Total batch = 8000 + 12000 = 20000 ($200.00). 5% = 1000 minor ($10.00). Flat fee = 500 minor ($5.00).
-    // Total batch fee = 1500 minor ($15.00).
+    // Reconciling batch: 10% already recognized at order level; batch fee is 0, transfer fee is $0.30
     const skyBatch = await createAndReconcileWithdrawalBatch({
       platform: 'skycoach',
       orderContributions: [
-        { orderId: ordSky_1.id, contributionMinor: 8000 },
-        { orderId: ordSky_2.id, contributionMinor: 12000 },
+        { orderId: ordSky_1.id, contributionMinor: snapSky_1.platformOrderNetMinor }, // 7200
+        { orderId: ordSky_2.id, contributionMinor: snapSky_2.platformOrderNetMinor }, // 10800
       ],
       actorId: adminId,
     });
     const skyBatchFee = skyBatch.batch.actualBatchFeeMinor;
     assert(
-      skyBatchFee === 1500 &&
-        skyBatch.allocations.reduce((s, a) => s + a.allocatedBatchFeeMinor, 0) === 1500 &&
-        // Order 1 (40% of 20000) gets 600 minor; Order 2 (60% of 20000) gets 900 minor
-        skyBatch.allocations.find((a) => a.orderId === ordSky_1.id)?.allocatedBatchFeeMinor === 600 &&
-        skyBatch.allocations.find((a) => a.orderId === ordSky_2.id)?.allocatedBatchFeeMinor === 900,
-      '4. SkyCoach 5% plus $5 is charged once per withdrawal batch and allocated proportionally',
+      skyBatchFee === 0 &&
+        skyBatch.allocations.reduce((s, a) => s + a.allocatedBatchFeeMinor, 0) === 0 &&
+        skyBatch.batch.status === 'reconciled',
+      '4. SkyCoach batch reconciliation does not double-count 10% fee or add $5 flat charge',
       `Actual batch fee: ${skyBatchFee}`
     );
 

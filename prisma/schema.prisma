@@ -67,6 +67,18 @@ model User {
   finalizedSnapshots       OrderFinancialSnapshot[]  @relation("SnapshotFinalizedBy")
   boosterAllocations       BoosterPayoutAllocation[] @relation("BoosterAllocations")
   createdPlatformTransactions PlatformAccountTransaction[] @relation("PlatformTxCreator")
+  walletV2                 WalletV2?
+  ledgerEntriesV2          LedgerEntryV2[]            @relation("UserLedgerV2")
+  advertiserFundingRequests AdvertiserFundingRequest[] @relation("AdvertiserFunding")
+  verifiedFundingRequests  AdvertiserFundingRequest[] @relation("VerifiedFunding")
+  goldTradesAsAdvertiser   GoldExchangeTradeOrder[]   @relation("AdvertiserGoldTrades")
+  goldTradesAsExchanger    GoldExchangeTradeOrder[]   @relation("ExchangerGoldTrades")
+  verifiedGoldTrades       GoldExchangeTradeOrder[]   @relation("VerifiedGoldTrades")
+  boosterWithdrawals       BoosterWithdrawalRequest[] @relation("BoosterWithdrawals")
+  approvedWithdrawals      BoosterWithdrawalRequest[] @relation("ApprovedWithdrawals")
+  processedWithdrawals     BoosterWithdrawalRequest[] @relation("ProcessedWithdrawals")
+  staffReviewedReleases    G4XBoostReleaseTracker[]   @relation("StaffReviewedReleases")
+  adminApprovedReleases    G4XBoostReleaseTracker[]   @relation("AdminApprovedReleases")
 
   @@map("users")
 }
@@ -316,6 +328,8 @@ model Order {
   withdrawalAllocations    OrderWithdrawalAllocation[]
   boosterPayoutAllocations BoosterPayoutAllocation[]
   platformTransactions     PlatformAccountTransaction[]
+  boostReleaseTracker      G4XBoostReleaseTracker?
+  ledgerEntriesV2          LedgerEntryV2[]
 
   @@index([status])
   @@index([gameSlug, status])
@@ -1036,5 +1050,211 @@ model PlatformAccountTransaction {
   @@index([createdAt])
   @@map("platform_account_transactions")
 }
+
+// ─── ۳۳. والت مالی نسل دوم (Unified USD Cents Wallet V2) ─────────────────────
+model WalletV2 {
+  userId                 String   @id @map("user_id")
+  availableCents         Int      @default(0) @map("available_cents")
+  reservedCents          Int      @default(0) @map("reserved_cents")
+  pendingEarningsCents   Int      @default(0) @map("pending_earnings_cents")
+  confirmedEarningsCents Int      @default(0) @map("confirmed_earnings_cents")
+  paidCents              Int      @default(0) @map("paid_cents")
+  refundedCents          Int      @default(0) @map("refunded_cents")
+  customCommissionRate   Float?   @default(0.15) @map("custom_commission_rate")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [discordId], onDelete: Cascade)
+
+  @@map("wallets_v2")
+}
+
+// ─── ۳۴. دفتر کل مالی نسل دوم (Finance V2 Ledger Entries) ────────────────────
+model LedgerEntryV2 {
+  id                         Int      @id @default(autoincrement())
+  entryRef                   String   @unique @map("entry_ref")
+  userId                     String?  @map("user_id")
+  orderId                    Int?     @map("order_id")
+  fundingRequestId           Int?     @map("funding_request_id")
+  withdrawalRequestId        Int?     @map("withdrawal_request_id")
+  amountCents                Int      @map("amount_cents")
+  entryType                  String   @map("entry_type")
+  // EARNING_PENDING | EARNING_CONFIRMED | AVAILABLE_RELEASE | WITHDRAWAL_RESERVE | WITHDRAWAL_SETTLE | WITHDRAWAL_REVERSE | ADVERTISER_DEPOSIT | MANUAL_ADJUSTMENT
+  direction                  String   @map("direction") // CREDIT | DEBIT
+  balanceAfterAvailableCents Int?     @map("balance_after_available_cents")
+  balanceAfterReservedCents  Int?     @map("balance_after_reserved_cents")
+  description                String?
+  metadata                   String?
+  createdBy                  String?  @map("created_by")
+  createdAt                  DateTime @default(now()) @map("created_at")
+
+  user              User?                      @relation("UserLedgerV2", fields: [userId], references: [discordId], onDelete: SetNull)
+  order             Order?                     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  fundingRequest    AdvertiserFundingRequest?  @relation(fields: [fundingRequestId], references: [id], onDelete: SetNull)
+  withdrawalRequest BoosterWithdrawalRequest?  @relation(fields: [withdrawalRequestId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([orderId])
+  @@index([entryType])
+  @@index([createdAt])
+  @@map("ledger_entries_v2")
+}
+
+// ─── ۳۵. درخواست‌های شارژ کیف‌پول ادورتایزر (Advertiser Funding Requests) ─────────
+model AdvertiserFundingRequest {
+  id                      Int       @id @default(autoincrement())
+  fundingRef              String    @unique @map("funding_ref")
+  advertiserId            String    @map("advertiser_id")
+  fundingMethod           String    @map("funding_method") // USDT | IRT | GOLD_EXCHANGE
+  status                  String    @default("PENDING_VERIFICATION") @map("status")
+  // DRAFT | QUOTED | AWAITING_PAYMENT | PAYMENT_SUBMITTED | PENDING_ADMIN_VERIFICATION | CONFIRMED_CREDITED | REJECTED | CANCELLED | PENDING_BUSINESS_CONFIRMATION
+  targetUsdCents          Int       @map("target_usd_cents")
+  externalCurrency        String    @map("external_currency") // USDT | IRT | GOLD
+  externalAmountUnits     String    @map("external_amount_units")
+  network                 String?
+  exchangeRate            Float?    @map("exchange_rate")
+  currencyPurchaseFeeRate Float?    @map("currency_purchase_fee_rate")
+  feeAmountUnits          String?   @map("fee_amount_units")
+  evidenceRef             String?   @map("evidence_ref")
+  payerIdentifier         String?   @map("payer_identifier")
+  adminNotes              String?   @map("admin_notes")
+  verifiedBy              String?   @map("verified_by")
+  verifiedAt              DateTime? @map("verified_at")
+  creditedAt              DateTime? @map("credited_at")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  advertiser      User                     @relation("AdvertiserFunding", fields: [advertiserId], references: [discordId], onDelete: Cascade)
+  verifier        User?                    @relation("VerifiedFunding", fields: [verifiedBy], references: [discordId], onDelete: SetNull)
+  goldTradeOrders GoldExchangeTradeOrder[]
+  ledgerEntries   LedgerEntryV2[]
+
+  @@index([advertiserId])
+  @@index([status])
+  @@map("advertiser_funding_requests")
+}
+
+// ─── ۳۶. سفارشات مبادله طلا برای شارژ ادورتایزر (Gold Exchange Trade Orders) ───────
+model GoldExchangeTradeOrder {
+  id                         Int       @id @default(autoincrement())
+  tradeRef                   String    @unique @map("trade_ref")
+  advertiserId               String    @map("advertiser_id")
+  exchangerId                String    @map("exchanger_id")
+  fundingRequestId           Int?      @map("funding_request_id")
+  gameSlug                   String    @default("wow_midnight") @map("game_slug")
+  goldQuantity               Int       @map("gold_quantity")
+  status                     String    @default("TRADE_PENDING") @map("status")
+  // TRADE_PENDING | TRADE_COMPLETED_IN_GAME | TRADE_VERIFIED | PAYMENT_PENDING | PAYMENT_CONFIRMED | PENDING_BUSINESS_CONFIRMATION | RECONCILED | CANCELLED | REJECTED
+  tradeEvidenceRef           String?   @map("trade_evidence_ref")
+  externalPaymentMethod      String?   @map("external_payment_method") // USDT | IRT
+  externalPaymentAmount      String?   @map("external_payment_amount")
+  externalPaymentRef         String?   @map("external_payment_ref")
+  externalPaymentConfirmedAt DateTime? @map("external_payment_confirmed_at")
+  resultingUsdCents          Int?      @map("resulting_usd_cents")
+  walletCreditStatus         String    @default("BLOCKED_PENDING_DIRECTION_CONFIRMATION") @map("wallet_credit_status")
+  rejectionReason            String?   @map("rejection_reason")
+  verifiedBy                 String?   @map("verified_by")
+  verifiedAt                 DateTime? @map("verified_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  advertiser     User                      @relation("AdvertiserGoldTrades", fields: [advertiserId], references: [discordId], onDelete: Cascade)
+  exchanger      User                      @relation("ExchangerGoldTrades", fields: [exchangerId], references: [discordId], onDelete: Cascade)
+  verifier       User?                     @relation("VerifiedGoldTrades", fields: [verifiedBy], references: [discordId], onDelete: SetNull)
+  fundingRequest AdvertiserFundingRequest? @relation(fields: [fundingRequestId], references: [id], onDelete: SetNull)
+
+  @@index([advertiserId])
+  @@index([exchangerId])
+  @@index([status])
+  @@map("gold_exchange_trade_orders")
+}
+
+// ─── ۳۷. درخواست‌های تسویه و برداشت بوسترها (Booster Withdrawal Requests) ───────────
+model BoosterWithdrawalRequest {
+  id                       Int       @id @default(autoincrement())
+  withdrawalRef            String    @unique @map("withdrawal_ref")
+  boosterId                String    @map("booster_id")
+  payoutMethod             String    @map("payout_method") // USDT_BEP20 | IRT_BANK
+  status                   String    @default("DRAFT") @map("status")
+  // DRAFT | QUOTED | USER_CONFIRMED | REQUESTED | RESERVED | UNDER_ADMIN_REVIEW | PROCESSING | PAID | REJECTED | CANCELLED | FAILED
+  requestedUsdCents        Int       @map("requested_usd_cents")
+  fixedFeeUsdCents         Int       @map("fixed_fee_usd_cents")
+  netUsdCents              Int       @map("net_usd_cents")
+  quoteRate                Float?    @map("quote_rate")
+  effectiveRate            Float?    @map("effective_rate")
+  rateDiscount             Int?      @default(0) @map("rate_discount")
+  quotedNetPayoutAmount    String    @map("quoted_net_payout_amount")
+  quotedCurrency           String    @map("quoted_currency")
+  quoteExpiresAt           DateTime? @map("quote_expires_at")
+  userConfirmedAt          DateTime? @map("user_confirmed_at")
+  destinationAddress       String    @map("destination_address")
+  destinationAccountHolder String?   @map("destination_account_holder")
+  scheduledCycleDay        String?   @map("scheduled_cycle_day") // WEDNESDAY | SATURDAY | MANUAL
+  scheduledCycleDate       DateTime? @map("scheduled_cycle_date")
+  schedulingStatus         String    @default("PENDING_SCHEDULE") @map("scheduling_status")
+  approvedBy               String?   @map("approved_by")
+  approvedAt               DateTime? @map("approved_at")
+  processedBy              String?   @map("processed_by")
+  processedAt              DateTime? @map("processed_at")
+  externalTxHash           String?   @map("external_tx_hash")
+  bankReceiptRef           String?   @map("bank_receipt_ref")
+  rejectionReason          String?   @map("rejection_reason")
+  cancelReason             String?   @map("cancel_reason")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  booster       User            @relation("BoosterWithdrawals", fields: [boosterId], references: [discordId], onDelete: Cascade)
+  approver      User?           @relation("ApprovedWithdrawals", fields: [approvedBy], references: [discordId], onDelete: SetNull)
+  processor     User?           @relation("ProcessedWithdrawals", fields: [processedBy], references: [discordId], onDelete: SetNull)
+  ledgerEntries LedgerEntryV2[]
+
+  @@index([boosterId])
+  @@index([status])
+  @@index([scheduledCycleDay])
+  @@map("booster_withdrawal_requests")
+}
+
+// ─── ۳۸. پیگیری مراحل آزادسازی بوست‌های G4X (G4X Boost Release Tracker) ────────────
+model G4XBoostReleaseTracker {
+  id                     Int       @id @default(autoincrement())
+  orderId                Int       @unique @map("order_id")
+  stage                  String    @default("RUN_COMPLETED") @map("stage")
+  // RUN_COMPLETED | PROOF_SUBMITTED | STAFF_REVIEW | ADMIN_FINAL_APPROVED | HOLD_24_HOURS | ELIGIBLE_FOR_RELEASE | AVAILABLE
+  proofSubmittedAt       DateTime? @map("proof_submitted_at")
+  staffReviewedAt        DateTime? @map("staff_reviewed_at")
+  staffReviewedBy        String?   @map("staff_reviewed_by")
+  adminFinalApprovedAt   DateTime? @map("admin_final_approved_at")
+  adminFinalApprovedBy   String?   @map("admin_final_approved_by")
+  holdDurationHours      Int       @default(24) @map("hold_duration_hours")
+  holdExpiresAt          DateTime? @map("hold_expires_at")
+  isFundsReconciled      Boolean   @default(false) @map("is_funds_reconciled")
+  isCalculationFinalized Boolean   @default(false) @map("is_calculation_finalized")
+  hasActiveDispute       Boolean   @default(false) @map("has_active_dispute")
+  hasActiveHold          Boolean   @default(false) @map("has_active_hold")
+  isReleased             Boolean   @default(false) @map("is_released")
+  releasedAt             DateTime? @map("released_at")
+  notes                  String?
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  order              Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  staffReviewerUser  User? @relation("StaffReviewedReleases", fields: [staffReviewedBy], references: [discordId], onDelete: SetNull)
+  adminApproverUser  User? @relation("AdminApprovedReleases", fields: [adminFinalApprovedBy], references: [discordId], onDelete: SetNull)
+
+  @@index([stage])
+  @@map("g4x_boost_release_trackers")
+}
+
+// ─── ۳۹. تنظیمات مالی متمرکز سیستم (System Financial Configurations) ───────────────
+model SystemFinancialConfig {
+  key         String   @id @map("config_key")
+  value       String   @map("config_value")
+  description String?
+  updatedBy   String?  @map("updated_by")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("system_financial_configs")
+}
+
 
 

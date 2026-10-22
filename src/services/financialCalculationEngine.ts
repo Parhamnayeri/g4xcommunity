@@ -214,15 +214,24 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
     }
     // هزینه‌های برداشت G2G (3.99% + $0.99) و انتقال ($0.30) در زمان تسویه دسته اعمال می‌شوند
   } else if (sourcePlatform === 'skycoach') {
-    // طبق تصحیح قوانین SkyCoach:
-    // ۱. مبلغ سفارش تغییر نمی‌کند و ۵٪ + ۵ دلار در ایجاد سفارش کسر نمی‌شود.
-    // ۲. مبلغ ۵ دلار هزینه هر سفارش نیست بلکه برای کل دسته است.
-    // ۳. مبلغ نمایشی به عنوان سهم مانده پلتفرم ثبت می‌شود.
-    grossSaleMinor = sourceAmountMinor;
-    platformSaleCommissionMinor = 0;
-    platformOrderNetMinor = sourceAmountMinor;
-    const policy = await getFeePolicy({ platform: 'skycoach', feeType: 'withdrawal_fee' });
-    policyVersion = policy?.version ?? 1;
+    // طبق تصمیم نهایی مالک (Finance V2):
+    // خط‌مشی قدیمی ۵٪ + ۵ دلار کاملاً بازنشسته شد.
+    // کارمزد مصوب جدید: ۱۰٪ به ازای هر سفارش (10% per order).
+    // هرگز نباید هر دو کارمزد کسر شوند و هیچ کارمزد ۵ دلاری روی سفارشات یا دسته وضع نمی‌گردد.
+    const policy = await getFeePolicy({ platform: 'skycoach', feeType: 'sale_commission' });
+    policyVersion = policy?.version ?? 2;
+    const orderFeeRate = policy?.percentageRate ?? 0.10;
+
+    if (sourceAmountType === 'gross_sale') {
+      grossSaleMinor = sourceAmountMinor;
+      platformSaleCommissionMinor = Math.round(grossSaleMinor * orderFeeRate);
+      platformOrderNetMinor = grossSaleMinor - platformSaleCommissionMinor;
+    } else {
+      // platform_net: مبلغ وارد شده از قبل با احتساب کسر ۱۰٪ خالص است — عدم کسر مجدد
+      grossSaleMinor = null;
+      platformSaleCommissionMinor = 0;
+      platformOrderNetMinor = sourceAmountMinor;
+    }
   } else if (sourcePlatform === 'eldorado') {
     if (sourceAmountType === 'platform_net') {
       // مبلغ خالص واریز شده پلتفرم است — عدم کسر مجدد کمیسیون
@@ -438,8 +447,10 @@ export async function createAndReconcileWithdrawalBatch(input: ReconcileWithdraw
   let calculatedTransferFee = 0;
 
   if (platform === 'skycoach') {
-    // 5% + $5.00 یکبار برای کل دسته اعمال می‌شود
-    calculatedBatchFee = Math.round(totalContributionsMinor * 0.05) + 500;
+    // طبق تصمیم نهایی مالک: کارمزد ۱۰٪ در سطح سفارش شناسایی شده است.
+    // کارمزد دسته صفر منظور می‌شود تا کارمزد ۱۰٪ مجدداً کسر نشود و کارمزد ۵ دلاری نیز کسر نگردد.
+    // کارمزد انتقال $0.30 تنها در صورت وقوع تراکنش انتقال خارجی منظور می‌شود.
+    calculatedBatchFee = 0;
     calculatedTransferFee = 30; // $0.30 هزینه انتقال BNB در صورت شمول
   } else if (platform === 'g2g') {
     // 3.99% + $0.99 برای دسته

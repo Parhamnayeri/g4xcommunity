@@ -434,19 +434,17 @@ async function runPlatformReconciliationTestSuite() {
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // تست ۱۴: کارمزد SkyCoach فقط یکبار برای کل دسته (SkyCoach Fee Charged Once)
-    // 5% + $5 یکبار برای کل دسته اعمال می‌شود، نه جداگانه برای هر سفارش
+    // تست ۱۴: کارمزد SkyCoach در سطح سفارش (۱۰٪) و عدم اعمال کارمزد ۵ دلار روی دسته
     // ─────────────────────────────────────────────────────────────────────────
-    // دسته SkyCoach با کل ۸۰ دلار ($80 = 8000 minor):
-    // 5% * 8000 = 400 + 500 = 900 minor ($9.00). انتقال = 30 minor ($0.30).
-    const skyActualBatchFee = Math.round(8000 * 0.05) + 500; // 900
-    const skyActualTransferFee = 30; // 30
-    const skyActualReceived = 8000 - skyActualBatchFee - skyActualTransferFee; // 7070 minor ($70.70)
+    // در سیستم جدید، کارمزد ۱۰٪ قبلاً در سطح سفارش کسر شده و کارمزد دسته‌ای جداگانه کسر نمی‌شود.
+    const skyActualBatchFee = 0; // 0 batch fee (10% recognized per order)
+    const skyActualTransferFee = 30; // $0.30 transfer cost
+    const skyActualReceived = 8000 - skyActualBatchFee - skyActualTransferFee; // 7970 minor ($79.70)
 
     assert(
-      skyActualBatchFee === 900,
-      '14. SkyCoach 5% plus $5 is charged once across the entire withdrawal batch',
-      `Total Batch Fee: ${skyActualBatchFee} minor ($9.00)`
+      skyActualBatchFee === 0,
+      '14. SkyCoach new 10% policy supersedes legacy 5% plus $5 (no $5 batch fee charged)',
+      `Total Batch Fee: ${skyActualBatchFee} minor`
     );
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -538,11 +536,11 @@ async function runPlatformReconciliationTestSuite() {
     );
 
     assert(
-      alloc1.allocatedBatchFeeMinor < alloc2.allocatedBatchFeeMinor &&
+      alloc1.allocatedTransferFeeMinor < alloc2.allocatedTransferFeeMinor &&
         alloc1.contributionAmountMinor === 3500 &&
         alloc2.contributionAmountMinor === 4500,
       '16. Exact proportional allocation distributes fees based on order contribution ratios',
-      `Order 1 ($35) Fee: ${alloc1.allocatedBatchFeeMinor}, Order 2 ($45) Fee: ${alloc2.allocatedBatchFeeMinor}`
+      `Order 1 ($35) Transfer Fee: ${alloc1.allocatedTransferFeeMinor}, Order 2 ($45) Transfer Fee: ${alloc2.allocatedTransferFeeMinor}`
     );
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -739,6 +737,12 @@ async function runPlatformReconciliationTestSuite() {
       });
       await prisma.order.deleteMany({
         where: { orderRef: { startsWith: 'ORD-TEST-' } },
+      });
+      await prisma.userRole.deleteMany({
+        where: { userId: { in: [adminId, unauthorizedId, boosterId] } },
+      });
+      await prisma.user.deleteMany({
+        where: { discordId: { in: [adminId, unauthorizedId, boosterId] } },
       });
     } catch (_) {}
   }

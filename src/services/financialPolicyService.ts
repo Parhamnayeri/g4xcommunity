@@ -211,10 +211,14 @@ export async function seedStandardFeePolicies(): Promise<void> {
     },
   });
 
-  // ۴. کارمزد برداشت دسته SkyCoach (5% + $5.00)
+  // ۴. خط‌مشی قدیمی ۵٪ + ۵ دلار بازنشسته شد (RETIRED)
   await prisma.platformFeePolicy.upsert({
     where: { id: 4 },
-    update: {},
+    update: {
+      isApproved: false,
+      effectiveTo: new Date(),
+      changeReason: 'RETIRED: Superseded by new owner policy (10% per order)',
+    },
     create: {
       id: 4,
       platform: 'skycoach',
@@ -226,8 +230,33 @@ export async function seedStandardFeePolicies(): Promise<void> {
       currency: 'USD',
       minThresholdMinor: 5000,
       version: 1,
+      isApproved: false,
+      changeReason: 'RETIRED: Superseded by new owner policy (10% per order)',
+    },
+  });
+
+  // ۴.ب. خط‌مشی جدید کارمزد سفارش SkyCoach (۱۰٪ به ازای هر سفارش - بدون ۵ دلار ثابت)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 40 },
+    update: {
+      percentageRate: 0.10,
+      fixedMinor: null,
       isApproved: true,
-      changeReason: 'Standard SkyCoach batch withdrawal fee (5% + $5.00)',
+      changeReason: 'NEW OWNER POLICY: 10% per order replacing legacy 5% + $5',
+    },
+    create: {
+      id: 40,
+      platform: 'skycoach',
+      feeType: 'sale_commission',
+      chargingEvent: 'sale',
+      percentageRate: 0.10,
+      fixedMinor: null,
+      feeBasis: 'gross_sale',
+      currency: 'USD',
+      minThresholdMinor: 5000,
+      version: 2,
+      isApproved: true,
+      changeReason: 'NEW OWNER POLICY: 10% per order replacing legacy 5% + $5',
     },
   });
 

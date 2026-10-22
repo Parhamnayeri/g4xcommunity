@@ -37,15 +37,21 @@ Configure the following variables in your hosting dashboard or local `.env` file
 | `ROLE_BOOSTER` | Discord Role ID for Booster | `123456789012345678` | Dev & Prod |
 | `ROLE_PILOT` | Discord Role ID for Pilot | `123456789012345678` | Dev & Prod |
 | `HOST` | Express host binding | `0.0.0.0` | Prod |
-| `PORT` | Web server listening port | `3000` (or host assigned) | Dev & Prod |
+| `PORT` | Web server listening port | **`26189`** (Bot-Hosting.net production assigned port; `3000` for local dev) | Dev & Prod |
 | `NODE_ENV` | Environment mode | `production` | Prod |
 | `WEB_BASE_URL` | Canonical public URL of the web server | `https://g4x.online` | Dev & Prod |
 | `SESSION_SECRET` | Strong random string (min 64 chars) | *Cryptographic secret* | Dev & Prod |
 | `DISCORD_REDIRECT_URI` | OAuth2 callback redirect URL | `https://g4x.online/auth/callback` | Dev & Prod |
 | `DATABASE_URL` | SQLite database file URI | `file:../data/g4x_dev.db` | Dev & Prod |
-| `ESCROW_RELEASE_ENABLED`| Automatic escrow settlement switch | **`false`** (Must remain false) | Dev & Prod |
-| `ESCROW_RELEASE_HOURS` | Escrow holding period | `72` | Dev & Prod |
-| `PLATFORM_FEE_RATE` | Platform fee fraction | `0.10` | Dev & Prod |
+| `ESCROW_RELEASE_ENABLED`| Automatic escrow settlement switch | **`false`** (Must remain false in production during testing) | Dev & Prod |
+| `G4X_BOOST_HOLD_HOURS` | Holding period for G4X published boosts from Admin Final Approval | `24` | Dev & Prod |
+| `BOOSTER_USDT_WITHDRAWAL_FEE_CENTS` | Fixed fee for booster USDT BEP-20 withdrawals | `40` ($0.40) | Dev & Prod |
+| `BOOSTER_IRT_WITHDRAWAL_FEE_CENTS` | Fixed fee for booster IRT bank withdrawals | `130` ($1.30) | Dev & Prod |
+| `BOOSTER_IRT_RATE_DISCOUNT_PER_USD` | Rate discount per USD for booster IRT withdrawals | `3000` (3,000 IRT) | Dev & Prod |
+| `ADVERTISER_IRT_PURCHASE_FEE_RATE` | Currency purchase fee for advertiser IRT funding | `0.05` (5%) | Dev & Prod |
+| `IRT_PAYOUT_TIMEZONE_OFFSET` | Timezone offset for IRT payout scheduling (Iran Standard Time) | `3.5` (UTC+3.5) | Dev & Prod |
+| `IRT_PAYOUT_TUESDAY_CUTOFF_HOUR` | Tuesday morning cutoff hour for Wednesday payout window | `10` (Requires owner approval) | Dev & Prod |
+| `PLATFORM_FEE_RATE` | Legacy fallback platform fee fraction | `0.10` | Dev & Prod |
 | `DEFAULT_COMMISSION_RATE` | Default commission rate | `0.15` | Dev & Prod |
 | `PRESIGN_TIMER_MINUTES` | Pre-sign window timer | `10` | Dev & Prod |
 
@@ -218,3 +224,80 @@ cp data/g4x_dev.db data/backups/g4x_backup_$(date +%s).db
 2. Replace `data/g4x_dev.db` with your verified backup copy.
 3. Run `npx prisma migrate deploy` to ensure any newer migrations are applied safely.
 4. Restart the bot (`npm start`).
+
+---
+
+## 9. Finance V2 Architecture & Clean Database Safety
+
+G4X Community Finance V2 is a clean redesign of the financial domain. Because the project has already deployed historical migrations on Bot-Hosting.net, historical migration integrity is strictly preserved.
+
+### 9.1 Core Financial Architectural Invariants
+1. **Unified USD Wallet (`wallets_v2`)**:
+   - All internal wallet balances are denominated strictly in **integer USD cents**.
+   - No parallel internal balances for USDT, IRT, TRY, or WoW Gold exist.
+   - Six distinct, auditable balance fields: `availableCents`, `reservedCents`, `pendingEarningsCents`, `confirmedEarningsCents`, `paidCents`, `refundedCents`.
+   - SQLite CHECK constraint (`wallets_v2_positive_balances_check`) strictly prevents negative balances.
+2. **WoW Gold Removed as Financial Currency**:
+   - WoW Gold exists solely as in-game trade quantities within Advertiser Gold Exchange trade orders.
+   - No Gold wallet balance is created or maintained.
+3. **Advertiser Funding Workflows**:
+   - **Direct USDT**: Recorded under admin verification with approved 1:1 USD valuation; credited only upon verified receipt.
+   - **Direct IRT**: Admin sets USD/IRT rate manually; applies currency purchase fee (5%); credited with exact integer arithmetic.
+   - **Gold Exchange Workflow**: Dedicated trade order; in-game trade completed and evidence verified; external payment confirmed.
+   - **Strict Safeguard**: Automatic wallet credits from Gold Exchange remain strictly blocked (`GOLD_EXCHANGE_DIRECTION_UNAPPROVED`) pending owner business confirmation on payment and delivery direction.
+4. **SkyCoach 10% Fee Policy**:
+   - The old 5% + $5 flat fee is retired.
+   - Approved new policy: 10% per order assessed at order creation.
+   - Batch reconciliation treats batch fee as $0 so 10% is never double-counted; external $0.30 BNB transfer expense is recorded separately.
+5. **Deterministic Equal Booster Pool Split**:
+   - 100% of the booster pool after authorized fees belongs to eligible boosters.
+   - Mythic+ (4 boosters): exact equal split with Largest Remainder Method in minor units.
+   - Single booster: 100% to participant. No leader bonus; no lost cents.
+6. **G4X-Published Boost 7 Release Stages & 24h Countdown**:
+   - Stages: `RUN_COMPLETED` -> `PROOF_SUBMITTED` -> `STAFF_REVIEW` -> `ADMIN_FINAL_APPROVED` -> `HOLD_24_HOURS` -> `ELIGIBLE_FOR_RELEASE` -> `AVAILABLE`.
+   - The 24-hour hold begins strictly at `adminFinalApprovedAt`.
+   - Applies strictly to G4X-published boosts (`creatorType === 'g4x'`); other orders are excluded.
+   - Production safety switch `ESCROW_RELEASE_ENABLED=false` blocks actual automated balance releases.
+7. **Booster Withdrawals**:
+   - **USDT**: BEP-20 only; fixed fee $0.40; Net USD = Requested - $0.40; manual payout with transaction hash.
+   - **IRT**: Fixed fee $1.30; Effective Rate = Admin Rate - 3,000 IRT; Net IRT = `(Requested USD - $1.30) * Effective Rate`; no percentage fee.
+   - **Scheduling**: Saturday 08:00 to Tuesday morning cutoff paid on Wednesday; after cutoff paid on Saturday. Missing Tuesday cutoff config blocks automated scheduling finalization.
+
+### 9.2 Legacy Table Isolation
+- Legacy tables (`wallets`, `ledger_transactions`, `platform_fee_policies`) are preserved and retired from active execution paths to maintain complete migration history on Bot-Hosting.net.
+- Never use `prisma migrate reset` or `prisma db push` on production.
+- Always use `npx prisma migrate deploy`.
+
+---
+
+## 10. Disposable Development / Test Database Guide
+
+To validate migrations or execute tests without modifying the live SQLite database (`data/g4x_dev.db`), use a disposable database:
+
+```powershell
+# 1. Set environment variable to a disposable database file
+$env:DATABASE_URL="file:./data/disposable_test.db"
+
+# 2. Deploy migrations from scratch to the disposable database
+npx prisma migrate deploy
+
+# 3. Run all test suites against the disposable database
+npm run test:security
+npm run test:escrow
+npm run test:integrity
+npm run test:domain
+npm run test:permissions
+npm run test:registration
+npm run test:recovery
+npm run test:bootstrap
+npm run test:channels
+npm test
+
+# 4. Clean up disposable database after validation
+Remove-Item -Path "data\disposable_test.db" -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "data\disposable_test.db-journal" -Force -ErrorAction SilentlyContinue
+
+# 5. Restore standard development database environment variable
+$env:DATABASE_URL="file:../data/g4x_dev.db"
+```
+
