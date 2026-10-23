@@ -501,13 +501,13 @@
 
         <!-- Navigation Tabs -->
         <div class="tab-nav">
-          <button class="tab-btn ${activeTab === 'overview' ? 'active' : ''}" onclick="switchTab('overview')">Active Offers</button>
-          <button class="tab-btn ${activeTab === 'sell-gold' ? 'active' : ''}" onclick="switchTab('sell-gold')">Sell Gold (Advertiser)</button>
-          <button class="tab-btn ${activeTab === 'p2p-funding' ? 'active' : ''}" onclick="switchTab('p2p-funding')">P2P IRT Funding</button>
-          <button class="tab-btn ${activeTab === 'booster' ? 'active' : ''}" onclick="switchTab('booster')">Booster &amp; Withdrawals</button>
-          <button class="tab-btn ${activeTab === 'applications' ? 'active' : ''}" onclick="switchTab('applications')">Member Applications</button>
-          ${isExchanger() ? `<button class="tab-btn ${activeTab === 'exchanger' ? 'active' : ''}" onclick="switchTab('exchanger')">Exchanger Portal</button>` : ''}
-          ${isAdmin() ? `<button class="tab-btn ${activeTab === 'admin' ? 'active' : ''}" onclick="switchTab('admin')">Admin Review Hub</button>` : ''}
+          <button class="tab-btn ${activeTab === 'overview' ? 'active' : ''}" data-tab="overview" onclick="switchTab('overview')">Active Offers</button>
+          <button class="tab-btn ${activeTab === 'sell-gold' ? 'active' : ''}" data-tab="sell-gold" onclick="switchTab('sell-gold')">Sell Gold (Advertiser)</button>
+          <button class="tab-btn ${activeTab === 'p2p-funding' ? 'active' : ''}" data-tab="p2p-funding" onclick="switchTab('p2p-funding')">P2P IRT Funding</button>
+          <button class="tab-btn ${activeTab === 'booster' ? 'active' : ''}" data-tab="booster" onclick="switchTab('booster')">Booster &amp; Withdrawals</button>
+          <button class="tab-btn ${activeTab === 'applications' ? 'active' : ''}" data-tab="applications" onclick="switchTab('applications')">Member Applications</button>
+          ${isExchanger() ? `<button class="tab-btn ${activeTab === 'exchanger' ? 'active' : ''}" data-tab="exchanger" onclick="switchTab('exchanger')">Exchanger Portal</button>` : ''}
+          ${isAdmin() ? `<button class="tab-btn ${activeTab === 'admin' ? 'active' : ''}" data-tab="admin" onclick="switchTab('admin')">Admin Review Hub</button>` : ''}
         </div>
 
         <div id="tab-content">
@@ -553,11 +553,12 @@
 
     async function switchTab(tab) {
       activeTab = tab;
-      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-      const activeBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.textContent.toLowerCase().includes(tab.replace('-', ' ')));
-      if (activeBtn) activeBtn.classList.add('active');
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-tab') === tab);
+      });
 
       const content = document.getElementById('tab-content');
+      if (!content) return;
       content.innerHTML = '<div class="loading-spinner"></div>';
 
       if (tab === 'overview') {
@@ -599,10 +600,11 @@
                     <th>Currency</th>
                     <th>Commission</th>
                     <th>Terms / Limits</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  ${offers.length === 0 ? '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No active offers published yet.</td></tr>' : 
+                  ${offers.length === 0 ? '<tr><td colspan="7" style="text-align: center; color: var(--text-muted);">No active offers published yet.</td></tr>' : 
                     offers.map(o => `
                       <tr>
                         <td><code>${o.offerRef}</code></td>
@@ -611,6 +613,9 @@
                         <td><strong>${o.settlementCurrency}</strong></td>
                         <td style="color: var(--accent-green); font-weight: 700;">${(o.commissionPercentage * 100).toFixed(2)}%</td>
                         <td style="color: var(--text-muted);">${o.terms || 'Standard terms'}</td>
+                        <td>
+                          <button class="btn btn-secondary" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="selectOfferForTrade('${o.exchanger.discordId || o.exchangerId}', '${o.settlementCurrency}')">Sell Gold</button>
+                        </td>
                       </tr>
                     `).join('')
                   }
@@ -623,6 +628,20 @@
         container.innerHTML = `<div class="card"><p style="color: var(--accent-red);">Failed to load exchange offers.</p></div>`;
       }
     }
+
+    window.selectOfferForTrade = function(buyerId, currency) {
+      switchTab('sell-gold');
+      setTimeout(() => {
+        const buyerInput = document.getElementById('gold-buyer-id');
+        if (buyerInput) buyerInput.value = buyerId;
+        const methodInput = document.getElementById('gold-settlement-method');
+        if (methodInput) {
+          if (currency === 'USDT') methodInput.value = 'USDT_DIRECT';
+          else if (currency === 'IRT') methodInput.value = 'IRT_DIRECT';
+          else if (currency === 'USD') methodInput.value = 'USD_WALLET';
+        }
+      }, 100);
+    };
 
     async function renderSellGoldTab(container) {
       container.innerHTML = `
@@ -669,8 +688,123 @@
 
           <div id="gold-quote-result" style="margin-top: 1.5rem;"></div>
         </div>
+
+        <div class="card" style="margin-top: 1.5rem;">
+          <div class="card-title">
+            <span>My Sold Gold Trades (As Seller)</span>
+            <span class="badge badge-blue">Deliveries &amp; Payment Confirmation</span>
+          </div>
+          <div id="advertiser-trades-list"><div class="loading-spinner"></div> Loading trades...</div>
+        </div>
       `;
+
+      loadAdvertiserTrades();
     }
+
+    async function loadAdvertiserTrades() {
+      const container = document.getElementById('advertiser-trades-list');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/marketplace/advertiser/trades', { credentials: 'include' });
+        const data = await res.json();
+        const trades = data.trades || [];
+
+        if (trades.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No active sales created yet.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ref</th>
+                  <th>Buyer</th>
+                  <th>Gold Qty</th>
+                  <th>Route</th>
+                  <th>Valuation</th>
+                  <th>Status</th>
+                  <th>Delivery</th>
+                  <th>Payment</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${trades.map(t => `
+                  <tr>
+                    <td><code>${t.tradeRef}</code></td>
+                    <td>${t.buyer ? t.buyer.username : t.buyerId}</td>
+                    <td><strong>${t.goldQuantity.toLocaleString()} g</strong></td>
+                    <td><span class="badge">${t.settlementMethod}</span></td>
+                    <td>$${(t.agreedValuationUsdCents / 100).toFixed(2)}</td>
+                    <td><span class="badge ${t.simplifiedStatus ? t.simplifiedStatus.colorClass : 'badge-amber'}">${t.simplifiedStatus ? t.simplifiedStatus.label : t.tradeStatus}</span></td>
+                    <td>${t.goldDeliveryStatus}</td>
+                    <td>${t.paymentStatus}</td>
+                    <td>
+                      ${t.goldDeliveryStatus === 'PENDING' ? `<button class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="reportAdvertiserGoldDelivery(${t.id})">Report Delivery</button>` : ''}
+                      ${t.paymentStatus === 'PROOF_SUBMITTED' ? `<button class="btn btn-success" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="confirmAdvertiserPaymentReceipt(${t.id})">Confirm Payment</button>` : ''}
+                      ${(t.tradeStatus !== 'SETTLED' && t.tradeStatus !== 'CANCELLED' && t.tradeStatus !== 'DISPUTED') ? `<button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="disputeAdvertiserTrade(${t.id})">Dispute</button>` : ''}
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = '<p style="color: var(--accent-red);">Failed to load sales.</p>';
+      }
+    }
+
+    window.reportAdvertiserGoldDelivery = async function(id) {
+      const ref = prompt('Enter in-game trade screenshot / chat delivery evidence reference:', 'Delivered in Valdrakken trade window');
+      if (!ref) return;
+      try {
+        const res = await fetch(`/api/marketplace/advertiser/trades/${id}/delivery`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ deliveryEvidenceRef: ref }),
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Delivery report failed');
+        alert('Gold delivery reported! Buyer must now verify receipt.');
+        loadAdvertiserTrades();
+      } catch (err) { alert(err.message); }
+    };
+
+    window.confirmAdvertiserPaymentReceipt = async function(id) {
+      if (!confirm('Confirm that you have received payment in your bank/card/wallet?')) return;
+      try {
+        const res = await fetch(`/api/marketplace/advertiser/trades/${id}/confirm-payment`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Payment confirmation failed');
+        alert('Payment receipt confirmed! Trade is now ready for final settlement.');
+        loadAdvertiserTrades();
+      } catch (err) { alert(err.message); }
+    };
+
+    window.disputeAdvertiserTrade = async function(id) {
+      const reason = prompt('Enter dispute reason:');
+      if (!reason) return;
+      try {
+        const res = await fetch(`/api/marketplace/advertiser/trades/${id}/dispute`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ reason }),
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Dispute failed');
+        alert('Trade marked disputed. Staff and Admin will review.');
+        loadAdvertiserTrades();
+      } catch (err) { alert(err.message); }
+    };
 
     window.requestGoldQuote = async function() {
       const buyerId = document.getElementById('gold-buyer-id').value.trim();
@@ -748,6 +882,7 @@
             </div>
           `;
           loadWalletV2();
+          loadAdvertiserTrades();
         } else {
           alert('Failed to accept trade: ' + data.error);
         }
@@ -963,6 +1098,7 @@
                   <th>Status</th>
                   <th>Delivery</th>
                   <th>Payment</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -972,9 +1108,14 @@
                     <td>${t.seller ? t.seller.username : t.sellerId}</td>
                     <td><strong>${t.goldQuantity.toLocaleString()} g</strong></td>
                     <td><span class="badge">${t.settlementMethod}</span></td>
-                    <td><span class="badge badge-amber">${t.tradeStatus}</span></td>
+                    <td><span class="badge ${t.simplifiedStatus ? t.simplifiedStatus.colorClass : 'badge-amber'}">${t.simplifiedStatus ? t.simplifiedStatus.label : t.tradeStatus}</span></td>
                     <td>${t.goldDeliveryStatus}</td>
                     <td>${t.paymentStatus}</td>
+                    <td>
+                      ${(t.goldDeliveryStatus === 'DELIVERED' && !t.exchangerGoldVerified) ? `<button class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="verifyExchangerGold(${t.id})">Verify Gold</button>` : ''}
+                      ${(t.paymentStatus === 'PENDING' && t.settlementMethod !== 'USD_WALLET') ? `<button class="btn btn-success" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="submitExchangerPayment(${t.id}, '${t.settlementMethod}')">Submit Payment</button>` : ''}
+                      ${(t.tradeStatus !== 'SETTLED' && t.tradeStatus !== 'CANCELLED' && t.tradeStatus !== 'DISPUTED') ? `<button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="disputeExchangerTrade(${t.id})">Dispute</button>` : ''}
+                    </td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -985,6 +1126,54 @@
         container.innerHTML = `<p style="color: var(--accent-red);">Failed to load purchases.</p>`;
       }
     }
+
+    window.verifyExchangerGold = async function(id) {
+      try {
+        const res = await fetch(`/api/marketplace/exchanger/trades/${id}/verify-gold`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Failed to verify gold');
+        alert('Gold receipt verified successfully!');
+        loadExchangerTrades();
+      } catch (err) { alert(err.message); }
+    };
+
+    window.submitExchangerPayment = async function(id, method) {
+      const ref = prompt('Enter payment transaction reference (Bank Reference Number or BEP-20 TxHash):', 'PAYMENT_REF_' + Date.now());
+      if (!ref) return;
+      try {
+        const res = await fetch(`/api/marketplace/exchanger/trades/${id}/payment`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ paymentRef: ref, paymentMethod: method }),
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Payment submission failed');
+        alert('Payment proof submitted! Seller can now confirm receipt.');
+        loadExchangerTrades();
+      } catch (err) { alert(err.message); }
+    };
+
+    window.disputeExchangerTrade = async function(id) {
+      const reason = prompt('Enter dispute reason:');
+      if (!reason) return;
+      try {
+        const res = await fetch(`/api/marketplace/advertiser/trades/${id}/dispute`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ reason }),
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Dispute failed');
+        alert('Trade marked disputed.');
+        loadExchangerTrades();
+      } catch (err) { alert(err.message); }
+    };
 
     async function renderBoosterTab(container) {
       container.innerHTML = `
@@ -1622,12 +1811,12 @@
     async function loadAdminOrders() {
       const container = document.getElementById('admin-orders-table');
       try {
-        const res = await fetch('/api/orders/available', { credentials: 'include' });
+        const res = await fetch('/api/admin/orders', { credentials: 'include' });
         const data = await res.json();
-        const orders = (data.orders || []).filter(o => o.status === 'completed');
+        const orders = data.orders || [];
 
         if (orders.length === 0) {
-          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No orders currently requiring review or approval.</p>';
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No orders currently recorded.</p>';
           return;
         }
 
@@ -1640,6 +1829,7 @@
                   <th>Service</th>
                   <th>Pool USD</th>
                   <th>Status</th>
+                  <th>Release Stage</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -1650,9 +1840,12 @@
                     <td>${o.serviceName}</td>
                     <td style="color: var(--accent-green); font-weight: 700;">$${o.boosterPoolUsd}</td>
                     <td><span class="badge ${o.simplifiedStatus.colorClass}">${o.simplifiedStatus.label}</span></td>
+                    <td><span class="badge">${o.releaseStage || 'PRE_PROOF'}</span></td>
                     <td>
-                      <button class="btn btn-secondary" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="adminStaffReview(${o.id})">Staff Review</button>
-                      <button class="btn btn-primary" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="adminFinalApprove(${o.id})">Final Approve</button>
+                      ${o.releaseStage === 'PROOF_SUBMITTED' ? `<button class="btn btn-secondary" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="adminStaffReview(${o.id})">Staff Review</button>` : ''}
+                      ${o.releaseStage === 'STAFF_REVIEW' ? `<button class="btn btn-primary" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="adminFinalApprove(${o.id})">Final Approve</button>` : ''}
+                      ${o.releaseStage === 'HOLD_24_HOURS' ? `<span class="badge badge-purple">In 24h Hold</span>` : ''}
+                      ${o.releaseStage === 'ESCROW_RELEASED' ? `<span class="badge badge-green">Released</span>` : ''}
                     </td>
                   </tr>
                 `).join('')}
@@ -1720,6 +1913,7 @@
                   <th>Status</th>
                   <th>Delivery</th>
                   <th>Payment</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1730,9 +1924,16 @@
                     <td>${t.buyer ? t.buyer.username : t.buyerId}</td>
                     <td>$${(t.agreedValuationUsdCents / 100).toFixed(2)}</td>
                     <td><span class="badge">${t.settlementMethod}</span></td>
-                    <td><span class="badge ${t.simplifiedStatus ? t.simplifiedStatus.colorClass : (t.tradeStatus === 'SETTLED' ? 'badge-green' : 'badge-amber')}">${t.simplifiedStatus ? t.simplifiedStatus.label : t.tradeStatus}</span></td>
+                    <td><span class="badge ${t.simplifiedStatus ? t.simplifiedStatus.colorClass : (t.tradeStatus === 'SETTLED' ? 'badge-green' : (t.tradeStatus === 'CANCELLED' ? 'badge-red' : 'badge-amber'))}">${t.simplifiedStatus ? t.simplifiedStatus.label : t.tradeStatus}</span></td>
                     <td>${t.goldDeliveryStatus}</td>
                     <td>${t.paymentStatus}</td>
+                    <td>
+                      ${(t.tradeStatus !== 'SETTLED' && t.tradeStatus !== 'CANCELLED') ? `
+                        ${(t.settlementMethod === 'IRT_DIRECT' || t.settlementMethod === 'USDT_DIRECT') ? `<button class="btn btn-success" style="padding: 0.2rem 0.5rem; font-size: 0.75rem; margin-bottom: 2px;" onclick="adminSettleDirectTrade(${t.id})">Settle Direct</button>` : ''}
+                        ${t.settlementMethod === 'USD_WALLET' ? `<button class="btn btn-success" style="padding: 0.2rem 0.5rem; font-size: 0.75rem; margin-bottom: 2px;" onclick="adminSettleWalletTrade(${t.id})">Settle Wallet</button>` : ''}
+                        <button class="btn btn-danger" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="adminCancelTrade(${t.id})">Cancel</button>
+                      ` : ''}
+                    </td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -1743,6 +1944,55 @@
         tableContainer.innerHTML = '<p style="color: var(--accent-red);">Failed to load admin overview.</p>';
       }
     }
+
+    window.adminSettleDirectTrade = async function(id) {
+      if (!confirm('Settle this direct external trade?')) return;
+      try {
+        const res = await fetch(`/api/marketplace/admin/trades/${id}/settle-direct`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ adminNotes: 'Settled via Admin Hub' }),
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Direct settlement failed');
+        alert('Trade marked SETTLED successfully!');
+        loadAdminTrades();
+      } catch (err) { alert(err.message); }
+    };
+
+    window.adminSettleWalletTrade = async function(id) {
+      if (!confirm('Settle wallet trade and transfer reserved USD balance from Exchanger to Advertiser?')) return;
+      try {
+        const res = await fetch(`/api/marketplace/admin/trades/${id}/settle-prepaid`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ adminNotes: 'Settled via Admin Hub' }),
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Wallet settlement failed');
+        alert('Trade settled! Reserved USD transferred into Advertiser wallet.');
+        loadAdminTrades();
+      } catch (err) { alert(err.message); }
+    };
+
+    window.adminCancelTrade = async function(id) {
+      const reason = prompt('Enter cancellation reason:');
+      if (!reason) return;
+      try {
+        const res = await fetch(`/api/marketplace/admin/trades/${id}/cancel`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ reason }),
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Cancel trade failed');
+        alert('Trade cancelled and any reserved funds released.');
+        loadAdminTrades();
+      } catch (err) { alert(err.message); }
+    };
 
     // Start authentication check on load
     checkAuth();

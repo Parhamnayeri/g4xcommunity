@@ -211,6 +211,52 @@ router.get('/auth/callback', async (req: Request, res: Response): Promise<void> 
   }
 });
 
+// ─── ورود امن محیط استیجینگ (فقط در حالت STAGING_TEST_AUTH فعال است) ─────────
+if (process.env.STAGING_TEST_AUTH === 'true' || process.env.NODE_ENV === 'staging') {
+  router.get('/auth/staging-login', async (req: Request, res: Response): Promise<void> => {
+    const discordId = String(req.query.discordId || 'test_admin_staging');
+    const username = String(req.query.username || 'Staging Admin');
+    const role = String(req.query.role || 'admin');
+
+    await prisma.user.upsert({
+      where: { discordId },
+      update: { isActive: true },
+      create: { discordId, username, displayName: username },
+    });
+
+    await prisma.role.upsert({
+      where: { roleKey: role },
+      update: {},
+      create: { roleKey: role, name: role.toUpperCase() },
+    });
+
+    await prisma.userRole.upsert({
+      where: { userId_roleKey: { userId: discordId, roleKey: role } },
+      update: {},
+      create: { userId: discordId, roleKey: role },
+    });
+
+    await prisma.wallet.upsert({
+      where: { userId: discordId },
+      update: {},
+      create: { userId: discordId },
+    });
+
+    await getOrCreateWalletV2(discordId);
+
+    if (req.session) {
+      req.session.userId = discordId;
+      req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+      req.session.save(() => {
+        res.redirect('/');
+      });
+    } else {
+      res.redirect('/');
+    }
+  });
+}
+
+
 // ─── خروج از حساب (Logout) با باطل‌سازی سشن و پاک‌سازی کوکی ─────────────────
 router.post('/auth/logout', requireAuth, requireCsrf, (req: Request, res: Response) => {
   req.session.destroy((err) => {
@@ -625,7 +671,7 @@ router.get('/orders/available', requireAuth, async (_req: Request, res: Response
   try {
     const orders = await prisma.order.findMany({
       where: {
-        status: { in: ['open_presign', 'pending', 'assigned', 'in_progress'] },
+        status: { in: ['open_presign', 'pending', 'assigned', 'in_progress', 'completed'] },
       },
       include: {
         service: true,
@@ -648,6 +694,7 @@ router.get('/orders/available', requireAuth, async (_req: Request, res: Response
         status: o.status,
         creatorType: o.creatorType,
         runsCount: o.runs.length,
+        releaseStage: o.boostReleaseTracker?.stage || null,
         simplifiedStatus: mapOrderStatus(o.status, o.boostReleaseTracker?.stage),
       })),
     });
@@ -859,6 +906,44 @@ router.post(
       });
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Admin final approval failed' });
+    }
+  }
+);
+
+router.get(
+  '/admin/orders',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const orders = await prisma.order.findMany({
+        include: {
+          service: true,
+          runs: true,
+          boostReleaseTracker: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+
+      res.json({
+        success: true,
+        orders: orders.map((o) => ({
+          id: o.id,
+          orderRef: o.orderRef,
+          gameSlug: o.gameSlug,
+          serviceName: o.service.displayName,
+          grossAmountUsd: (o.grossAmountMinor / 100).toFixed(2),
+          boosterPoolUsd: (o.boosterPoolMinor / 100).toFixed(2),
+          status: o.status,
+          creatorType: o.creatorType,
+          runsCount: o.runs.length,
+          releaseStage: o.boostReleaseTracker?.stage || null,
+          simplifiedStatus: mapOrderStatus(o.status, o.boostReleaseTracker?.stage),
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch admin orders' });
     }
   }
 );
