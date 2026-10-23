@@ -341,4 +341,62 @@ If any source distribution archive previously exposed sensitive configuration fi
 > ⚠️ **CRITICAL WARNING**:
 > Never blindly restore a stale SQLite backup over a running production database that contains recent user registrations, financial transactions, or audit logs. Restoring a stale backup will irrevocably overwrite all state changes that occurred after the backup timestamp. If recovery is required, extract and replay specific records using transactional migration scripts rather than wholesale file replacement.
 
+---
+
+## 12. Discord Order Board & Role Pre-sign Operations (Phase 2, Milestone 1)
+
+### 12.1 Required Channel Configuration
+To receive and display published boost orders:
+1. Configure `CHANNEL_ORDERS` in `.env` with the ID of the dedicated orders text channel:
+   ```env
+   CHANNEL_ORDERS=123456789012345678
+   ```
+2. **Channel Resolution Fallback Hierarchy**:
+   - Explicit `order.discordChannelId` (if previously published)
+   - `CHANNEL_ORDERS` environment variable
+   - Authoritative `channel_routes` table in SQLite
+   - Text channel named `#orders`, `#boost-orders`, or `#order-board` in the guild cache
+
+### 12.2 Required Bot Permissions & Gateway Intents
+1. **Privileged Gateway Intents**:
+   - **`Message Content Intent`** (Required): The bot requires this intent in the Discord Developer Portal to read `G4!order` and `G4!setup` prefix commands from guild messages.
+   - **`Server Members Intent`** (Required): Needed for booster verification and role synchronization.
+2. **Bot Permissions in Orders Channel**:
+   - `View Channel`
+   - `Send Messages`
+   - `Embed Links` (Required for rich order cards)
+   - `Read Message History` (Required for fetching and editing existing order cards)
+   - `Use External Emojis` (For role indicators 🛡️, 💚, ⚔️)
+
+### 12.3 Role Hierarchy Constraints
+- The bot's integrated role in Discord Server Settings -> Roles must be positioned **above** the community roles (`@Booster`, `@Advertiser`, `@Pilot`, `@Exchanger`).
+- If the bot's role is below these roles, Discord API rejects role assignment attempts with HTTP 403 Forbidden (`Missing Permissions`).
+
+### 12.4 How to Test on a Staging Discord Server
+1. Invite bot to staging server with Administrator or standard text permissions + Message Content intent enabled.
+2. Ensure test user has approved Booster status in database (`user_game_approvals` table with `status = 'approved'`).
+3. Deploy registration channels using `G4!setup registration`.
+4. Create a test boost order via command:
+   ```
+   G4!order create wow_midnight 1 50 group Fast M+ Run
+   ```
+5. Observe order card published to `#orders` with real Tank, Healer, DPS, Withdraw, and View Details buttons.
+6. Click **Tank** button: observe ephemeral confirmation `Pre-sign Confirmed` and card role count updating to `1/1 (Full)`.
+7. Click **Withdraw** button: observe ephemeral confirmation `Pre-sign Withdrawn` and card slot opening up.
+8. Re-click **Tank** button as another user when slot is full: observe `Slot Full` rejection.
+
+### 12.5 Recovery of Missing or Stale Order Messages
+- If a Discord card message was manually deleted by staff, run:
+  ```bash
+  # Re-publish card idempotently:
+  # The bot will detect missing message ID and publish a fresh card with updated references.
+  ```
+- Bot restarts do not invalidate orders or buttons: button interactions look up authoritative state from SQLite in real-time.
+
+### 12.6 Known Limitations & Milestone Boundary
+- **Order Assignment**: Chat command `G4!order assign` is intentionally left disabled to ensure booster assignment is managed strictly via automated squad selection or the Web Portal.
+- **Proof & Completion**: Order completion requires proof submission workflow (Phase 3.1) and is not completable via simple chat command.
+- **Financial Safety**: All financial release gates (`ESCROW_RELEASE_ENABLED`, `FINANCE_V2_LIVE_CREDITS_ENABLED`, `FINANCE_V2_LIVE_PAYOUTS_ENABLED`) remain strictly disabled.
+
+
 

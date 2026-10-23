@@ -16,6 +16,11 @@ import {
   handleAdminReviewButton,
   handleProvideInfoButton,
 } from './registrationInteractions';
+import {
+  handlePresignButton,
+  handlePresignWithdrawButton,
+  handleOrderViewButton,
+} from '../services/orderDiscordService';
 
 export async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
   const [action, ...params] = interaction.customId.split(':');
@@ -40,20 +45,30 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
     case 'presign_healer':
     case 'presign_dps': {
       const role = action.replace('presign_', '');
-      const orderId = params[0];
-      // TODO: پیاده‌سازی ثبت پیش‌ثبت‌نام
-      await interaction.reply({
-        content: `🚧 Pre-sign as **${role.toUpperCase()}** for order #${orderId} — Coming soon!`,
-        ephemeral: true,
-      });
+      const orderId = Number(params[0]);
+      if (isNaN(orderId) || orderId <= 0) {
+        await interaction.reply({ content: '❌ Invalid order ID parameter.', ephemeral: true });
+        return;
+      }
+      await handlePresignButton(interaction, role, orderId);
       break;
     }
     case 'presign_withdraw': {
-      const orderId = params[0];
-      await interaction.reply({
-        content: `🚧 Withdrawing pre-sign from order #${orderId} — Coming soon!`,
-        ephemeral: true,
-      });
+      const orderId = Number(params[0]);
+      if (isNaN(orderId) || orderId <= 0) {
+        await interaction.reply({ content: '❌ Invalid order ID parameter.', ephemeral: true });
+        return;
+      }
+      await handlePresignWithdrawButton(interaction, orderId);
+      break;
+    }
+    case 'order_view': {
+      const orderId = Number(params[0]);
+      if (isNaN(orderId) || orderId <= 0) {
+        await interaction.reply({ content: '❌ Invalid order ID parameter.', ephemeral: true });
+        return;
+      }
+      await handleOrderViewButton(interaction, orderId);
       break;
     }
     case 'order_accept': {
