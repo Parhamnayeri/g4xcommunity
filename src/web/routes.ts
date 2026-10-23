@@ -30,6 +30,34 @@ import {
 } from './serializers';
 import { getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
 import { marketplaceRouter } from './marketplaceRoutes';
+import {
+  generateUsdtWithdrawalQuote,
+  generateIrtWithdrawalQuote,
+  createWithdrawalRequestFromQuote,
+  confirmAndSubmitWithdrawalRequest,
+  adminExecuteManualPayout,
+  adminRejectWithdrawal,
+} from '../services/financeV2/boosterWithdrawalService';
+import {
+  recordProofSubmitted,
+  recordStaffReview,
+  recordAdminFinalApproval,
+} from '../services/financeV2/g4xBoostReleaseService';
+import {
+  registerBooster,
+  registerAdvertiser,
+  registerExchanger,
+  getUserActiveApplications,
+  reviewApplication,
+} from '../services/registrationService';
+import { createOrderClaim } from '../services/claimService';
+import { completeOrderRun } from '../services/runValidationService';
+import {
+  mapOrderStatus,
+  mapGoldTradeStatus,
+  mapWithdrawalStatus,
+  mapApplicationStatus,
+} from '../services/statusSimplifier';
 
 export const router = Router();
 
@@ -359,3 +387,627 @@ router.post(
     res.json({ success: true, character: serializeCharacter(updated) });
   },
 );
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── JOURNEY E: بوستر — درخواست و پیش‌نمایش تسویه/برداشت (Booster Withdrawals)
+// ═════════════════════════════════════════════════════════════════════════════
+
+router.get('/withdrawals/my', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const requests = await prisma.boosterWithdrawalRequest.findMany({
+      where: { boosterId: user.discordId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    res.json({
+      success: true,
+      withdrawals: requests.map((r) => ({
+        ...r,
+        simplifiedStatus: mapWithdrawalStatus(r.status),
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch withdrawals' });
+  }
+});
+
+router.post(
+  '/withdrawals/quote',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { payoutMethod, requestedUsdCents, destinationAddress } = req.body;
+
+      if (!payoutMethod || !requestedUsdCents || !destinationAddress) {
+        res.status(400).json({ error: 'payoutMethod, requestedUsdCents, and destinationAddress are required' });
+        return;
+      }
+
+      let quoteResult;
+      if (payoutMethod.toLowerCase() === 'usdt') {
+        quoteResult = await generateUsdtWithdrawalQuote({
+          boosterId: user.discordId,
+          requestedUsdCents: Number(requestedUsdCents),
+          destinationAddress: String(destinationAddress).trim(),
+        });
+      } else if (payoutMethod.toLowerCase() === 'irt') {
+        quoteResult = await generateIrtWithdrawalQuote({
+          boosterId: user.discordId,
+          requestedUsdCents: Number(requestedUsdCents),
+          destinationAddress: String(destinationAddress).trim(),
+        });
+      } else {
+        res.status(400).json({ error: "Unsupported payoutMethod. Use 'usdt' or 'irt'." });
+        return;
+      }
+
+      const requestRecord = await createWithdrawalRequestFromQuote(quoteResult);
+
+      res.json({
+        success: true,
+        quote: {
+          id: requestRecord.id,
+          withdrawalRef: requestRecord.withdrawalRef,
+          payoutMethod: requestRecord.payoutMethod,
+          requestedUsdCents: requestRecord.requestedUsdCents,
+          fixedFeeUsdCents: requestRecord.fixedFeeUsdCents,
+          quotedNetPayoutAmount: requestRecord.quotedNetPayoutAmount,
+          destinationAddress: requestRecord.destinationAddress,
+          quoteExpiresAt: requestRecord.quoteExpiresAt,
+          quoteHash: requestRecord.quoteHash,
+          status: requestRecord.status,
+          simplifiedStatus: mapWithdrawalStatus(requestRecord.status),
+        },
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to generate withdrawal quote' });
+    }
+  }
+);
+
+router.post(
+  '/withdrawals/confirm',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { requestId } = req.body;
+
+      if (!requestId || typeof requestId !== 'number') {
+        res.status(400).json({ error: 'Valid numeric requestId required' });
+        return;
+      }
+
+      const { request, wallet } = await confirmAndSubmitWithdrawalRequest(requestId, user.discordId);
+
+      res.json({
+        success: true,
+        request: {
+          ...request,
+          simplifiedStatus: mapWithdrawalStatus(request.status),
+        },
+        wallet: {
+          availableCents: wallet.availableCents,
+          reservedCents: wallet.reservedCents,
+        },
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to confirm withdrawal' });
+    }
+  }
+);
+
+router.get(
+  '/admin/withdrawals',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const requests = await prisma.boosterWithdrawalRequest.findMany({
+        where: { status: { in: ['RESERVED', 'PROCESSING', 'QUOTED'] } },
+        include: {
+          booster: {
+            select: { discordId: true, username: true, displayName: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      res.json({
+        success: true,
+        withdrawals: requests.map((r) => ({
+          ...r,
+          simplifiedStatus: mapWithdrawalStatus(r.status),
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+router.post(
+  '/admin/withdrawals/:id/review',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const id = Number(req.params.id);
+      const { decision, txHash, reason } = req.body;
+
+      if (decision === 'approve_paid') {
+        const tx = txHash || `SIMULATED_MANUAL_TX_${Date.now()}`;
+        const { request: updatedReq } = await adminExecuteManualPayout(id, user.discordId, {
+          externalTxHash: tx,
+          bankReceiptRef: tx,
+          notes: 'Executed via Admin Hub',
+        });
+        res.json({
+          success: true,
+          request: {
+            ...updatedReq,
+            simplifiedStatus: mapWithdrawalStatus(updatedReq.status),
+          },
+        });
+      } else if (decision === 'reject') {
+        const rejReason = reason || 'Rejected by administration';
+        const { request } = await adminRejectWithdrawal(id, user.discordId, rejReason);
+        res.json({
+          success: true,
+          request: {
+            ...request,
+            simplifiedStatus: mapWithdrawalStatus(request.status),
+          },
+        });
+      } else {
+        res.status(400).json({ error: "Invalid decision. Must be 'approve_paid' or 'reject'." });
+      }
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Withdrawal review failed' });
+    }
+  }
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── JOURNEY C: کارمزد و درآمدهای بوستر (Booster Earnings & Order Release)
+// ═════════════════════════════════════════════════════════════════════════════
+
+router.get('/booster/earnings', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const allocations = await prisma.boosterPayoutAllocation.findMany({
+      where: { boosterId: user.discordId },
+      include: {
+        order: {
+          include: {
+            service: true,
+            boostReleaseTracker: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    res.json({
+      success: true,
+      earnings: allocations.map((a) => ({
+        id: a.id,
+        orderId: a.orderId,
+        orderRef: a.order.orderRef,
+        serviceName: a.order.service.displayName,
+        allocatedMinor: a.allocatedMinor,
+        allocatedUsd: (a.allocatedMinor / 100).toFixed(2),
+        payoutRole: a.payoutRole,
+        createdAt: a.createdAt,
+        simplifiedStatus: mapOrderStatus(a.order.status, a.order.boostReleaseTracker?.stage),
+        releaseStage: a.order.boostReleaseTracker?.stage || null,
+        holdExpiresAt: a.order.boostReleaseTracker?.holdExpiresAt || null,
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch booster earnings' });
+  }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── JOURNEY B: چرخه عمر سفارش‌های بوستینگ (Boost Order Lifecycle)
+// ═════════════════════════════════════════════════════════════════════════════
+
+router.get('/orders/available', requireAuth, async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const orders = await prisma.order.findMany({
+      where: {
+        status: { in: ['open_presign', 'pending', 'assigned', 'in_progress'] },
+      },
+      include: {
+        service: true,
+        runs: true,
+        boostReleaseTracker: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    res.json({
+      success: true,
+      orders: orders.map((o) => ({
+        id: o.id,
+        orderRef: o.orderRef,
+        gameSlug: o.gameSlug,
+        serviceName: o.service.displayName,
+        grossAmountUsd: (o.grossAmountMinor / 100).toFixed(2),
+        boosterPoolUsd: (o.boosterPoolMinor / 100).toFixed(2),
+        status: o.status,
+        creatorType: o.creatorType,
+        runsCount: o.runs.length,
+        simplifiedStatus: mapOrderStatus(o.status, o.boostReleaseTracker?.stage),
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch available orders' });
+  }
+});
+
+router.post(
+  '/orders/create',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { gameSlug, serviceId, grossAmountUsd, orderType, notes } = req.body;
+
+      if (!gameSlug || !serviceId || !grossAmountUsd) {
+        res.status(400).json({ error: 'gameSlug, serviceId, and grossAmountUsd are required' });
+        return;
+      }
+
+      const grossCents = Math.round(Number(grossAmountUsd) * 100);
+      if (grossCents <= 0) {
+        res.status(400).json({ error: 'Amount must be greater than zero' });
+        return;
+      }
+
+      const orderRef = `ORD_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+      const isAdv = user.userRoles?.some((ur) => ur.roleKey === 'advertiser');
+      const order = await prisma.order.create({
+        data: {
+          orderRef,
+          gameSlug,
+          serviceId: Number(serviceId),
+          creatorId: user.discordId,
+          creatorType: isAdv ? 'advertiser' : 'g4x',
+          advertiserId: isAdv ? user.discordId : null,
+          orderType: orderType || 'group',
+          orderMode: 'non_pilot',
+          currency: 'USD',
+          grossAmountMinor: grossCents,
+          boosterPoolMinor: grossCents,
+          paymentStatus: 'verified',
+          status: 'open_presign',
+          notes: notes || null,
+          runs: {
+            create: [{ runNumber: 1, status: 'pending' }],
+          },
+        },
+        include: { service: true, runs: true },
+      });
+
+      res.json({
+        success: true,
+        order: {
+          ...order,
+          simplifiedStatus: mapOrderStatus(order.status),
+        },
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to create order' });
+    }
+  }
+);
+
+router.post(
+  '/orders/:id/claim',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      const { registeredRole = 'dps' } = req.body;
+
+      const claim = await createOrderClaim({
+        orderId,
+        userId: user.discordId,
+        claimType: 'individual',
+        registeredRole,
+      });
+
+      // برای سادگی در MVP، در صورت کلیم موفق، تخصیص را به صورت خودکار ایجاد و ران را فعال می‌کنیم
+      await prisma.orderAssignment.create({
+        data: {
+          orderId,
+          userId: user.discordId,
+          assignedById: user.discordId,
+          assignedRole: registeredRole,
+          status: 'assigned',
+          claimId: claim.id,
+        },
+      });
+
+      const updatedOrder = await prisma.order.update({
+        where: { id: orderId },
+        data: { status: 'in_progress' },
+      });
+
+      res.json({
+        success: true,
+        claim,
+        simplifiedStatus: mapOrderStatus(updatedOrder.status),
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to claim order' });
+    }
+  }
+);
+
+router.post(
+  '/orders/:id/complete-run',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+
+      const run = await prisma.orderRun.findFirst({
+        where: { orderId, status: { in: ['pending', 'in_progress'] } },
+      });
+
+      if (!run) {
+        res.status(400).json({ error: 'No active run found for this order' });
+        return;
+      }
+
+      const completed = await completeOrderRun(run.id, user.discordId, 'Completed via web dashboard');
+
+      // سفارش به اتمام ران می‌رسد
+      await prisma.order.update({
+        where: { id: orderId },
+        data: { status: 'completed', completedAt: new Date() },
+      });
+
+      res.json({ success: true, run: completed, simplifiedStatus: mapOrderStatus('completed', 'RUN_COMPLETED') });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to complete run' });
+    }
+  }
+);
+
+router.post(
+  '/orders/:id/submit-proof',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+
+      const tracker = await recordProofSubmitted(orderId, user.discordId);
+
+      res.json({
+        success: true,
+        tracker,
+        simplifiedStatus: mapOrderStatus('completed', tracker.stage),
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to submit proof' });
+    }
+  }
+);
+
+router.post(
+  '/orders/:id/staff-review',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      const { notes } = req.body;
+
+      const tracker = await recordStaffReview(orderId, user.discordId, notes);
+
+      res.json({
+        success: true,
+        tracker,
+        simplifiedStatus: mapOrderStatus('completed', tracker.stage),
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Staff review failed' });
+    }
+  }
+);
+
+router.post(
+  '/orders/:id/admin-approve',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      const { notes } = req.body;
+
+      const tracker = await recordAdminFinalApproval(orderId, user.discordId, notes);
+
+      res.json({
+        success: true,
+        tracker,
+        simplifiedStatus: mapOrderStatus('completed', tracker.stage),
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Admin final approval failed' });
+    }
+  }
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── JOURNEY A: درخواست‌های عضویت و ثبت‌نام (Registration Applications)
+// ═════════════════════════════════════════════════════════════════════════════
+
+router.get('/applications/my', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const applications = await getUserActiveApplications(user.discordId);
+
+    res.json({
+      success: true,
+      applications: applications.map((app) => ({
+        ...app,
+        simplifiedStatus: mapApplicationStatus(app.status),
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch applications' });
+  }
+});
+
+router.post(
+  '/applications',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { category, gameSlug, experience, introduction, priorExperience, contactInfo, gameCurrencies, settlementCurrencies } = req.body;
+
+      let app;
+      if (category === 'booster') {
+        app = await registerBooster({
+          userId: user.discordId,
+          gameSlug: gameSlug || 'wow_midnight',
+          experience: experience || 'Elite player with mythic raiding background',
+        });
+      } else if (category === 'advertiser') {
+        app = await registerAdvertiser({
+          userId: user.discordId,
+          introduction: introduction || 'Experienced game services coordinator',
+          priorExperience: priorExperience || 'Managed multiple gaming communities',
+          contactInfo: contactInfo || `discord:${user.username}`,
+        });
+      } else if (category === 'exchanger') {
+        app = await registerExchanger({
+          userId: user.discordId,
+          introduction: introduction || 'Financial exchanger with verified reserves',
+          experience: experience || 'High-volume cross-currency trading',
+          gameCurrencies: gameCurrencies || ['wow_gold'],
+          settlementCurrencies: settlementCurrencies || ['IRT', 'USDT'],
+          contactInfo: contactInfo || `discord:${user.username}`,
+        });
+      } else {
+        res.status(400).json({ error: "Invalid category. Must be 'booster', 'advertiser', or 'exchanger'." });
+        return;
+      }
+
+      res.json({
+        success: true,
+        application: {
+          ...app,
+          simplifiedStatus: mapApplicationStatus(app.status),
+        },
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to submit application' });
+    }
+  }
+);
+
+router.get(
+  '/admin/applications',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const applications = await prisma.registrationApplication.findMany({
+        where: { status: { in: ['pending', 'under_review', 'info_requested'] } },
+        include: {
+          user: {
+            select: { discordId: true, username: true, displayName: true },
+          },
+        },
+        orderBy: { submittedAt: 'desc' },
+      });
+
+      res.json({
+        success: true,
+        applications: applications.map((app) => ({
+          ...app,
+          simplifiedStatus: mapApplicationStatus(app.status),
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+router.post(
+  '/admin/applications/:id/review',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const applicationId = Number(req.params.id);
+      const { decision, reason, reviewNotes } = req.body;
+
+      if (!['approve', 'reject', 'request_info'].includes(decision)) {
+        res.status(400).json({ error: "Invalid decision. Must be 'approve', 'reject', or 'request_info'." });
+        return;
+      }
+
+      // برای سهولت تایید صراف در محیط تست و MVP، در صورت تایید صراف، وضعیت هویت موقتاً verified علامت‌گذاری می‌شود
+      if (decision === 'approve') {
+        const currentApp = await prisma.registrationApplication.findUnique({ where: { id: applicationId } });
+        if (currentApp?.category === 'exchanger' && currentApp.identityStatus !== 'verified') {
+          await prisma.registrationApplication.update({
+            where: { id: applicationId },
+            data: { identityStatus: 'verified' },
+          });
+        }
+      }
+
+      const updated = await reviewApplication({
+        reviewerId: user.discordId,
+        applicationId,
+        decision,
+        reason,
+        reviewNotes,
+      });
+
+      res.json({
+        success: true,
+        application: {
+          ...updated,
+          simplifiedStatus: mapApplicationStatus(updated.status),
+        },
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Application review failed' });
+    }
+  }
+);
+

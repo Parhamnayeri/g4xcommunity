@@ -177,7 +177,8 @@ export const ROLE_PERMISSIONS: Record<SystemRoleKey, Permission[]> = {
   ],
 
   staff: [
-    // پشتیبان/استاف: نظارت بر تیکت‌ها و گزارش حوادث؛ فاقد تایید پرداخت، تغییر موجودی، تخصیص بوستر و تایید نهایی
+    // پشتیبان/استاف: نظارت بر تیکت‌ها، بررسی مدارک و گزارش حوادث؛ فاقد تایید پرداخت، تغییر موجودی، تخصیص بوستر و تایید نهایی
+    Permission.PROOF_REVIEW,
     Permission.SUPPORT_TICKET_CREATE,
     Permission.SUPPORT_TICKET_MANAGE,
     Permission.DISPUTE_CREATE,

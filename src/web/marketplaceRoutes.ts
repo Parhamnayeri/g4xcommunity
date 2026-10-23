@@ -40,6 +40,7 @@ import {
   ExchangerOfferStatus,
   GoldTradeSettlementMethod,
 } from '../services/financeV2/financeV2Types';
+import { mapGoldTradeStatus } from '../services/statusSimplifier';
 
 export const marketplaceRouter = Router();
 
@@ -175,7 +176,13 @@ marketplaceRouter.get(
         },
         orderBy: { createdAt: 'desc' },
       });
-      res.json({ success: true, trades });
+      res.json({
+        success: true,
+        trades: trades.map((t) => ({
+          ...t,
+          simplifiedStatus: mapGoldTradeStatus(t.tradeStatus),
+        })),
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -304,7 +311,13 @@ marketplaceRouter.get(
         },
         orderBy: { createdAt: 'desc' },
       });
-      res.json({ success: true, trades });
+      res.json({
+        success: true,
+        trades: trades.map((t) => ({
+          ...t,
+          simplifiedStatus: mapGoldTradeStatus(t.tradeStatus),
+        })),
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

@@ -248,6 +248,21 @@
       color: var(--accent-blue);
     }
 
+    .badge-purple {
+      background: rgba(168, 85, 247, 0.15);
+      color: #c084fc;
+    }
+
+    .badge-red {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--accent-red);
+    }
+
+    .badge-gray {
+      background: rgba(156, 163, 175, 0.15);
+      color: var(--text-muted);
+    }
+
     .form-group {
       margin-bottom: 1rem;
     }
@@ -417,6 +432,14 @@
       return currentUser && currentUser.roles && (currentUser.roles.includes('exchanger') || currentUser.roles.includes('owner'));
     }
 
+    function isBooster() {
+      return currentUser && currentUser.roles && (currentUser.roles.includes('booster') || currentUser.roles.includes('pilot') || currentUser.roles.includes('owner') || currentUser.roles.includes('admin'));
+    }
+
+    function isAdvertiser() {
+      return currentUser && currentUser.roles && (currentUser.roles.includes('advertiser') || currentUser.roles.includes('owner') || currentUser.roles.includes('admin'));
+    }
+
     function isAdmin() {
       return currentUser && currentUser.roles && (currentUser.roles.includes('admin') || currentUser.roles.includes('manager') || currentUser.roles.includes('owner'));
     }
@@ -481,6 +504,8 @@
           <button class="tab-btn ${activeTab === 'overview' ? 'active' : ''}" onclick="switchTab('overview')">Active Offers</button>
           <button class="tab-btn ${activeTab === 'sell-gold' ? 'active' : ''}" onclick="switchTab('sell-gold')">Sell Gold (Advertiser)</button>
           <button class="tab-btn ${activeTab === 'p2p-funding' ? 'active' : ''}" onclick="switchTab('p2p-funding')">P2P IRT Funding</button>
+          <button class="tab-btn ${activeTab === 'booster' ? 'active' : ''}" onclick="switchTab('booster')">Booster &amp; Withdrawals</button>
+          <button class="tab-btn ${activeTab === 'applications' ? 'active' : ''}" onclick="switchTab('applications')">Member Applications</button>
           ${isExchanger() ? `<button class="tab-btn ${activeTab === 'exchanger' ? 'active' : ''}" onclick="switchTab('exchanger')">Exchanger Portal</button>` : ''}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'admin' ? 'active' : ''}" onclick="switchTab('admin')">Admin Review Hub</button>` : ''}
         </div>
@@ -541,6 +566,10 @@
         renderSellGoldTab(content);
       } else if (tab === 'p2p-funding') {
         renderP2pFundingTab(content);
+      } else if (tab === 'booster') {
+        renderBoosterTab(content);
+      } else if (tab === 'applications') {
+        renderApplicationsTab(content);
       } else if (tab === 'exchanger' && isExchanger()) {
         renderExchangerTab(content);
       } else if (tab === 'admin' && isAdmin()) {
@@ -957,25 +986,724 @@
       }
     }
 
-    async function renderAdminTab(container) {
+    async function renderBoosterTab(container) {
       container.innerHTML = `
-        <div class="card">
+        <div class="card" style="margin-bottom: 1.5rem;">
           <div class="card-title">
-            <span>Admin Marketplace &amp; Trade Review Hub</span>
-            <span class="badge badge-green">Privileged Auditor</span>
+            <span>Request Booster Withdrawal</span>
+            <span class="badge badge-blue">Manual Payout (Safe Testing)</span>
           </div>
-          <div id="admin-trades-table"><div class="loading-spinner"></div> Loading trades across all workflows...</div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem;">
+            <div class="form-group">
+              <label>Payout Method</label>
+              <select id="wdr-method" class="form-control" onchange="updateWithdrawalPlaceholder()">
+                <option value="usdt">USDT — Binance Smart Chain (BEP-20) [Fee: $0.40]</option>
+                <option value="irt">IRT — Bank Transfer / Sheba [Fee: $1.30, -3,000 IRT/USD]</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Amount (USD)</label>
+              <input type="number" id="wdr-amount" class="form-control" placeholder="10.00" min="1" step="0.01" />
+            </div>
+            <div class="form-group" style="grid-column: 1 / -1;">
+              <label id="wdr-dest-label">Destination Address (BEP-20 / Sheba)</label>
+              <input type="text" id="wdr-destination" class="form-control" placeholder="0x1234567890123456789012345678901234567890" />
+            </div>
+          </div>
+          <div style="display: flex; gap: 0.75rem; align-items: center; margin-top: 0.5rem;">
+            <button class="btn btn-primary" onclick="requestWithdrawalQuote()" id="btn-wdr-quote">Preview Quote</button>
+            <span id="wdr-quote-feedback" style="font-size: 0.9rem;"></span>
+          </div>
+          <div id="wdr-quote-preview" style="margin-top: 1rem; display: none;"></div>
+        </div>
+
+        <div class="dashboard-grid">
+          <div class="card">
+            <div class="card-title">
+              <span>My Booster Earnings &amp; 24h Hold</span>
+              <span class="badge badge-green">Equal Pool Allocation</span>
+            </div>
+            <div id="booster-earnings-table"><div class="loading-spinner"></div> Loading earnings...</div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <span>My Withdrawal History</span>
+              <span class="badge badge-amber">Audited Ledger</span>
+            </div>
+            <div id="booster-withdrawals-table"><div class="loading-spinner"></div> Loading withdrawals...</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top: 1.5rem;">
+          <div class="card-title">
+            <span>Available Boost Orders</span>
+            <span class="badge badge-blue">Claims &amp; Execution</span>
+          </div>
+          <div id="booster-orders-table"><div class="loading-spinner"></div> Loading orders...</div>
         </div>
       `;
 
+      loadBoosterEarnings();
+      loadBoosterWithdrawals();
+      loadBoosterOrders();
+    }
+
+    function updateWithdrawalPlaceholder() {
+      const method = document.getElementById('wdr-method').value;
+      const dest = document.getElementById('wdr-destination');
+      if (method === 'usdt') {
+        dest.placeholder = '0x1234567890123456789012345678901234567890 (BEP-20 only)';
+      } else {
+        dest.placeholder = 'IR123456789012345678901234 (IBAN / Sheba)';
+      }
+    }
+
+    async function requestWithdrawalQuote() {
+      const method = document.getElementById('wdr-method').value;
+      const amountVal = parseFloat(document.getElementById('wdr-amount').value || '0');
+      const dest = document.getElementById('wdr-destination').value.trim();
+      const feedback = document.getElementById('wdr-quote-feedback');
+      const preview = document.getElementById('wdr-quote-preview');
+
+      if (amountVal <= 0 || !dest) {
+        feedback.innerHTML = '<span style="color: var(--accent-red);">Please enter a valid amount and destination address.</span>';
+        return;
+      }
+
+      feedback.innerHTML = '<span class="loading-spinner"></span> Generating quote...';
+
+      try {
+        const res = await fetch('/api/withdrawals/quote', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || '',
+          },
+          body: JSON.stringify({
+            payoutMethod: method,
+            requestedUsdCents: Math.round(amountVal * 100),
+            destinationAddress: dest,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          feedback.innerHTML = `<span style="color: var(--accent-red);">${data.error || 'Failed to generate quote.'}</span>`;
+          preview.style.display = 'none';
+          return;
+        }
+
+        feedback.innerHTML = '<span style="color: var(--accent-green);">Quote generated successfully.</span>';
+        const q = data.quote;
+        preview.style.display = 'block';
+        preview.innerHTML = `
+          <div style="background: rgba(88, 101, 242, 0.08); border: 1px solid var(--primary); border-radius: 8px; padding: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+              <strong>Quote #${q.id} (${q.withdrawalRef})</strong>
+              <span class="badge ${q.simplifiedStatus.colorClass}">${q.simplifiedStatus.label}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Requested USD</span>
+              <span class="stat-val">$${(q.requestedUsdCents / 100).toFixed(2)}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Fixed Payout Fee</span>
+              <span class="stat-val" style="color: var(--accent-amber);">$${(q.fixedFeeUsdCents / 100).toFixed(2)}</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Net Payable Amount</span>
+              <span class="stat-val" style="color: var(--accent-green); font-size: 1.1rem;">
+                ${q.quotedNetPayoutAmount} ${q.payoutMethod.toUpperCase()}
+              </span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Destination</span>
+              <span class="stat-val"><code>${q.destinationAddress}</code></span>
+            </div>
+            <div style="margin-top: 1rem;">
+              <button class="btn btn-success" onclick="confirmWithdrawal(${q.id})" id="btn-confirm-wdr">
+                Confirm &amp; Lock Funds (Reserve)
+              </button>
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        feedback.innerHTML = `<span style="color: var(--accent-red);">${err.message}</span>`;
+      }
+    }
+
+    async function confirmWithdrawal(requestId) {
+      try {
+        const res = await fetch('/api/withdrawals/confirm', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || '',
+          },
+          body: JSON.stringify({ requestId }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          alert(data.error || 'Withdrawal confirmation failed');
+          return;
+        }
+
+        alert('Withdrawal confirmed and USD funds reserved successfully!');
+        loadWalletV2();
+        loadBoosterWithdrawals();
+        document.getElementById('wdr-quote-preview').style.display = 'none';
+        document.getElementById('wdr-quote-feedback').innerHTML = '';
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function loadBoosterEarnings() {
+      const container = document.getElementById('booster-earnings-table');
+      try {
+        const res = await fetch('/api/booster/earnings', { credentials: 'include' });
+        const data = await res.json();
+        const earnings = data.earnings || [];
+
+        if (earnings.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No earnings records found yet.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Service</th>
+                  <th>Allocated</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${earnings.map(e => `
+                  <tr>
+                    <td><code>${e.orderRef}</code></td>
+                    <td>${e.serviceName}</td>
+                    <td style="color: var(--accent-green); font-weight: 700;">$${e.allocatedUsd}</td>
+                    <td><span class="badge ${e.simplifiedStatus.colorClass}">${e.simplifiedStatus.label}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = '<span style="color: var(--accent-red);">Failed to load earnings.</span>';
+      }
+    }
+
+    async function loadBoosterWithdrawals() {
+      const container = document.getElementById('booster-withdrawals-table');
+      try {
+        const res = await fetch('/api/withdrawals/my', { credentials: 'include' });
+        const data = await res.json();
+        const withdrawals = data.withdrawals || [];
+
+        if (withdrawals.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No withdrawal requests submitted yet.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ref</th>
+                  <th>Method</th>
+                  <th>Amount</th>
+                  <th>Net Payout</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${withdrawals.map(w => `
+                  <tr>
+                    <td><code>${w.withdrawalRef}</code></td>
+                    <td><span class="badge">${w.payoutMethod.toUpperCase()}</span></td>
+                    <td>$${(w.requestedUsdCents / 100).toFixed(2)}</td>
+                    <td style="color: var(--accent-green);">${w.quotedNetPayoutAmount}</td>
+                    <td><span class="badge ${w.simplifiedStatus.colorClass}">${w.simplifiedStatus.label}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = '<span style="color: var(--accent-red);">Failed to load withdrawals.</span>';
+      }
+    }
+
+    async function loadBoosterOrders() {
+      const container = document.getElementById('booster-orders-table');
+      try {
+        const res = await fetch('/api/orders/available', { credentials: 'include' });
+        const data = await res.json();
+        const orders = data.orders || [];
+
+        if (orders.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No available orders right now.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ref</th>
+                  <th>Game</th>
+                  <th>Service</th>
+                  <th>Booster Pool</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${orders.map(o => `
+                  <tr>
+                    <td><code>${o.orderRef}</code></td>
+                    <td>${o.gameSlug}</td>
+                    <td>${o.serviceName}</td>
+                    <td style="color: var(--accent-green); font-weight: 700;">$${o.boosterPoolUsd}</td>
+                    <td><span class="badge ${o.simplifiedStatus.colorClass}">${o.simplifiedStatus.label}</span></td>
+                    <td>
+                      ${o.status === 'open_presign' ? `<button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="claimOrder(${o.id})">Claim</button>` : ''}
+                      ${o.status === 'in_progress' ? `<button class="btn btn-primary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="completeRun(${o.id})">Complete Run</button>` : ''}
+                      ${o.status === 'completed' ? `<button class="btn btn-success" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="submitOrderProof(${o.id})">Submit Proof</button>` : ''}
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = '<span style="color: var(--accent-red);">Failed to load orders.</span>';
+      }
+    }
+
+    async function claimOrder(id) {
+      try {
+        const res = await fetch(`/api/orders/${id}/claim`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ registeredRole: 'dps' }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Claim failed');
+        alert('Order claimed successfully!');
+        loadBoosterOrders();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function completeRun(id) {
+      try {
+        const res = await fetch(`/api/orders/${id}/complete-run`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Run completion failed');
+        alert('Run marked completed!');
+        loadBoosterOrders();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function submitOrderProof(id) {
+      try {
+        const res = await fetch(`/api/orders/${id}/submit-proof`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Proof submission failed');
+        alert('Proof submitted! Order now awaiting staff review.');
+        loadBoosterOrders();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function renderApplicationsTab(container) {
+      container.innerHTML = `
+        <div class="dashboard-grid">
+          <div class="card">
+            <div class="card-title">
+              <span>Apply for Role / Membership</span>
+              <span class="badge badge-blue">Official Verification</span>
+            </div>
+            <div class="form-group">
+              <label>Role Category</label>
+              <select id="app-category" class="form-control">
+                <option value="booster">Booster (Mythic+ / Raids / FPS)</option>
+                <option value="advertiser">Advertiser (Service Coordination)</option>
+                <option value="exchanger">Exchanger (Currency Trading &amp; P2P)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Experience / Description</label>
+              <textarea id="app-experience" class="form-control" rows="3" placeholder="Describe your gaming background, high-end achievements or exchange capabilities..."></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="submitApplication()" id="btn-submit-app">Submit Application</button>
+            <div id="app-feedback" style="margin-top: 0.5rem;"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <span>My Active Applications</span>
+              <span class="badge badge-amber">Under Review</span>
+            </div>
+            <div id="my-apps-table"><div class="loading-spinner"></div> Loading applications...</div>
+          </div>
+        </div>
+      `;
+
+      loadMyApplications();
+    }
+
+    async function submitApplication() {
+      const category = document.getElementById('app-category').value;
+      const experience = document.getElementById('app-experience').value.trim();
+      const feedback = document.getElementById('app-feedback');
+
+      if (!experience) {
+        feedback.innerHTML = '<span style="color: var(--accent-red);">Please provide experience details.</span>';
+        return;
+      }
+
+      feedback.innerHTML = '<span class="loading-spinner"></span> Submitting...';
+
+      try {
+        const res = await fetch('/api/applications', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ category, experience, introduction: experience }),
+        });
+
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          feedback.innerHTML = `<span style="color: var(--accent-red);">${data.error || 'Submission failed'}</span>`;
+          return;
+        }
+
+        feedback.innerHTML = '<span style="color: var(--accent-green);">Application submitted successfully!</span>';
+        loadMyApplications();
+      } catch (err) {
+        feedback.innerHTML = `<span style="color: var(--accent-red);">${err.message}</span>`;
+      }
+    }
+
+    async function loadMyApplications() {
+      const container = document.getElementById('my-apps-table');
+      try {
+        const res = await fetch('/api/applications/my', { credentials: 'include' });
+        const data = await res.json();
+        const apps = data.applications || [];
+
+        if (apps.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No active applications found.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Category</th>
+                  <th>Submitted</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${apps.map(a => `
+                  <tr>
+                    <td>#${a.id}</td>
+                    <td><span class="badge">${a.category.toUpperCase()}</span></td>
+                    <td>${new Date(a.submittedAt).toLocaleDateString()}</td>
+                    <td><span class="badge ${a.simplifiedStatus.colorClass}">${a.simplifiedStatus.label}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = '<span style="color: var(--accent-red);">Failed to load applications.</span>';
+      }
+    }
+
+    async function renderAdminTab(container) {
+      container.innerHTML = `
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title">
+            <span>Pending Registration Applications</span>
+            <span class="badge badge-amber">Admin Review</span>
+          </div>
+          <div id="admin-apps-table"><div class="loading-spinner"></div> Loading applications...</div>
+        </div>
+
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title">
+            <span>Pending Booster Withdrawals (Manual Payout Review)</span>
+            <span class="badge badge-blue">Simulation Mode</span>
+          </div>
+          <div id="admin-wdr-table"><div class="loading-spinner"></div> Loading withdrawals...</div>
+        </div>
+
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title">
+            <span>Boost Order Proof Reviews &amp; Final Approvals</span>
+            <span class="badge badge-purple">7-Stage Policy</span>
+          </div>
+          <div id="admin-orders-table"><div class="loading-spinner"></div> Loading orders...</div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <span>Gold Marketplace Trades Audit</span>
+            <span class="badge badge-green">Hardened V2.2</span>
+          </div>
+          <div id="admin-trades-table"><div class="loading-spinner"></div> Loading trades...</div>
+        </div>
+      `;
+
+      loadAdminApplications();
+      loadAdminWithdrawals();
+      loadAdminOrders();
+      loadAdminTrades();
+    }
+
+    async function loadAdminApplications() {
+      const container = document.getElementById('admin-apps-table');
+      try {
+        const res = await fetch('/api/admin/applications', { credentials: 'include' });
+        const data = await res.json();
+        const apps = data.applications || [];
+
+        if (apps.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No pending applications requiring review.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Applicant</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${apps.map(a => `
+                  <tr>
+                    <td>#${a.id}</td>
+                    <td>${a.user ? a.user.username : a.userId}</td>
+                    <td><span class="badge">${a.category.toUpperCase()}</span></td>
+                    <td><span class="badge ${a.simplifiedStatus.colorClass}">${a.simplifiedStatus.label}</span></td>
+                    <td>
+                      <button class="btn btn-success" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="reviewApp(${a.id}, 'approve')">Approve</button>
+                      <button class="btn btn-danger" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="reviewApp(${a.id}, 'reject')">Reject</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = '<span style="color: var(--accent-red);">Failed to load admin applications.</span>';
+      }
+    }
+
+    async function reviewApp(id, decision) {
+      try {
+        const res = await fetch(`/api/admin/applications/${id}/review`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ decision, reviewNotes: `Decision: ${decision} via Admin Hub` }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Review failed');
+        alert(`Application #${id} ${decision}d successfully!`);
+        loadAdminApplications();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function loadAdminWithdrawals() {
+      const container = document.getElementById('admin-wdr-table');
+      try {
+        const res = await fetch('/api/admin/withdrawals', { credentials: 'include' });
+        const data = await res.json();
+        const withdrawals = data.withdrawals || [];
+
+        if (withdrawals.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No pending reserved withdrawals.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ref</th>
+                  <th>Booster</th>
+                  <th>Method</th>
+                  <th>Reserved USD</th>
+                  <th>Net Payout</th>
+                  <th>Destination</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${withdrawals.map(w => `
+                  <tr>
+                    <td><code>${w.withdrawalRef}</code></td>
+                    <td>${w.booster ? w.booster.username : w.boosterId}</td>
+                    <td><span class="badge">${w.payoutMethod.toUpperCase()}</span></td>
+                    <td>$${(w.requestedUsdCents / 100).toFixed(2)}</td>
+                    <td style="color: var(--accent-green); font-weight: 700;">${w.quotedNetPayoutAmount}</td>
+                    <td><code style="font-size: 0.8rem;">${w.destinationAddress}</code></td>
+                    <td><span class="badge ${w.simplifiedStatus.colorClass}">${w.simplifiedStatus.label}</span></td>
+                    <td>
+                      <button class="btn btn-success" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="reviewWdr(${w.id}, 'approve_paid')">Approve Payout</button>
+                      <button class="btn btn-danger" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="reviewWdr(${w.id}, 'reject')">Reject</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = '<span style="color: var(--accent-red);">Failed to load admin withdrawals.</span>';
+      }
+    }
+
+    async function reviewWdr(id, decision) {
+      try {
+        const txHash = decision === 'approve_paid' ? `SIMULATED_TX_${Date.now()}` : undefined;
+        const res = await fetch(`/api/admin/withdrawals/${id}/review`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ decision, txHash }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Withdrawal review failed');
+        alert(`Withdrawal #${id} processed: ${decision}`);
+        loadAdminWithdrawals();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function loadAdminOrders() {
+      const container = document.getElementById('admin-orders-table');
+      try {
+        const res = await fetch('/api/orders/available', { credentials: 'include' });
+        const data = await res.json();
+        const orders = (data.orders || []).filter(o => o.status === 'completed');
+
+        if (orders.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No orders currently requiring review or approval.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Ref</th>
+                  <th>Service</th>
+                  <th>Pool USD</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${orders.map(o => `
+                  <tr>
+                    <td><code>${o.orderRef}</code></td>
+                    <td>${o.serviceName}</td>
+                    <td style="color: var(--accent-green); font-weight: 700;">$${o.boosterPoolUsd}</td>
+                    <td><span class="badge ${o.simplifiedStatus.colorClass}">${o.simplifiedStatus.label}</span></td>
+                    <td>
+                      <button class="btn btn-secondary" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="adminStaffReview(${o.id})">Staff Review</button>
+                      <button class="btn btn-primary" style="padding: 0.25rem 0.6rem; font-size: 0.8rem;" onclick="adminFinalApprove(${o.id})">Final Approve</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = '<span style="color: var(--accent-red);">Failed to load admin orders.</span>';
+      }
+    }
+
+    async function adminStaffReview(id) {
+      try {
+        const res = await fetch(`/api/orders/${id}/staff-review`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ notes: 'Verified via Admin Hub' }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Staff review failed');
+        alert('Staff review recorded! Order can now receive Admin Final Approval.');
+        loadAdminOrders();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function adminFinalApprove(id) {
+      try {
+        const res = await fetch(`/api/orders/${id}/admin-approve`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ notes: 'Final Approval granted via Admin Hub' }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Admin approval failed');
+        alert('Admin Final Approval granted! 24-hour hold clock initiated.');
+        loadAdminOrders();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function loadAdminTrades() {
+      const tableContainer = document.getElementById('admin-trades-table');
       try {
         const res = await fetch('/api/marketplace/admin/trades', { credentials: 'include' });
         const data = await res.json();
         const trades = data.trades || [];
 
-        const tableContainer = document.getElementById('admin-trades-table');
         if (trades.length === 0) {
-          tableContainer.innerHTML = '<p style="color: var(--text-muted);">No recorded trades yet.</p>';
+          tableContainer.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No recorded trades yet.</p>';
           return;
         }
 
@@ -1002,7 +1730,7 @@
                     <td>${t.buyer ? t.buyer.username : t.buyerId}</td>
                     <td>$${(t.agreedValuationUsdCents / 100).toFixed(2)}</td>
                     <td><span class="badge">${t.settlementMethod}</span></td>
-                    <td><span class="badge ${t.tradeStatus === 'SETTLED' ? 'badge-green' : 'badge-amber'}">${t.tradeStatus}</span></td>
+                    <td><span class="badge ${t.simplifiedStatus ? t.simplifiedStatus.colorClass : (t.tradeStatus === 'SETTLED' ? 'badge-green' : 'badge-amber')}">${t.simplifiedStatus ? t.simplifiedStatus.label : t.tradeStatus}</span></td>
                     <td>${t.goldDeliveryStatus}</td>
                     <td>${t.paymentStatus}</td>
                   </tr>
@@ -1012,7 +1740,7 @@
           </div>
         `;
       } catch (err) {
-        container.innerHTML = `<p style="color: var(--accent-red);">Failed to load admin overview.</p>`;
+        tableContainer.innerHTML = '<p style="color: var(--accent-red);">Failed to load admin overview.</p>';
       }
     }
 
