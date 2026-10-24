@@ -837,6 +837,21 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         },
       });
 
+      // ۲.۱. انتساب رنک تجاری ادورتایزر (تخصیص برنز به ادورتایزرهای جدید با حفظ رنک‌های پیشین)
+      if (currentApp.category === 'advertiser') {
+        const applicantUser = await tx.user.findUnique({
+          where: { discordId: applicantId },
+          select: { advertiserRank: true },
+        });
+
+        if (!applicantUser?.advertiserRank) {
+          await tx.user.update({
+            where: { discordId: applicantId },
+            data: { advertiserRank: 'BRONZE' },
+          });
+        }
+      }
+
       // ۳. به‌روزرسانی UserGameApproval
       if (currentApp.gameSlug) {
         await upsertUserGameApproval(

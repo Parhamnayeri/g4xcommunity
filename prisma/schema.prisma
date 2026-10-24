@@ -21,6 +21,7 @@ model User {
   telegramUsername String? @map("telegram_username")
   whatsappNumber   String? @map("whatsapp_number")
   isActive         Boolean @default(true) @map("is_active")
+  advertiserRank   String?  @map("advertiser_rank") // BRONZE | SILVER | GOLD | DIAMOND | OFFICIAL_PARTNERS | FOUNDING_ADVERTISER
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
@@ -84,6 +85,7 @@ model User {
   goldTradesAsBuyer        GoldTrade[]                @relation("BuyerGoldTrades")
   verifiedGoldTradesV2     GoldTrade[]                @relation("VerifiedGoldTradesV2")
 
+  @@index([advertiserRank])
   @@map("users")
 }
 
@@ -299,6 +301,8 @@ model Order {
   platformFeeMinor    Int       @default(0) @map("platform_fee_minor")
   advertiserFeeMinor  Int       @default(0) @map("advertiser_fee_minor")
   boosterPoolMinor    Int       @default(0) @map("booster_pool_minor")
+  advertiserRank      String?   @map("advertiser_rank")
+  rankCommissionBps   Int?      @map("rank_commission_bps")
   paymentStatus       String    @default("pending") @map("payment_status") // pending | verified | unneeded | refunded
   paymentVerifiedBy   String?   @map("payment_verified_by")
   paymentVerifiedAt   DateTime? @map("payment_verified_at")
@@ -340,6 +344,7 @@ model Order {
   @@index([advertiserId])
   @@index([creatorId])
   @@index([paymentStatus])
+  @@index([advertiserRank])
   @@map("orders")
 }
 
@@ -964,6 +969,11 @@ model OrderFinancialSnapshot {
   advertiserFeeMinor          Int       @default(0) @map("advertiser_fee_minor")
   boosterPoolMinor            Int       @map("booster_pool_minor")
   currency                    String    @default("USD")
+  advertiserId                String?   @map("advertiser_id")
+  advertiserRank              String?   @map("advertiser_rank")
+  rankFeeBasisPoints          Int?      @map("rank_fee_basis_points")
+  remainingAmountMinor        Int?      @map("remaining_amount_minor")
+  snapshotTimestamp           DateTime? @map("snapshot_timestamp")
   calculationStatus           String    @default("provisional") @map("calculation_status") // provisional | reconciled | finalized
   policyVersion               Int?      @map("policy_version")
   listingCategory             String?   @map("listing_category")
@@ -977,6 +987,7 @@ model OrderFinancialSnapshot {
   finalizer User? @relation("SnapshotFinalizedBy", fields: [finalizedBy], references: [discordId], onDelete: SetNull)
 
   @@index([sourcePlatform, calculationStatus])
+  @@index([advertiserRank])
   @@map("order_financial_snapshots")
 }
 

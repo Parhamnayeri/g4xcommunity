@@ -58,6 +58,20 @@ import {
   mapWithdrawalStatus,
   mapApplicationStatus,
 } from '../services/statusSimplifier';
+import {
+  AdvertiserRank,
+  ADVERTISER_RANK_RATES_BPS,
+  ADVERTISER_RANK_LABELS,
+  ADVERTISER_RANK_POLICY_VERSION,
+  isValidAdvertiserRank,
+  getRankBasisPoints,
+  formatBasisPoints,
+  calculateRankCommission,
+  getAdvertiserRank,
+  setAdvertiserRank,
+  getAdvertiserMigrationImpactReport,
+  getAdvertiserRankAuditHistory,
+} from '../services/advertiserRankService';
 
 export const router = Router();
 
@@ -726,27 +740,77 @@ router.post(
       const orderRef = `ORD_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
       const isAdv = user.userRoles?.some((ur) => ur.roleKey === 'advertiser');
-      const order = await prisma.order.create({
-        data: {
-          orderRef,
-          gameSlug,
-          serviceId: Number(serviceId),
-          creatorId: user.discordId,
-          creatorType: isAdv ? 'advertiser' : 'g4x',
-          advertiserId: isAdv ? user.discordId : null,
-          orderType: orderType || 'group',
-          orderMode: 'non_pilot',
-          currency: 'USD',
-          grossAmountMinor: grossCents,
-          boosterPoolMinor: grossCents,
-          paymentStatus: 'verified',
-          status: 'open_presign',
-          notes: notes || null,
-          runs: {
-            create: [{ runNumber: 1, status: 'pending' }],
+      let advRank: AdvertiserRank | null = null;
+      let platformFeeMinor = 0;
+      let boosterPoolMinor = grossCents;
+      let rankCommissionBps: number | null = null;
+
+      if (isAdv) {
+        advRank = await getAdvertiserRank(user.discordId);
+        if (advRank) {
+          const calc = calculateRankCommission(grossCents, advRank);
+          platformFeeMinor = calc.g4xFeeMinor;
+          boosterPoolMinor = calc.remainingMinor;
+          rankCommissionBps = calc.rankCommissionBasisPoints;
+        }
+      }
+
+      const order = await prisma.$transaction(async (tx) => {
+        const ord = await tx.order.create({
+          data: {
+            orderRef,
+            gameSlug,
+            serviceId: Number(serviceId),
+            creatorId: user.discordId,
+            creatorType: isAdv ? 'advertiser' : 'g4x',
+            advertiserId: isAdv ? user.discordId : null,
+            advertiserRank: advRank,
+            rankCommissionBps,
+            orderType: orderType || 'group',
+            orderMode: 'non_pilot',
+            currency: 'USD',
+            grossAmountMinor: grossCents,
+            platformFeeMinor,
+            advertiserFeeMinor: 0,
+            boosterPoolMinor,
+            paymentStatus: 'verified',
+            status: 'open_presign',
+            notes: notes || null,
+            runs: {
+              create: [{ runNumber: 1, status: 'pending' }],
+            },
           },
-        },
-        include: { service: true, runs: true },
+          include: { service: true, runs: true },
+        });
+
+        // Persist commercial snapshot at authoritative commitment point
+        if (isAdv && advRank && rankCommissionBps !== null) {
+          await tx.orderFinancialSnapshot.create({
+            data: {
+              orderId: ord.id,
+              sourcePlatform: 'advertiser',
+              sourceAmountType: 'gross_sale',
+              sourceAmountMinor: grossCents,
+              grossSaleMinor: grossCents,
+              platformOrderNetMinor: grossCents,
+              externalNetBaseMinor: grossCents,
+              g4xFeeRate: rankCommissionBps / 10000,
+              g4xFeeMinor: platformFeeMinor,
+              advertiserFeeMinor: 0,
+              boosterPoolMinor,
+              currency: 'USD',
+              calculationStatus: 'provisional',
+              policyVersion: ADVERTISER_RANK_POLICY_VERSION,
+              advertiserId: user.discordId,
+              advertiserRank: advRank,
+              rankFeeBasisPoints: rankCommissionBps,
+              remainingAmountMinor: boosterPoolMinor,
+              snapshotTimestamp: new Date(),
+            },
+          });
+        }
+
+        return ord;
       });
 
       res.json({
@@ -1095,4 +1159,148 @@ router.post(
     }
   }
 );
+
+// ─── روت‌های مدیریت رنک‌های تجاری ادورتایزرها (Advertiser Rank Management) ────────
+
+// ۱. دریافت فهرست ادورتایزرها و رنک‌های فعلی
+router.get(
+  '/admin/advertiser-ranks',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const advertisers = await prisma.user.findMany({
+        where: {
+          userRoles: {
+            some: { roleKey: 'advertiser' },
+          },
+        },
+        include: {
+          wallet: { select: { customCommissionRate: true } },
+          walletV2: { select: { customCommissionRate: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      const result = advertisers.map((adv) => {
+        const rank = isValidAdvertiserRank(adv.advertiserRank) ? (adv.advertiserRank as AdvertiserRank) : null;
+        const bps = rank ? getRankBasisPoints(rank) : null;
+        return {
+          discordId: adv.discordId,
+          username: adv.username,
+          displayName: adv.displayName,
+          advertiserRank: rank,
+          rankLabel: rank ? ADVERTISER_RANK_LABELS[rank] : 'Unassigned / Pending Migration',
+          basisPoints: bps,
+          commissionRateFormatted: bps !== null ? formatBasisPoints(bps) : null,
+          legacyW1CustomRate: adv.wallet?.customCommissionRate ?? null,
+          legacyW2CustomRate: adv.walletV2?.customCommissionRate ?? null,
+          hasLegacyRate: adv.wallet?.customCommissionRate != null || adv.walletV2?.customCommissionRate != null,
+          isMigrationUnresolved: rank === null,
+          createdAt: adv.createdAt,
+        };
+      });
+
+      res.json({
+        success: true,
+        advertisers: result,
+        approvedRanks: Object.values(AdvertiserRank).map((r) => ({
+          rank: r,
+          label: ADVERTISER_RANK_LABELS[r],
+          basisPoints: ADVERTISER_RANK_RATES_BPS[r],
+          percentageFormatted: formatBasisPoints(ADVERTISER_RANK_RATES_BPS[r]),
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch advertiser ranks' });
+    }
+  }
+);
+
+// ۲. به‌روزرسانی دستی رنک ادورتایزر با دلیل اجباری
+router.post(
+  '/admin/advertiser-ranks/:id',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const advertiserId = req.params.id;
+      const { rank, reason } = req.body;
+
+      if (!rank || !isValidAdvertiserRank(rank)) {
+        res.status(400).json({
+          error: `Invalid advertiser rank. Approved ranks: ${Object.values(AdvertiserRank).join(', ')}`,
+        });
+        return;
+      }
+
+      if (!reason || typeof reason !== 'string' || reason.trim().length < 3) {
+        res.status(400).json({
+          error: 'A mandatory reason of at least 3 characters is required to change an advertiser rank.',
+        });
+        return;
+      }
+
+      const result = await setAdvertiserRank({
+        advertiserId,
+        newRank: rank as AdvertiserRank,
+        reason,
+        actorId: user.discordId,
+      });
+
+      res.json({
+        success: true,
+        message: `Advertiser rank successfully updated to ${rank} (${result.effectiveCommissionRate})`,
+        data: result,
+      });
+    } catch (err: any) {
+      const statusCode = err.message?.includes('PERMISSION_DENIED') ? 403 : 400;
+      res.status(statusCode).json({ error: err.message || 'Failed to update advertiser rank' });
+    }
+  }
+);
+
+// ۳. دریافت گزارش ممیزی مهاجرت کمیسیون‌های قدیمی ادورتایزرها (Read-only Migration Impact Report)
+router.get(
+  '/admin/advertiser-ranks/migration-report',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const report = await getAdvertiserMigrationImpactReport();
+      res.json({ success: true, report });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to generate migration impact report' });
+    }
+  }
+);
+
+// ۴. دریافت تاریخچه تغییرات رنک ادورتایزر (Audit Trail)
+router.get(
+  '/admin/advertiser-ranks/:id/audit-history',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const targetId = req.params.id;
+
+      const userRoles = user.userRoles?.map((r) => r.roleKey) || [];
+      const isStaffOrAdmin = userRoles.some((r) => ['owner', 'manager', 'admin'].includes(r));
+      const isSelf = user.discordId === targetId;
+
+      if (!isStaffOrAdmin && !isSelf) {
+        res.status(403).json({ error: 'PERMISSION_DENIED: Cannot access audit history for other users.' });
+        return;
+      }
+
+      const history = await getAdvertiserRankAuditHistory(targetId);
+      res.json({ success: true, history });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch rank audit history' });
+    }
+  }
+);
+
 

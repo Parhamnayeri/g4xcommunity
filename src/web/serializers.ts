@@ -3,6 +3,12 @@
  */
 
 import { User, Wallet, WowCharacter, Order, GameService } from '@prisma/client';
+import {
+  AdvertiserRank,
+  isValidAdvertiserRank,
+  getRankBasisPoints,
+  formatBasisPoints,
+} from '../services/advertiserRankService';
 
 export interface SerializedUser {
   discordId: string;
@@ -11,11 +17,18 @@ export interface SerializedUser {
   isActive: boolean;
   createdAt: Date;
   roles: string[];
+  advertiserRank?: string | null;
+  advertiserCommissionBps?: number | null;
+  advertiserCommissionRateFormatted?: string | null;
 }
 
 export function serializeUser(
   user: User & { userRoles?: { roleKey: string }[] },
 ): SerializedUser {
+  const isAdv = user.userRoles ? user.userRoles.some((r) => r.roleKey === 'advertiser') : false;
+  const rank = isAdv && user.advertiserRank && isValidAdvertiserRank(user.advertiserRank) ? (user.advertiserRank as AdvertiserRank) : null;
+  const bps = rank ? getRankBasisPoints(rank) : null;
+
   return {
     discordId: user.discordId,
     username: user.username,
@@ -23,6 +36,9 @@ export function serializeUser(
     isActive: user.isActive,
     createdAt: user.createdAt,
     roles: user.userRoles ? user.userRoles.map((r) => r.roleKey) : [],
+    advertiserRank: rank,
+    advertiserCommissionBps: bps,
+    advertiserCommissionRateFormatted: bps !== null ? formatBasisPoints(bps) : null,
   };
 }
 

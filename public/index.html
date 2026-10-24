@@ -458,8 +458,13 @@
             <h2 style="font-size: 1.75rem; font-weight: 800;">Financial &amp; Marketplace Hub</h2>
             <p style="color: var(--text-muted); font-size: 0.95rem;">Authenticated as @${currentUser.username} (${currentUser.discordId})</p>
           </div>
-          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+          <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
             ${currentUser.roles.map(r => `<span class="badge badge-green">${r}</span>`).join('')}
+            ${currentUser.advertiserRank ? `
+              <span class="badge badge-blue" style="border: 1px solid rgba(59, 130, 246, 0.4);" title="Commercial Commission: ${currentUser.advertiserCommissionRateFormatted}">
+                ⭐ Rank: <strong>${currentUser.advertiserRank}</strong> (${currentUser.advertiserCommissionRateFormatted} G4X Fee)
+              </span>
+            ` : ''}
           </div>
         </div>
 
@@ -1642,6 +1647,17 @@
       container.innerHTML = `
         <div class="card" style="margin-bottom: 1.5rem;">
           <div class="card-title">
+            <span>Advertiser Commercial Ranks &amp; Commissions</span>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+              <button class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;" onclick="loadMigrationReport()">Migration Impact Report</button>
+              <span class="badge badge-blue">Manual Only</span>
+            </div>
+          </div>
+          <div id="admin-advertisers-table"><div class="loading-spinner"></div> Loading advertisers...</div>
+        </div>
+
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title">
             <span>Pending Registration Applications</span>
             <span class="badge badge-amber">Admin Review</span>
           </div>
@@ -1671,8 +1687,12 @@
           </div>
           <div id="admin-trades-table"><div class="loading-spinner"></div> Loading trades...</div>
         </div>
+
+        <!-- Dynamic Modal Container for Rank Management, Audit Trail & Migration Report -->
+        <div id="admin-rank-modal-container"></div>
       `;
 
+      loadAdminAdvertisers();
       loadAdminApplications();
       loadAdminWithdrawals();
       loadAdminOrders();
@@ -1992,6 +2012,338 @@
         alert('Trade cancelled and any reserved funds released.');
         loadAdminTrades();
       } catch (err) { alert(err.message); }
+    };
+
+    // ─── توابع مدیریت رنک‌های ادورتایزر (Advertiser Rank UI Functions) ───────────
+
+    let cachedApprovedRanks = [];
+
+    async function loadAdminAdvertisers() {
+      const container = document.getElementById('admin-advertisers-table');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/admin/advertiser-ranks', { credentials: 'include' });
+        const data = await res.json();
+        const advertisers = data.advertisers || [];
+        cachedApprovedRanks = data.approvedRanks || [];
+
+        if (advertisers.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No registered advertisers found.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Advertiser</th>
+                  <th>Current Rank</th>
+                  <th>Effective G4X Commission</th>
+                  <th>Legacy Custom Rate</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${advertisers.map(a => `
+                  <tr>
+                    <td>
+                      <strong>${a.username}</strong>
+                      <div style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">${a.discordId}</div>
+                    </td>
+                    <td>
+                      ${a.advertiserRank ? `
+                        <span class="badge badge-blue" style="font-weight: 800;">${a.advertiserRank}</span>
+                      ` : `
+                        <span class="badge badge-amber">Pending Migration</span>
+                      `}
+                    </td>
+                    <td style="font-weight: 700; color: ${a.commissionRateFormatted ? 'var(--accent-green)' : 'var(--text-muted)'};">
+                      ${a.commissionRateFormatted || 'N/A'}
+                    </td>
+                    <td>
+                      ${a.legacyW1CustomRate !== null || a.legacyW2CustomRate !== null ? `
+                        <span style="font-size: 0.85rem; color: var(--accent-amber);">
+                          ${a.legacyW2CustomRate !== null ? (a.legacyW2CustomRate * 100).toFixed(2) + '%' : (a.legacyW1CustomRate * 100).toFixed(2) + '%'}
+                        </span>
+                      ` : `
+                        <span style="color: var(--text-muted); font-size: 0.85rem;">None</span>
+                      `}
+                    </td>
+                    <td>
+                      ${a.isMigrationUnresolved ? `
+                        <span class="badge badge-amber" title="Requires explicit owner/admin rank mapping">Requires Mapping</span>
+                      ` : `
+                        <span class="badge badge-green">Active</span>
+                      `}
+                    </td>
+                    <td style="display: flex; gap: 0.4rem; flex-wrap: wrap;">
+                      <button class="btn btn-primary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="openChangeRankModal('${a.discordId}', '${a.username}', '${a.advertiserRank || ''}')">
+                        Change Rank
+                      </button>
+                      <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="openRankAuditModal('${a.discordId}', '${a.username}')">
+                        Audit Trail
+                      </button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = '<span style="color: var(--accent-red);">Failed to load advertisers list.</span>';
+      }
+    }
+
+    window.openChangeRankModal = function(discordId, username, currentRank) {
+      const modal = document.getElementById('admin-rank-modal-container');
+      if (!modal) return;
+
+      const ranks = cachedApprovedRanks.length > 0 ? cachedApprovedRanks : [
+        { rank: 'BRONZE', label: 'Bronze (14.99%)', percentageFormatted: '14.99%' },
+        { rank: 'SILVER', label: 'Silver (12.99%)', percentageFormatted: '12.99%' },
+        { rank: 'GOLD', label: 'Gold (10.99%)', percentageFormatted: '10.99%' },
+        { rank: 'DIAMOND', label: 'Diamond (8.99%)', percentageFormatted: '8.99%' },
+        { rank: 'OFFICIAL_PARTNERS', label: 'Official Partners (6.99%)', percentageFormatted: '6.99%' },
+        { rank: 'FOUNDING_ADVERTISER', label: 'Founding Advertiser (8.99%)', percentageFormatted: '8.99%' }
+      ];
+
+      modal.innerHTML = `
+        <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
+          <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; max-width: 500px; width: 100%; padding: 1.5rem; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem;">
+              <h3 style="font-size: 1.15rem; font-weight: 700;">Manual Advertiser Rank Assignment</h3>
+              <button style="background: none; border: none; color: var(--text-muted); font-size: 1.25rem; cursor: pointer;" onclick="closeRankModal()">&times;</button>
+            </div>
+            <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 1.25rem;">
+              Target: <strong>${username}</strong> (<code>${discordId}</code>)<br />
+              Current Rank: <strong>${currentRank || 'None (Pending)'}</strong>
+            </p>
+            <div class="form-group">
+              <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.4rem;">Select Approved Rank</label>
+              <select id="modal-select-rank" style="width: 100%; padding: 0.6rem; background: #0e111a; border: 1px solid var(--card-border); border-radius: 6px; color: #fff; font-size: 0.9rem;">
+                ${ranks.map(r => `
+                  <option value="${r.rank}" ${r.rank === currentRank ? 'selected' : ''}>
+                    ${r.label || (r.rank + ' (' + r.percentageFormatted + ')')}
+                  </option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label style="display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.4rem;">Mandatory Audit Reason (Required)</label>
+              <textarea id="modal-rank-reason" rows="3" placeholder="Enter authorized management rationale for this rank assignment..." style="width: 100%; padding: 0.6rem; background: #0e111a; border: 1px solid var(--card-border); border-radius: 6px; color: #fff; font-size: 0.9rem; resize: vertical;"></textarea>
+            </div>
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.25rem;">
+              <button class="btn btn-secondary" onclick="closeRankModal()">Cancel</button>
+              <button class="btn btn-primary" onclick="submitAdvertiserRank('${discordId}')">Confirm &amp; Record Audit Log</button>
+            </div>
+          </div>
+        </div>
+      `;
+    };
+
+    window.closeRankModal = function() {
+      const modal = document.getElementById('admin-rank-modal-container');
+      if (modal) modal.innerHTML = '';
+    };
+
+    window.submitAdvertiserRank = async function(discordId) {
+      const selectRank = document.getElementById('modal-select-rank');
+      const textReason = document.getElementById('modal-rank-reason');
+      const rank = selectRank?.value;
+      const reason = textReason?.value?.trim();
+
+      if (!reason || reason.length < 3) {
+        alert('A valid mandatory reason (minimum 3 characters) is required to record this change.');
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/admin/advertiser-ranks/${discordId}`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || '',
+          },
+          body: JSON.stringify({ rank, reason }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          alert(data.error || 'Failed to update advertiser rank');
+          return;
+        }
+
+        alert(data.message || 'Advertiser rank updated successfully!');
+        closeRankModal();
+        loadAdminAdvertisers();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+
+    window.openRankAuditModal = async function(discordId, username) {
+      const modal = document.getElementById('admin-rank-modal-container');
+      if (!modal) return;
+
+      modal.innerHTML = `
+        <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
+          <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; max-width: 650px; width: 100%; padding: 1.5rem; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem;">
+              <h3 style="font-size: 1.15rem; font-weight: 700;">Rank Audit History — ${username}</h3>
+              <button style="background: none; border: none; color: var(--text-muted); font-size: 1.25rem; cursor: pointer;" onclick="closeRankModal()">&times;</button>
+            </div>
+            <div id="modal-audit-content"><div class="loading-spinner"></div> Loading audit trail...</div>
+            <div style="display: flex; justify-content: flex-end; margin-top: 1.25rem;">
+              <button class="btn btn-secondary" onclick="closeRankModal()">Close</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      try {
+        const res = await fetch(`/api/admin/advertiser-ranks/${discordId}/audit-history`, { credentials: 'include' });
+        const data = await res.json();
+        const logs = data.history || [];
+        const content = document.getElementById('modal-audit-content');
+        if (!content) return;
+
+        if (logs.length === 0) {
+          content.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No manual rank changes recorded yet for this advertiser.</p>';
+          return;
+        }
+
+        content.innerHTML = `
+          <div class="table-container" style="max-height: 350px; overflow-y: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Changed By</th>
+                  <th>Old &rarr; New Rank</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${logs.map(l => {
+                  let oldVal = {};
+                  let newVal = {};
+                  try { oldVal = JSON.parse(l.previousValues || '{}'); } catch(e) {}
+                  try { newVal = JSON.parse(l.newValues || '{}'); } catch(e) {}
+                  return `
+                    <tr>
+                      <td style="font-size: 0.8rem; color: var(--text-muted);">${new Date(l.createdAt).toLocaleString()}</td>
+                      <td>${l.actor ? l.actor.username : (l.actorId || 'System')}</td>
+                      <td>
+                        <span style="color: var(--text-muted);">${oldVal.rank || 'None'}</span> &rarr;
+                        <strong style="color: var(--accent-green);">${newVal.rank || 'None'}</strong>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">${newVal.commissionRate || ''}</div>
+                      </td>
+                      <td style="font-size: 0.85rem; max-width: 200px; word-break: break-word;">${l.reason || '-'}</td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        const content = document.getElementById('modal-audit-content');
+        if (content) content.innerHTML = `<span style="color: var(--accent-red);">${err.message}</span>`;
+      }
+    };
+
+    window.loadMigrationReport = async function() {
+      const modal = document.getElementById('admin-rank-modal-container');
+      if (!modal) return;
+
+      modal.innerHTML = `
+        <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem;">
+          <div style="background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; max-width: 750px; width: 100%; padding: 1.5rem; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem;">
+              <h3 style="font-size: 1.15rem; font-weight: 700;">Advertiser Legacy Commission Migration Impact Report</h3>
+              <button style="background: none; border: none; color: var(--text-muted); font-size: 1.25rem; cursor: pointer;" onclick="closeRankModal()">&times;</button>
+            </div>
+            <div id="modal-migration-content"><div class="loading-spinner"></div> Generating report...</div>
+            <div style="display: flex; justify-content: flex-end; margin-top: 1.25rem;">
+              <button class="btn btn-secondary" onclick="closeRankModal()">Close</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      try {
+        const res = await fetch('/api/admin/advertiser-ranks/migration-report', { credentials: 'include' });
+        const data = await res.json();
+        const r = data.report;
+        const content = document.getElementById('modal-migration-content');
+        if (!content) return;
+
+        content.innerHTML = `
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; margin-bottom: 1.25rem;">
+            <div style="background: #0e111a; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--card-border);">
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Total Advertisers</div>
+              <div style="font-size: 1.25rem; font-weight: 800;">${r.totalAdvertisers}</div>
+            </div>
+            <div style="background: #0e111a; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--card-border);">
+              <div style="font-size: 0.75rem; color: var(--accent-green);">Assigned Ranks</div>
+              <div style="font-size: 1.25rem; font-weight: 800; color: var(--accent-green);">${r.advertisersWithAssignedRank}</div>
+            </div>
+            <div style="background: #0e111a; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--card-border);">
+              <div style="font-size: 0.75rem; color: var(--accent-amber);">Legacy Custom Rates</div>
+              <div style="font-size: 1.25rem; font-weight: 800; color: var(--accent-amber);">${r.advertisersWithLegacyCustomRates}</div>
+            </div>
+            <div style="background: #0e111a; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--card-border);">
+              <div style="font-size: 0.75rem; color: var(--accent-red);">Unresolved Mappings</div>
+              <div style="font-size: 1.25rem; font-weight: 800; color: var(--accent-red);">${r.unresolvedAdvertisersCount}</div>
+            </div>
+            <div style="background: #0e111a; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--card-border);">
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Finalized Snapshots</div>
+              <div style="font-size: 1.25rem; font-weight: 800;">${r.finalizedHistoricalSnapshotsCount}</div>
+            </div>
+          </div>
+
+          <h4 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 0.5rem;">Detailed Advertiser Status Breakdown</h4>
+          <div class="table-container" style="max-height: 250px; overflow-y: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Advertiser</th>
+                  <th>Current Rank</th>
+                  <th>Legacy Custom Rate</th>
+                  <th>Open Orders</th>
+                  <th>Mapping Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${r.advertisers.map(a => `
+                  <tr>
+                    <td><strong>${a.username}</strong><br /><span style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">${a.discordId}</span></td>
+                    <td>${a.currentRank ? `<span class="badge badge-green">${a.currentRank}</span>` : `<span class="badge badge-amber">Unresolved</span>`}</td>
+                    <td>${a.hasLegacyCustomRate ? `<span style="color: var(--accent-amber); font-weight: 700;">${((a.legacyW2CustomRate || a.legacyW1CustomRate) * 100).toFixed(2)}%</span>` : '<span style="color: var(--text-muted);">None</span>'}</td>
+                    <td>${a.openOrdersCount > 0 ? `<strong style="color: var(--accent-amber);">${a.openOrdersCount} open</strong>` : '0'}</td>
+                    <td>
+                      ${a.isMigrationUnresolved ? `
+                        <button class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="closeRankModal(); openChangeRankModal('${a.discordId}', '${a.username}', '')">
+                          Assign Rank
+                        </button>
+                      ` : `
+                        <span style="color: var(--accent-green); font-size: 0.8rem;">Resolved</span>
+                      `}
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        const content = document.getElementById('modal-migration-content');
+        if (content) content.innerHTML = `<span style="color: var(--accent-red);">${err.message}</span>`;
+      }
     };
 
     // Start authentication check on load

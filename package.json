@@ -32,9 +32,11 @@
     "test": "ts-node src/test/financial_calculation_suite.ts && ts-node src/test/platform_balances_and_reconciliation_suite.ts && ts-node src/test/finance_v2_suite.ts && ts-node src/test/finance_v2_1_hardening_suite.ts && ts-node src/test/finance_v2_2_marketplace_suite.ts",
     "bootstrap:owner": "ts-node scripts/bootstrap-owner.ts",
     "audit:policies": "ts-node scripts/audit-financial-policies.ts",
+    "audit:advertiser-ranks": "ts-node scripts/advertiser-rank-migration-report.ts",
     "audit": "ts-node scripts/audit-financial-policies.ts",
     "finance:cli": "ts-node scripts/platform-finance-cli.ts",
-    "export:clean-source": "ts-node scripts/export-clean-source.ts"
+    "export:clean-source": "ts-node scripts/export-clean-source.ts",
+    "test:advertiser-ranks": "ts-node src/test/advertiser_rank_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"

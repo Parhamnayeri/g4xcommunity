@@ -15,6 +15,12 @@ import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 import { validateGameAndService, ensureOrderAcceptsOperations } from '../services/orderValidationService';
 import { publishOrRefreshOrderCard } from '../services/orderDiscordService';
+import {
+  AdvertiserRank,
+  isValidAdvertiserRank,
+  calculateRankCommission,
+  ADVERTISER_RANK_POLICY_VERSION,
+} from '../services/advertiserRankService';
 
 export async function handleOrderCommand(message: Message, args: string[]): Promise<void> {
   const subCommand = args[0]?.toLowerCase();
@@ -276,44 +282,92 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
     });
     const isAdv = user?.userRoles?.some((r) => r.roleKey === 'advertiser') ?? false;
 
-    // 4. Create the authoritative Order in DB
-    const order = await prisma.order.create({
-      data: {
-        orderRef,
-        gameSlug,
-        serviceId,
-        creatorId: actorId,
-        creatorType: isAdv ? 'advertiser' : 'g4x',
-        advertiserId: isAdv ? actorId : null,
-        orderType,
-        orderMode: service.serviceMode === 'pilot' ? 'pilot' : 'non_pilot',
-        currency: 'USD',
-        grossAmountMinor: grossCents,
-        boosterPoolMinor: grossCents,
-        paymentStatus: 'verified',
-        status: 'open_presign',
-        notes,
-        runs: {
-          create: [{ runNumber: 1, status: 'pending' }],
+    let advRank: AdvertiserRank | null = null;
+    let platformFeeMinor = 0;
+    let boosterPoolMinor = grossCents;
+    let rankCommissionBps: number | null = null;
+
+    if (isAdv && user?.advertiserRank && isValidAdvertiserRank(user.advertiserRank)) {
+      advRank = user.advertiserRank as AdvertiserRank;
+      const calc = calculateRankCommission(grossCents, advRank);
+      platformFeeMinor = calc.g4xFeeMinor;
+      boosterPoolMinor = calc.remainingMinor;
+      rankCommissionBps = calc.rankCommissionBasisPoints;
+    }
+
+    // 4. Create the authoritative Order in DB atomically with financial snapshot
+    const order = await prisma.$transaction(async (tx) => {
+      const ord = await tx.order.create({
+        data: {
+          orderRef,
+          gameSlug,
+          serviceId,
+          creatorId: actorId,
+          creatorType: isAdv ? 'advertiser' : 'g4x',
+          advertiserId: isAdv ? actorId : null,
+          advertiserRank: advRank,
+          rankCommissionBps,
+          orderType,
+          orderMode: service.serviceMode === 'pilot' ? 'pilot' : 'non_pilot',
+          currency: 'USD',
+          grossAmountMinor: grossCents,
+          platformFeeMinor,
+          advertiserFeeMinor: 0,
+          boosterPoolMinor,
+          paymentStatus: 'verified',
+          status: 'open_presign',
+          notes,
+          runs: {
+            create: [{ runNumber: 1, status: 'pending' }],
+          },
+          // Automatically attach default Mythic+ required roles for group WoW orders
+          ...(service.gameSlug === 'wow_midnight' && orderType === 'group'
+            ? {
+                requiredRoles: {
+                  create: [
+                    { roleName: 'tank', quantity: 1 },
+                    { roleName: 'healer', quantity: 1 },
+                    { roleName: 'dps', quantity: 3 },
+                  ],
+                },
+              }
+            : {}),
         },
-        // Automatically attach default Mythic+ required roles for group WoW orders
-        ...(service.gameSlug === 'wow_midnight' && orderType === 'group'
-          ? {
-              requiredRoles: {
-                create: [
-                  { roleName: 'tank', quantity: 1 },
-                  { roleName: 'healer', quantity: 1 },
-                  { roleName: 'dps', quantity: 3 },
-                ],
-              },
-            }
-          : {}),
-      },
-      include: {
-        game: true,
-        service: true,
-        requiredRoles: true,
-      },
+        include: {
+          game: true,
+          service: true,
+          requiredRoles: true,
+        },
+      });
+
+      // Persist authoritative rank snapshot at commercial commitment point
+      if (isAdv && advRank && rankCommissionBps !== null) {
+        await tx.orderFinancialSnapshot.create({
+          data: {
+            orderId: ord.id,
+            sourcePlatform: 'advertiser',
+            sourceAmountType: 'gross_sale',
+            sourceAmountMinor: grossCents,
+            grossSaleMinor: grossCents,
+            platformOrderNetMinor: grossCents,
+            externalNetBaseMinor: grossCents,
+            g4xFeeRate: rankCommissionBps / 10000,
+            g4xFeeMinor: platformFeeMinor,
+            advertiserFeeMinor: 0,
+            boosterPoolMinor,
+            currency: 'USD',
+            calculationStatus: 'provisional',
+            policyVersion: ADVERTISER_RANK_POLICY_VERSION,
+            advertiserId: actorId,
+            advertiserRank: advRank,
+            rankFeeBasisPoints: rankCommissionBps,
+            remainingAmountMinor: boosterPoolMinor,
+            snapshotTimestamp: new Date(),
+          },
+        });
+      }
+
+      return ord;
     });
 
     // 5. Automatically publish real order card to Discord

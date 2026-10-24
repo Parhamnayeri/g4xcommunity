@@ -27,6 +27,14 @@ import {
   getPlatformWithdrawalThreshold,
   getAdvertiserCommissionRate,
 } from './financialPolicyService';
+import {
+  getAdvertiserRank,
+  calculateRankCommission,
+  AdvertiserRank,
+  isValidAdvertiserRank,
+  ADVERTISER_RANK_POLICY_VERSION,
+  ADVERTISER_RANK_RATES_BPS,
+} from './advertiserRankService';
 
 // ─── ۱. توابع کمکی محاسبات صحیح و پایستگی سنت‌ها (Exact Arithmetic) ────────────
 
@@ -191,9 +199,24 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
   let otherExternalFeesMinor = 0;
   let g4xFeeMinor = 0;
   let advertiserFeeMinor = 0;
+  let effectiveG4xFeeRate: number | null | undefined = g4xFeeRate;
   let calculationStatus = 'provisional';
   let policyVersion: number | null = null;
   let snapshotNotes = notes || null;
+  let snapAdvertiserRank: string | null = null;
+  let snapRankFeeBps: number | null = null;
+  let snapRemainingMinor: number | null = null;
+  let snapTimestamp: Date = new Date();
+
+  // Check if an existing snapshot already exists for this order
+  const existingSnapshot = await prisma.orderFinancialSnapshot.findUnique({
+    where: { orderId },
+  });
+
+  // Finalized financial snapshots are immutable and must never be overwritten
+  if (existingSnapshot?.calculationStatus === 'finalized') {
+    return existingSnapshot;
+  }
 
   // ── الف. پردازش بر اساس پلتفرم مبدا ──
 
@@ -279,44 +302,77 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
     grossSaleMinor = sourceAmountMinor;
     platformOrderNetMinor = sourceAmountMinor;
 
-    // دریافت کمیسیون اختصاصی ادورتایزر مصوب ادمین
-    const customRate = advertiserId ? await getAdvertiserCommissionRate(advertiserId) : null;
-    if (customRate !== null && customRate !== undefined) {
-      advertiserFeeMinor = Math.round(grossSaleMinor * customRate);
-    } else if (advertiserId) {
-      if (!allowProvisional) {
-        throw new Error(
-          `MISSING_ADVERTISER_COMMISSION_RATE: Advertiser '${advertiserId}' has no authorized commission rate configured by management. Finalization blocked.`
-        );
-      }
-      snapshotNotes = 'MISSING_ADVERTISER_COMMISSION_RATE: Advertiser-specific commission rate has not been configured by authorized management.';
-    }
-
-    if (currency.toUpperCase() === 'GOLD') {
-      // خط‌مشی مشترک سفارشات طلای ادورتایزر (Shared policy across all gold advertiser orders)
-      const goldPolicy = await getFeePolicy({
-        platform: 'advertiser',
-        feeType: 'g4x_fee',
-        listingCategory: 'currency',
-      });
-      if (
-        !goldPolicy ||
-        goldPolicy.percentageRate === null ||
-        goldPolicy.percentageRate === undefined ||
-        !goldPolicy.isApproved
-      ) {
-        // عدم جایگزینی هرگونه نرخ پیش‌فرض؛ بدون درصد مصوب مدیریت، کارمزد صفر و وضعیت موقت ثبت می‌شود
-        snapshotNotes =
-          'MISSING_SHARED_GOLD_FEE_RATE: Shared advertiser Gold G4X fee policy has not been configured by management. Calculation is provisional.';
-        g4xFeeMinor = 0;
-      } else {
-        const goldRate = goldPolicy.percentageRate;
-        g4xFeeMinor = Math.round(grossSaleMinor * goldRate);
-      }
+    // اگر اسنپ‌شات قبلی روی سفارش وجود داشته باشد، نرخ و رنک اسنپ‌شات‌شده حفظ می‌شود
+    if (existingSnapshot && existingSnapshot.advertiserRank) {
+      snapAdvertiserRank = existingSnapshot.advertiserRank;
+      snapRankFeeBps =
+        existingSnapshot.rankFeeBasisPoints ??
+        (isValidAdvertiserRank(snapAdvertiserRank)
+          ? ADVERTISER_RANK_RATES_BPS[snapAdvertiserRank as AdvertiserRank]
+          : null);
+      g4xFeeMinor = existingSnapshot.g4xFeeMinor;
+      advertiserFeeMinor = 0;
+      snapRemainingMinor = existingSnapshot.remainingAmountMinor ?? (grossSaleMinor - g4xFeeMinor);
+      snapTimestamp = existingSnapshot.snapshotTimestamp ?? existingSnapshot.createdAt;
+      policyVersion = existingSnapshot.policyVersion ?? ADVERTISER_RANK_POLICY_VERSION;
+      effectiveG4xFeeRate = snapRankFeeBps ? snapRankFeeBps / 10000 : existingSnapshot.g4xFeeRate;
     } else {
-      // در سفارشات USD یا USDT ادورتایزر، نرخ طلا اعمال نمی‌شود و تبدیل ساختگی طلا به دلار ممنوع است
-      if (g4xFeeRate !== undefined && g4xFeeRate !== null) {
-        g4xFeeMinor = Math.round(grossSaleMinor * g4xFeeRate);
+      // استعلام رنک فعال تجاری ادورتایزر
+      const activeRank = advertiserId ? await getAdvertiserRank(advertiserId) : null;
+
+      if (currency.toUpperCase() === 'GOLD') {
+        const customRate = advertiserId ? await getAdvertiserCommissionRate(advertiserId) : null;
+        if (customRate !== null && customRate !== undefined) {
+          advertiserFeeMinor = Math.round(grossSaleMinor * customRate);
+        }
+        // خط‌مشی مشترک سفارشات طلای ادورتایزر (Shared policy across all gold advertiser orders)
+        const goldPolicy = await getFeePolicy({
+          platform: 'advertiser',
+          feeType: 'g4x_fee',
+          listingCategory: 'currency',
+        });
+        if (
+          !goldPolicy ||
+          goldPolicy.percentageRate === null ||
+          goldPolicy.percentageRate === undefined ||
+          !goldPolicy.isApproved
+        ) {
+          snapshotNotes =
+            'MISSING_SHARED_GOLD_FEE_RATE: Shared advertiser Gold G4X fee policy has not been configured by management. Calculation is provisional.';
+          g4xFeeMinor = 0;
+        } else {
+          const goldRate = goldPolicy.percentageRate;
+          g4xFeeMinor = Math.round(grossSaleMinor * goldRate);
+        }
+      } else if (activeRank) {
+        // محاسبه بر اساس سیستم رنک مصوب مالک برای سفارشات بوست مستقیم ادورتایزر
+        const calc = calculateRankCommission(grossSaleMinor, activeRank);
+        snapAdvertiserRank = activeRank;
+        snapRankFeeBps = calc.rankCommissionBasisPoints;
+        g4xFeeMinor = calc.g4xFeeMinor;
+        advertiserFeeMinor = 0;
+        snapRemainingMinor = calc.remainingMinor;
+        effectiveG4xFeeRate = calc.rankCommissionBasisPoints / 10000;
+        policyVersion = ADVERTISER_RANK_POLICY_VERSION;
+      } else if (advertiserId) {
+        // بررسی وضعیت انتقال داده‌های قدیمی (Legacy Commission Migration)
+        const legacyCustomRate = await getAdvertiserCommissionRate(advertiserId);
+        if (legacyCustomRate !== null && legacyCustomRate !== undefined) {
+          advertiserFeeMinor = Math.round(grossSaleMinor * legacyCustomRate);
+          if (g4xFeeRate !== undefined && g4xFeeRate !== null) {
+            g4xFeeMinor = Math.round(grossSaleMinor * g4xFeeRate);
+          }
+          snapshotNotes =
+            'UNRESOLVED_ADVERTISER_RANK_MIGRATION: Advertiser has legacy custom commission rate but no approved advertiser rank mapping. Explicit Admin mapping required before finalization.';
+        } else {
+          if (!allowProvisional) {
+            throw new Error(
+              `MISSING_ADVERTISER_COMMISSION_RATE: Advertiser '${advertiserId}' has no commercial rank or commission rate configured by management. Finalization blocked.`
+            );
+          }
+          snapshotNotes =
+            'MISSING_ADVERTISER_COMMISSION_RATE: Advertiser commercial rank has not been configured by authorized management.';
+        }
       }
     }
   } else {
@@ -338,7 +394,11 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
   // استخر بوسترها: باقیمانده خالص پس از کسر تمامی کارمزدهای مصوب
   let boosterPoolMinor: number;
   if (sourcePlatform === 'advertiser') {
-    boosterPoolMinor = grossSaleMinor! - advertiserFeeMinor - g4xFeeMinor;
+    if (snapAdvertiserRank && snapRemainingMinor !== null) {
+      boosterPoolMinor = snapRemainingMinor;
+    } else {
+      boosterPoolMinor = grossSaleMinor! - advertiserFeeMinor - g4xFeeMinor;
+    }
   } else {
     boosterPoolMinor = externalNetBaseMinor - g4xFeeMinor;
   }
@@ -361,7 +421,7 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
       allocatedTransferFeeMinor,
       otherExternalFeesMinor,
       externalNetBaseMinor,
-      g4xFeeRate: g4xFeeRate ?? null,
+      g4xFeeRate: effectiveG4xFeeRate ?? null,
       g4xFeeMinor,
       advertiserFeeMinor,
       boosterPoolMinor,
@@ -370,6 +430,11 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
       policyVersion,
       listingCategory: listingCategory ?? null,
       notes: snapshotNotes,
+      advertiserId: advertiserId ?? existingSnapshot?.advertiserId ?? null,
+      advertiserRank: snapAdvertiserRank ?? existingSnapshot?.advertiserRank ?? null,
+      rankFeeBasisPoints: snapRankFeeBps ?? existingSnapshot?.rankFeeBasisPoints ?? null,
+      remainingAmountMinor: snapRemainingMinor ?? existingSnapshot?.remainingAmountMinor ?? boosterPoolMinor,
+      snapshotTimestamp: snapTimestamp ?? existingSnapshot?.snapshotTimestamp ?? new Date(),
     },
     create: {
       orderId,
@@ -383,7 +448,7 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
       allocatedTransferFeeMinor,
       otherExternalFeesMinor,
       externalNetBaseMinor,
-      g4xFeeRate: g4xFeeRate ?? null,
+      g4xFeeRate: effectiveG4xFeeRate ?? null,
       g4xFeeMinor,
       advertiserFeeMinor,
       boosterPoolMinor,
@@ -392,6 +457,11 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
       policyVersion,
       listingCategory: listingCategory ?? null,
       notes: snapshotNotes,
+      advertiserId: advertiserId ?? null,
+      advertiserRank: snapAdvertiserRank ?? null,
+      rankFeeBasisPoints: snapRankFeeBps ?? null,
+      remainingAmountMinor: snapRemainingMinor ?? boosterPoolMinor,
+      snapshotTimestamp: snapTimestamp ?? new Date(),
     },
   });
 
@@ -650,7 +720,15 @@ export async function finalizeOrderFinancialsAndBoosterAllocation(input: Finaliz
     }
   }
 
-  if (snapshot.sourcePlatform === 'advertiser') {
+  if (snapshot.sourcePlatform === 'advertiser' && snapshot.currency.toUpperCase() !== 'GOLD') {
+    if (
+      snapshot.notes?.includes('UNRESOLVED_ADVERTISER_RANK_MIGRATION') ||
+      snapshot.notes?.includes('MISSING_ADVERTISER_RANK')
+    ) {
+      throw new Error(
+        'UNRESOLVED_ADVERTISER_RANK_MIGRATION: Cannot finalize advertiser order without an approved advertiser rank configured by management'
+      );
+    }
     if (snapshot.notes?.includes('MISSING_ADVERTISER_COMMISSION_RATE')) {
       throw new Error(
         'MISSING_ADVERTISER_COMMISSION_RATE: Cannot finalize advertiser order without an approved advertiser commission rate'
@@ -659,9 +737,16 @@ export async function finalizeOrderFinancialsAndBoosterAllocation(input: Finaliz
     const order = await prisma.order.findUnique({
       where: { id: orderId },
     });
-    if (order?.customerId) {
-      const advRate = await getAdvertiserCommissionRate(order.customerId);
-      if (advRate === null || advRate === undefined) {
+    const targetAdvId = order?.advertiserId || order?.customerId || order?.creatorId;
+    if (targetAdvId) {
+      const advRank = snapshot.advertiserRank || (await getAdvertiserRank(targetAdvId));
+      if (!advRank) {
+        const legacyRate = await getAdvertiserCommissionRate(targetAdvId);
+        if (legacyRate !== null && legacyRate !== undefined) {
+          throw new Error(
+            'UNRESOLVED_ADVERTISER_RANK_MIGRATION: Advertiser has legacy custom commission rate but no approved advertiser rank mapping. Finalization blocked.'
+          );
+        }
         throw new Error(
           'MISSING_ADVERTISER_COMMISSION_RATE: Advertiser commission rate must be configured per advertiser by authorized management'
         );
