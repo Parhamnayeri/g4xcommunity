@@ -686,6 +686,7 @@ router.get('/orders/available', requireAuth, async (_req: Request, res: Response
     const orders = await prisma.order.findMany({
       where: {
         status: { in: ['open_presign', 'pending', 'assigned', 'in_progress', 'completed'] },
+        paymentStatus: { in: ['verified', 'unneeded'] },
       },
       include: {
         service: true,
@@ -732,12 +733,10 @@ router.post(
       }
 
       const grossCents = Math.round(Number(grossAmountUsd) * 100);
-      if (grossCents <= 0) {
-        res.status(400).json({ error: 'Amount must be greater than zero' });
+      if (!Number.isSafeInteger(grossCents) || grossCents <= 0) {
+        res.status(400).json({ error: 'Amount must be a positive integer in cents' });
         return;
       }
-
-      const orderRef = `ORD_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
       const isAdv = user.userRoles?.some((ur) => ur.roleKey === 'advertiser');
       let advRank: AdvertiserRank | null = null;
@@ -747,15 +746,65 @@ router.post(
 
       if (isAdv) {
         advRank = await getAdvertiserRank(user.discordId);
-        if (advRank) {
-          const calc = calculateRankCommission(grossCents, advRank);
-          platformFeeMinor = calc.g4xFeeMinor;
-          boosterPoolMinor = calc.remainingMinor;
-          rankCommissionBps = calc.rankCommissionBasisPoints;
+        if (!advRank || !isValidAdvertiserRank(advRank)) {
+          res.status(400).json({
+            error:
+              'UNRESOLVED_ADVERTISER_RANK: Direct Advertiser Boost order creation is blocked because the advertiser lacks an approved rank. Commercial rank must be assigned by management.',
+          });
+          return;
         }
+        const calc = calculateRankCommission(grossCents, advRank);
+        platformFeeMinor = calc.g4xFeeMinor;
+        boosterPoolMinor = calc.remainingMinor;
+        rankCommissionBps = calc.rankCommissionBasisPoints;
       }
 
+      const orderRef = `ORD_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
       const order = await prisma.$transaction(async (tx) => {
+        // Authoritative wallet check for payment reservation
+        const wallet = await tx.walletV2.findUnique({
+          where: { userId: user.discordId },
+        });
+
+        const hasSufficientWalletFunds = Boolean(wallet && wallet.availableCents >= grossCents);
+        let paymentStatus = 'pending';
+        let orderStatus = 'payment_pending';
+        let paymentVerifiedBy: string | null = null;
+        let paymentVerifiedAt: Date | null = null;
+
+        if (hasSufficientWalletFunds && wallet) {
+          const newAvailable = wallet.availableCents - grossCents;
+          const newReserved = wallet.reservedCents + grossCents;
+
+          await tx.walletV2.update({
+            where: { userId: user.discordId },
+            data: {
+              availableCents: newAvailable,
+              reservedCents: newReserved,
+            },
+          });
+
+          await tx.ledgerEntryV2.create({
+            data: {
+              entryRef: `LEDGER_ORD_RES_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+              userId: user.discordId,
+              amountCents: grossCents,
+              entryType: 'ORDER_RESERVE',
+              direction: 'DEBIT',
+              balanceAfterAvailableCents: newAvailable,
+              balanceAfterReservedCents: newReserved,
+              description: `Authoritative funds reserved from available USD balance for Order #${orderRef}`,
+              createdBy: user.discordId,
+            },
+          });
+
+          paymentStatus = 'verified';
+          orderStatus = 'open_presign';
+          paymentVerifiedBy = user.discordId;
+          paymentVerifiedAt = new Date();
+        }
+
         const ord = await tx.order.create({
           data: {
             orderRef,
@@ -773,8 +822,10 @@ router.post(
             platformFeeMinor,
             advertiserFeeMinor: 0,
             boosterPoolMinor,
-            paymentStatus: 'verified',
-            status: 'open_presign',
+            paymentStatus,
+            status: orderStatus,
+            paymentVerifiedBy,
+            paymentVerifiedAt,
             notes: notes || null,
             runs: {
               create: [{ runNumber: 1, status: 'pending' }],
@@ -822,6 +873,166 @@ router.post(
       });
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Failed to create order' });
+    }
+  }
+);
+
+router.post(
+  '/orders/:id/verify-payment',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+      });
+
+      if (!order) {
+        res.status(404).json({ error: 'Order not found' });
+        return;
+      }
+
+      if (order.paymentStatus === 'verified') {
+        res.json({ success: true, message: 'Order payment is already verified', order });
+        return;
+      }
+
+      const updated = await prisma.$transaction(async (tx) => {
+        const ord = await tx.order.update({
+          where: { id: orderId },
+          data: {
+            paymentStatus: 'verified',
+            status: order.status === 'payment_pending' ? 'open_presign' : order.status,
+            paymentVerifiedBy: user.discordId,
+            paymentVerifiedAt: new Date(),
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            action: 'ORDER_PAYMENT_VERIFIED',
+            actorId: user.discordId,
+            entityType: 'Order',
+            entityId: String(orderId),
+            reason: `Order #${orderId} marked as payment verified via administrative action by ${user.username || user.discordId}`,
+            previousValues: JSON.stringify({
+              paymentStatus: order.paymentStatus,
+              status: order.status,
+            }),
+            newValues: JSON.stringify({
+              paymentStatus: 'verified',
+              status: ord.status,
+            }),
+            isSuccess: true,
+          },
+        });
+
+        return ord;
+      });
+
+      res.json({
+        success: true,
+        message: 'Order payment marked verified',
+        order: {
+          ...updated,
+          simplifiedStatus: mapOrderStatus(updated.status),
+        },
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to verify order payment' });
+    }
+  }
+);
+
+router.post(
+  '/orders/:id/pay-from-wallet',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+      });
+
+      if (!order) {
+        res.status(404).json({ error: 'Order not found' });
+        return;
+      }
+
+      if (order.creatorId !== user.discordId && order.advertiserId !== user.discordId) {
+        res.status(403).json({ error: 'Only the order creator can fund this order from wallet' });
+        return;
+      }
+
+      if (order.paymentStatus === 'verified') {
+        res.json({ success: true, message: 'Order is already funded and verified', order });
+        return;
+      }
+
+      const updated = await prisma.$transaction(async (tx) => {
+        const wallet = await tx.walletV2.findUnique({
+          where: { userId: user.discordId },
+        });
+
+        if (!wallet || wallet.availableCents < order.grossAmountMinor) {
+          throw new Error('INSUFFICIENT_FUNDS: Available wallet balance is insufficient to fund this order.');
+        }
+
+        const newAvailable = wallet.availableCents - order.grossAmountMinor;
+        const newReserved = wallet.reservedCents + order.grossAmountMinor;
+
+        await tx.walletV2.update({
+          where: { userId: user.discordId },
+          data: {
+            availableCents: newAvailable,
+            reservedCents: newReserved,
+          },
+        });
+
+        await tx.ledgerEntryV2.create({
+          data: {
+            entryRef: `LEDGER_ORD_PAY_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+            userId: user.discordId,
+            amountCents: order.grossAmountMinor,
+            entryType: 'ORDER_RESERVE',
+            direction: 'DEBIT',
+            balanceAfterAvailableCents: newAvailable,
+            balanceAfterReservedCents: newReserved,
+            description: `Payment reserved from available USD balance for Order #${order.orderRef}`,
+            createdBy: user.discordId,
+          },
+        });
+
+        const ord = await tx.order.update({
+          where: { id: orderId },
+          data: {
+            paymentStatus: 'verified',
+            status: order.status === 'payment_pending' ? 'open_presign' : order.status,
+            paymentVerifiedBy: user.discordId,
+            paymentVerifiedAt: new Date(),
+          },
+        });
+
+        return ord;
+      });
+
+      res.json({
+        success: true,
+        message: 'Order funded and payment verified from wallet balance',
+        order: {
+          ...updated,
+          simplifiedStatus: mapOrderStatus(updated.status),
+        },
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to pay for order' });
     }
   }
 );

@@ -50,6 +50,10 @@ export async function handleOrderCommand(message: Message, args: string[]): Prom
       });
       break;
 
+    case 'verify-payment':
+      await handleOrderVerifyPayment(message, args.slice(1));
+      break;
+
     case 'complete':
       await message.reply({
         content:
@@ -74,6 +78,7 @@ async function handleOrderList(message: Message, args: string[]): Promise<void> 
     const orders = await prisma.order.findMany({
       where: {
         status: 'open_presign',
+        paymentStatus: 'verified',
         ...(gameFilter ? { gameSlug: gameFilter } : {}),
       },
       include: {
@@ -273,6 +278,13 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
     );
 
     const grossCents = Math.round(amountUsd * 100);
+    if (!Number.isSafeInteger(grossCents) || grossCents <= 0) {
+      await message.reply({
+        content: '❌ Invalid order amount. Amount must be a positive integer in cents.',
+      });
+      return;
+    }
+
     const orderRef = `ORD_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
     // Determine if creator is advertiser
@@ -287,7 +299,14 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
     let boosterPoolMinor = grossCents;
     let rankCommissionBps: number | null = null;
 
-    if (isAdv && user?.advertiserRank && isValidAdvertiserRank(user.advertiserRank)) {
+    if (isAdv) {
+      if (!user?.advertiserRank || !isValidAdvertiserRank(user.advertiserRank)) {
+        await message.reply({
+          content:
+            '❌ **Unresolved Commercial Rank**: Advertiser does not have an approved commercial rank configured by management. Order creation is blocked until an administrator assigns an approved rank.',
+        });
+        return;
+      }
       advRank = user.advertiserRank as AdvertiserRank;
       const calc = calculateRankCommission(grossCents, advRank);
       platformFeeMinor = calc.g4xFeeMinor;
@@ -295,8 +314,51 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
       rankCommissionBps = calc.rankCommissionBasisPoints;
     }
 
-    // 4. Create the authoritative Order in DB atomically with financial snapshot
+    // 4. Create the authoritative Order in DB atomically with payment check and financial snapshot
     const order = await prisma.$transaction(async (tx) => {
+      // Check if creator has sufficient available balance in WalletV2 for verified payment
+      const wallet = await tx.walletV2.findUnique({
+        where: { userId: actorId },
+      });
+
+      const hasSufficientWalletFunds = Boolean(wallet && wallet.availableCents >= grossCents);
+      let paymentStatus = 'pending';
+      let orderStatus = 'payment_pending';
+      let paymentVerifiedBy: string | null = null;
+      let paymentVerifiedAt: Date | null = null;
+
+      if (hasSufficientWalletFunds && wallet) {
+        const newAvailable = wallet.availableCents - grossCents;
+        const newReserved = wallet.reservedCents + grossCents;
+
+        await tx.walletV2.update({
+          where: { userId: actorId },
+          data: {
+            availableCents: newAvailable,
+            reservedCents: newReserved,
+          },
+        });
+
+        await tx.ledgerEntryV2.create({
+          data: {
+            entryRef: `LEDGER_ORD_RES_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+            userId: actorId,
+            amountCents: grossCents,
+            entryType: 'ORDER_RESERVE',
+            direction: 'DEBIT',
+            balanceAfterAvailableCents: newAvailable,
+            balanceAfterReservedCents: newReserved,
+            description: `Authoritative funds reserved from available USD balance for Order #${orderRef}`,
+            createdBy: actorId,
+          },
+        });
+
+        paymentStatus = 'verified';
+        orderStatus = 'open_presign';
+        paymentVerifiedBy = actorId;
+        paymentVerifiedAt = new Date();
+      }
+
       const ord = await tx.order.create({
         data: {
           orderRef,
@@ -314,8 +376,10 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
           platformFeeMinor,
           advertiserFeeMinor: 0,
           boosterPoolMinor,
-          paymentStatus: 'verified',
-          status: 'open_presign',
+          paymentStatus,
+          status: orderStatus,
+          paymentVerifiedBy,
+          paymentVerifiedAt,
           notes,
           runs: {
             create: [{ runNumber: 1, status: 'pending' }],
@@ -370,23 +434,100 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
       return ord;
     });
 
-    // 5. Automatically publish real order card to Discord
-    const pubResult = await publishOrRefreshOrderCard(message.client, order.id, message.guild?.id);
-
-    let confirmationText = `✅ **Order Created Successfully!**\n• Order ID: **#${order.id}**\n• Reference: \`${order.orderRef}\`\n• Game: **${game.displayName}**\n• Service: **${service.displayName}**\n• Status: **${order.status}**`;
-    if (pubResult.success) {
-      confirmationText += `\n📢 **Published to Orders Board** (Message ID: \`${pubResult.messageId}\`)`;
+    // 5. Card Publication: Only verified orders may be published for public claims
+    if (order.paymentStatus === 'verified') {
+      const pubResult = await publishOrRefreshOrderCard(message.client, order.id, message.guild?.id);
+      let confirmationText = `✅ **Order Created and Funded Successfully!**\n• Order ID: **#${order.id}**\n• Reference: \`${order.orderRef}\`\n• Game: **${game.displayName}**\n• Service: **${service.displayName}**\n• Payment: **verified (wallet reserved)**\n• Status: **${order.status}**`;
+      if (pubResult.success) {
+        confirmationText += `\n📢 **Published to Orders Board** (Message ID: \`${pubResult.messageId}\`)`;
+      } else {
+        confirmationText += `\n⚠️ **Card Publication Warning**: ${pubResult.error || 'Configured orders channel not found'}`;
+      }
+      await message.reply({ content: confirmationText });
     } else {
-      confirmationText += `\n⚠️ **Card Publication Warning**: ${pubResult.error || 'Configured orders channel not found'}`;
+      // Unpaid draft
+      await message.reply({
+        content: `⚠️ **Order Created in Pending Payment Status (Draft)**.\n• Order ID: **#${order.id}**\n• Reference: \`${order.orderRef}\`\n• Game: **${game.displayName}**\n• Service: **${service.displayName}**\n• Amount: **$${(grossCents / 100).toFixed(2)}**\n• Payment Status: **pending**\n• Order Status: **payment_pending**\n\n🔒 *Booster presign, claimability, and public publication are strictly blocked until funds are deposited and payment is authoritatively verified.*`,
+      });
     }
-
-    await message.reply({ content: confirmationText });
   } catch (err: any) {
     console.error('[OrderCommand] Order creation failed:', err);
     await message.reply({
       content: `❌ **Order Creation Failed**: ${err?.message || err}`,
     });
   }
+}
+
+/**
+ * Authoritative payment verification command for managers and administrators.
+ */
+async function handleOrderVerifyPayment(message: Message, args: string[]): Promise<void> {
+  const actorId = message.author.id;
+  const auth = await authorize(actorId, Permission.ORDER_PAYMENT_VERIFY);
+  if (!auth.allowed) {
+    await message.reply({
+      content: `❌ **Permission Denied**: ${auth.reason || 'You lack ORDER_PAYMENT_VERIFY permission to verify order payments.'}`,
+    });
+    return;
+  }
+
+  const orderId = Number(args[0]);
+  if (isNaN(orderId) || orderId <= 0) {
+    await message.reply({
+      content: '❌ **Invalid Order ID**. Usage: `G4!order verify-payment <orderId> [receiptRef]`',
+    });
+    return;
+  }
+
+  const receiptRef = args.slice(1).join(' ').trim() || null;
+
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+  });
+
+  if (!order) {
+    await message.reply({ content: `❌ Order #${orderId} not found.` });
+    return;
+  }
+
+  if (order.paymentStatus === 'verified') {
+    await message.reply({ content: `ℹ️ Order #${orderId} payment is already verified.` });
+    return;
+  }
+
+  const updatedOrder = await prisma.$transaction(async (tx) => {
+    const ord = await tx.order.update({
+      where: { id: orderId },
+      data: {
+        paymentStatus: 'verified',
+        paymentVerifiedBy: actorId,
+        paymentVerifiedAt: new Date(),
+        status: order.status === 'payment_pending' || order.status === 'draft' ? 'open_presign' : order.status,
+      },
+      include: { game: true, service: true, requiredRoles: true },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: 'ORDER_PAYMENT_VERIFIED',
+        entityType: 'Order',
+        entityId: String(orderId),
+        previousValues: JSON.stringify({ paymentStatus: order.paymentStatus, status: order.status }),
+        newValues: JSON.stringify({ paymentStatus: 'verified', status: ord.status, receiptRef }),
+        reason: receiptRef ? `Payment verified with reference: ${receiptRef}` : 'Payment verified by administrator',
+        isSuccess: true,
+      },
+    });
+
+    return ord;
+  });
+
+  // Publish to Discord now that payment has been authoritatively verified
+  const pubResult = await publishOrRefreshOrderCard(message.client, updatedOrder.id, message.guild?.id);
+  await message.reply({
+    content: `✅ **Payment Verified for Order #${updatedOrder.id}!**\nStatus updated to \`${updatedOrder.status}\`.${pubResult.success ? '\n📢 Published to Orders Board.' : ''}`,
+  });
 }
 
 /**

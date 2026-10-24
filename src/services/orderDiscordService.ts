@@ -365,6 +365,14 @@ export async function publishOrRefreshOrderCard(
     throw new DomainError(DomainErrorCode.ORDER_NOT_FOUND, `Order #${orderId} not found`);
   }
 
+  // Payment verification guard: Unfunded/unverified orders must not be published for public claims
+  if (order.paymentStatus !== 'verified' && order.paymentStatus !== 'unneeded') {
+    return {
+      success: false,
+      error: `PAYMENT_NOT_VERIFIED: Order #${order.id} cannot be published for public claims. Payment status is '${order.paymentStatus}'`,
+    };
+  }
+
   const channel = await resolveOrdersChannel(
     client,
     {

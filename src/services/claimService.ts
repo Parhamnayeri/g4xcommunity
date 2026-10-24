@@ -55,6 +55,14 @@ export async function createOrderClaim(
     );
   }
 
+  // Payment verification guard: Unfunded/unverified orders cannot be claimed
+  if (order.paymentStatus !== 'verified' && order.paymentStatus !== 'unneeded') {
+    throw new DomainError(
+      DomainErrorCode.PAYMENT_NOT_VERIFIED,
+      `Order #${input.orderId} cannot be claimed. Payment status is '${order.paymentStatus}'`,
+    );
+  }
+
   if (order.presignDeadline && now > order.presignDeadline) {
     throw new DomainError(
       DomainErrorCode.PRESIGN_WINDOW_CLOSED,

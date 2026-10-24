@@ -46,6 +46,8 @@ import {
 } from '../services/financialCalculationEngine';
 import { reviewApplication } from '../services/registrationService';
 import { getFeePolicy } from '../services/financialPolicyService';
+import { createOrderClaim } from '../services/claimService';
+import { FINANCE_V2_FEATURE_GATES } from '../services/financeV2/financeV2Types';
 
 async function runAdvertiserRankSuite() {
   console.log('================================================================================');
@@ -548,7 +550,54 @@ async function runAdvertiserRankSuite() {
     );
 
     // -------------------------------------------------------------------------
-    // TEST 25: Unresolved migration mapping blocks ambiguous direct order finalization
+    // TEST 25a: Unfunded order safely blocks financial finalization
+    // -------------------------------------------------------------------------
+    const unfundedAdvId = 'test_unfunded_adv_101';
+    await prisma.user.upsert({
+      where: { discordId: unfundedAdvId },
+      update: { isActive: true, advertiserRank: AdvertiserRank.BRONZE },
+      create: { discordId: unfundedAdvId, username: 'UnfundedAdv', displayName: 'Unfunded Advertiser', advertiserRank: AdvertiserRank.BRONZE },
+    });
+    await prisma.userRole.upsert({
+      where: { userId_roleKey: { userId: unfundedAdvId, roleKey: 'advertiser' } },
+      update: {},
+      create: { userId: unfundedAdvId, roleKey: 'advertiser' },
+    });
+
+    const unfundedOrder = await prisma.order.create({
+      data: {
+        orderRef: `unfunded_order_${Date.now()}`,
+        gameSlug: testGameSlug,
+        serviceId: testService.id,
+        creatorId: unfundedAdvId,
+        advertiserId: unfundedAdvId,
+        creatorType: 'advertiser',
+        sourceType: 'direct',
+        orderType: 'solo',
+        currency: 'USD',
+        grossAmountMinor: 10000,
+        status: 'payment_pending',
+        paymentStatus: 'pending',
+      },
+    });
+
+    let unfundedFinalizeErr: string | null = null;
+    try {
+      await finalizeOrderFinancialsAndBoosterAllocation({
+        orderId: unfundedOrder.id,
+        actorId: adminDiscordId,
+      });
+    } catch (err: any) {
+      unfundedFinalizeErr = err.message;
+    }
+    assert(
+      Boolean(unfundedFinalizeErr && unfundedFinalizeErr.includes('ORDER_PAYMENT_NOT_VERIFIED')),
+      '25a. Unfunded order safely blocks financial finalization (ORDER_PAYMENT_NOT_VERIFIED)',
+      `Got error: ${unfundedFinalizeErr}`
+    );
+
+    // -------------------------------------------------------------------------
+    // TEST 25b: Unresolved migration mapping blocks ambiguous direct order finalization
     // -------------------------------------------------------------------------
     const unresolvedAdvId = 'test_unresolved_adv_999';
     await prisma.user.upsert({
@@ -582,6 +631,7 @@ async function runAdvertiserRankSuite() {
         currency: 'USD',
         grossAmountMinor: 10000,
         status: 'open_presign',
+        paymentStatus: 'verified', // Set verified so we isolate the rank migration check
       },
     });
 
@@ -606,7 +656,7 @@ async function runAdvertiserRankSuite() {
     }
     assert(
       Boolean(finalizationError && finalizationError.includes('UNRESOLVED_ADVERTISER_RANK_MIGRATION')),
-      '25. Unresolved advertiser rank migration safely blocks financial finalization',
+      '25b. Unresolved advertiser rank migration safely blocks financial finalization',
       `Got error: ${finalizationError}`
     );
 
@@ -636,7 +686,7 @@ async function runAdvertiserRankSuite() {
     );
 
     // -------------------------------------------------------------------------
-    // TEST 27: Read-Only Migration Impact Report functionality
+    // TEST 29: Read-Only Migration Impact Report functionality
     // -------------------------------------------------------------------------
     const impactReport = await getAdvertiserMigrationImpactReport();
     assert(
@@ -648,12 +698,417 @@ async function runAdvertiserRankSuite() {
     );
 
     // -------------------------------------------------------------------------
-    // TEST 28: Zero wallet balances altered by rank operations
+    // TEST 30: Zero wallet balances altered by rank operations
     // -------------------------------------------------------------------------
     const advWallet = await prisma.walletV2.findUnique({ where: { userId: advertiserDiscordId } });
     assert(
       (advWallet?.availableCents ?? 0) === 0 && (advWallet?.reservedCents ?? 0) === 0,
       '30. Rank system operations execute strictly as policy changes with zero wallet credits/debits'
+    );
+
+    // =========================================================================
+    // TARGETED REGRESSION TESTS (Section 7 Requirements)
+    // =========================================================================
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 1: Advertiser with missing rank cannot publish a commission-free order
+    // -------------------------------------------------------------------------
+    // Setup advertiser agent
+    const advAgent = request.agent(app);
+    const advCsrfRes = await advAgent.get('/api/csrf-token');
+    const advSidMatch = (advCsrfRes.header['set-cookie']?.[0] || '').match(/g4x\.sid=s%3A([^.]+)\./);
+    const advSid = advSidMatch ? advSidMatch[1] : '';
+
+    await new Promise<void>((resolve, reject) => {
+      sessionStore.get(advSid, (err, sess) => {
+        if (err || !sess) return reject(err || new Error('No session'));
+        sess.userId = unresolvedAdvId; // has advertiser role but advertiserRank === null
+        sessionStore.set(advSid, sess, setErr => (setErr ? reject(setErr) : resolve()));
+      });
+    });
+
+    const unrankedOrderRes = await advAgent
+      .post('/api/orders/create')
+      .set('x-csrf-token', advCsrfRes.body.csrfToken)
+      .send({
+        gameSlug: testGameSlug,
+        serviceId: testService.id,
+        grossAmountUsd: 50,
+      });
+
+    assert(
+      unrankedOrderRes.status === 400 &&
+      unrankedOrderRes.body.error?.includes('UNRESOLVED_ADVERTISER_RANK'),
+      'R1. Advertiser with missing rank cannot publish a commission-free order (HTTP 400 UNRESOLVED_ADVERTISER_RANK)',
+      `Status: ${unrankedOrderRes.status}, Error: ${unrankedOrderRes.body.error}`
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 2: Existing Advertiser with unresolved legacy commission cannot bypass rank mapping
+    // -------------------------------------------------------------------------
+    let legacyBypassErr: string | null = null;
+    try {
+      await finalizeOrderFinancialsAndBoosterAllocation({
+        orderId: unresolvedOrder.id,
+        actorId: adminDiscordId,
+      });
+    } catch (err: any) {
+      legacyBypassErr = err.message;
+    }
+    assert(
+      Boolean(legacyBypassErr && legacyBypassErr.includes('UNRESOLVED_ADVERTISER_RANK_MIGRATION')),
+      'R2. Existing Advertiser with unresolved legacy commission fails closed and cannot bypass rank mapping',
+      `Got error: ${legacyBypassErr}`
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 3: Web and Discord apply identical commission rules
+    // -------------------------------------------------------------------------
+    const bronzeCalcR = calculateRankCommission(10000, AdvertiserRank.BRONZE);
+    const silverCalcR = calculateRankCommission(10000, AdvertiserRank.SILVER);
+    const goldCalcR = calculateRankCommission(10000, AdvertiserRank.GOLD);
+    const diamondCalcR = calculateRankCommission(10000, AdvertiserRank.DIAMOND);
+    const foundingCalcR = calculateRankCommission(10000, AdvertiserRank.FOUNDING_ADVERTISER);
+    const officialCalcR = calculateRankCommission(10000, AdvertiserRank.OFFICIAL_PARTNERS);
+
+    assert(
+      bronzeCalcR.g4xFeeMinor === 1499 &&
+      silverCalcR.g4xFeeMinor === 1299 &&
+      goldCalcR.g4xFeeMinor === 1099 &&
+      diamondCalcR.g4xFeeMinor === 899 &&
+      foundingCalcR.g4xFeeMinor === 899 &&
+      officialCalcR.g4xFeeMinor === 699,
+      'R3. Web and Discord share identical integer basis point rules across all approved ranks'
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 4: Order creation does not mark payment verified without authoritative evidence
+    // -------------------------------------------------------------------------
+    // Set advertiser wallet to 0 balance
+    await prisma.walletV2.upsert({
+      where: { userId: advertiserDiscordId },
+      update: { availableCents: 0, reservedCents: 0 },
+      create: { userId: advertiserDiscordId, availableCents: 0, reservedCents: 0 },
+    });
+
+    // Authenticate advertiser with valid rank
+    await new Promise<void>((resolve, reject) => {
+      sessionStore.get(advSid, (err, sess) => {
+        if (err || !sess) return reject(err || new Error('No session'));
+        sess.userId = advertiserDiscordId;
+        sessionStore.set(advSid, sess, setErr => (setErr ? reject(setErr) : resolve()));
+      });
+    });
+
+    const unfundedCreationRes = await advAgent
+      .post('/api/orders/create')
+      .set('x-csrf-token', advCsrfRes.body.csrfToken)
+      .send({
+        gameSlug: testGameSlug,
+        serviceId: testService.id,
+        grossAmountUsd: 100,
+      });
+
+    assert(
+      unfundedCreationRes.status === 200 &&
+      unfundedCreationRes.body.order.paymentStatus === 'pending' &&
+      unfundedCreationRes.body.order.status === 'payment_pending',
+      'R4. Order creation without authoritative wallet funds sets paymentStatus: pending and status: payment_pending',
+      `PaymentStatus: ${unfundedCreationRes.body.order?.paymentStatus}, Status: ${unfundedCreationRes.body.order?.status}`
+    );
+
+    const newlyCreatedUnfundedOrderId = unfundedCreationRes.body.order.id;
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 5: Unfunded order cannot become publicly claimable or financially releasable
+    // -------------------------------------------------------------------------
+    let claimErr: string | null = null;
+    try {
+      await createOrderClaim({
+        orderId: newlyCreatedUnfundedOrderId,
+        userId: boosterDiscordId,
+        claimType: 'individual',
+        registeredRole: 'dps',
+      });
+    } catch (err: any) {
+      claimErr = err.message;
+    }
+    assert(
+      Boolean(claimErr && (claimErr.includes('PAYMENT_NOT_VERIFIED') || claimErr.includes('not in \'open_presign\' status'))),
+      'R5. Unfunded order cannot be claimed by boosters (blocked by paymentStatus and status)',
+      `Claim error: ${claimErr}`
+    );
+
+    const availableOrdersRes = await advAgent.get('/api/orders/available');
+    const orderInAvailable = availableOrdersRes.body.orders?.some(
+      (o: any) => o.id === newlyCreatedUnfundedOrderId
+    );
+    assert(
+      orderInAvailable === false,
+      'R5b. Unfunded order does not appear in /orders/available list'
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 6: User cannot forge payment verification
+    // -------------------------------------------------------------------------
+    const forgedRes = await advAgent
+      .post('/api/orders/create')
+      .set('x-csrf-token', advCsrfRes.body.csrfToken)
+      .send({
+        gameSlug: testGameSlug,
+        serviceId: testService.id,
+        grossAmountUsd: 50,
+        paymentStatus: 'verified', // Client attempting to forge payment verification
+      });
+
+    assert(
+      forgedRes.status === 200 && forgedRes.body.order.paymentStatus === 'pending',
+      'R6. Client cannot forge payment verification flag; server enforces authoritative funds check',
+      `Result paymentStatus: ${forgedRes.body.order?.paymentStatus}`
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 7: Rank change does not alter committed order rates
+    // -------------------------------------------------------------------------
+    // Order was committed at GOLD (1099 bps) in Test 23
+    const lockedSnapshotBefore = await prisma.orderFinancialSnapshot.findFirst({
+      where: { orderId: createdOrder.id },
+    });
+    // Promote advertiser to OFFICIAL_PARTNERS (699 bps)
+    await setAdvertiserRank({
+      advertiserId: advertiserDiscordId,
+      newRank: AdvertiserRank.OFFICIAL_PARTNERS,
+      reason: 'Partner promotion test',
+      actorId: adminDiscordId,
+    });
+    const lockedSnapshotAfter = await calculateOrderFinancialSnapshot(snapshotInput);
+    assert(
+      lockedSnapshotBefore?.rankFeeBasisPoints === 1099 &&
+      lockedSnapshotAfter.rankFeeBasisPoints === 1099 &&
+      lockedSnapshotAfter.g4xFeeMinor === 1099,
+      'R7. Advertiser rank change does not reprice previously committed order rates',
+      `Locked bps: ${lockedSnapshotAfter.rankFeeBasisPoints}`
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 8: Finalized snapshots cannot be overwritten
+    // -------------------------------------------------------------------------
+    // Mark snapshot finalized
+    await prisma.orderFinancialSnapshot.updateMany({
+      where: { orderId: createdOrder.id },
+      data: { calculationStatus: 'finalized' },
+    });
+
+    let finalizedOverwriteErr: string | null = null;
+    try {
+      await calculateOrderFinancialSnapshot({
+        ...snapshotInput,
+        sourceAmountMinor: 20000, // Attempt conflicting reprice
+      });
+    } catch (err: any) {
+      finalizedOverwriteErr = err.message;
+    }
+    assert(
+      Boolean(finalizedOverwriteErr && finalizedOverwriteErr.includes('FINALIZED_SNAPSHOT_IMMUTABLE')),
+      'R8. Finalized financial snapshots are strictly immutable and cannot be overwritten',
+      `Got error: ${finalizedOverwriteErr}`
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 9: Conflicting financial snapshot recalculation fails
+    // -------------------------------------------------------------------------
+    const freshOrder = await prisma.order.create({
+      data: {
+        orderRef: `fresh_order_${Date.now()}`,
+        gameSlug: testGameSlug,
+        serviceId: testService.id,
+        creatorId: advertiserDiscordId,
+        advertiserId: advertiserDiscordId,
+        creatorType: 'advertiser',
+        orderType: 'solo',
+        currency: 'USD',
+        grossAmountMinor: 10000,
+        status: 'open_presign',
+        paymentStatus: 'verified',
+      },
+    });
+
+    await calculateOrderFinancialSnapshot({
+      orderId: freshOrder.id,
+      sourcePlatform: 'advertiser',
+      sourceAmountType: 'gross_sale',
+      sourceAmountMinor: 10000,
+      currency: 'USD',
+      advertiserId: advertiserDiscordId,
+    });
+
+    let conflictRecalcErr: string | null = null;
+    try {
+      await calculateOrderFinancialSnapshot({
+        orderId: freshOrder.id,
+        sourcePlatform: 'advertiser',
+        sourceAmountType: 'gross_sale',
+        sourceAmountMinor: 15000, // Conflicting gross amount
+        currency: 'USD',
+        advertiserId: advertiserDiscordId,
+      });
+    } catch (err: any) {
+      conflictRecalcErr = err.message;
+    }
+    assert(
+      Boolean(conflictRecalcErr && conflictRecalcErr.includes('CONFLICTING_SNAPSHOT_RECALCULATION')),
+      'R9. Conflicting financial snapshot recalculation fails closed',
+      `Got error: ${conflictRecalcErr}`
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 10: Duplicate order requests remain safe (Idempotency)
+    // -------------------------------------------------------------------------
+    const identicalSnapshot1 = await calculateOrderFinancialSnapshot({
+      orderId: freshOrder.id,
+      sourcePlatform: 'advertiser',
+      sourceAmountType: 'gross_sale',
+      sourceAmountMinor: 10000,
+      currency: 'USD',
+      advertiserId: advertiserDiscordId,
+    });
+    const identicalSnapshot2 = await calculateOrderFinancialSnapshot({
+      orderId: freshOrder.id,
+      sourcePlatform: 'advertiser',
+      sourceAmountType: 'gross_sale',
+      sourceAmountMinor: 10000,
+      currency: 'USD',
+      advertiserId: advertiserDiscordId,
+    });
+    assert(
+      identicalSnapshot1.id === identicalSnapshot2.id &&
+      identicalSnapshot1.g4xFeeMinor === identicalSnapshot2.g4xFeeMinor,
+      'R10. Duplicate / identical recalculation calls are strictly idempotent and safe'
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 11: Invalid financial inputs fail
+    // -------------------------------------------------------------------------
+    let negativeInputErr: string | null = null;
+    try {
+      await calculateOrderFinancialSnapshot({
+        orderId: freshOrder.id,
+        sourcePlatform: 'advertiser',
+        sourceAmountType: 'gross_sale',
+        sourceAmountMinor: -500,
+        currency: 'USD',
+      });
+    } catch (err: any) {
+      negativeInputErr = err.message;
+    }
+
+    let nanInputErr: string | null = null;
+    try {
+      await calculateOrderFinancialSnapshot({
+        orderId: freshOrder.id,
+        sourcePlatform: 'advertiser',
+        sourceAmountType: 'gross_sale',
+        sourceAmountMinor: NaN,
+        currency: 'USD',
+      });
+    } catch (err: any) {
+      nanInputErr = err.message;
+    }
+
+    assert(
+      Boolean(negativeInputErr && negativeInputErr.includes('INVALID_SOURCE_AMOUNT')) &&
+      Boolean(nanInputErr && nanInputErr.includes('INVALID_SOURCE_AMOUNT')),
+      'R11. Negative amounts and NaN fail financial calculation with INVALID_SOURCE_AMOUNT'
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 12: Legacy commissions cannot double-charge rank fees
+    // -------------------------------------------------------------------------
+    const singleChargeOrder = await prisma.order.create({
+      data: {
+        orderRef: `single_charge_${Date.now()}`,
+        gameSlug: testGameSlug,
+        serviceId: testService.id,
+        creatorId: advertiserDiscordId,
+        advertiserId: advertiserDiscordId,
+        creatorType: 'advertiser',
+        orderType: 'solo',
+        currency: 'USD',
+        grossAmountMinor: 10000,
+        status: 'open_presign',
+        paymentStatus: 'verified',
+      },
+    });
+
+    const singleChargeSnap = await calculateOrderFinancialSnapshot({
+      orderId: singleChargeOrder.id,
+      sourcePlatform: 'advertiser',
+      sourceAmountType: 'gross_sale',
+      sourceAmountMinor: 10000,
+      currency: 'USD',
+      advertiserId: advertiserDiscordId,
+    });
+
+    assert(
+      singleChargeSnap.advertiserFeeMinor === 0 &&
+      singleChargeSnap.g4xFeeMinor === 699 && // OFFICIAL_PARTNERS = 6.99%
+      singleChargeSnap.g4xFeeMinor + (singleChargeSnap.remainingAmountMinor ?? 0) === 10000,
+      'R12. Rank-based commission is the sole approved fee; legacy custom commission is not combined or double-charged'
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 13: G2G, SkyCoach, Eldorado and Exchanger policies remain unchanged
+    // -------------------------------------------------------------------------
+    const g2gFresh = await getFeePolicy({ platform: 'g2g', feeType: 'sale_commission' });
+    const skycoachFresh = await getFeePolicy({ platform: 'skycoach', feeType: 'sale_commission' });
+    assert(
+      g2gFresh?.percentageRate === 0.0899 && skycoachFresh?.percentageRate === 0.10,
+      'R13. Third-party platform policies (G2G, SkyCoach, Eldorado) remain strictly unchanged'
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 14: Concurrent Admin rank updates preserve accurate audit history
+    // -------------------------------------------------------------------------
+    // Target user current rank is OFFICIAL_PARTNERS
+    let concurrentError: string | null = null;
+    try {
+      await setAdvertiserRank({
+        advertiserId: advertiserDiscordId,
+        newRank: AdvertiserRank.DIAMOND,
+        reason: 'Stale admin attempting update',
+        actorId: adminDiscordId,
+        expectedPreviousRank: AdvertiserRank.BRONZE, // Wrong expected previous rank
+      });
+    } catch (err: any) {
+      concurrentError = err.message;
+    }
+    assert(
+      Boolean(concurrentError && concurrentError.includes('CONCURRENT_RANK_MODIFICATION')),
+      'R14. Optimistic concurrency with expectedPreviousRank blocks stale concurrent admin updates (CONCURRENT_RANK_MODIFICATION)',
+      `Got error: ${concurrentError}`
+    );
+
+    const safeConcurrentSuccess = await setAdvertiserRank({
+      advertiserId: advertiserDiscordId,
+      newRank: AdvertiserRank.DIAMOND,
+      reason: 'Valid optimistic update',
+      actorId: adminDiscordId,
+      expectedPreviousRank: AdvertiserRank.OFFICIAL_PARTNERS, // Correct previous rank
+    });
+    assert(
+      safeConcurrentSuccess.user.advertiserRank === AdvertiserRank.DIAMOND,
+      'R14b. Concurrent rank update succeeds when expected previous rank matches database state exactly'
+    );
+
+    // -------------------------------------------------------------------------
+    // REGRESSION 15: All financial production feature gates remain disabled
+    // -------------------------------------------------------------------------
+    assert(
+      FINANCE_V2_FEATURE_GATES.ESCROW_RELEASE_ENABLED === false &&
+      FINANCE_V2_FEATURE_GATES.FINANCE_V2_LIVE_CREDITS_ENABLED === false &&
+      FINANCE_V2_FEATURE_GATES.FINANCE_V2_LIVE_PAYOUTS_ENABLED === false &&
+      FINANCE_V2_FEATURE_GATES.FINANCE_V2_P2P_SETTLEMENT_ENABLED === false,
+      'R15. All financial production feature gates remain strictly false / disabled'
     );
 
   } catch (err) {

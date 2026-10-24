@@ -187,8 +187,28 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
     allowProvisional = true,
   } = input;
 
-  if (sourceAmountMinor < 0) {
-    throw new Error('INVALID_AMOUNT: Source amount cannot be negative');
+  if (
+    typeof sourceAmountMinor !== 'number' ||
+    !Number.isSafeInteger(sourceAmountMinor) ||
+    sourceAmountMinor <= 0
+  ) {
+    throw new Error(
+      `INVALID_SOURCE_AMOUNT: Source amount must be a positive safe integer in minor units (cents), got ${sourceAmountMinor}`
+    );
+  }
+
+  // Authoritative Order verification
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+  });
+
+  if (order) {
+    const authOwnerId = order.advertiserId || order.creatorId;
+    if (advertiserId && authOwnerId && authOwnerId !== advertiserId) {
+      throw new Error(
+        `ADVERTISER_MISMATCH: Provided advertiserId '${advertiserId}' does not match authoritative order owner '${authOwnerId}'`
+      );
+    }
   }
 
   let grossSaleMinor: number | null = null;
@@ -213,8 +233,19 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
     where: { orderId },
   });
 
-  // Finalized financial snapshots are immutable and must never be overwritten
+  // Finalized financial snapshots are strictly immutable
   if (existingSnapshot?.calculationStatus === 'finalized') {
+    const hasConflict =
+      existingSnapshot.sourceAmountMinor !== sourceAmountMinor ||
+      existingSnapshot.sourcePlatform !== sourcePlatform ||
+      existingSnapshot.currency !== currency.toUpperCase() ||
+      (advertiserId && existingSnapshot.advertiserId && existingSnapshot.advertiserId !== advertiserId);
+
+    if (hasConflict) {
+      throw new Error(
+        `FINALIZED_SNAPSHOT_IMMUTABLE: Order #${orderId} financial snapshot is finalized and cannot be recalculated with conflicting parameters`
+      );
+    }
     return existingSnapshot;
   }
 
@@ -304,6 +335,14 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
 
     // اگر اسنپ‌شات قبلی روی سفارش وجود داشته باشد، نرخ و رنک اسنپ‌شات‌شده حفظ می‌شود
     if (existingSnapshot && existingSnapshot.advertiserRank) {
+      if (
+        (existingSnapshot.grossSaleMinor !== null && existingSnapshot.grossSaleMinor !== sourceAmountMinor) ||
+        (advertiserId && existingSnapshot.advertiserId && existingSnapshot.advertiserId !== advertiserId)
+      ) {
+        throw new Error(
+          `CONFLICTING_SNAPSHOT_RECALCULATION: Order #${orderId} commercial terms are locked in an existing snapshot. Conflicting recalculation is rejected.`
+        );
+      }
       snapAdvertiserRank = existingSnapshot.advertiserRank;
       snapRankFeeBps =
         existingSnapshot.rankFeeBasisPoints ??
@@ -367,7 +406,7 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
         } else {
           if (!allowProvisional) {
             throw new Error(
-              `MISSING_ADVERTISER_COMMISSION_RATE: Advertiser '${advertiserId}' has no commercial rank or commission rate configured by management. Finalization blocked.`
+              `MISSING_ADVERTISER_COMMISSION_RATE: MISSING_ADVERTISER_RANK: Advertiser '${advertiserId}' has no commercial rank or commission rate configured by management. Finalization blocked.`
             );
           }
           snapshotNotes =
@@ -676,7 +715,20 @@ export async function finalizeOrderFinancialsAndBoosterAllocation(input: Finaliz
     throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions to finalize order financials'}`);
   }
 
-  // ۲. واکشی اسنپ‌شات سفارش
+  // ۲. بررسی وجود سفارش و وضعیت پرداخت
+  const orderForFinalize = await prisma.order.findUnique({
+    where: { id: orderId },
+  });
+  if (!orderForFinalize) {
+    throw new Error(`ORDER_NOT_FOUND: Order #${orderId} does not exist`);
+  }
+  if (orderForFinalize.paymentStatus !== 'verified' && orderForFinalize.paymentStatus !== 'unneeded') {
+    throw new Error(
+      `ORDER_PAYMENT_NOT_VERIFIED: Order #${orderId} cannot be financially finalized. Payment status is '${orderForFinalize.paymentStatus}'`
+    );
+  }
+
+  // ۳. واکشی اسنپ‌شات سفارش
   const snapshot = await prisma.orderFinancialSnapshot.findUnique({
     where: { orderId },
   });

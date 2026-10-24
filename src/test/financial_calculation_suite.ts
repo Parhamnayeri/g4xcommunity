@@ -99,7 +99,7 @@ async function runFinancialEngineTests() {
     async function createTestOrder(ref: string, grossMinor: number, currency = 'USD') {
       return await prisma.order.upsert({
         where: { orderRef: ref },
-        update: { grossAmountMinor: grossMinor },
+        update: { grossAmountMinor: grossMinor, paymentStatus: 'verified' },
         create: {
           orderRef: ref,
           gameSlug: 'wow_midnight',
@@ -108,6 +108,7 @@ async function runFinancialEngineTests() {
           currency,
           grossAmountMinor: grossMinor,
           status: 'assigned',
+          paymentStatus: 'verified',
         },
       });
     }

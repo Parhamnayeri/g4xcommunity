@@ -137,13 +137,14 @@ export interface SetAdvertiserRankInput {
   newRank: AdvertiserRank;
   reason: string;
   actorId: string;
+  expectedPreviousRank?: string | null;
 }
 
 /**
  * Manually updates an Advertiser's rank with strict permission checks and an immutable audit log
  */
 export async function setAdvertiserRank(input: SetAdvertiserRankInput) {
-  const { advertiserId, newRank, reason, actorId } = input;
+  const { advertiserId, newRank, reason, actorId, expectedPreviousRank } = input;
 
   if (!actorId) {
     throw new Error('MISSING_ACTOR_ID: Actor identifier is required to modify advertiser rank');
@@ -190,27 +191,35 @@ export async function setAdvertiserRank(input: SetAdvertiserRankInput) {
     throw new Error('PERMISSION_DENIED: Exchangers have no authority to modify advertiser ranks');
   }
 
-  // 2. Validate target advertiser
-  const targetUser = await prisma.user.findUnique({
-    where: { discordId: advertiserId },
-    include: { userRoles: true },
-  });
-
-  if (!targetUser) {
-    throw new Error(`USER_NOT_FOUND: User '${advertiserId}' does not exist`);
-  }
-
-  const isTargetAdvertiser = targetUser.userRoles.some((r) => r.roleKey === 'advertiser');
-  if (!isTargetAdvertiser) {
-    throw new Error(`TARGET_NOT_AN_ADVERTISER: User '${advertiserId}' is not registered with the advertiser role`);
-  }
-
-  const oldRank = targetUser.advertiserRank as AdvertiserRank | null;
-  const oldBps = oldRank && isValidAdvertiserRank(oldRank) ? getRankBasisPoints(oldRank) : null;
   const newBps = getRankBasisPoints(newRank);
 
-  // 3. Atomic database update and audit log recording
+  // 2. Atomic database update, optimistic concurrency check and audit log recording inside transaction
   return await prisma.$transaction(async (tx) => {
+    // Re-fetch target inside the transaction to get fresh, authoritative row state
+    const currentTarget = await tx.user.findUnique({
+      where: { discordId: advertiserId },
+      include: { userRoles: true },
+    });
+
+    if (!currentTarget) {
+      throw new Error(`USER_NOT_FOUND: User '${advertiserId}' does not exist`);
+    }
+
+    const isTargetAdvertiser = currentTarget.userRoles.some((r) => r.roleKey === 'advertiser');
+    if (!isTargetAdvertiser) {
+      throw new Error(`TARGET_NOT_AN_ADVERTISER: User '${advertiserId}' is not registered with the advertiser role`);
+    }
+
+    const actualOldRank = currentTarget.advertiserRank as AdvertiserRank | null;
+    const actualOldBps = actualOldRank && isValidAdvertiserRank(actualOldRank) ? getRankBasisPoints(actualOldRank) : null;
+
+    // Concurrency protection: If caller specified an expected previous rank, enforce matching state
+    if (expectedPreviousRank !== undefined && actualOldRank !== expectedPreviousRank) {
+      throw new Error(
+        `CONCURRENT_RANK_MODIFICATION: Advertiser rank was modified concurrently by another administrator (expected: '${expectedPreviousRank || 'NONE'}', actual current: '${actualOldRank || 'NONE'}')`
+      );
+    }
+
     const updatedUser = await tx.user.update({
       where: { discordId: advertiserId },
       data: { advertiserRank: newRank },
@@ -230,9 +239,9 @@ export async function setAdvertiserRank(input: SetAdvertiserRankInput) {
         entityType: 'AdvertiserRank',
         entityId: advertiserId,
         previousValues: JSON.stringify({
-          rank: oldRank,
-          basisPoints: oldBps,
-          commissionRate: oldBps !== null ? formatBasisPoints(oldBps) : null,
+          rank: actualOldRank,
+          basisPoints: actualOldBps,
+          commissionRate: actualOldBps !== null ? formatBasisPoints(actualOldBps) : null,
         }),
         newValues: JSON.stringify({
           rank: newRank,
