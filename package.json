@@ -36,7 +36,8 @@
     "audit": "ts-node scripts/audit-financial-policies.ts",
     "finance:cli": "ts-node scripts/platform-finance-cli.ts",
     "export:clean-source": "ts-node scripts/export-clean-source.ts",
-    "test:advertiser-ranks": "ts-node src/test/advertiser_rank_suite.ts"
+    "test:advertiser-ranks": "ts-node src/test/advertiser_rank_suite.ts",
+    "test:payments": "ts-node src/test/payment_verification_and_nowpayments_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"

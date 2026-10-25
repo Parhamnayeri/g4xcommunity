@@ -30,6 +30,8 @@ import {
 } from './serializers';
 import { getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
 import { marketplaceRouter } from './marketplaceRoutes';
+import { paymentRouter } from './paymentRoutes';
+import { verifyOrderWithReceipt } from '../services/payment/paymentReconciliationService';
 import {
   generateUsdtWithdrawalQuote,
   generateIrtWithdrawalQuote,
@@ -77,6 +79,9 @@ export const router = Router();
 
 // ─── روت‌های بازار مبادله، معاملات طلا و شارژ همتا‌به‌همتا (Finance V2.2) ──────
 router.use('/marketplace', marketplaceRouter);
+
+// ─── روت‌های پرداخت، وب‌هوک و اعتبارسنجی وصول وجوه ─────────────────────────
+router.use('/', paymentRouter);
 
 // ─── ثابت‌های OAuth2 ────────────────────────────────────────────────────────
 const DISCORD_API = 'https://discord.com/api/v10';
@@ -886,6 +891,7 @@ router.post(
     try {
       const { user } = req as AuthenticatedRequest;
       const orderId = Number(req.params.id);
+      const { receiptRef } = req.body;
 
       const order = await prisma.order.findUnique({
         where: { id: orderId },
@@ -901,46 +907,26 @@ router.post(
         return;
       }
 
-      const updated = await prisma.$transaction(async (tx) => {
-        const ord = await tx.order.update({
-          where: { id: orderId },
-          data: {
-            paymentStatus: 'verified',
-            status: order.status === 'payment_pending' ? 'open_presign' : order.status,
-            paymentVerifiedBy: user.discordId,
-            paymentVerifiedAt: new Date(),
-          },
+      if (!receiptRef) {
+        res.status(400).json({
+          error:
+            'DIRECT_PAYMENT_VERIFICATION_BLOCKED: Administrative payment verification strictly requires a valid verified payment receipt. Synthetic approvals without financial backing are prohibited. Please approve an active payment attempt or provide receiptRef.',
         });
+        return;
+      }
 
-        await tx.auditLog.create({
-          data: {
-            action: 'ORDER_PAYMENT_VERIFIED',
-            actorId: user.discordId,
-            entityType: 'Order',
-            entityId: String(orderId),
-            reason: `Order #${orderId} marked as payment verified via administrative action by ${user.username || user.discordId}`,
-            previousValues: JSON.stringify({
-              paymentStatus: order.paymentStatus,
-              status: order.status,
-            }),
-            newValues: JSON.stringify({
-              paymentStatus: 'verified',
-              status: ord.status,
-            }),
-            isSuccess: true,
-          },
-        });
-
-        return ord;
-      });
+      const result = await verifyOrderWithReceipt(orderId, String(receiptRef), user.discordId);
 
       res.json({
         success: true,
-        message: 'Order payment marked verified',
-        order: {
-          ...updated,
-          simplifiedStatus: mapOrderStatus(updated.status),
-        },
+        message: 'Order payment verified via receipt',
+        order: result.order
+          ? {
+              ...result.order,
+              simplifiedStatus: mapOrderStatus(result.order.status),
+            }
+          : undefined,
+        receipt: result.receipt,
       });
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Failed to verify order payment' });

@@ -84,6 +84,8 @@ model User {
   goldTradesAsSeller       GoldTrade[]                @relation("SellerGoldTrades")
   goldTradesAsBuyer        GoldTrade[]                @relation("BuyerGoldTrades")
   verifiedGoldTradesV2     GoldTrade[]                @relation("VerifiedGoldTradesV2")
+  paymentRequests          PaymentRequest[]           @relation("UserPaymentRequests")
+  reviewedPaymentAttempts  PaymentAttempt[]           @relation("ReviewedPaymentAttempts")
 
   @@index([advertiserRank])
   @@map("users")
@@ -338,6 +340,7 @@ model Order {
   platformTransactions     PlatformAccountTransaction[]
   boostReleaseTracker      G4XBoostReleaseTracker?
   ledgerEntriesV2          LedgerEntryV2[]
+  paymentRequests          PaymentRequest[]
 
   @@index([status])
   @@index([gameSlug, status])
@@ -1151,6 +1154,7 @@ model AdvertiserFundingRequest {
   verifier        User?                    @relation("VerifiedFunding", fields: [verifiedBy], references: [discordId], onDelete: SetNull)
   goldTradeOrders GoldExchangeTradeOrder[]
   ledgerEntries   LedgerEntryV2[]
+  paymentRequests PaymentRequest[]
 
   @@index([advertiserId])
   @@index([status])
@@ -1385,6 +1389,114 @@ model GoldTrade {
   @@index([createdAt])
   @@map("gold_trades")
 }
+
+// ─── ۴۲. درخواست‌های پرداخت و اعتبارسنجی (Payment Requests) ───────────────────
+model PaymentRequest {
+  id               Int       @id @default(autoincrement())
+  requestRef       String    @unique @map("request_ref")
+  businessType     String    @map("business_type") // ORDER | WALLET_FUNDING
+  orderId          Int?      @map("order_id")
+  fundingRequestId Int?      @map("funding_request_id")
+  userId           String    @map("user_id")
+  amountUsdCents   Int       @map("amount_usd_cents")
+  currency         String    @default("USD")
+  status           String    @default("pending") // pending | processing | verified | cancelled | expired
+  activeReceiptId  Int?      @map("active_receipt_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  order            Order?                    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fundingRequest   AdvertiserFundingRequest? @relation(fields: [fundingRequestId], references: [id], onDelete: SetNull)
+  user             User                      @relation("UserPaymentRequests", fields: [userId], references: [discordId], onDelete: Cascade)
+  attempts         PaymentAttempt[]
+  receipts         PaymentReceipt[]
+
+  @@index([userId])
+  @@index([orderId])
+  @@index([fundingRequestId])
+  @@index([status])
+  @@map("payment_requests")
+}
+
+// ─── ۴۳. تلاش‌های پرداخت (Payment Attempts) ───────────────────────────────────
+model PaymentAttempt {
+  id                      Int       @id @default(autoincrement())
+  attemptRef              String    @unique @map("attempt_ref")
+  paymentRequestId        Int       @map("payment_request_id")
+  method                  String    // CARD_TO_CARD_IRT | NOWPAYMENTS_CRYPTO
+  provider                String    // MANUAL_BANK | NOWPAYMENTS
+  status                  String    @default("pending")
+  // pending | confirming | confirmed | sending | partially_paid | finished | failed | expired | refunded | rejected | manual_review
+  providerPaymentId       String?   @unique @map("provider_payment_id")
+  providerPurchaseId      String?   @map("provider_purchase_id")
+  providerParentPaymentId String?   @map("provider_parent_payment_id")
+  payCurrency             String?   @map("pay_currency")
+  payNetwork              String?   @map("pay_network")
+  payAddress              String?   @map("pay_address")
+  payExtraId              String?   @map("pay_extra_id")
+  expectedAmount          String    @map("expected_amount")
+  expectedCurrency        String    @map("expected_currency")
+  exchangeRate            Float?    @map("exchange_rate")
+  quoteExpiresAt          DateTime? @map("quote_expires_at")
+  quoteSnapshot           String?   @map("quote_snapshot")
+  trackingNumber          String?   @map("tracking_number")
+  paidAmountIrt           String?   @map("paid_amount_irt")
+  senderCardLast4         String?   @map("sender_card_last4")
+  receiptScreenshotUrl    String?   @map("receipt_screenshot_url")
+  actualAmountReceived    String?   @map("actual_amount_received")
+  actualCurrencyReceived  String?   @map("actual_currency_received")
+  outcomeAmount           String?   @map("outcome_amount")
+  outcomeCurrency         String?   @map("outcome_currency")
+  isWrongAsset            Boolean   @default(false) @map("is_wrong_asset")
+  isReDeposit             Boolean   @default(false) @map("is_re_deposit")
+  reviewReason            String?   @map("review_reason")
+  reviewedBy              String?   @map("reviewed_by")
+  reviewedAt              DateTime? @map("reviewed_at")
+  reconciledAt            DateTime? @map("reconciled_at")
+  reconciliationNotes     String?   @map("reconciliation_notes")
+  rawCallbackPayload      String?   @map("raw_callback_payload")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  paymentRequest          PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+  reviewer                User?          @relation("ReviewedPaymentAttempts", fields: [reviewedBy], references: [discordId], onDelete: SetNull)
+  receipts                PaymentReceipt[]
+
+  @@index([paymentRequestId, status])
+  @@index([trackingNumber])
+  @@index([providerPaymentId])
+  @@index([status])
+  @@map("payment_attempts")
+}
+
+// ─── ۴۴. رسیدهای تاییدشده پرداخت (Verified Payment Receipts) ────────────────
+model PaymentReceipt {
+  id                  Int       @id @default(autoincrement())
+  receiptRef          String    @unique @map("receipt_ref")
+  paymentRequestId    Int       @map("payment_request_id")
+  paymentAttemptId    Int       @map("payment_attempt_id")
+  amountUsdCents      Int       @map("amount_usd_cents")
+  paymentMethod       String    @map("payment_method")
+  providerReference   String    @map("provider_reference")
+  verifiedBy          String    @map("verified_by")
+  verifiedAt          DateTime  @default(now()) @map("verified_at")
+  status              String    @default("ACTIVE") // ACTIVE | CONSUMED | VOIDED
+  consumedAction      String?   @map("consumed_action") // ORDER_FUNDING | WALLET_CREDIT
+  consumedReferenceId String?   @map("consumed_reference_id")
+  consumedAt          DateTime? @map("consumed_at")
+  auditLogId          Int?      @map("audit_log_id")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  paymentRequest      PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+  paymentAttempt      PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Cascade)
+
+  @@index([paymentRequestId])
+  @@index([paymentAttemptId])
+  @@index([providerReference])
+  @@index([status])
+  @@map("payment_receipts")
+}
+
 
 
 
