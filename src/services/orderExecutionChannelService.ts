@@ -242,6 +242,26 @@ export function buildExecutionChannelOverwrites(
     });
   }
 
+  // 7. Allow order creator if defined, distinct and not platform
+  if (
+    order.creatorId &&
+    order.creatorId !== order.advertiserId &&
+    order.creatorId !== order.customerId &&
+    !assignedUserIds.includes(order.creatorId) &&
+    order.creatorType !== 'g4x'
+  ) {
+    overwrites.push({
+      id: order.creatorId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.EmbedLinks,
+        PermissionFlagsBits.AttachFiles,
+      ],
+    });
+  }
+
   return overwrites;
 }
 
@@ -322,6 +342,8 @@ export function buildExecutionChannelSummary(order: any, activeAssignments: any[
   return { embed, components: [row] };
 }
 
+const channelCreationLocks = new Set<number>();
+
 /**
  * Creates or retrieves the single authoritative Discord coordination channel for an order.
  */
@@ -330,17 +352,23 @@ export async function getOrCreateOrderExecutionChannel(
   client: any,
   options?: { guildId?: string; actorId?: string }
 ): Promise<OrderExecutionChannelResult> {
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: {
-      game: true,
-      service: true,
-      assignments: true,
-      orderChannels: true,
-      runs: true,
-      disputes: true,
-    },
-  });
+  if (channelCreationLocks.has(orderId)) {
+    await new Promise((res) => setTimeout(res, 200));
+  }
+  channelCreationLocks.add(orderId);
+
+  try {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        game: true,
+        service: true,
+        assignments: true,
+        orderChannels: true,
+        runs: true,
+        disputes: true,
+      },
+    });
 
   if (!order) {
     throw new DomainError(DomainErrorCode.ORDER_NOT_FOUND, `Order #${orderId} not found`);
@@ -455,6 +483,51 @@ export async function getOrCreateOrderExecutionChannel(
     }
   }
 
+  // 5b. Guard against duplicate Discord channels if creation previously succeeded in Discord but DB write failed
+  const channelName = `order-${order.id}`;
+  let orphanChannel: any = null;
+  if (guild.channels?.cache) {
+    if (typeof guild.channels.cache.find === 'function') {
+      orphanChannel = guild.channels.cache.find(
+        (c: any) => c.name === channelName && (c.type === ChannelType.GuildText || c.isTextBased?.())
+      );
+    } else if (typeof guild.channels.cache.values === 'function') {
+      for (const c of guild.channels.cache.values()) {
+        if (c.name === channelName && (c.type === ChannelType.GuildText || c.isTextBased?.())) {
+          orphanChannel = c;
+          break;
+        }
+      }
+    }
+  }
+
+  if (orphanChannel) {
+    await prisma.$transaction(async (tx) => {
+      await tx.orderChannel.create({
+        data: {
+          orderId: order.id,
+          discordGuildId: guild.id,
+          discordChannelId: orphanChannel.id,
+          channelType: 'execution',
+          status: 'active',
+        },
+      });
+      await tx.order.update({
+        where: { id: order.id },
+        data: { executionChannelId: orphanChannel.id },
+      });
+    });
+
+    await syncOrderChannelPermissions(order.id, client, orphanChannel);
+    return {
+      success: true,
+      channelId: orphanChannel.id,
+      guildId: guild.id,
+      isNew: false,
+      channel: orphanChannel,
+    };
+  }
+
   // 6. Create New Discord Channel
   const category = await resolveOrCreateExecutionCategory(guild);
   const botUserId = client.user?.id || guild.members?.me?.id;
@@ -465,7 +538,6 @@ export async function getOrCreateOrderExecutionChannel(
     botUserId
   );
 
-  const channelName = `order-${order.id}`;
   let newChannel: any = null;
 
   try {
@@ -533,6 +605,9 @@ export async function getOrCreateOrderExecutionChannel(
     isNew: true,
     channel: newChannel,
   };
+  } finally {
+    channelCreationLocks.delete(orderId);
+  }
 }
 
 /**
@@ -760,7 +835,7 @@ export async function archiveOrderExecutionChannel(
   }
 
   // 2. Active Escrow Hold Check
-  const activeHolds = order.escrowHolds.filter((h) => h.status === 'held');
+  const activeHolds = order.escrowHolds.filter((h) => ['active', 'pending', 'held'].includes(h.status));
   if (activeHolds.length > 0 && !options?.force) {
     throw new DomainError(
       DomainErrorCode.ORDER_DISPUTE_ACTIVE,

@@ -1484,6 +1484,7 @@
                       ${o.status === 'in_progress' ? `<button class="btn btn-primary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="completeRun(${o.id})">Complete Run</button>` : ''}
                       ${o.status === 'completed' ? `<button class="btn btn-success" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="submitOrderProof(${o.id})">Submit Proof</button>` : ''}
                       ${['assigned', 'in_progress', 'completed'].includes(o.status) ? `<button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; margin-left: 0.25rem;" onclick="openOrderDiscordChannel(${o.id})">💬 Discord Channel</button>` : ''}
+                      ${['assigned', 'in_progress', 'completed'].includes(o.status) ? `<button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; margin-left: 0.25rem; color: var(--accent-amber);" onclick="openDisputeModal(${o.id})">⚠️ Dispute</button>` : ''}
                     </td>
                   </tr>
                 `).join('')}
@@ -1512,6 +1513,49 @@
       } catch (err) {
         alert(err.message || 'Error opening Discord channel');
       }
+    }
+
+    async function submitOrderProof(orderId) {
+      const evidenceUrl = prompt('Enter screenshot image URL or proof reference:');
+      if (!evidenceUrl || !evidenceUrl.trim()) return;
+      const description = prompt('Enter completion notes (optional):') || '';
+      try {
+        const proofsRes = await fetch(`/api/orders/${orderId}/proofs`, { credentials: 'include' });
+        const proofsData = await proofsRes.json();
+        const runId = proofsData.proofs && proofsData.proofs[0] ? proofsData.proofs[0].runId : 1;
+        const res = await fetch(`/api/orders/${orderId}/proofs`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ runId, evidenceUrl: evidenceUrl.trim(), description: description.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Failed to submit proof');
+        alert('Proof submitted successfully! It is now pending Staff review.');
+        loadAvailableOrders();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function openDisputeModal(orderId) {
+      const disputeType = prompt('Select dispute reason:\n1: completion\n2: quality\n3: misconduct\n4: key_failure\n5: payment\n6: other', 'completion');
+      if (!disputeType) return;
+      const typeMap = { '1': 'completion', '2': 'quality', '3': 'misconduct', '4': 'key_failure', '5': 'payment', '6': 'other' };
+      const selectedType = typeMap[disputeType] || disputeType;
+      const description = prompt('Provide a clear explanation of the issue (minimum 5 characters):');
+      if (!description || description.trim().length < 5) return alert('Explanation must be at least 5 characters.');
+      const evidenceUrl = prompt('Evidence screenshot or URL (optional):') || '';
+      try {
+        const res = await fetch(`/api/orders/${orderId}/disputes`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ disputeType: selectedType, description: description.trim(), evidenceUrl: evidenceUrl.trim() || undefined }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Failed to open dispute');
+        alert(`Dispute #${data.dispute.id} opened successfully! Financial release has been paused and Staff notified.`);
+        loadAvailableOrders();
+      } catch (err) { alert(err.message); }
     }
 
     async function claimOrder(id) {
@@ -2118,6 +2162,14 @@
           <div id="admin-orders-table"><div class="loading-spinner"></div> Loading orders...</div>
         </div>
 
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title">
+            <span>Order Disputes &amp; Proof Review</span>
+            <span class="badge badge-amber">Active Retention &amp; Hold</span>
+          </div>
+          <div id="admin-disputes-table"><div class="loading-spinner"></div> Loading disputes...</div>
+        </div>
+
         <div class="card">
           <div class="card-title">
             <span>Gold Marketplace Trades Audit</span>
@@ -2152,6 +2204,7 @@
       loadAdminApplications();
       loadAdminWithdrawals();
       loadAdminOrders();
+      loadAdminDisputes();
       loadAdminTrades();
     }
 
@@ -2361,6 +2414,137 @@
         if (!res.ok || !data.success) return alert(data.error || 'Admin approval failed');
         alert('Admin Final Approval granted! 24-hour hold clock initiated.');
         loadAdminOrders();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function loadAdminDisputes() {
+      const container = document.getElementById('admin-disputes-table');
+      if (!container) return;
+      try {
+        const res = await fetch('/api/disputes', { credentials: 'include' });
+        const data = await res.json();
+        const disputes = data.disputes || [];
+
+        if (disputes.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No active order disputes recorded.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Order</th>
+                  <th>Claimant</th>
+                  <th>Type</th>
+                  <th>Description</th>
+                  <th>Hold</th>
+                  <th>Status</th>
+                  <th>Notes</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${disputes.map(d => `
+                  <tr>
+                    <td><code>#${d.id}</code></td>
+                    <td><code>${d.order ? d.order.orderRef : '#' + d.orderId}</code></td>
+                    <td>${d.openedBy ? d.openedBy.username : d.openedById}</td>
+                    <td><span class="badge">${d.disputeType.toUpperCase()}</span></td>
+                    <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${(d.description || '').replace(/"/g, '&quot;')}">${d.description}</td>
+                    <td>${d.escrowHolds && d.escrowHolds.length > 0 ? '<span class="badge badge-amber">Hold Active</span>' : '<span class="badge badge-gray">No Hold</span>'}</td>
+                    <td><span class="badge ${d.simplifiedStatus.badgeClass}">${d.simplifiedStatus.label}</span></td>
+                    <td style="max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem;" title="${(d.resolutionNotes || '').replace(/"/g, '&quot;')}">${d.resolutionNotes || '-'}</td>
+                    <td>
+                      <div style="display: flex; gap: 0.25rem; flex-wrap: wrap;">
+                        ${['open', 'under_review'].includes(d.status) ? `
+                          <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="adminRequestDisputeEvidence(${d.id})">Request Evidence</button>
+                          <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="adminAddDisputeNotes(${d.id})">Add Note</button>
+                        ` : ''}
+                        ${!['resolved', 'rejected', 'cancelled'].includes(d.status) ? `
+                          <button class="btn btn-primary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="adminResolveDispute(${d.id})">Resolve</button>
+                        ` : ''}
+                        <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="adminViewDisputeAudit(${d.id})">Audit</button>
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = '<span style="color: var(--accent-red);">Failed to load order disputes.</span>';
+      }
+    }
+
+    async function adminRequestDisputeEvidence(disputeId) {
+      const requestNotes = prompt('Enter specific evidence or information requested from participants:');
+      if (!requestNotes || !requestNotes.trim()) return;
+      try {
+        const res = await fetch(`/api/admin/disputes/${disputeId}/request-evidence`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ requestNotes: requestNotes.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Request failed');
+        alert('Evidence request submitted and posted to coordination channel!');
+        loadAdminDisputes();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function adminAddDisputeNotes(disputeId) {
+      const notes = prompt('Enter internal review note:');
+      if (!notes || !notes.trim()) return;
+      try {
+        const res = await fetch(`/api/admin/disputes/${disputeId}/notes`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ notes: notes.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Failed to add note');
+        alert('Note added to dispute.');
+        loadAdminDisputes();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function adminResolveDispute(disputeId) {
+      const decision = prompt('Enter resolution decision ("resolved", "rejected", or "cancelled"):', 'resolved');
+      if (!decision || !['resolved', 'rejected', 'cancelled'].includes(decision.toLowerCase())) {
+        return alert('Invalid decision. Must be resolved, rejected, or cancelled.');
+      }
+      const resolutionNotes = prompt('Enter mandatory explanation and resolution terms:');
+      if (!resolutionNotes || resolutionNotes.trim().length < 5) {
+        return alert('A non-empty resolution explanation (min 5 chars) is mandatory.');
+      }
+      try {
+        const res = await fetch(`/api/admin/disputes/${disputeId}/resolve`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ decision: decision.toLowerCase(), resolutionNotes: resolutionNotes.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Failed to resolve dispute');
+        alert(`Dispute #${disputeId} marked as ${decision.toUpperCase()}.`);
+        loadAdminDisputes();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function adminViewDisputeAudit(disputeId) {
+      try {
+        const res = await fetch(`/api/admin/disputes/${disputeId}/audit-history`, { credentials: 'include' });
+        const data = await res.json();
+        const logs = data.history || [];
+        alert(`Dispute #${disputeId} Audit Trail (${logs.length} entries):\n` +
+          logs.map(l => `• ${new Date(l.createdAt).toLocaleTimeString()}: ${l.action} by ${l.actor ? l.actor.username : l.actorId || 'System'}`).join('\n')
+        );
       } catch (err) { alert(err.message); }
     }
 

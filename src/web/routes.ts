@@ -77,6 +77,17 @@ import {
   getAuthorizedChannelAccess,
 } from '../services/orderExecutionChannelService';
 import {
+  openOrderDispute,
+  requestDisputeEvidence,
+  submitDisputeEvidence,
+  addDisputeReviewNotes,
+  resolveOrderDispute,
+  submitRunProof,
+  reviewRunProof,
+  getDisputesForUser,
+  formatDisputeStatusLabel,
+} from '../services/orderDisputeService';
+import {
   mapOrderStatus,
   mapGoldTradeStatus,
   mapWithdrawalStatus,
@@ -1791,6 +1802,444 @@ router.get(
       res.json({ success: true, history });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to fetch rank audit history' });
+    }
+  }
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ─── JOURNEY G: اختلافات سفارش و شواهد اتمام ران (Disputes & Proof Review)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ۱. دریافت لیست اختلافات (کاربران عادی فقط اختلافات مرتبط، پرسنل همه را مشاهده می‌کنند)
+router.get(
+  '/disputes',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const userRoles = (user.userRoles?.map((r) => r.roleKey) || []).map((r) => r.toLowerCase());
+      const isStaffOrAdmin = userRoles.some((r) => ['owner', 'manager', 'admin', 'staff'].includes(r));
+      const statusFilter = req.query.status as string | undefined;
+
+      const disputes = await getDisputesForUser(user.discordId, isStaffOrAdmin, { status: statusFilter });
+      res.json({ success: true, disputes });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch disputes' });
+    }
+  }
+);
+
+// ۲. دریافت اختلافات یک سفارش مشخص
+router.get(
+  '/orders/:id/disputes',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      if (isNaN(orderId) || orderId <= 0) {
+        res.status(400).json({ error: 'Invalid order ID' });
+        return;
+      }
+
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        include: { assignments: { where: { status: 'assigned' } } },
+      });
+
+      if (!order) {
+        res.status(404).json({ error: 'Order not found' });
+        return;
+      }
+
+      const userRoles = (user.userRoles?.map((r) => r.roleKey) || []).map((r) => r.toLowerCase());
+      const isStaffOrAdmin = userRoles.some((r) => ['owner', 'manager', 'admin', 'staff'].includes(r));
+      const isParticipant =
+        order.customerId === user.discordId ||
+        order.advertiserId === user.discordId ||
+        order.creatorId === user.discordId ||
+        order.assignments.some((a) => a.userId === user.discordId);
+
+      if (!isStaffOrAdmin && !isParticipant) {
+        res.status(403).json({ error: 'PERMISSION_DENIED: Cannot view disputes for this order' });
+        return;
+      }
+
+      const disputes = await prisma.orderDispute.findMany({
+        where: { orderId },
+        include: {
+          openedBy: { select: { discordId: true, username: true } },
+          assignedReviewer: { select: { discordId: true, username: true } },
+          resolver: { select: { discordId: true, username: true } },
+          escrowHolds: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      res.json({
+        success: true,
+        disputes: disputes.map((d) => ({
+          ...d,
+          simplifiedStatus: formatDisputeStatusLabel(d.status),
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch order disputes' });
+    }
+  }
+);
+
+// ۳. باز کردن شکایت / اختلاف روی یک سفارش
+router.post(
+  '/orders/:id/disputes',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      if (isNaN(orderId) || orderId <= 0) {
+        res.status(400).json({ error: 'Invalid order ID' });
+        return;
+      }
+
+      const { disputeType, description, evidenceUrl, runId } = req.body;
+      const discordClient = req.app.get('discordClient');
+
+      const result = await openOrderDispute({
+        orderId,
+        actorId: user.discordId,
+        disputeType: disputeType || 'other',
+        description,
+        evidenceUrl,
+        runId: runId ? Number(runId) : undefined,
+        discordClient,
+      });
+
+      res.status(201).json({
+        success: true,
+        dispute: {
+          ...result.dispute,
+          simplifiedStatus: formatDisputeStatusLabel(result.dispute.status),
+        },
+        holdId: result.hold.id,
+      });
+    } catch (err: any) {
+      const status = err.name === 'DomainError' ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to open dispute', code: err.code });
+    }
+  }
+);
+
+// ۴. ارسال مدارک تکمیلی برای یک اختلاف موجود
+router.post(
+  '/disputes/:id/evidence',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const disputeId = Number(req.params.id);
+      if (isNaN(disputeId) || disputeId <= 0) {
+        res.status(400).json({ error: 'Invalid dispute ID' });
+        return;
+      }
+
+      const { evidenceUrl, description } = req.body;
+      const discordClient = req.app.get('discordClient');
+
+      const updated = await submitDisputeEvidence({
+        disputeId,
+        actorId: user.discordId,
+        evidenceUrl,
+        description,
+        discordClient,
+      });
+
+      res.json({
+        success: true,
+        dispute: {
+          ...updated,
+          simplifiedStatus: formatDisputeStatusLabel(updated.status),
+        },
+      });
+    } catch (err: any) {
+      const status = err.name === 'DomainError' ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to submit evidence', code: err.code });
+    }
+  }
+);
+
+// ۵. درخواست مدارک بیشتر توسط استف / ادمین
+router.post(
+  '/admin/disputes/:id/request-evidence',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const disputeId = Number(req.params.id);
+      if (isNaN(disputeId) || disputeId <= 0) {
+        res.status(400).json({ error: 'Invalid dispute ID' });
+        return;
+      }
+
+      const { requestNotes } = req.body;
+      const discordClient = req.app.get('discordClient');
+
+      const updated = await requestDisputeEvidence({
+        disputeId,
+        staffId: user.discordId,
+        requestNotes,
+        discordClient,
+      });
+
+      res.json({
+        success: true,
+        dispute: {
+          ...updated,
+          simplifiedStatus: formatDisputeStatusLabel(updated.status),
+        },
+      });
+    } catch (err: any) {
+      const status = err.name === 'DomainError' ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to request evidence', code: err.code });
+    }
+  }
+);
+
+// ۶. ثبت یادداشت بازبینی داخلی روی اختلاف
+router.post(
+  '/admin/disputes/:id/notes',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const disputeId = Number(req.params.id);
+      if (isNaN(disputeId) || disputeId <= 0) {
+        res.status(400).json({ error: 'Invalid dispute ID' });
+        return;
+      }
+
+      const { notes } = req.body;
+      const updated = await addDisputeReviewNotes({
+        disputeId,
+        staffId: user.discordId,
+        notes,
+      });
+
+      res.json({
+        success: true,
+        dispute: {
+          ...updated,
+          simplifiedStatus: formatDisputeStatusLabel(updated.status),
+        },
+      });
+    } catch (err: any) {
+      const status = err.name === 'DomainError' ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to add review notes', code: err.code });
+    }
+  }
+);
+
+// ۷. صدور رای نهایی و حل اختلاف (فقط ادمین یا اونر)
+router.post(
+  '/admin/disputes/:id/resolve',
+  requireAuth,
+  requireRole('owner', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const disputeId = Number(req.params.id);
+      if (isNaN(disputeId) || disputeId <= 0) {
+        res.status(400).json({ error: 'Invalid dispute ID' });
+        return;
+      }
+
+      const { decision, resolutionNotes } = req.body;
+      const discordClient = req.app.get('discordClient');
+
+      const resolved = await resolveOrderDispute({
+        disputeId,
+        resolverId: user.discordId,
+        decision: decision || 'resolved',
+        resolutionNotes,
+        discordClient,
+      });
+
+      res.json({
+        success: true,
+        dispute: {
+          ...resolved,
+          simplifiedStatus: formatDisputeStatusLabel(resolved.status),
+        },
+      });
+    } catch (err: any) {
+      const status = err.name === 'DomainError' ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to resolve dispute', code: err.code });
+    }
+  }
+);
+
+// ۸. دریافت مدارک ران‌های یک سفارش
+router.get(
+  '/orders/:id/proofs',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      if (isNaN(orderId) || orderId <= 0) {
+        res.status(400).json({ error: 'Invalid order ID' });
+        return;
+      }
+
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        include: {
+          assignments: { where: { status: 'assigned' } },
+          runs: {
+            include: {
+              proofs: {
+                include: {
+                  submittedBy: { select: { discordId: true, username: true } },
+                  reviewedBy: { select: { discordId: true, username: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      if (!order) {
+        res.status(404).json({ error: 'Order not found' });
+        return;
+      }
+
+      const userRoles = (user.userRoles?.map((r) => r.roleKey) || []).map((r) => r.toLowerCase());
+      const isStaffOrAdmin = userRoles.some((r) => ['owner', 'manager', 'admin', 'staff'].includes(r));
+      const isParticipant =
+        order.customerId === user.discordId ||
+        order.advertiserId === user.discordId ||
+        order.creatorId === user.discordId ||
+        order.assignments.some((a) => a.userId === user.discordId);
+
+      if (!isStaffOrAdmin && !isParticipant) {
+        res.status(403).json({ error: 'PERMISSION_DENIED: Cannot view proofs for this order' });
+        return;
+      }
+
+      const proofs = order.runs.flatMap((r) =>
+        r.proofs.map((p) => ({ ...p, runNumber: r.runNumber, orderId: order.id }))
+      );
+
+      res.json({ success: true, proofs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch order proofs' });
+    }
+  }
+);
+
+// ۹. ارسال مدرک اتمام برای یک ران
+router.post(
+  '/orders/:id/proofs',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      if (isNaN(orderId) || orderId <= 0) {
+        res.status(400).json({ error: 'Invalid order ID' });
+        return;
+      }
+
+      const { runId, proofType, evidenceUrl, description } = req.body;
+      const discordClient = req.app.get('discordClient');
+
+      const proof = await submitRunProof({
+        runId: Number(runId),
+        submittedById: user.discordId,
+        proofType,
+        evidenceUrl,
+        description,
+        discordClient,
+      });
+
+      res.status(201).json({ success: true, proof });
+    } catch (err: any) {
+      const status = err.name === 'DomainError' ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to submit proof', code: err.code });
+    }
+  }
+);
+
+// ۱۰. بازبینی و تایید یا رد مدرک ران توسط استف یا ادمین
+router.post(
+  '/admin/proofs/:id/review',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const proofId = Number(req.params.id);
+      if (isNaN(proofId) || proofId <= 0) {
+        res.status(400).json({ error: 'Invalid proof ID' });
+        return;
+      }
+
+      const { decision, reviewNotes } = req.body;
+      const discordClient = req.app.get('discordClient');
+
+      const reviewed = await reviewRunProof({
+        proofId,
+        reviewerId: user.discordId,
+        decision: decision === 'reject' ? 'reject' : 'approve',
+        reviewNotes,
+        discordClient,
+      });
+
+      res.json({ success: true, proof: reviewed });
+    } catch (err: any) {
+      const status = err.name === 'DomainError' ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to review proof', code: err.code });
+    }
+  }
+);
+
+// ۱۱. دریافت تاریخچه حسابرسی اختلاف (Dispute Audit History)
+router.get(
+  '/admin/disputes/:id/audit-history',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const disputeId = Number(req.params.id);
+      if (isNaN(disputeId) || disputeId <= 0) {
+        res.status(400).json({ error: 'Invalid dispute ID' });
+        return;
+      }
+
+      const logs = await prisma.auditLog.findMany({
+        where: {
+          OR: [
+            { entityType: 'OrderDispute', entityId: String(disputeId) },
+            { action: { in: ['ORDER_DISPUTE_OPENED', 'ORDER_DISPUTE_RESOLVED', 'DISPUTE_EVIDENCE_REQUESTED', 'DISPUTE_EVIDENCE_SUBMITTED', 'DISPUTE_REVIEW_NOTE_ADDED'] } },
+          ],
+        },
+        include: { actor: { select: { discordId: true, username: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+      });
+
+      res.json({ success: true, history: logs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch dispute audit history' });
     }
   }
 );
