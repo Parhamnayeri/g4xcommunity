@@ -511,6 +511,7 @@
           <button class="tab-btn ${activeTab === 'sell-gold' ? 'active' : ''}" data-tab="sell-gold" onclick="switchTab('sell-gold')">Sell Gold (Advertiser)</button>
           <button class="tab-btn ${activeTab === 'p2p-funding' ? 'active' : ''}" data-tab="p2p-funding" onclick="switchTab('p2p-funding')">P2P IRT Funding</button>
           <button class="tab-btn ${activeTab === 'booster' ? 'active' : ''}" data-tab="booster" onclick="switchTab('booster')">Booster &amp; Withdrawals</button>
+          <button class="tab-btn ${activeTab === 'characters-teams' ? 'active' : ''}" data-tab="characters-teams" onclick="switchTab('characters-teams')">My Characters &amp; Teams</button>
           <button class="tab-btn ${activeTab === 'applications' ? 'active' : ''}" data-tab="applications" onclick="switchTab('applications')">Member Applications</button>
           ${isExchanger() ? `<button class="tab-btn ${activeTab === 'exchanger' ? 'active' : ''}" data-tab="exchanger" onclick="switchTab('exchanger')">Exchanger Portal</button>` : ''}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'admin' ? 'active' : ''}" data-tab="admin" onclick="switchTab('admin')">Admin Review Hub</button>` : ''}
@@ -577,6 +578,8 @@
         renderP2pFundingTab(content);
       } else if (tab === 'booster') {
         renderBoosterTab(content);
+      } else if (tab === 'characters-teams') {
+        renderCharactersAndTeamsTab(content);
       } else if (tab === 'applications') {
         renderApplicationsTab(content);
       } else if (tab === 'exchanger' && isExchanger()) {
@@ -1533,6 +1536,419 @@
         alert('Proof submitted! Order now awaiting staff review.');
         loadBoosterOrders();
       } catch (err) { alert(err.message); }
+    }
+
+    async function renderCharactersAndTeamsTab(container) {
+      container.innerHTML = `
+        <div class="dashboard-grid">
+          <!-- Card 1: Registered WoW Characters -->
+          <div class="card">
+            <div class="card-title">
+              <span>My WoW Characters</span>
+              <span class="badge badge-blue" id="char-count-badge">Loading...</span>
+            </div>
+            <div id="characters-list-container"><div class="loading-spinner"></div> Loading characters...</div>
+
+            <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+              <h4 style="margin-bottom: 0.75rem; font-size: 0.95rem; color: var(--text-main);">Add New WoW Character</h4>
+              <div style="display: grid; grid-template-columns: 1fr 1.5fr 2fr; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <div class="form-group">
+                  <label style="font-size: 0.75rem;">Region</label>
+                  <select id="char-new-region" class="form-control">
+                    <option value="eu" selected>EU</option>
+                    <option value="us">US</option>
+                    <option value="kr">KR</option>
+                    <option value="tw">TW</option>
+                    <option value="cn">CN</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label style="font-size: 0.75rem;">Realm</label>
+                  <input type="text" id="char-new-realm" class="form-control" placeholder="e.g. tarren-mill" />
+                </div>
+                <div class="form-group">
+                  <label style="font-size: 0.75rem;">Character Name</label>
+                  <input type="text" id="char-new-name" class="form-control" placeholder="e.g. Arthas" />
+                </div>
+              </div>
+              <button class="btn btn-primary" onclick="submitAddCharacter()" id="btn-add-char" style="width: 100%;">
+                Verify &amp; Add Character (Raider.IO)
+              </button>
+              <div id="add-char-feedback" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
+            </div>
+          </div>
+
+          <!-- Card 2: Premade Teams -->
+          <div class="card">
+            <div class="card-title">
+              <span>My Premade Squads</span>
+              <span class="badge badge-green" id="team-count-badge">Loading...</span>
+            </div>
+            <div id="teams-list-container"><div class="loading-spinner"></div> Loading teams...</div>
+
+            <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
+              <h4 style="margin-bottom: 0.75rem; font-size: 0.95rem; color: var(--text-main);">Create Premade Squad</h4>
+              <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 0.5rem; margin-bottom: 0.75rem;">
+                <div class="form-group">
+                  <label style="font-size: 0.75rem;">Team Name</label>
+                  <input type="text" id="team-new-name" class="form-control" placeholder="e.g. ApexMythic" />
+                </div>
+                <div class="form-group">
+                  <label style="font-size: 0.75rem;">Squad Type</label>
+                  <select id="team-new-type" class="form-control">
+                    <option value="full" selected>Full (4-Man M+)</option>
+                    <option value="trio">Trio (3-Man)</option>
+                    <option value="duo">Duo (2-Man)</option>
+                  </select>
+                </div>
+              </div>
+              <button class="btn btn-secondary" onclick="submitCreateTeam()" id="btn-create-team" style="width: 100%;">
+                Create Squad
+              </button>
+              <div id="create-team-feedback" style="margin-top: 0.5rem; font-size: 0.85rem;"></div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      loadCharactersList();
+      loadTeamsList();
+    }
+
+    async function loadCharactersList() {
+      const container = document.getElementById('characters-list-container');
+      const badge = document.getElementById('char-count-badge');
+      if (!container) return;
+
+      try {
+        const res = await fetch('/api/characters', { credentials: 'include' });
+        if (!res.ok) throw new Error('Failed to load characters');
+        const chars = await res.json();
+
+        if (badge) badge.innerText = `${chars.length} Active`;
+
+        if (chars.length === 0) {
+          container.innerHTML = `<div style="color: var(--text-muted); font-size: 0.9rem; padding: 1rem 0;">No active WoW characters registered yet. Add one below!</div>`;
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Character</th>
+                  <th>Realm / Region</th>
+                  <th>Class / Spec</th>
+                  <th>iLvl</th>
+                  <th>M+ Score</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${chars.map(c => `
+                  <tr>
+                    <td>
+                      <strong>${c.characterName}</strong>
+                      ${c.isMain ? '<span class="badge badge-green" style="margin-left: 0.3rem; font-size: 0.7rem;">MAIN</span>' : ''}
+                    </td>
+                    <td>${c.realm} (${c.region.toUpperCase()})</td>
+                    <td>${c.characterClass || '-'}${c.activeSpec ? ' / ' + c.activeSpec : ''}</td>
+                    <td>${c.itemLevel ?? '-'}</td>
+                    <td><strong style="color: var(--accent-blue);">${c.mythicScore ?? '-'}</strong></td>
+                    <td><span class="badge">${c.syncStatus}</span></td>
+                    <td style="white-space: nowrap;">
+                      ${!c.isMain ? `<button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="setCharacterMain(${c.id})">Set Main</button>` : ''}
+                      <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="syncCharacterRaiderio(${c.id})">Sync RIO</button>
+                      <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem; color: var(--accent-red);" onclick="removeCharacterSubmit(${c.id})">Remove</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = `<div style="color: var(--accent-red); font-size: 0.9rem;">${err.message || 'Error loading characters'}</div>`;
+      }
+    }
+
+    async function submitAddCharacter() {
+      const region = document.getElementById('char-new-region').value;
+      const realm = document.getElementById('char-new-realm').value.trim();
+      const characterName = document.getElementById('char-new-name').value.trim();
+      const feedback = document.getElementById('add-char-feedback');
+      const btn = document.getElementById('btn-add-char');
+
+      if (!realm || !characterName) {
+        feedback.innerHTML = '<span style="color: var(--accent-red);">Please enter realm and character name.</span>';
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerText = 'Verifying on Raider.IO...';
+      feedback.innerHTML = '';
+
+      try {
+        const res = await fetch('/api/characters/add', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ region, realm, characterName }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || 'Failed to add character');
+        }
+
+        feedback.innerHTML = `<span style="color: var(--accent-green);">Character <strong>${data.character.characterName}</strong> added successfully!</span>`;
+        document.getElementById('char-new-realm').value = '';
+        document.getElementById('char-new-name').value = '';
+        loadCharactersList();
+      } catch (err) {
+        feedback.innerHTML = `<span style="color: var(--accent-red);">${err.message || 'Error adding character'}</span>`;
+      } finally {
+        btn.disabled = false;
+        btn.innerText = 'Verify & Add Character (Raider.IO)';
+      }
+    }
+
+    async function setCharacterMain(characterId) {
+      try {
+        const res = await fetch('/api/characters/set-main', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ characterId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to set main character');
+        loadCharactersList();
+      } catch (err) {
+        alert(err.message || 'Error setting main character');
+      }
+    }
+
+    async function syncCharacterRaiderio(characterId) {
+      try {
+        const res = await fetch('/api/characters/sync-request', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ characterId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to sync character');
+        alert(`Raider.IO Sync Result: ${data.result}\nMythic+ Score: ${data.character.mythicScore ?? 'N/A'}`);
+        loadCharactersList();
+      } catch (err) {
+        alert(err.message || 'Error syncing character');
+      }
+    }
+
+    async function removeCharacterSubmit(characterId) {
+      if (!confirm('Are you sure you want to deactivate/remove this character?')) return;
+      try {
+        const res = await fetch('/api/characters/remove', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ characterId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to remove character');
+        loadCharactersList();
+      } catch (err) {
+        alert(err.message || 'Error removing character');
+      }
+    }
+
+    async function loadTeamsList() {
+      const container = document.getElementById('teams-list-container');
+      const badge = document.getElementById('team-count-badge');
+      if (!container) return;
+
+      try {
+        const res = await fetch('/api/teams', { credentials: 'include' });
+        if (!res.ok) throw new Error('Failed to load teams');
+        const teams = await res.json();
+
+        if (badge) badge.innerText = `${teams.length} Squad(s)`;
+
+        if (teams.length === 0) {
+          container.innerHTML = `<div style="color: var(--text-muted); font-size: 0.9rem; padding: 1rem 0;">You are not in any premade squads yet. Create one below!</div>`;
+          return;
+        }
+
+        container.innerHTML = `
+          <div style="display: flex; flex-direction: column; gap: 1rem;">
+            ${teams.map(t => {
+              const myId = currentUser ? currentUser.discordId : '';
+              const isLeader = t.leaderId === myId;
+              const myMembership = (t.members || []).find(m => m.userId === myId);
+              const isPending = myMembership && myMembership.status === 'pending';
+              const isAccepted = myMembership && myMembership.status === 'accepted';
+
+              return `
+                <div style="border: 1px solid var(--border-color); border-radius: 6px; padding: 0.75rem; background: var(--card-bg-subtle, rgba(255,255,255,0.02));">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <div>
+                      <strong style="font-size: 1rem;">${t.teamName}</strong>
+                      <span class="badge badge-blue" style="margin-left: 0.3rem;">${t.squadType.toUpperCase()}</span>
+                      ${isLeader ? '<span class="badge badge-green" style="margin-left: 0.3rem;">LEADER</span>' : ''}
+                    </div>
+                    <div>
+                      ${isPending ? `
+                        <button class="btn btn-primary" style="padding: 0.2rem 0.6rem; font-size: 0.75rem;" onclick="acceptTeamInvite(${t.id})">Accept Invite</button>
+                        <button class="btn btn-secondary" style="padding: 0.2rem 0.6rem; font-size: 0.75rem; color: var(--accent-red);" onclick="declineTeamInvite(${t.id})">Decline</button>
+                      ` : ''}
+                      ${isAccepted ? `
+                        <button class="btn btn-secondary" style="padding: 0.2rem 0.6rem; font-size: 0.75rem;" onclick="leaveTeamSubmit(${t.id})">Leave Squad</button>
+                      ` : ''}
+                      ${isLeader ? `
+                        <button class="btn btn-secondary" style="padding: 0.2rem 0.6rem; font-size: 0.75rem;" onclick="promptInviteMember(${t.id})">Invite</button>
+                        <button class="btn btn-secondary" style="padding: 0.2rem 0.6rem; font-size: 0.75rem; color: var(--accent-red);" onclick="disbandTeamSubmit(${t.id})">Disband</button>
+                      ` : ''}
+                    </div>
+                  </div>
+                  <div style="font-size: 0.85rem; color: var(--text-muted);">
+                    <strong>Members (${t.members.length}):</strong>
+                    ${t.members.map(m => `
+                      <span style="display: inline-block; margin-right: 0.5rem; ${m.status === 'pending' ? 'opacity: 0.6;' : ''}">
+                        • ${m.displayName || m.username || m.userId} [${m.memberRole || 'booster'}] (${m.status})
+                      </span>
+                    `).join('')}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = `<div style="color: var(--accent-red); font-size: 0.9rem;">${err.message || 'Error loading teams'}</div>`;
+      }
+    }
+
+    async function submitCreateTeam() {
+      const teamName = document.getElementById('team-new-name').value.trim();
+      const squadType = document.getElementById('team-new-type').value;
+      const feedback = document.getElementById('create-team-feedback');
+      const btn = document.getElementById('btn-create-team');
+
+      if (!teamName) {
+        feedback.innerHTML = '<span style="color: var(--accent-red);">Please enter a team name.</span>';
+        return;
+      }
+
+      btn.disabled = true;
+      feedback.innerHTML = '';
+
+      try {
+        const res = await fetch('/api/teams/create', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ teamName, squadType }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to create squad');
+
+        feedback.innerHTML = `<span style="color: var(--accent-green);">Squad <strong>${data.squad.teamName}</strong> created successfully!</span>`;
+        document.getElementById('team-new-name').value = '';
+        loadTeamsList();
+      } catch (err) {
+        feedback.innerHTML = `<span style="color: var(--accent-red);">${err.message || 'Error creating squad'}</span>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function promptInviteMember(squadId) {
+      const targetUserId = prompt('Enter Discord ID of the Booster to invite:');
+      if (!targetUserId) return;
+      const memberRole = prompt('Enter role (tank, healer, dps, flex):', 'dps') || 'dps';
+
+      try {
+        const res = await fetch('/api/teams/invite', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ squadId, targetUserId, memberRole }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to invite member');
+        alert('Invitation sent successfully!');
+        loadTeamsList();
+      } catch (err) {
+        alert(err.message || 'Error inviting member');
+      }
+    }
+
+    async function acceptTeamInvite(squadId) {
+      try {
+        const res = await fetch('/api/teams/accept', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ squadId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to accept invitation');
+        loadTeamsList();
+      } catch (err) {
+        alert(err.message || 'Error accepting invitation');
+      }
+    }
+
+    async function declineTeamInvite(squadId) {
+      try {
+        const res = await fetch('/api/teams/decline', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ squadId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to decline invitation');
+        loadTeamsList();
+      } catch (err) {
+        alert(err.message || 'Error declining invitation');
+      }
+    }
+
+    async function leaveTeamSubmit(squadId) {
+      if (!confirm('Are you sure you want to leave this squad?')) return;
+      try {
+        const res = await fetch('/api/teams/leave', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ squadId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to leave squad');
+        loadTeamsList();
+      } catch (err) {
+        alert(err.message || 'Error leaving squad');
+      }
+    }
+
+    async function disbandTeamSubmit(squadId) {
+      if (!confirm('Are you sure you want to disband this squad? This cannot be undone.')) return;
+      try {
+        const res = await fetch('/api/teams/disband', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ squadId }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Failed to disband squad');
+        loadTeamsList();
+      } catch (err) {
+        alert(err.message || 'Error disbanding squad');
+      }
     }
 
     async function renderApplicationsTab(container) {

@@ -100,6 +100,7 @@ export async function assignOrderBoosters(
         order.serviceId,
         undefined,
         tx,
+        { enforceMythicPlusSize: false },
       );
 
       for (const member of squad.members) {

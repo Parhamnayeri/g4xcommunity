@@ -17,6 +17,8 @@ import { startEscrowCron }    from './services/escrowCron';
 import { startWebServer }     from './web/server';
 import { handleSetupCommand } from './commands/setup';
 import { handleOrderCommand } from './commands/order';
+import { handleProfileCommand } from './commands/profile';
+import { handleTeamCommand } from './commands/team';
 import { handleButtonInteraction } from './interactions/buttons';
 import { handleModalSubmit } from './interactions/modals';
 import { handleRegistrationSelectMenu } from './interactions/registrationInteractions';
@@ -56,6 +58,10 @@ client.on('messageCreate', async (message) => {
       await handleSetupCommand(message, rawArgs);
     } else if (command === 'order') {
       await handleOrderCommand(message, rawArgs);
+    } else if (command === 'profile') {
+      await handleProfileCommand(message, rawArgs);
+    } else if (command === 'team') {
+      await handleTeamCommand(message, rawArgs);
     }
   } catch (error) {
     console.error(`[Command] Error executing ${command}:`, error);

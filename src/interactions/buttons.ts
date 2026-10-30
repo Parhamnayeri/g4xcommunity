@@ -71,6 +71,89 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
       await handleOrderViewButton(interaction, orderId);
       break;
     }
+    case 'team_accept': {
+      const teamIdentifier = params.join(':');
+      try {
+        const { acceptInvitation } = await import('../services/teamService');
+        await acceptInvitation(teamIdentifier, interaction.user.id);
+        await interaction.reply({
+          content: `✅ You have accepted the invitation and joined team **${teamIdentifier}**!`,
+          ephemeral: true,
+        });
+      } catch (error: any) {
+        await interaction.reply({
+          content: `❌ Could not accept invitation: ${error.message || error}`,
+          ephemeral: true,
+        });
+      }
+      break;
+    }
+    case 'team_decline': {
+      const teamIdentifier = params.join(':');
+      try {
+        const { declineInvitation } = await import('../services/teamService');
+        await declineInvitation(teamIdentifier, interaction.user.id);
+        await interaction.reply({
+          content: `❌ You have declined the invitation for team **${teamIdentifier}**.`,
+          ephemeral: true,
+        });
+      } catch (error: any) {
+        await interaction.reply({
+          content: `❌ Could not decline invitation: ${error.message || error}`,
+          ephemeral: true,
+        });
+      }
+      break;
+    }
+    case 'profile_btn_refresh': {
+      try {
+        const { listUserCharacters, syncCharacterProfile } = await import('../services/characterService');
+        const chars = await listUserCharacters(interaction.user.id);
+        const mainChar = chars.find((c) => c.isMain) || chars[0];
+        if (!mainChar) {
+          await interaction.reply({
+            content: '❌ No registered characters found to sync.',
+            ephemeral: true,
+          });
+          return;
+        }
+        await interaction.deferReply({ ephemeral: true });
+        const { result, character } = await syncCharacterProfile(mainChar.id, interaction.user.id);
+        await interaction.editReply({
+          content: `🔄 **${character.characterName}** refreshed from Raider.IO: \`${result}\` (Mythic+ Score: ${character.mythicScore ?? 'N/A'}, iLvl: ${character.itemLevel ?? 'N/A'})`,
+        });
+      } catch (error: any) {
+        if (interaction.deferred) {
+          await interaction.editReply({ content: `❌ Sync error: ${error.message || error}` });
+        } else {
+          await interaction.reply({ content: `❌ Sync error: ${error.message || error}`, ephemeral: true });
+        }
+      }
+      break;
+    }
+    case 'profile_btn_list': {
+      try {
+        const { listUserCharacters } = await import('../services/characterService');
+        const chars = await listUserCharacters(interaction.user.id);
+        if (chars.length === 0) {
+          await interaction.reply({
+            content: '❌ No active characters registered. Use `G4!profile add-char` to add one.',
+            ephemeral: true,
+          });
+          return;
+        }
+        const listText = chars
+          .map((c) => `• ${c.isMain ? '⭐ [MAIN] ' : ''}**${c.characterName}** — ${c.realm} (${c.region.toUpperCase()}) | ${c.characterClass || 'Class'} | Score: ${c.mythicScore ?? 'N/A'}`)
+          .join('\n');
+        await interaction.reply({
+          content: `📜 **Your Registered Characters:**\n${listText}`,
+          ephemeral: true,
+        });
+      } catch (error: any) {
+        await interaction.reply({ content: `❌ Error: ${error.message || error}`, ephemeral: true });
+      }
+      break;
+    }
     case 'order_accept': {
       const orderId = params[0];
       await interaction.reply({

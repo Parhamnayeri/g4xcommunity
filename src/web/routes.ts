@@ -26,8 +26,26 @@ import {
   serializeUser,
   serializeWallet,
   serializeCharacter,
+  serializeSquad,
   serializeOrderHistory,
 } from './serializers';
+import {
+  addCharacter,
+  listUserCharacters,
+  setMainCharacter,
+  syncCharacterProfile,
+  removeCharacter,
+} from '../services/characterService';
+import {
+  createTeam,
+  listTeams,
+  inviteMember,
+  acceptInvitation,
+  declineInvitation,
+  leaveTeam,
+  disbandTeam,
+} from '../services/teamService';
+import { DomainError } from '../services/domainErrors';
 import { getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
 import { marketplaceRouter } from './marketplaceRoutes';
 import { paymentRouter } from './paymentRoutes';
@@ -420,37 +438,275 @@ router.get(
   },
 );
 
-// ─── روت تغییر وضعیت تحت محافظت CSRF (نمونه عملیاتی) ────────────────────────
+// ─── کاراکترهای WoW کاربر جاری ───────────────────────────────────────────────
+router.get('/characters', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const characters = await listUserCharacters(user.discordId);
+    res.json(characters.map(serializeCharacter));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to list characters' });
+  }
+});
+
+router.post(
+  '/characters/add',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { characterName, realm, region } = req.body;
+
+      if (!characterName || !realm) {
+        res.status(400).json({ error: 'characterName and realm are required.' });
+        return;
+      }
+
+      const character = await addCharacter({
+        userId: user.discordId,
+        characterName,
+        realm,
+        region,
+        actorId: user.discordId,
+      });
+
+      res.json({ success: true, character: serializeCharacter(character) });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to add character' });
+    }
+  }
+);
+
+router.post(
+  '/characters/set-main',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { characterId } = req.body;
+
+      if (!characterId) {
+        res.status(400).json({ error: 'Valid characterId required.' });
+        return;
+      }
+
+      const updated = await setMainCharacter(user.discordId, characterId, user.discordId);
+      res.json({ success: true, character: serializeCharacter(updated) });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to set main character' });
+    }
+  }
+);
+
 router.post(
   '/characters/sync-request',
   requireAuth,
   requireCsrf,
   async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { characterId } = req.body;
+
+      if (!characterId) {
+        res.status(400).json({ error: 'Valid characterId required.' });
+        return;
+      }
+
+      const { result, character } = await syncCharacterProfile(characterId, user.discordId, user.discordId);
+      res.json({ success: true, result, character: serializeCharacter(character) });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to sync character' });
+    }
+  }
+);
+
+router.post(
+  '/characters/remove',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { characterId } = req.body;
+
+      if (!characterId) {
+        res.status(400).json({ error: 'Valid characterId required.' });
+        return;
+      }
+
+      const removed = await removeCharacter(characterId, user.discordId, user.discordId);
+      res.json({ success: true, character: serializeCharacter(removed) });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to remove character' });
+    }
+  }
+);
+
+// ─── تیم‌های آماده (Premade Squads) ───────────────────────────────────────────
+router.get('/teams', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
     const { user } = req as AuthenticatedRequest;
-    const { characterId } = req.body;
+    const squads = await listTeams(user.discordId);
+    res.json(squads.map(serializeSquad));
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to list teams' });
+  }
+});
 
-    if (!characterId || typeof characterId !== 'number') {
-      res.status(400).json({ error: 'Valid characterId required' });
-      return;
+router.post(
+  '/teams/create',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { teamName, squadType } = req.body;
+
+      if (!teamName) {
+        res.status(400).json({ error: 'teamName is required.' });
+        return;
+      }
+
+      const squad = await createTeam({
+        leaderId: user.discordId,
+        teamName,
+        squadType,
+        actorId: user.discordId,
+      });
+
+      res.json({ success: true, squad: squad ? serializeSquad(squad) : null });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to create team' });
     }
+  }
+);
 
-    // بررسی مالکیت کاراکتر
-    const char = await prisma.wowCharacter.findFirst({
-      where: { id: characterId, userId: user.discordId },
-    });
+router.post(
+  '/teams/invite',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { squadId, targetUserId, memberRole } = req.body;
 
-    if (!char) {
-      res.status(404).json({ error: 'Character not found or not owned by caller' });
-      return;
+      if (!squadId || !targetUserId) {
+        res.status(400).json({ error: 'squadId and targetUserId are required.' });
+        return;
+      }
+
+      await inviteMember({
+        squadIdOrName: squadId,
+        leaderId: user.discordId,
+        targetUserId,
+        memberRole,
+      });
+
+      res.json({ success: true });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to invite member' });
     }
+  }
+);
 
-    const updated = await prisma.wowCharacter.update({
-      where: { id: characterId },
-      data: { syncStatus: 'pending' },
-    });
+router.post(
+  '/teams/accept',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { squadId } = req.body;
 
-    res.json({ success: true, character: serializeCharacter(updated) });
-  },
+      if (!squadId) {
+        res.status(400).json({ error: 'squadId is required.' });
+        return;
+      }
+
+      await acceptInvitation(squadId, user.discordId);
+      res.json({ success: true });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to accept invitation' });
+    }
+  }
+);
+
+router.post(
+  '/teams/decline',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { squadId } = req.body;
+
+      if (!squadId) {
+        res.status(400).json({ error: 'squadId is required.' });
+        return;
+      }
+
+      await declineInvitation(squadId, user.discordId);
+      res.json({ success: true });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to decline invitation' });
+    }
+  }
+);
+
+router.post(
+  '/teams/leave',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { squadId } = req.body;
+
+      if (!squadId) {
+        res.status(400).json({ error: 'squadId is required.' });
+        return;
+      }
+
+      const result = await leaveTeam(squadId, user.discordId);
+      res.json({ success: true, result });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to leave team' });
+    }
+  }
+);
+
+router.post(
+  '/teams/disband',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { squadId } = req.body;
+
+      if (!squadId) {
+        res.status(400).json({ error: 'squadId is required.' });
+        return;
+      }
+
+      const squad = await disbandTeam(squadId, user.discordId);
+      res.json({ success: true, squad: serializeSquad(squad) });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to disband team' });
+    }
+  }
 );
 
 // ═════════════════════════════════════════════════════════════════════════════

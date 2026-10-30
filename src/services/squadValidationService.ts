@@ -15,6 +15,7 @@ export async function validatePremadeSquad(
   serviceId: number,
   submitterId?: string,
   client: Prisma.TransactionClient | typeof prisma = prisma,
+  options?: { enforceMythicPlusSize?: boolean },
 ) {
   const squad = await client.premadeSquad.findUnique({
     where: { id: squadId },
@@ -33,7 +34,10 @@ export async function validatePremadeSquad(
   }
 
   // ۱. بررسی تطابق بازی
-  if (squad.gameSlug !== orderGameSlug) {
+  const isCompatibleGame =
+    squad.gameSlug === orderGameSlug ||
+    (squad.gameSlug.startsWith('wow') && orderGameSlug.startsWith('wow'));
+  if (!isCompatibleGame) {
     throw new DomainError(
       DomainErrorCode.SQUAD_GAME_MISMATCH,
       `Squad belongs to game '${squad.gameSlug}', but order is for '${orderGameSlug}'`,
@@ -82,7 +86,7 @@ export async function validatePremadeSquad(
     const approval = await client.userGameApproval.findFirst({
       where: {
         userId: member.userId,
-        gameSlug: orderGameSlug,
+        gameSlug: { in: [orderGameSlug, 'wow', 'wow_midnight'] },
         OR: [{ serviceId: null }, { serviceId }],
         approvalType: 'booster',
         status: 'approved',
@@ -96,12 +100,34 @@ export async function validatePremadeSquad(
       );
     }
 
-    // ۶. بررسی مالکیت کاراکترهای اعضای تیم
+    // ۶. بررسی مالکیت کاراکترهای اعضای تیم و فعال بودن آن‌ها
     if (member.characterId && member.character) {
       if (member.character.userId !== member.userId) {
         throw new DomainError(
           DomainErrorCode.CHARACTER_NOT_OWNED,
           `Character '${member.character.characterName}' assigned to member '${member.userId}' belongs to user '${member.character.userId}'`,
+        );
+      }
+      if (!member.character.isActive) {
+        throw new DomainError(
+          DomainErrorCode.CHARACTER_INACTIVE,
+          `Character '${member.character.characterName}' assigned to member '${member.userId}' is inactive.`,
+        );
+      }
+    }
+  }
+
+  // ۷. بررسی الزام ۴ بوستر در سرویس‌های Mythic+
+  if (options?.enforceMythicPlusSize !== false) {
+    const service = await client.gameService.findUnique({
+      where: { id: serviceId },
+    });
+    if (service?.serviceKey === 'mythic_plus') {
+      const acceptedMembers = squad.members.filter((m) => m.status === 'accepted');
+      if (acceptedMembers.length !== 4) {
+        throw new DomainError(
+          DomainErrorCode.SQUAD_INVALID_SIZE,
+          `Mythic+ orders require a squad of exactly 4 accepted boosters (found ${acceptedMembers.length}).`,
         );
       }
     }

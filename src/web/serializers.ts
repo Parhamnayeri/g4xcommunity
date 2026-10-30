@@ -85,6 +85,7 @@ export interface SerializedWowCharacter {
   raidProgression: string | null;
   raiderioUrl: string | null;
   isMain: boolean;
+  isActive: boolean;
   syncStatus: string;
   lastSyncedAt: Date | null;
 }
@@ -105,8 +106,59 @@ export function serializeCharacter(character: WowCharacter): SerializedWowCharac
     raidProgression: character.raidProgression,
     raiderioUrl: character.raiderioUrl,
     isMain: character.isMain,
+    isActive: character.isActive,
     syncStatus: character.syncStatus,
     lastSyncedAt: character.lastSyncedAt,
+  };
+}
+
+export interface SerializedSquadMember {
+  squadId: number;
+  userId: string;
+  username?: string;
+  displayName?: string | null;
+  memberRole: string | null;
+  characterId: number | null;
+  character?: SerializedWowCharacter | null;
+  status: string;
+  joinedAt: Date;
+}
+
+export interface SerializedSquad {
+  id: number;
+  gameSlug: string;
+  teamName: string;
+  leaderId: string;
+  leaderName?: string;
+  squadType: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+  members: SerializedSquadMember[];
+}
+
+export function serializeSquad(squad: any): SerializedSquad {
+  return {
+    id: squad.id,
+    gameSlug: squad.gameSlug,
+    teamName: squad.teamName,
+    leaderId: squad.leaderId,
+    leaderName: squad.leader ? (squad.leader.displayName || squad.leader.username) : undefined,
+    squadType: squad.squadType,
+    status: squad.status,
+    createdAt: squad.createdAt,
+    updatedAt: squad.updatedAt,
+    members: (squad.members || []).map((m: any) => ({
+      squadId: m.squadId,
+      userId: m.userId,
+      username: m.user?.username,
+      displayName: m.user?.displayName,
+      memberRole: m.memberRole,
+      characterId: m.characterId,
+      character: m.character ? serializeCharacter(m.character) : null,
+      status: m.status,
+      joinedAt: m.joinedAt,
+    })),
   };
 }
 

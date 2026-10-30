@@ -26,14 +26,35 @@ export async function handleModalSubmit(interaction: ModalSubmitInteraction): Pr
 
   switch (customId) {
     case 'modal_add_character': {
-      // const charName = interaction.fields.getTextInputValue('character_name');
-      // const realm    = interaction.fields.getTextInputValue('realm');
-      // const region   = interaction.fields.getTextInputValue('region');
-      // TODO: افزودن کاراکتر به دیتابیس و همگام‌سازی Raider.IO
-      await interaction.reply({
-        content: '🚧 **Add Character** modal — Coming soon!',
-        ephemeral: true,
-      });
+      const charName = interaction.fields.getTextInputValue('character_name');
+      const realm = interaction.fields.getTextInputValue('realm');
+      let region = 'eu';
+      try {
+        region = interaction.fields.getTextInputValue('region') || 'eu';
+      } catch {
+        region = 'eu';
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        const { addCharacter } = await import('../services/characterService');
+        const char = await addCharacter({
+          userId: interaction.user.id,
+          characterName: charName,
+          realm,
+          region,
+        });
+        await interaction.editReply({
+          content: `✅ Character **${char.characterName}** (${char.realm} - ${char.region.toUpperCase()}) successfully registered!\n` +
+            `• Class: **${char.characterClass || 'Unknown'}** (${char.activeSpec || '-'})\n` +
+            `• Mythic+ Score: **${char.mythicScore ?? 'N/A'}**\n` +
+            `• Status: ${char.isMain ? '⭐ **Main Character**' : 'Alt Character'}`,
+        });
+      } catch (err: any) {
+        await interaction.editReply({
+          content: `❌ Failed to add character: ${err.message || err}`,
+        });
+      }
       break;
     }
     case 'modal_apply_booster': {

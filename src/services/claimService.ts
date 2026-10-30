@@ -85,15 +85,16 @@ export async function createOrderClaim(
     }
   }
 
-  // ۴. بررسی مالکیت کاراکتر در صورت ارائه
-  if (input.characterId) {
+  // ۴. بررسی مالکیت و وضعیت کاراکتر
+  let effectiveCharacterId = input.characterId;
+  if (effectiveCharacterId) {
     const character = await client.wowCharacter.findUnique({
-      where: { id: input.characterId },
+      where: { id: effectiveCharacterId },
     });
     if (!character) {
       throw new DomainError(
         DomainErrorCode.CHARACTER_NOT_FOUND,
-        `Character #${input.characterId} not found`,
+        `Character #${effectiveCharacterId} not found`,
       );
     }
     if (character.userId !== input.userId) {
@@ -101,6 +102,20 @@ export async function createOrderClaim(
         DomainErrorCode.CHARACTER_NOT_OWNED,
         `Character '${character.characterName}' does not belong to user '${input.userId}'`,
       );
+    }
+    if (!character.isActive) {
+      throw new DomainError(
+        DomainErrorCode.CHARACTER_INACTIVE,
+        `Character '${character.characterName}' is inactive.`,
+      );
+    }
+  } else if (order.gameSlug.startsWith('wow') || order.gameSlug === 'wow_midnight' || order.gameSlug === 'wow') {
+    // در صورت عدم انتخاب دستی در سفارش‌های WoW، کاراکتر اصلی فعال بوستر الصاق می‌شود
+    const mainChar = await client.wowCharacter.findFirst({
+      where: { userId: input.userId, isActive: true, isMain: true },
+    });
+    if (mainChar) {
+      effectiveCharacterId = mainChar.id;
     }
   }
 
@@ -120,7 +135,7 @@ export async function createOrderClaim(
     data: {
       orderId: input.orderId,
       userId: input.userId,
-      characterId: input.characterId ?? null,
+      characterId: effectiveCharacterId ?? null,
       squadId: input.claimType === 'squad' ? input.squadId : null,
       claimType: input.claimType,
       registeredRole: input.registeredRole,

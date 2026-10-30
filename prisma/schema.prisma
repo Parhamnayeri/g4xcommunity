@@ -198,6 +198,7 @@ model WowCharacter {
   raidProgression String? @map("raid_progression")
   raiderioUrl    String?  @map("raiderio_url")
   isMain         Boolean  @default(false) @map("is_main")
+  isActive       Boolean  @default(true) @map("is_active")
   syncStatus     String   @default("pending") @map("sync_status") // pending | synced | failed | not_found
   lastSyncedAt   DateTime? @map("last_synced_at")
   createdAt      DateTime @default(now()) @map("created_at")
