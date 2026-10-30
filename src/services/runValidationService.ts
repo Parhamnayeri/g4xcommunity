@@ -5,6 +5,7 @@
 import prisma from '../database/db';
 import { DomainError, DomainErrorCode } from './domainErrors';
 import { ensureOrderAcceptsOperations } from './orderValidationService';
+import { syncOrderChannelPermissions, notifyExecutionChannelMilestone } from './orderExecutionChannelService';
 import { Prisma } from '@prisma/client';
 
 /**
@@ -103,6 +104,7 @@ export async function completeOrderRun(
   completedById: string,
   notes?: string,
   client: Prisma.TransactionClient | typeof prisma = prisma,
+  discordClient?: any,
 ) {
   const run = await client.orderRun.findUnique({
     where: { id: runId },
@@ -157,6 +159,17 @@ export async function completeOrderRun(
     },
   });
 
+  if (discordClient) {
+    try {
+      await notifyExecutionChannelMilestone(run.orderId, discordClient, 'RUN_COMPLETED', {
+        actorId: completedById,
+        notes,
+      });
+    } catch (err) {
+      console.warn(`[RunValidationService] Failed to notify run completion:`, err);
+    }
+  }
+
   return updatedRun;
 }
 
@@ -169,8 +182,9 @@ export async function replaceAssignment(
   replacedById: string,
   reason: string,
   client: Prisma.TransactionClient | typeof prisma = prisma,
+  discordClient?: any,
 ) {
-  return await (client as typeof prisma).$transaction(async (tx) => {
+  const result = await (client as typeof prisma).$transaction(async (tx) => {
     const existing = await tx.orderAssignment.findUnique({
       where: { id: assignmentId },
       include: { order: true },
@@ -237,4 +251,14 @@ export async function replaceAssignment(
       newAssignment,
     };
   });
+
+  if (discordClient) {
+    try {
+      await syncOrderChannelPermissions(result.newAssignment.orderId, discordClient);
+    } catch (err) {
+      console.warn(`[RunValidationService] Failed to sync permissions after replacement:`, err);
+    }
+  }
+
+  return result;
 }

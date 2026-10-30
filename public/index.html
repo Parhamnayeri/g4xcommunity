@@ -1483,6 +1483,7 @@
                       ${o.status === 'open_presign' ? `<button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="claimOrder(${o.id})">Claim</button>` : ''}
                       ${o.status === 'in_progress' ? `<button class="btn btn-primary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="completeRun(${o.id})">Complete Run</button>` : ''}
                       ${o.status === 'completed' ? `<button class="btn btn-success" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="submitOrderProof(${o.id})">Submit Proof</button>` : ''}
+                      ${['assigned', 'in_progress', 'completed'].includes(o.status) ? `<button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem; margin-left: 0.25rem;" onclick="openOrderDiscordChannel(${o.id})">💬 Discord Channel</button>` : ''}
                     </td>
                   </tr>
                 `).join('')}
@@ -1492,6 +1493,24 @@
         `;
       } catch (err) {
         container.innerHTML = '<span style="color: var(--accent-red);">Failed to load orders.</span>';
+      }
+    }
+
+    async function openOrderDiscordChannel(id) {
+      try {
+        const res = await fetch(`/api/orders/${id}/channel`, { credentials: 'include' });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          alert(data.error || 'Access denied or no channel available');
+          return;
+        }
+        if (data.channelUrl) {
+          window.open(data.channelUrl, '_blank');
+        } else {
+          alert(`Discord Channel: #${data.channelName || data.channelId}`);
+        }
+      } catch (err) {
+        alert(err.message || 'Error opening Discord channel');
       }
     }
 

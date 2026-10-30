@@ -15,6 +15,7 @@ import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 import { validateGameAndService, ensureOrderAcceptsOperations } from '../services/orderValidationService';
 import { publishOrRefreshOrderCard } from '../services/orderDiscordService';
+import { handleOrderCancellationChannel } from '../services/orderExecutionChannelService';
 import {
   AdvertiserRank,
   isValidAdvertiserRank,
@@ -598,6 +599,11 @@ async function handleOrderCancel(message: Message, args: string[]): Promise<void
     // Update published Discord card
     publishOrRefreshOrderCard(message.client, order.id).catch((e) =>
       console.warn('[OrderCommand] Card refresh error after cancellation:', e)
+    );
+
+    // Lock private coordination channel if exists
+    handleOrderCancellationChannel(order.id, reason, message.client).catch((e) =>
+      console.warn('[OrderCommand] Channel lock error after cancellation:', e)
     );
 
     await message.reply({

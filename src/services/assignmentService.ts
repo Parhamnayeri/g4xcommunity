@@ -6,6 +6,7 @@ import prisma from '../database/db';
 import { DomainError, DomainErrorCode } from './domainErrors';
 import { validateUserApproval, ensureOrderAcceptsOperations } from './orderValidationService';
 import { validatePremadeSquad } from './squadValidationService';
+import { getOrCreateOrderExecutionChannel } from './orderExecutionChannelService';
 import { Prisma } from '@prisma/client';
 
 export interface AssignCandidate {
@@ -19,6 +20,7 @@ export interface AssignOrderInput {
   actorId: string;
   candidates?: AssignCandidate[];
   squadId?: number | null;
+  discordClient?: any;
 }
 
 /**
@@ -65,7 +67,7 @@ export async function assignOrderBoosters(
   input: AssignOrderInput,
   client: Prisma.TransactionClient | typeof prisma = prisma,
 ) {
-  return await (client as typeof prisma).$transaction(async (tx) => {
+  const result = await (client as typeof prisma).$transaction(async (tx) => {
     // ۱. دریافت اطلاعات کامل سفارش و پیش‌نیازها
     const order = await tx.order.findUnique({
       where: { id: input.orderId },
@@ -235,4 +237,14 @@ export async function assignOrderBoosters(
       reservations: createdReservations,
     };
   });
+
+  if (input.discordClient) {
+    try {
+      await getOrCreateOrderExecutionChannel(input.orderId, input.discordClient, { actorId: input.actorId });
+    } catch (chanErr) {
+      console.warn(`[AssignmentService] Could not auto-create execution channel for order #${input.orderId}:`, chanErr);
+    }
+  }
+
+  return result;
 }

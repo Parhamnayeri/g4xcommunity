@@ -154,6 +154,50 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
       }
       break;
     }
+    case 'order_chan_complete': {
+      const orderId = Number(params[0]);
+      if (isNaN(orderId) || orderId <= 0) {
+        await interaction.reply({ content: '❌ Invalid order ID parameter.', ephemeral: true });
+        return;
+      }
+      try {
+        const { completeOrderRun } = await import('../services/runValidationService');
+        const prismaClient = (await import('../database/db')).default;
+        const run = await prismaClient.orderRun.findFirst({
+          where: { orderId, status: { in: ['pending', 'in_progress'] } },
+        });
+        if (!run) {
+          await interaction.reply({
+            content: `ℹ️ All runs for Order #${orderId} are already marked as completed or not active.`,
+            ephemeral: true,
+          });
+          return;
+        }
+        await completeOrderRun(run.id, interaction.user.id, 'Completed via Discord coordination channel', prismaClient, interaction.client);
+        await interaction.reply({
+          content: `✅ **Run #${run.runNumber} Marked Completed!** Please submit proof screenshots.`,
+          ephemeral: true,
+        });
+      } catch (err: any) {
+        await interaction.reply({
+          content: `❌ Could not complete run: ${err?.message || err}`,
+          ephemeral: true,
+        });
+      }
+      break;
+    }
+    case 'order_chan_proof': {
+      const orderId = Number(params[0]);
+      const webBaseUrl = process.env.WEB_BASE_URL || 'https://g4x.online';
+      await interaction.reply({
+        content:
+          `📸 **Submit Completion Evidence for Order #${orderId}**\n` +
+          `• Option 1: Upload and verify screenshot directly on the [Web Dashboard](${webBaseUrl}/#booster).\n` +
+          `• Option 2: Post your screenshot directly in this coordination channel for Staff review.`,
+        ephemeral: true,
+      });
+      break;
+    }
     case 'order_accept': {
       const orderId = params[0];
       await interaction.reply({

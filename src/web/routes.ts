@@ -73,6 +73,10 @@ import {
 import { createOrderClaim } from '../services/claimService';
 import { completeOrderRun } from '../services/runValidationService';
 import {
+  getOrCreateOrderExecutionChannel,
+  getAuthorizedChannelAccess,
+} from '../services/orderExecutionChannelService';
+import {
   mapOrderStatus,
   mapGoldTradeStatus,
   mapWithdrawalStatus,
@@ -1320,6 +1324,41 @@ router.post(
       });
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Failed to claim order' });
+    }
+  }
+);
+
+router.get(
+  '/orders/:id/channel',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      if (isNaN(orderId) || orderId <= 0) {
+        res.status(400).json({ error: 'Invalid order ID' });
+        return;
+      }
+
+      const access = await getAuthorizedChannelAccess(orderId, user.discordId);
+      if (!access.authorized) {
+        res.status(403).json({ error: access.reason || 'PERMISSION_DENIED' });
+        return;
+      }
+
+      if (!access.hasChannel) {
+        res.status(404).json({ error: access.reason || 'NO_CHANNEL_AVAILABLE' });
+        return;
+      }
+
+      res.json({
+        success: true,
+        channelId: access.channelId,
+        channelUrl: access.channelUrl,
+        channelName: access.channelName,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to resolve order channel' });
     }
   }
 );
