@@ -174,6 +174,7 @@ export const ROLE_PERMISSIONS: Record<SystemRoleKey, Permission[]> = {
     Permission.SUPPORT_TICKET_MANAGE,
     Permission.WALLET_VIEW_OWN,
     Permission.AUDIT_LOG_VIEW,
+    Permission.FINANCE_ADMIN_VIEW,
   ],
 
   staff: [

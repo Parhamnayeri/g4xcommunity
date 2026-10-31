@@ -107,6 +107,31 @@ import {
   getAdvertiserMigrationImpactReport,
   getAdvertiserRankAuditHistory,
 } from '../services/advertiserRankService';
+import {
+  getPlatformAccountsSummary,
+  checkPlatformWithdrawalEligibility,
+  getOrCreatePlatformAccount,
+  ExternalPlatform,
+} from '../services/platformBalanceService';
+import {
+  createDraftWithdrawalBatch,
+  markBatchReady,
+  submitWithdrawalBatch,
+  cancelWithdrawalBatch,
+  recordBatchReceipt,
+  reconcileWithdrawalBatch,
+} from '../services/withdrawalBatchService';
+import {
+  getPlatformWithdrawalThreshold,
+  getPlatformWithdrawalThresholdAsync,
+} from '../services/financialPolicyService';
+import {
+  finalizeOrderFinancialsAndBoosterAllocation,
+  splitPoolEquallyWithRemainder,
+  allocateProportionalWithRemainder,
+} from '../services/financialCalculationEngine';
+import { authorize } from '../services/authorizationService';
+import { Permission } from '../services/permissionTypes';
 
 export const router = Router();
 
@@ -2243,5 +2268,768 @@ router.get(
     }
   }
 );
+// ─────────────────────────────────────────────────────────────────────────────
+// PLATFORM FINANCE — G2G, SKYCOACH & ELDORADO ADMIN DASHBOARD & RECONCILIATION
+// ─────────────────────────────────────────────────────────────────────────────
 
+// ۱. دریافت خلاصه مقایسه‌ای سه پلتفرم (Platform Finance Overview)
+router.get(
+  '/admin/platform-finance/overview',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const auth = await authorize(user.discordId, Permission.FINANCE_ADMIN_VIEW);
+      if (!auth.allowed) {
+        res.status(403).json({ error: auth.reason || 'Insufficient permissions to view platform finance data' });
+        return;
+      }
 
+      // اطمینان از وجود حساب‌های پیش‌فرض سه پلتفرم
+      await getOrCreatePlatformAccount('g2g_main', 'g2g', 'G2G (Main Store)');
+      await getOrCreatePlatformAccount('skycoach_main', 'skycoach', 'SkyCoach (Main)');
+      await getOrCreatePlatformAccount('eldorado_main', 'eldorado', 'Eldorado (Main Store)');
+
+      const accounts = await getPlatformAccountsSummary(user.discordId);
+
+      // آمار دسته‌های برداشت در جریان و تسویه‌شده
+      const batches = await prisma.platformWithdrawalBatch.findMany({
+        select: {
+          id: true,
+          platform: true,
+          status: true,
+          totalContributionsMinor: true,
+          netReceivedMinor: true,
+          actualReceivedMinor: true,
+        },
+      });
+
+      // سفارشات تسویه‌شده پلتفرم‌های خارجی
+      const settledExternalOrders = await prisma.order.findMany({
+        where: {
+          sourceWebsite: { in: ['g2g', 'skycoach', 'eldorado'] },
+          status: { in: ['completed', 'assigned', 'in_progress'] },
+          paymentStatus: { in: ['verified', 'unneeded'] },
+          financialSnapshot: { isNot: null },
+        },
+        include: {
+          financialSnapshot: true,
+          withdrawalAllocations: {
+            include: { batch: true },
+          },
+        },
+      });
+
+      // تجمیع اطلاعات پلتفرم‌ها
+      const platformSummaries = accounts.map((acc) => {
+        const platformBatches = batches.filter((b) => b.platform.toLowerCase() === acc.platform.toLowerCase());
+        const pendingBatches = platformBatches.filter((b) =>
+          ['draft', 'ready', 'submitted', 'processing', 'received', 'review_required'].includes(b.status)
+        );
+        const reconciledBatches = platformBatches.filter((b) => b.status === 'reconciled');
+
+        const pendingBatchesAmountMinor = pendingBatches.reduce((s, b) => s + b.totalContributionsMinor, 0);
+        const reconciledTotalReceivedMinor = reconciledBatches.reduce((s, b) => s + (b.actualReceivedMinor ?? b.netReceivedMinor), 0);
+
+        // سفارشات مرتبط با این پلتفرم
+        const ordersForPlatform = settledExternalOrders.filter(
+          (o) => (o.sourceWebsite || '').toLowerCase() === acc.platform.toLowerCase()
+        );
+
+        let grossRevenueMinor = 0;
+        let platformFeesChargedMinor = 0;
+        let eligibleForBatchMinor = 0;
+        let pendingReconciliationMinor = 0;
+
+        for (const ord of ordersForPlatform) {
+          const snap = ord.financialSnapshot;
+          if (snap) {
+            grossRevenueMinor += (snap.grossSaleMinor ?? snap.sourceAmountMinor);
+            platformFeesChargedMinor += snap.platformSaleCommissionMinor;
+
+            const activeAllocs = ord.withdrawalAllocations.filter(
+              (a) => !['cancelled', 'failed'].includes(a.batch.status.toLowerCase())
+            );
+            const allocatedMinor = activeAllocs.reduce((s, a) => s + a.contributionAmountMinor, 0);
+            const netAvailable = Math.max(0, snap.platformOrderNetMinor - allocatedMinor);
+
+            eligibleForBatchMinor += netAvailable;
+
+            const inPendingBatch = activeAllocs.some((a) =>
+              ['draft', 'ready', 'submitted', 'processing', 'received', 'review_required'].includes(a.batch.status.toLowerCase())
+            );
+            if (inPendingBatch || snap.calculationStatus === 'provisional') {
+              pendingReconciliationMinor += snap.platformOrderNetMinor;
+            }
+          }
+        }
+
+        // تفکیک شفاف نوع موجودی
+        const reportedExternalBalanceMinor = acc.eligibleBalanceMinor + acc.pendingReleaseMinor;
+        const confirmedActualFundsMinor = acc.receivedTotalMinor;
+        const internalUsdLedgerBalanceMinor = acc.eligibleBalanceMinor + acc.reservedBatchMinor;
+
+        // محاسبه تخمینی عواید برداشت بر اساس سیاست‌های مصوب
+        let estimatedProceedsMinor = acc.eligibleBalanceMinor;
+        if (acc.platform === 'g2g') {
+          // G2G: 3.99% + $0.99 + $0.30 transfer
+          const fee = Math.round(acc.eligibleBalanceMinor * 0.0399) + 99 + 30;
+          estimatedProceedsMinor = Math.max(0, acc.eligibleBalanceMinor - fee);
+        } else if (acc.platform === 'skycoach') {
+          // SkyCoach: $0.30 transfer
+          estimatedProceedsMinor = Math.max(0, acc.eligibleBalanceMinor - 30);
+        } else if (acc.platform === 'eldorado') {
+          // Eldorado: $1.50 transfer
+          estimatedProceedsMinor = Math.max(0, acc.eligibleBalanceMinor - 150);
+        }
+
+        const warnings: string[] = [];
+        if (!acc.isEligibleForWithdrawal) {
+          warnings.push(`Account balance ($${(acc.eligibleBalanceMinor / 100).toFixed(2)}) is below the platform minimum withdrawal threshold ($${(acc.minWithdrawalThresholdMinor / 100).toFixed(2)})`);
+        }
+        if (platformBatches.some((b) => b.status === 'review_required')) {
+          warnings.push('One or more batches are flagged with REVIEW_REQUIRED due to receipt discrepancies');
+        }
+        if (acc.pendingReleaseMinor > 0) {
+          warnings.push(`$${(acc.pendingReleaseMinor / 100).toFixed(2)} is pending platform escrow/clearing and cannot be withdrawn yet`);
+        }
+
+        return {
+          ...acc,
+          grossRevenueMinor,
+          platformFeesChargedMinor,
+          eligibleForBatchMinor,
+          pendingReconciliationMinor,
+          pendingBatchesCount: pendingBatches.length,
+          pendingBatchesAmountMinor,
+          reconciledBatchesCount: reconciledBatches.length,
+          reconciledTotalReceivedMinor,
+          reportedExternalBalanceMinor,
+          confirmedActualFundsMinor,
+          internalUsdLedgerBalanceMinor,
+          estimatedProceedsMinor,
+          isRealtimeApiConnected: false, // صراحتاً اعلام عدم اتصال خودکار به API
+          balanceSource: 'Verified Internal Ledger & Settled Platform Records',
+          warnings,
+        };
+      });
+
+      res.json({
+        success: true,
+        platforms: platformSummaries,
+        systemStatus: {
+          realtimeApiConnected: false,
+          accountingUnit: 'USD Minor Units (Cents)',
+          escrowReleaseEnabled: false,
+          liveCreditsEnabled: false,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch platform finance overview' });
+    }
+  }
+);
+
+// ۲. دریافت سفارشات واجد شرایط برای ایجاد دسته برداشت (Eligible Settled External Orders)
+router.get(
+  '/admin/platform-finance/eligible-orders',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const auth = await authorize(user.discordId, Permission.FINANCE_ADMIN_VIEW);
+      if (!auth.allowed) {
+        res.status(403).json({ error: auth.reason || 'Insufficient permissions' });
+        return;
+      }
+
+      const platformFilter = typeof req.query.platform === 'string' ? req.query.platform.toLowerCase() : undefined;
+
+      const orders = await prisma.order.findMany({
+        where: {
+          sourceWebsite: platformFilter ? platformFilter : { in: ['g2g', 'skycoach', 'eldorado'] },
+          status: { in: ['completed', 'assigned', 'in_progress'] },
+          paymentStatus: { in: ['verified', 'unneeded'] },
+          disputes: {
+            none: {
+              status: { in: ['open', 'under_review', 'waiting_for_evidence'] },
+            },
+          },
+        },
+        include: {
+          game: { select: { displayName: true, slug: true } },
+          service: { select: { displayName: true, serviceKey: true, serviceMode: true } },
+          financialSnapshot: true,
+          withdrawalAllocations: {
+            include: { batch: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const eligibleOrders = orders
+        .map((o) => {
+          const snap = o.financialSnapshot;
+          if (!snap) return null;
+
+          const activeAllocs = o.withdrawalAllocations.filter(
+            (a) => !['cancelled', 'failed'].includes(a.batch.status.toLowerCase())
+          );
+          const alreadyAllocatedMinor = activeAllocs.reduce((sum, a) => sum + a.contributionAmountMinor, 0);
+          const orderNetMinor = snap.platformOrderNetMinor ?? o.grossAmountMinor;
+          const remainingAllocatableMinor = Math.max(0, orderNetMinor - alreadyAllocatedMinor);
+
+          if (remainingAllocatableMinor <= 0) return null;
+
+          return {
+            orderId: o.id,
+            platform: o.sourceWebsite?.toLowerCase(),
+            externalOrderId: o.externalOrderId,
+            gameName: o.game?.displayName || o.gameSlug,
+            serviceName: o.service?.displayName || o.orderName,
+            serviceKey: o.service?.serviceKey,
+            orderType: o.orderType,
+            currency: o.currency,
+            grossAmountMinor: o.grossAmountMinor,
+            platformSaleCommissionMinor: snap.platformSaleCommissionMinor,
+            platformOrderNetMinor: snap.platformOrderNetMinor,
+            alreadyAllocatedMinor,
+            allocatableMinor: remainingAllocatableMinor,
+            calculationStatus: snap.calculationStatus,
+            createdAt: o.createdAt,
+          };
+        })
+        .filter(Boolean);
+
+      res.json({ success: true, orders: eligibleOrders });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch eligible orders' });
+    }
+  }
+);
+
+// ۳. پیش‌نمایش محاسبات دسته برداشت (Preview Batch Fees & Minimum Validation)
+router.post(
+  '/admin/platform-finance/batches/preview',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const auth = await authorize(user.discordId, Permission.FINANCE_ADMIN_VIEW);
+      if (!auth.allowed) {
+        res.status(403).json({ error: auth.reason || 'Insufficient permissions' });
+        return;
+      }
+
+      const { platform, orderContributions } = req.body;
+      if (!platform || !['g2g', 'skycoach', 'eldorado'].includes(String(platform).toLowerCase())) {
+        res.status(400).json({ error: 'Valid platform (g2g, skycoach, eldorado) is required' });
+        return;
+      }
+
+      if (!Array.isArray(orderContributions) || orderContributions.length === 0) {
+        res.status(400).json({ error: 'At least one order contribution is required' });
+        return;
+      }
+
+      let totalContributionsMinor = 0;
+      for (const item of orderContributions) {
+        const amt = Number(item.contributionMinor);
+        if (isNaN(amt) || amt <= 0 || !Number.isInteger(amt)) {
+          res.status(400).json({ error: `Invalid contribution amount for order ${item.orderId}` });
+          return;
+        }
+        totalContributionsMinor += amt;
+      }
+
+      const pLower = String(platform).toLowerCase();
+      const minThresholdMinor = getPlatformWithdrawalThreshold(pLower);
+      const meetsMinimumThreshold = totalContributionsMinor >= minThresholdMinor;
+
+      let estimatedBatchFeeMinor = 0;
+      let estimatedTransferFeeMinor = 0;
+
+      if (pLower === 'g2g') {
+        // G2G: 3.99% + $0.99 batch fee, $0.30 transfer cost
+        estimatedBatchFeeMinor = Math.round(totalContributionsMinor * 0.0399) + 99;
+        estimatedTransferFeeMinor = 30;
+      } else if (pLower === 'skycoach') {
+        // SkyCoach: 10% already reflected in order net, no $5 fee!
+        estimatedBatchFeeMinor = 0;
+        estimatedTransferFeeMinor = 30;
+      } else if (pLower === 'eldorado') {
+        // Eldorado: category commission already reflected, $1.50 transfer fee
+        estimatedBatchFeeMinor = 0;
+        estimatedTransferFeeMinor = 150;
+      }
+
+      const expectedNetMinor = Math.max(0, totalContributionsMinor - estimatedBatchFeeMinor - estimatedTransferFeeMinor);
+
+      res.json({
+        success: true,
+        preview: {
+          platform: pLower,
+          orderCount: orderContributions.length,
+          totalContributionsMinor,
+          minThresholdMinor,
+          meetsMinimumThreshold,
+          estimatedBatchFeeMinor,
+          estimatedTransferFeeMinor,
+          expectedNetMinor,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to preview batch' });
+    }
+  }
+);
+
+// ۴. ایجاد دسته برداشت در وضعیت پیش‌نویس (Create Draft Withdrawal Batch)
+router.post(
+  '/admin/platform-finance/batches',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const { platform, accountRef, currency = 'USD', orderContributions, notes } = req.body;
+
+      if (!platform || !['g2g', 'skycoach', 'eldorado'].includes(String(platform).toLowerCase())) {
+        res.status(400).json({ error: 'Valid platform (g2g, skycoach, eldorado) is required' });
+        return;
+      }
+
+      if (!Array.isArray(orderContributions) || orderContributions.length === 0) {
+        res.status(400).json({ error: 'Order contributions array is required' });
+        return;
+      }
+
+      const targetAccountRef = accountRef || `${platform.toLowerCase()}_main`;
+
+      const batch = await createDraftWithdrawalBatch({
+        platform: platform.toLowerCase() as ExternalPlatform,
+        accountRef: targetAccountRef,
+        currency,
+        orderContributions: orderContributions.map((c: any) => ({
+          orderId: Number(c.orderId),
+          contributionMinor: Number(c.contributionMinor),
+        })),
+        actorId: user.discordId,
+        notes: notes ? String(notes).trim() : undefined,
+      });
+
+      res.status(201).json({ success: true, batch });
+    } catch (err: any) {
+      const isAuthError = err.message?.startsWith('UNAUTHORIZED');
+      res.status(isAuthError ? 403 : 400).json({ error: err.message || 'Failed to create withdrawal batch' });
+    }
+  }
+);
+
+// ۵. دریافت فهرست دسته‌های برداشت با فیلتر (List Withdrawal Batches)
+router.get(
+  '/admin/platform-finance/batches',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const auth = await authorize(user.discordId, Permission.FINANCE_ADMIN_VIEW);
+      if (!auth.allowed) {
+        res.status(403).json({ error: auth.reason || 'Insufficient permissions' });
+        return;
+      }
+
+      const { platform, status } = req.query;
+
+      const where: any = {};
+      if (platform && typeof platform === 'string') {
+        where.platform = platform.toLowerCase();
+      }
+      if (status && typeof status === 'string') {
+        where.status = status.toLowerCase();
+      }
+
+      const batches = await prisma.platformWithdrawalBatch.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          allocations: {
+            select: {
+              id: true,
+              orderId: true,
+              contributionAmountMinor: true,
+              allocatedBatchFeeMinor: true,
+              allocatedTransferFeeMinor: true,
+              netContributionMinor: true,
+            },
+          },
+          reconciler: { select: { discordId: true, username: true } },
+        },
+      });
+
+      res.json({
+        success: true,
+        batches: batches.map((b) => ({
+          ...b,
+          orderCount: b.allocations.length,
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch withdrawal batches' });
+    }
+  }
+);
+
+// ۶. مشاهده جزئیات دسته و شفافیت تسهیم سهم بوسترها (Batch Details & Booster Allocation Visibility)
+router.get(
+  '/admin/platform-finance/batches/:id',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const auth = await authorize(user.discordId, Permission.FINANCE_ADMIN_VIEW);
+      if (!auth.allowed) {
+        res.status(403).json({ error: auth.reason || 'Insufficient permissions' });
+        return;
+      }
+
+      const batchId = Number(req.params.id);
+      if (isNaN(batchId) || batchId <= 0) {
+        res.status(400).json({ error: 'Invalid batch ID' });
+        return;
+      }
+
+      const batch = await prisma.platformWithdrawalBatch.findUnique({
+        where: { id: batchId },
+        include: {
+          allocations: {
+            include: {
+              order: {
+                include: {
+                  service: true,
+                  financialSnapshot: true,
+                  boosterPayoutAllocations: {
+                    include: { booster: { select: { discordId: true, username: true, displayName: true } } },
+                  },
+                  runs: {
+                    where: { status: 'completed' },
+                    include: {
+                      runAssignments: {
+                        include: { assignment: { include: { user: { select: { discordId: true, username: true } } } } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          transactions: { orderBy: { createdAt: 'desc' } },
+          reconciler: { select: { discordId: true, username: true } },
+        },
+      });
+
+      if (!batch) {
+        res.status(404).json({ error: `Withdrawal batch #${batchId} not found` });
+        return;
+      }
+
+      // تحلیل و ساختاردهی شفافیت سهم بوسترها (Booster Allocation Breakdown)
+      const orderBreakdown = batch.allocations.map((alloc) => {
+        const order = alloc.order;
+        const snap = order.financialSnapshot;
+        const serviceType = order.orderType; // solo | group | pilot
+        const isMythicPlus = (order.service?.serviceKey || '').includes('mythic') || order.orderType === 'group';
+
+        // استخراج بوسترهای شرکت‌کننده تاییدشده
+        const verifiedBoosterMap = new Map<string, string>();
+        for (const run of order.runs) {
+          for (const ra of run.runAssignments) {
+            if (ra.assignment?.user) {
+              verifiedBoosterMap.set(ra.assignment.user.discordId, ra.assignment.user.username);
+            }
+          }
+        }
+        for (const pa of order.boosterPayoutAllocations) {
+          if (pa.booster) {
+            verifiedBoosterMap.set(pa.booster.discordId, pa.booster.displayName || pa.booster.username);
+          }
+        }
+
+        const verifiedBoosters = Array.from(verifiedBoosterMap.entries()).map(([id, name]) => ({
+          discordId: id,
+          username: name,
+        }));
+
+        // تخصیص‌های ثبت‌شده واقعی
+        const recordedAllocations = order.boosterPayoutAllocations.map((pa) => ({
+          boosterId: pa.boosterId,
+          boosterName: pa.booster?.displayName || pa.booster?.username || pa.boosterId,
+          allocatedMinor: pa.allocatedMinor,
+          currency: pa.currency,
+          payoutRole: pa.payoutRole,
+        }));
+
+        // در صورت عدم ثبت نهایی، محاسبه سهم‌های پیش‌بینی‌شده با روش Largest Remainder
+        let projectedAllocations: any[] = [];
+        const poolMinor = snap?.boosterPoolMinor ?? Math.max(0, alloc.netContributionMinor - (snap?.g4xFeeMinor ?? 0));
+        if (recordedAllocations.length === 0 && verifiedBoosters.length > 0 && poolMinor > 0) {
+          const boosterIds = verifiedBoosters.map((b) => b.discordId);
+          const split = splitPoolEquallyWithRemainder(poolMinor, boosterIds);
+          projectedAllocations = split.map((s) => ({
+            boosterId: s.boosterId,
+            boosterName: verifiedBoosterMap.get(s.boosterId) || s.boosterId,
+            allocatedMinor: s.allocatedMinor,
+            currency: batch.currency,
+            payoutRole: boosterIds.length === 1 ? 'solo' : 'team_member',
+            isProjected: true,
+          }));
+        }
+
+        return {
+          orderId: order.id,
+          serviceName: order.service?.displayName || order.orderName,
+          serviceKey: order.service?.serviceKey,
+          serviceType,
+          isMythicPlus,
+          orderGrossMinor: order.grossAmountMinor,
+          platformDeductionMinor: snap?.platformSaleCommissionMinor ?? 0,
+          allocatedBatchFeeMinor: alloc.allocatedBatchFeeMinor,
+          allocatedTransferFeeMinor: alloc.allocatedTransferFeeMinor,
+          netContributionMinor: alloc.netContributionMinor,
+          boosterPoolAvailableMinor: poolMinor,
+          verifiedBoostersCount: verifiedBoosters.length,
+          verifiedBoosters,
+          recordedAllocations,
+          projectedAllocations: recordedAllocations.length > 0 ? [] : projectedAllocations,
+          isMythicPlusFourBoosterRuleMet: isMythicPlus ? verifiedBoosters.length === 4 : true,
+          allocationStatus: order.boosterPayoutAllocations.length > 0
+            ? 'finalized'
+            : batch.status === 'reconciled'
+            ? 'reconciled_pending_booster_split'
+            : 'provisional',
+        };
+      });
+
+      res.json({
+        success: true,
+        batch: {
+          ...batch,
+          orderBreakdown,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch batch details' });
+    }
+  }
+);
+
+// ۷. ثبت ارسال دستی درخواست برداشت در پلتفرم (Submit Batch)
+router.post(
+  '/admin/platform-finance/batches/:id/submit',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const batchId = Number(req.params.id);
+      if (isNaN(batchId) || batchId <= 0) {
+        res.status(400).json({ error: 'Invalid batch ID' });
+        return;
+      }
+
+      const { externalReceiptRef, notes } = req.body;
+
+      const updated = await submitWithdrawalBatch(
+        batchId,
+        user.discordId,
+        externalReceiptRef ? String(externalReceiptRef).trim() : undefined,
+        notes ? String(notes).trim() : undefined
+      );
+
+      res.json({ success: true, batch: updated });
+    } catch (err: any) {
+      const isAuthError = err.message?.startsWith('UNAUTHORIZED');
+      res.status(isAuthError ? 403 : 400).json({ error: err.message || 'Failed to submit batch' });
+    }
+  }
+);
+
+// ۸. ثبت شواهد و وصول واقعی وجوه (Record Batch Receipt & Evidence)
+router.post(
+  '/admin/platform-finance/batches/:id/record-receipt',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const batchId = Number(req.params.id);
+      if (isNaN(batchId) || batchId <= 0) {
+        res.status(400).json({ error: 'Invalid batch ID' });
+        return;
+      }
+
+      const {
+        actualReceivedMinor,
+        actualBatchFeeMinor,
+        actualTransferFeeMinor = 0,
+        destinationAccountRef,
+        safeEvidenceRef,
+        externalReceiptRef,
+        reviewNotes,
+      } = req.body;
+
+      if (!actualReceivedMinor || Number(actualReceivedMinor) <= 0) {
+        res.status(400).json({ error: 'Valid actualReceivedMinor (> 0) is required' });
+        return;
+      }
+
+      if (!destinationAccountRef || !String(destinationAccountRef).trim()) {
+        res.status(400).json({ error: 'Destination account reference is required' });
+        return;
+      }
+
+      if (!safeEvidenceRef || !String(safeEvidenceRef).trim()) {
+        res.status(400).json({ error: 'Safe transaction evidence reference (e.g. TXID / receipt) is required' });
+        return;
+      }
+
+      const updated = await recordBatchReceipt({
+        batchId,
+        actualReceivedMinor: Number(actualReceivedMinor),
+        actualBatchFeeMinor: Number(actualBatchFeeMinor || 0),
+        actualTransferFeeMinor: Number(actualTransferFeeMinor || 0),
+        destinationAccountRef: String(destinationAccountRef).trim(),
+        safeEvidenceRef: String(safeEvidenceRef).trim(),
+        externalReceiptRef: externalReceiptRef ? String(externalReceiptRef).trim() : undefined,
+        reviewNotes: reviewNotes ? String(reviewNotes).trim() : undefined,
+        actorId: user.discordId,
+      });
+
+      res.json({ success: true, batch: updated });
+    } catch (err: any) {
+      const isAuthError = err.message?.startsWith('UNAUTHORIZED');
+      res.status(isAuthError ? 403 : 400).json({ error: err.message || 'Failed to record receipt' });
+    }
+  }
+);
+
+// ۹. تسویه نهایی دسته و اعمال تسهیم قطعی هزینه‌ها (Reconcile Batch)
+router.post(
+  '/admin/platform-finance/batches/:id/reconcile',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const batchId = Number(req.params.id);
+      if (isNaN(batchId) || batchId <= 0) {
+        res.status(400).json({ error: 'Invalid batch ID' });
+        return;
+      }
+
+      const result = await reconcileWithdrawalBatch(batchId, user.discordId);
+
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      const isAuthError = err.message?.startsWith('UNAUTHORIZED');
+      res.status(isAuthError ? 403 : 400).json({ error: err.message || 'Failed to reconcile batch' });
+    }
+  }
+);
+
+// ۱۰. لغو ایمن دسته پیش‌نویس (Cancel Batch)
+router.post(
+  '/admin/platform-finance/batches/:id/cancel',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const batchId = Number(req.params.id);
+      if (isNaN(batchId) || batchId <= 0) {
+        res.status(400).json({ error: 'Invalid batch ID' });
+        return;
+      }
+
+      const { reason } = req.body;
+      if (!reason || String(reason).trim().length < 5) {
+        res.status(400).json({ error: 'A valid cancellation reason (minimum 5 characters) is required' });
+        return;
+      }
+
+      const cancelled = await cancelWithdrawalBatch(batchId, user.discordId, String(reason).trim());
+
+      res.json({ success: true, batch: cancelled });
+    } catch (err: any) {
+      const isAuthError = err.message?.startsWith('UNAUTHORIZED');
+      res.status(isAuthError ? 403 : 400).json({ error: err.message || 'Failed to cancel batch' });
+    }
+  }
+);
+
+// ۱۱. نهایی‌سازی تسهیم استخر بوسترها پس از تسویه دسته (Finalize Booster Allocations)
+router.post(
+  '/admin/platform-finance/orders/:orderId/finalize-allocations',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const orderId = Number(req.params.orderId);
+      if (isNaN(orderId) || orderId <= 0) {
+        res.status(400).json({ error: 'Invalid order ID' });
+        return;
+      }
+
+      const { participatingBoosterIds, serviceType } = req.body;
+
+      const result = await finalizeOrderFinancialsAndBoosterAllocation({
+        orderId,
+        actorId: user.discordId,
+        participatingBoosterIds: Array.isArray(participatingBoosterIds) ? participatingBoosterIds : undefined,
+        serviceType,
+      });
+
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      const isAuthError = err.message?.startsWith('UNAUTHORIZED');
+      res.status(isAuthError ? 403 : 400).json({ error: err.message || 'Failed to finalize booster allocations' });
+    }
+  }
+);
+
+// ۱۲. تاریخچه ممیزی مالی پلتفرم‌ها (Platform Finance Audit History)
+router.get(
+  '/admin/platform-finance/audit-history',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const auth = await authorize(user.discordId, Permission.FINANCE_ADMIN_VIEW);
+      if (!auth.allowed) {
+        res.status(403).json({ error: auth.reason || 'Insufficient permissions' });
+        return;
+      }
+
+      const logs = await prisma.auditLog.findMany({
+        where: {
+          OR: [
+            { entityType: { in: ['PlatformAccount', 'PlatformWithdrawalBatch', 'OrderWithdrawalAllocation', 'PlatformAccountTransaction'] } },
+            { action: { startsWith: 'PLATFORM_' } },
+            { action: { in: ['ORDER_FINANCIALS_FINALIZED', 'FINANCIAL_POLICY_UPDATE'] } },
+          ],
+        },
+        include: {
+          actor: { select: { discordId: true, username: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 50,
+      });
+
+      res.json({ success: true, history: logs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch audit history' });
+    }
+  }
+);

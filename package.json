@@ -40,7 +40,8 @@
     "test:payments": "ts-node src/test/payment_verification_and_nowpayments_suite.ts",
     "test:teams": "ts-node src/test/wow_character_and_premade_teams_suite.ts",
     "test:channels:private": "ts-node src/test/private_discord_order_channels_suite.ts",
-    "test:disputes": "ts-node src/test/order_disputes_and_proof_review_suite.ts"
+    "test:disputes": "ts-node src/test/order_disputes_and_proof_review_suite.ts",
+    "test:platform:dashboard": "ts-node src/test/admin_platform_finance_dashboard_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"

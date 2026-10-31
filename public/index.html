@@ -2170,6 +2170,45 @@
           <div id="admin-disputes-table"><div class="loading-spinner"></div> Loading disputes...</div>
         </div>
 
+        <!-- Platform Finance Section: G2G, SkyCoach & Eldorado -->
+        <div class="card" style="margin-bottom: 1.5rem;" id="admin-platform-finance-card">
+          <div class="card-title">
+            <span>Platform Finance (G2G, SkyCoach &amp; Eldorado)</span>
+            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <button class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;" onclick="loadAdminPlatformAudit()">Audit History</button>
+              <button class="btn btn-primary" style="padding: 0.35rem 0.75rem; font-size: 0.8rem;" onclick="openCreateBatchModal()">+ Create Batch</button>
+              <span class="badge badge-blue">Reconciliation Hub</span>
+            </div>
+          </div>
+
+          <div style="margin-bottom: 0.8rem; font-size: 0.82rem; color: var(--text-muted); background: var(--bg-surface); padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
+            <strong>Notice:</strong> Balances are derived from authoritative internal ledger entries and settled order snapshots. No simulated or live third-party platform API connections are fabricated. Real-time cash release remains disabled.
+          </div>
+
+          <!-- Platform Overview Comparison Grid -->
+          <div id="admin-platform-overview" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+            <div class="loading-spinner"></div> Loading platform finance balances...
+          </div>
+
+          <!-- Withdrawal Batches Section -->
+          <div style="border-top: 1px solid var(--border-color); padding-top: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+              <h4 style="margin: 0; font-size: 0.95rem; color: var(--text-main);">Platform Withdrawal Batches</h4>
+              <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <label style="font-size: 0.8rem; color: var(--text-muted);">Platform:</label>
+                <select id="platform-batch-filter" class="form-input" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onchange="loadAdminPlatformBatches()">
+                  <option value="">All Platforms</option>
+                  <option value="g2g">G2G</option>
+                  <option value="skycoach">SkyCoach</option>
+                  <option value="eldorado">Eldorado</option>
+                </select>
+                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" onclick="loadAdminPlatformBatches()">Refresh</button>
+              </div>
+            </div>
+            <div id="admin-platform-batches-table"><div class="loading-spinner"></div> Loading batches...</div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-title">
             <span>Gold Marketplace Trades Audit</span>
@@ -2205,6 +2244,7 @@
       loadAdminWithdrawals();
       loadAdminOrders();
       loadAdminDisputes();
+      loadAdminPlatformFinance();
       loadAdminTrades();
     }
 
@@ -2546,6 +2586,772 @@
           logs.map(l => `• ${new Date(l.createdAt).toLocaleTimeString()}: ${l.action} by ${l.actor ? l.actor.username : l.actorId || 'System'}`).join('\n')
         );
       } catch (err) { alert(err.message); }
+    }
+
+    // ─── PLATFORM FINANCE (G2G, SKYCOACH, ELDORADO) FRONTEND FUNCTIONS ────────
+    let cachedEligibleOrders = [];
+
+    async function loadAdminPlatformFinance() {
+      const overviewContainer = document.getElementById('admin-platform-overview');
+      if (!overviewContainer) return;
+
+      try {
+        const res = await fetch('/api/admin/platform-finance/overview', { credentials: 'include' });
+        const data = await res.json();
+        if (!res.ok) {
+          overviewContainer.innerHTML = `<span style="color: var(--accent-red); font-size: 0.9rem;">Failed to load overview: ${data.error || 'Unauthorized'}</span>`;
+          return;
+        }
+
+        const platforms = data.platforms || [];
+        if (platforms.length === 0) {
+          overviewContainer.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No platform accounts configured.</p>';
+          return;
+        }
+
+        overviewContainer.innerHTML = platforms.map(p => {
+          const eligibleUsd = (p.eligibleBalanceMinor / 100).toFixed(2);
+          const reportedUsd = (p.reportedExternalBalanceMinor / 100).toFixed(2);
+          const actualUsd = (p.confirmedActualFundsMinor / 100).toFixed(2);
+          const ledgerUsd = (p.internalUsdLedgerBalanceMinor / 100).toFixed(2);
+          const estProceedsUsd = (p.estimatedProceedsMinor / 100).toFixed(2);
+          const grossUsd = (p.grossRevenueMinor / 100).toFixed(2);
+          const feesUsd = (p.platformFeesChargedMinor / 100).toFixed(2);
+          const pendingReconUsd = (p.pendingReconciliationMinor / 100).toFixed(2);
+          const eligibleForBatchUsd = (p.eligibleForBatchMinor / 100).toFixed(2);
+          const minThreshUsd = (p.minWithdrawalThresholdMinor / 100).toFixed(2);
+
+          const isEligible = p.isEligibleForWithdrawal;
+          const statusBadge = isEligible
+            ? `<span class="badge badge-green">✅ Withdrawable</span>`
+            : `<span class="badge badge-amber">⏳ Below Threshold</span>`;
+
+          return `
+            <div style="background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 8px; padding: 1rem; display: flex; flex-direction: column; justify-content: space-between;">
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                  <div>
+                    <h3 style="margin: 0; font-size: 1.05rem; color: var(--text-main); font-weight: 700;">${p.displayName}</h3>
+                    <span style="font-size: 0.75rem; color: var(--text-muted); font-family: monospace;">Ref: ${p.accountRef} | Currency: ${p.currency}</span>
+                  </div>
+                  ${statusBadge}
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.75rem; background: rgba(0,0,0,0.15); padding: 0.6rem; border-radius: 6px;">
+                  <div>
+                    <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Reported Platform Bal.</div>
+                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--text-main);">$${reportedUsd}</div>
+                  </div>
+                  <div>
+                    <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Confirmed Actual Cash</div>
+                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--accent-green);">$${actualUsd}</div>
+                  </div>
+                  <div>
+                    <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Internal USD Ledger</div>
+                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--text-main);">$${ledgerUsd}</div>
+                  </div>
+                  <div>
+                    <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Est. Net Proceeds</div>
+                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--accent-blue);">$${estProceedsUsd}</div>
+                  </div>
+                </div>
+
+                <div style="margin-top: 0.75rem; font-size: 0.8rem; display: flex; flex-direction: column; gap: 0.25rem;">
+                  <div style="display: flex; justify-content: space-between;">
+                    <span style="color: var(--text-muted);">Gross Revenue:</span>
+                    <strong>$${grossUsd}</strong>
+                  </div>
+                  <div style="display: flex; justify-content: space-between;">
+                    <span style="color: var(--text-muted);">Platform Fees Charged:</span>
+                    <strong style="color: var(--accent-amber);">$${feesUsd}</strong>
+                  </div>
+                  <div style="display: flex; justify-content: space-between;">
+                    <span style="color: var(--text-muted);">Pending Reconciliation:</span>
+                    <strong>$${pendingReconUsd}</strong>
+                  </div>
+                  <div style="display: flex; justify-content: space-between;">
+                    <span style="color: var(--text-muted);">Eligible for Batch:</span>
+                    <strong style="color: var(--accent-green);">$${eligibleForBatchUsd}</strong>
+                  </div>
+                  <div style="display: flex; justify-content: space-between;">
+                    <span style="color: var(--text-muted);">Min. Withdrawal Threshold:</span>
+                    <span>$${minThreshUsd}</span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between;">
+                    <span style="color: var(--text-muted);">Batches:</span>
+                    <span>Pending: <strong>${p.pendingBatchesCount}</strong> | Reconciled: <strong>${p.reconciledBatchesCount}</strong></span>
+                  </div>
+                </div>
+
+                ${p.warnings && p.warnings.length > 0 ? `
+                  <div style="margin-top: 0.6rem; padding: 0.4rem 0.6rem; background: rgba(245, 158, 11, 0.1); border-left: 3px solid var(--accent-amber); border-radius: 4px; font-size: 0.75rem; color: var(--accent-amber);">
+                    ${p.warnings.map(w => `<div>⚠️ ${w}</div>`).join('')}
+                  </div>
+                ` : ''}
+              </div>
+
+              <div style="margin-top: 0.8rem; pt: 0.5rem; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 0.7rem; color: var(--text-muted);">API: <code>Offline / Manual</code></span>
+                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="openCreateBatchModal('${p.platform}')">Batch Orders</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        loadAdminPlatformBatches();
+      } catch (err) {
+        overviewContainer.innerHTML = `<span style="color: var(--accent-red);">Failed to load platform finance: ${err.message}</span>`;
+      }
+    }
+
+    async function loadAdminPlatformBatches() {
+      const container = document.getElementById('admin-platform-batches-table');
+      if (!container) return;
+
+      const platformFilter = document.getElementById('platform-batch-filter')?.value || '';
+      try {
+        const url = `/api/admin/platform-finance/batches${platformFilter ? `?platform=${platformFilter}` : ''}`;
+        const res = await fetch(url, { credentials: 'include' });
+        const data = await res.json();
+        const batches = data.batches || [];
+
+        if (batches.length === 0) {
+          container.innerHTML = '<p style="color: var(--text-muted); font-size: 0.9rem;">No platform withdrawal batches found.</p>';
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Batch Ref</th>
+                  <th>Platform</th>
+                  <th>Orders</th>
+                  <th>Total Gross ($)</th>
+                  <th>Actual Fees ($)</th>
+                  <th>Net Received ($)</th>
+                  <th>Status</th>
+                  <th>Created Date</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${batches.map(b => {
+                  const grossUsd = (b.totalContributionsMinor / 100).toFixed(2);
+                  const feesUsd = ((b.actualBatchFeeMinor + b.actualTransferFeeMinor) / 100).toFixed(2);
+                  const netUsd = ((b.actualReceivedMinor ?? b.netReceivedMinor) / 100).toFixed(2);
+
+                  let statusBadge = `<span class="badge">${b.status}</span>`;
+                  if (b.status === 'reconciled') statusBadge = `<span class="badge badge-green">Reconciled</span>`;
+                  else if (b.status === 'received') statusBadge = `<span class="badge badge-blue">Funds Received</span>`;
+                  else if (b.status === 'submitted') statusBadge = `<span class="badge badge-purple">Submitted Ext.</span>`;
+                  else if (b.status === 'draft') statusBadge = `<span class="badge badge-amber">Draft</span>`;
+                  else if (b.status === 'ready') statusBadge = `<span class="badge badge-blue">Ready</span>`;
+                  else if (b.status === 'review_required') statusBadge = `<span class="badge badge-red">Review Required</span>`;
+                  else if (b.status === 'cancelled') statusBadge = `<span class="badge" style="opacity: 0.6;">Cancelled</span>`;
+
+                  return `
+                    <tr>
+                      <td>
+                        <strong style="font-family: monospace; font-size: 0.85rem;">${b.batchRef}</strong>
+                        ${b.accountRef ? `<div style="font-size: 0.75rem; color: var(--text-muted);">${b.accountRef}</div>` : ''}
+                      </td>
+                      <td><span class="badge" style="text-transform: uppercase;">${b.platform}</span></td>
+                      <td><strong>${b.orderCount}</strong></td>
+                      <td>$${grossUsd}</td>
+                      <td style="color: var(--accent-amber);">$${feesUsd}</td>
+                      <td style="font-weight: 700; color: ${b.status === 'reconciled' ? 'var(--accent-green)' : 'var(--text-main)'};">$${netUsd}</td>
+                      <td>${statusBadge}</td>
+                      <td style="font-size: 0.8rem; color: var(--text-muted);">${new Date(b.createdAt).toLocaleDateString()}</td>
+                      <td style="display: flex; gap: 0.3rem; flex-wrap: wrap;">
+                        <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="viewBatchDetails(${b.id})">Details</button>
+                        ${['draft', 'ready'].includes(b.status) ? `
+                          <button class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="adminSubmitBatch(${b.id})">Submit</button>
+                          <button class="btn btn-danger" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="adminCancelBatch(${b.id})">Cancel</button>
+                        ` : ''}
+                        ${['submitted', 'processing', 'review_required'].includes(b.status) ? `
+                          <button class="btn btn-success" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="openManualReconciliationModal(${b.id})">Record Receipt</button>
+                        ` : ''}
+                        ${b.status === 'received' ? `
+                          <button class="btn btn-success" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="adminReconcileBatch(${b.id})">Reconcile</button>
+                        ` : ''}
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      } catch (err) {
+        container.innerHTML = `<span style="color: var(--accent-red);">Failed to load withdrawal batches: ${err.message}</span>`;
+      }
+    }
+
+    // باز کردن مودال ایجاد دسته برداشت با پیش‌نمایش و اعتبارسنجی حداقل‌ها
+    async function openCreateBatchModal(defaultPlatform = 'g2g') {
+      const modal = document.getElementById('admin-rank-modal-container');
+      if (!modal) return;
+
+      modal.innerHTML = `
+        <div class="modal-backdrop" onclick="closeAdminModal()">
+          <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation()">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <h3 style="margin: 0; font-size: 1.15rem;">Create Platform Withdrawal Batch</h3>
+              <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem;" onclick="closeAdminModal()">✕</button>
+            </div>
+
+            <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center;">
+              <label style="font-weight: 700; font-size: 0.85rem;">Platform:</label>
+              <select id="create-batch-platform-select" class="form-input" style="padding: 0.35rem 0.6rem; max-width: 200px;" onchange="loadEligibleOrdersForModal(this.value)">
+                <option value="g2g" ${defaultPlatform === 'g2g' ? 'selected' : ''}>G2G ($10 Min)</option>
+                <option value="skycoach" ${defaultPlatform === 'skycoach' ? 'selected' : ''}>SkyCoach ($50 Min)</option>
+                <option value="eldorado" ${defaultPlatform === 'eldorado' ? 'selected' : ''}>Eldorado ($200 Min)</option>
+              </select>
+            </div>
+
+            <div id="eligible-orders-modal-list">
+              <div class="loading-spinner"></div> Loading eligible orders...
+            </div>
+
+            <div id="batch-preview-container" style="margin-top: 1rem; padding: 0.8rem; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; display: none;">
+              <h4 style="margin: 0 0 0.5rem 0; font-size: 0.9rem;">Batch Fee &amp; Net Proceeds Preview</h4>
+              <div id="batch-preview-content" style="font-size: 0.85rem;"></div>
+            </div>
+
+            <div style="margin-top: 1rem; display: flex; justify-content: flex-end; gap: 0.5rem;">
+              <button class="btn btn-secondary" onclick="closeAdminModal()">Cancel</button>
+              <button id="btn-submit-draft-batch" class="btn btn-primary" onclick="submitCreateDraftBatch()" disabled>Create Draft Batch</button>
+            </div>
+          </div>
+        </div>
+      `;
+
+      loadEligibleOrdersForModal(defaultPlatform);
+    }
+
+    async function loadEligibleOrdersForModal(platform) {
+      const container = document.getElementById('eligible-orders-modal-list');
+      if (!container) return;
+      container.innerHTML = '<div class="loading-spinner"></div> Loading eligible settled orders...';
+
+      try {
+        const res = await fetch(`/api/admin/platform-finance/eligible-orders?platform=${platform}`, { credentials: 'include' });
+        const data = await res.json();
+        cachedEligibleOrders = data.orders || [];
+
+        if (cachedEligibleOrders.length === 0) {
+          container.innerHTML = `<p style="color: var(--text-muted); font-size: 0.9rem;">No eligible settled orders available for ${platform.toUpperCase()}.</p>`;
+          document.getElementById('batch-preview-container').style.display = 'none';
+          document.getElementById('btn-submit-draft-batch').disabled = true;
+          return;
+        }
+
+        container.innerHTML = `
+          <div class="table-container" style="max-height: 280px; overflow-y: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width: 40px;"><input type="checkbox" id="select-all-eligible" onchange="toggleSelectAllEligibleOrders(this.checked)" /></th>
+                  <th>Order ID</th>
+                  <th>Service</th>
+                  <th>Gross ($)</th>
+                  <th>Platform Net ($)</th>
+                  <th>Available ($)</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${cachedEligibleOrders.map(o => `
+                  <tr>
+                    <td>
+                      <input type="checkbox" class="eligible-order-checkbox" value="${o.orderId}" data-amount="${o.allocatableMinor}" onchange="updateBatchCreationPreview()" />
+                    </td>
+                    <td><code>#${o.orderId}</code></td>
+                    <td>
+                      <strong>${o.serviceName}</strong>
+                      <div style="font-size: 0.75rem; color: var(--text-muted);">${o.gameName}</div>
+                    </td>
+                    <td>$${(o.grossAmountMinor / 100).toFixed(2)}</td>
+                    <td>$${(o.platformOrderNetMinor / 100).toFixed(2)}</td>
+                    <td style="font-weight: 700; color: var(--accent-green);">$${(o.allocatableMinor / 100).toFixed(2)}</td>
+                    <td><span class="badge badge-blue">${o.calculationStatus}</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+
+        updateBatchCreationPreview();
+      } catch (err) {
+        container.innerHTML = `<span style="color: var(--accent-red);">Failed to load orders: ${err.message}</span>`;
+      }
+    }
+
+    function toggleSelectAllEligibleOrders(checked) {
+      const checkboxes = document.querySelectorAll('.eligible-order-checkbox');
+      checkboxes.forEach(cb => cb.checked = checked);
+      updateBatchCreationPreview();
+    }
+
+    async function updateBatchCreationPreview() {
+      const platform = document.getElementById('create-batch-platform-select')?.value || 'g2g';
+      const checkboxes = document.querySelectorAll('.eligible-order-checkbox:checked');
+      const previewContainer = document.getElementById('batch-preview-container');
+      const previewContent = document.getElementById('batch-preview-content');
+      const submitBtn = document.getElementById('btn-submit-draft-batch');
+
+      if (!checkboxes || checkboxes.length === 0) {
+        if (previewContainer) previewContainer.style.display = 'none';
+        if (submitBtn) submitBtn.disabled = true;
+        return;
+      }
+
+      const orderContributions = [];
+      checkboxes.forEach(cb => {
+        orderContributions.push({
+          orderId: Number(cb.value),
+          contributionMinor: Number(cb.dataset.amount),
+        });
+      });
+
+      try {
+        const res = await fetch('/api/admin/platform-finance/batches/preview', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ platform, orderContributions }),
+        });
+        const data = await res.json();
+        if (!res.ok) return;
+
+        const p = data.preview;
+        previewContainer.style.display = 'block';
+
+        const totalUsd = (p.totalContributionsMinor / 100).toFixed(2);
+        const batchFeeUsd = (p.estimatedBatchFeeMinor / 100).toFixed(2);
+        const transferFeeUsd = (p.estimatedTransferFeeMinor / 100).toFixed(2);
+        const netUsd = (p.expectedNetMinor / 100).toFixed(2);
+        const minThreshUsd = (p.minThresholdMinor / 100).toFixed(2);
+
+        previewContent.innerHTML = `
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.5rem; margin-bottom: 0.5rem;">
+            <div><strong>Selected Orders:</strong> ${p.orderCount}</div>
+            <div><strong>Total Gross:</strong> $${totalUsd}</div>
+            <div><strong>Batch Fee:</strong> $${batchFeeUsd}</div>
+            <div><strong>Transfer Cost:</strong> $${transferFeeUsd}</div>
+            <div><strong>Expected Net:</strong> <span style="font-weight: 700; color: var(--accent-green);">$${netUsd}</span></div>
+          </div>
+          <div style="margin-top: 0.3rem;">
+            ${p.meetsMinimumThreshold ? `
+              <span class="badge badge-green">✅ Meets Minimum Threshold ($${minThreshUsd})</span>
+            ` : `
+              <span class="badge badge-amber">⚠️ Below Platform Minimum of $${minThreshUsd} (Cannot Submit until satisfied)</span>
+            `}
+          </div>
+        `;
+
+        if (submitBtn) {
+          submitBtn.disabled = false;
+        }
+      } catch (err) {
+        console.error('Preview error:', err);
+      }
+    }
+
+    async function submitCreateDraftBatch() {
+      const platform = document.getElementById('create-batch-platform-select')?.value || 'g2g';
+      const checkboxes = document.querySelectorAll('.eligible-order-checkbox:checked');
+      if (checkboxes.length === 0) return alert('Select at least one order');
+
+      const orderContributions = [];
+      checkboxes.forEach(cb => {
+        orderContributions.push({
+          orderId: Number(cb.value),
+          contributionMinor: Number(cb.dataset.amount),
+        });
+      });
+
+      try {
+        const res = await fetch('/api/admin/platform-finance/batches', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({
+            platform,
+            accountRef: `${platform}_main`,
+            currency: 'USD',
+            orderContributions,
+            notes: 'Batch created via Admin Platform Finance Dashboard',
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Failed to create draft batch');
+
+        alert(`Batch ${data.batch.batchRef} created successfully in draft status.`);
+        closeAdminModal();
+        loadAdminPlatformFinance();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    // مشاهده جزئیات کامل دسته و شفافیت سهم بوسترها
+    async function viewBatchDetails(batchId) {
+      const modal = document.getElementById('admin-rank-modal-container');
+      if (!modal) return;
+
+      try {
+        const res = await fetch(`/api/admin/platform-finance/batches/${batchId}`, { credentials: 'include' });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Failed to load batch details');
+
+        const b = data.batch;
+        const grossUsd = (b.totalContributionsMinor / 100).toFixed(2);
+        const batchFeeUsd = (b.actualBatchFeeMinor / 100).toFixed(2);
+        const transferFeeUsd = (b.actualTransferFeeMinor / 100).toFixed(2);
+        const netUsd = ((b.actualReceivedMinor ?? b.netReceivedMinor) / 100).toFixed(2);
+
+        modal.innerHTML = `
+          <div class="modal-backdrop" onclick="closeAdminModal()">
+            <div class="modal-content" style="max-width: 900px; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation()">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <div>
+                  <h3 style="margin: 0; font-size: 1.15rem;">Batch Details: <code>${b.batchRef}</code></h3>
+                  <div style="font-size: 0.8rem; color: var(--text-muted);">Platform: <strong>${b.platform.toUpperCase()}</strong> | Status: <strong>${b.status}</strong></div>
+                </div>
+                <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem;" onclick="closeAdminModal()">✕</button>
+              </div>
+
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.5rem; background: var(--bg-surface); padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; border: 1px solid var(--border-color);">
+                <div><span style="font-size: 0.75rem; color: var(--text-muted);">Total Gross:</span><div style="font-weight: 700;">$${grossUsd}</div></div>
+                <div><span style="font-size: 0.75rem; color: var(--text-muted);">Batch Fee:</span><div style="font-weight: 700; color: var(--accent-amber);">$${batchFeeUsd}</div></div>
+                <div><span style="font-size: 0.75rem; color: var(--text-muted);">Transfer Fee:</span><div style="font-weight: 700; color: var(--accent-amber);">$${transferFeeUsd}</div></div>
+                <div><span style="font-size: 0.75rem; color: var(--text-muted);">Net Received:</span><div style="font-weight: 700; color: var(--accent-green);">$${netUsd}</div></div>
+                <div><span style="font-size: 0.75rem; color: var(--text-muted);">Destination:</span><div style="font-size: 0.85rem;">${b.destinationAccountRef || 'N/A'}</div></div>
+                <div><span style="font-size: 0.75rem; color: var(--text-muted);">Evidence Ref:</span><div style="font-size: 0.85rem; font-family: monospace;">${b.safeEvidenceRef || 'Pending'}</div></div>
+              </div>
+
+              ${b.failureReason ? `
+                <div style="margin-bottom: 1rem; padding: 0.5rem; background: rgba(239, 68, 68, 0.1); border-left: 3px solid var(--accent-red); font-size: 0.85rem; color: var(--accent-red);">
+                  <strong>Discrepancy / Review Reason:</strong> ${b.failureReason}
+                </div>
+              ` : ''}
+
+              <h4 style="margin: 0.5rem 0; font-size: 0.95rem;">Included Orders &amp; Booster Allocation Visibility</h4>
+              <div class="table-container" style="margin-bottom: 1rem;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Order</th>
+                      <th>Service / Mode</th>
+                      <th>Gross ($)</th>
+                      <th>Platform Fee ($)</th>
+                      <th>Allocated Fees ($)</th>
+                      <th>Net ($)</th>
+                      <th>Booster Pool ($)</th>
+                      <th>Verified Boosters &amp; Split</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${(b.orderBreakdown || []).map(o => {
+                      const oGross = (o.orderGrossMinor / 100).toFixed(2);
+                      const oPlatFee = (o.platformDeductionMinor / 100).toFixed(2);
+                      const oAllocFee = ((o.allocatedBatchFeeMinor + o.allocatedTransferFeeMinor) / 100).toFixed(2);
+                      const oNet = (o.netContributionMinor / 100).toFixed(2);
+                      const oPool = (o.boosterPoolAvailableMinor / 100).toFixed(2);
+
+                      const splits = o.recordedAllocations.length > 0 ? o.recordedAllocations : o.projectedAllocations;
+
+                      return `
+                        <tr>
+                          <td><strong>#${o.orderId}</strong></td>
+                          <td>
+                            ${o.serviceName}
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">${o.serviceType}</div>
+                          </td>
+                          <td>$${oGross}</td>
+                          <td style="color: var(--accent-amber);">$${oPlatFee}</td>
+                          <td style="color: var(--accent-amber);">$${oAllocFee}</td>
+                          <td>$${oNet}</td>
+                          <td style="font-weight: 700; color: var(--accent-green);">$${oPool}</td>
+                          <td style="font-size: 0.8rem;">
+                            ${o.isMythicPlus ? `
+                              <div style="margin-bottom: 0.2rem;">
+                                ${o.isMythicPlusFourBoosterRuleMet ? `
+                                  <span class="badge badge-green" style="font-size: 0.7rem;">Mythic+ (4 Boosters Split)</span>
+                                ` : `
+                                  <span class="badge badge-amber" style="font-size: 0.7rem;">Mythic+ (${o.verifiedBoostersCount}/4 Boosters)</span>
+                                `}
+                              </div>
+                            ` : ''}
+                            ${splits.map(s => `
+                              <div>• <strong>${s.boosterName}</strong>: $${(s.allocatedMinor / 100).toFixed(2)} ${s.isProjected ? '<em style="color: var(--text-muted);">(Proj)</em>' : ''}</div>
+                            `).join('')}
+                            ${splits.length === 0 ? '<span style="color: var(--text-muted);">No verified boosters attached yet</span>' : ''}
+                          </td>
+                          <td>
+                            <span class="badge ${o.allocationStatus === 'finalized' ? 'badge-green' : (o.allocationStatus === 'reconciled_pending_booster_split' ? 'badge-blue' : 'badge-amber')}">
+                              ${o.allocationStatus}
+                            </span>
+                            ${(b.status === 'reconciled' && o.allocationStatus !== 'finalized') ? `
+                              <button class="btn btn-primary" style="padding: 0.2rem 0.4rem; font-size: 0.7rem; margin-top: 0.3rem;" onclick="adminFinalizeBoosterAllocations(${o.orderId}, ${b.id})">Finalize Split</button>
+                            ` : ''}
+                          </td>
+                        </tr>
+                      `;
+                    }).join('')}
+                  </tbody>
+                </table>
+              </div>
+
+              <div style="display: flex; justify-content: flex-end;">
+                <button class="btn btn-secondary" onclick="closeAdminModal()">Close</button>
+              </div>
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    // باز کردن فرم ثبت وصول واقعی وجوه و تطبیق کارمزدها
+    function openManualReconciliationModal(batchId) {
+      const modal = document.getElementById('admin-rank-modal-container');
+      if (!modal) return;
+
+      modal.innerHTML = `
+        <div class="modal-backdrop" onclick="closeAdminModal()">
+          <div class="modal-content" style="max-width: 550px;" onclick="event.stopPropagation()">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <h3 style="margin: 0; font-size: 1.15rem;">Record Actual Batch Receipt</h3>
+              <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem;" onclick="closeAdminModal()">✕</button>
+            </div>
+
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+              Enter confirmed settlement figures and verifiable transaction evidence (Management Attestation).
+            </p>
+
+            <div style="display: flex; flex-direction: column; gap: 0.75rem;">
+              <div>
+                <label style="font-size: 0.85rem; font-weight: 700;">Actual Received Amount ($): *</label>
+                <input id="rec-actual-received" type="number" step="0.01" class="form-input" placeholder="e.g. 95.50" style="width: 100%;" />
+              </div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem;">
+                <div>
+                  <label style="font-size: 0.85rem; font-weight: 700;">Actual Batch Fee ($):</label>
+                  <input id="rec-batch-fee" type="number" step="0.01" class="form-input" placeholder="0.00" style="width: 100%;" />
+                </div>
+                <div>
+                  <label style="font-size: 0.85rem; font-weight: 700;">Actual Transfer Fee ($):</label>
+                  <input id="rec-transfer-fee" type="number" step="0.01" class="form-input" placeholder="0.00" style="width: 100%;" />
+                </div>
+              </div>
+              <div>
+                <label style="font-size: 0.85rem; font-weight: 700;">Destination Account Reference: *</label>
+                <input id="rec-dest-account" type="text" class="form-input" placeholder="e.g. Toobit_USDT_Main" style="width: 100%;" />
+              </div>
+              <div>
+                <label style="font-size: 0.85rem; font-weight: 700;">Safe Evidence Reference (TXID / Receipt): *</label>
+                <input id="rec-evidence-ref" type="text" class="form-input" placeholder="e.g. TXID_0x7b4a... or Receipt #12345" style="width: 100%;" />
+              </div>
+              <div>
+                <label style="font-size: 0.85rem;">External Receipt Reference:</label>
+                <input id="rec-external-ref" type="text" class="form-input" placeholder="e.g. G2G_PAYOUT_REF_99" style="width: 100%;" />
+              </div>
+              <div>
+                <label style="font-size: 0.85rem;">Review Notes:</label>
+                <input id="rec-notes" type="text" class="form-input" placeholder="Optional notes" style="width: 100%;" />
+              </div>
+            </div>
+
+            <div style="margin-top: 1.2rem; display: flex; justify-content: flex-end; gap: 0.5rem;">
+              <button class="btn btn-secondary" onclick="closeAdminModal()">Cancel</button>
+              <button class="btn btn-success" onclick="submitRecordReceipt(${batchId})">Confirm &amp; Record Receipt</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    async function submitRecordReceipt(batchId) {
+      const receivedVal = parseFloat(document.getElementById('rec-actual-received')?.value || '0');
+      const batchFeeVal = parseFloat(document.getElementById('rec-batch-fee')?.value || '0');
+      const transferFeeVal = parseFloat(document.getElementById('rec-transfer-fee')?.value || '0');
+      const destAccount = document.getElementById('rec-dest-account')?.value?.trim();
+      const evidenceRef = document.getElementById('rec-evidence-ref')?.value?.trim();
+      const externalRef = document.getElementById('rec-external-ref')?.value?.trim();
+      const notes = document.getElementById('rec-notes')?.value?.trim();
+
+      if (isNaN(receivedVal) || receivedVal <= 0) return alert('Enter a valid received amount > 0');
+      if (!destAccount) return alert('Destination account reference is required');
+      if (!evidenceRef) return alert('Safe evidence reference (TXID/Receipt) is required');
+
+      try {
+        const res = await fetch(`/api/admin/platform-finance/batches/${batchId}/record-receipt`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({
+            actualReceivedMinor: Math.round(receivedVal * 100),
+            actualBatchFeeMinor: Math.round(batchFeeVal * 100),
+            actualTransferFeeMinor: Math.round(transferFeeVal * 100),
+            destinationAccountRef: destAccount,
+            safeEvidenceRef: evidenceRef,
+            externalReceiptRef: externalRef,
+            reviewNotes: notes,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Failed to record receipt');
+
+        alert(`Receipt confirmed for batch ${data.batch.batchRef}. Status: ${data.batch.status}`);
+        closeAdminModal();
+        loadAdminPlatformFinance();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function adminSubmitBatch(batchId) {
+      const externalRef = prompt('Enter external platform withdrawal reference (e.g. G2G_WDR_12345):');
+      if (externalRef === null) return;
+
+      try {
+        const res = await fetch(`/api/admin/platform-finance/batches/${batchId}/submit`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ externalReceiptRef: externalRef.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Failed to submit batch');
+
+        alert('Batch marked as submitted on platform.');
+        loadAdminPlatformFinance();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function adminReconcileBatch(batchId) {
+      if (!confirm('Reconcile this batch? This will authoritatively allocate verified fees to constituent orders.')) return;
+
+      try {
+        const res = await fetch(`/api/admin/platform-finance/batches/${batchId}/reconcile`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Failed to reconcile batch');
+
+        alert(`Batch reconciled successfully.`);
+        loadAdminPlatformFinance();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function adminCancelBatch(batchId) {
+      const reason = prompt('Enter mandatory cancellation reason (minimum 5 characters):');
+      if (!reason || reason.trim().length < 5) return alert('Valid cancellation reason required');
+
+      try {
+        const res = await fetch(`/api/admin/platform-finance/batches/${batchId}/cancel`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ reason: reason.trim() }),
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Failed to cancel batch');
+
+        alert('Batch cancelled safely and reserved funds restored.');
+        loadAdminPlatformFinance();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function adminFinalizeBoosterAllocations(orderId, batchId) {
+      if (!confirm(`Finalize booster allocations for order #${orderId}?`)) return;
+
+      try {
+        const res = await fetch(`/api/admin/platform-finance/orders/${orderId}/finalize-allocations`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+        });
+        const data = await res.json();
+        if (!res.ok) return alert(data.error || 'Failed to finalize booster allocations');
+
+        alert(`Order #${orderId} booster allocations finalized successfully.`);
+        viewBatchDetails(batchId);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function loadAdminPlatformAudit() {
+      const modal = document.getElementById('admin-rank-modal-container');
+      if (!modal) return;
+
+      try {
+        const res = await fetch('/api/admin/platform-finance/audit-history', { credentials: 'include' });
+        const data = await res.json();
+        const logs = data.history || [];
+
+        modal.innerHTML = `
+          <div class="modal-backdrop" onclick="closeAdminModal()">
+            <div class="modal-content" style="max-width: 800px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation()">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 style="margin: 0; font-size: 1.15rem;">Platform Finance Audit Trail</h3>
+                <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem;" onclick="closeAdminModal()">✕</button>
+              </div>
+
+              ${logs.length === 0 ? '<p style="color: var(--text-muted);">No audit logs recorded yet.</p>' : `
+                <div class="table-container">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Action</th>
+                        <th>Entity</th>
+                        <th>Actor</th>
+                        <th>Reason / Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      ${logs.map(l => `
+                        <tr>
+                          <td style="font-size: 0.8rem; color: var(--text-muted);">${new Date(l.createdAt).toLocaleString()}</td>
+                          <td><span class="badge badge-blue">${l.action}</span></td>
+                          <td><code>${l.entityType} #${l.entityId}</code></td>
+                          <td>${l.actor ? l.actor.username : l.actorId}</td>
+                          <td style="font-size: 0.85rem;">${l.reason || '-'}</td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+              `}
+
+              <div style="margin-top: 1rem; display: flex; justify-content: flex-end;">
+                <button class="btn btn-secondary" onclick="closeAdminModal()">Close</button>
+              </div>
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        alert(err.message);
+      }
     }
 
     async function loadAdminTrades() {
