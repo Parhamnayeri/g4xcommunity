@@ -288,50 +288,6 @@ router.get('/auth/callback', async (req: Request, res: Response): Promise<void> 
   }
 });
 
-// ─── ورود امن محیط استیجینگ (فقط در حالت STAGING_TEST_AUTH فعال است) ─────────
-if (process.env.STAGING_TEST_AUTH === 'true' || process.env.NODE_ENV === 'staging') {
-  router.get('/auth/staging-login', async (req: Request, res: Response): Promise<void> => {
-    const discordId = String(req.query.discordId || 'test_admin_staging');
-    const username = String(req.query.username || 'Staging Admin');
-    const role = String(req.query.role || 'admin');
-
-    await prisma.user.upsert({
-      where: { discordId },
-      update: { isActive: true },
-      create: { discordId, username, displayName: username },
-    });
-
-    await prisma.role.upsert({
-      where: { roleKey: role },
-      update: {},
-      create: { roleKey: role, name: role.toUpperCase() },
-    });
-
-    await prisma.userRole.upsert({
-      where: { userId_roleKey: { userId: discordId, roleKey: role } },
-      update: {},
-      create: { userId: discordId, roleKey: role },
-    });
-
-    await prisma.wallet.upsert({
-      where: { userId: discordId },
-      update: {},
-      create: { userId: discordId },
-    });
-
-    await getOrCreateWalletV2(discordId);
-
-    if (req.session) {
-      req.session.userId = discordId;
-      req.session.csrfToken = crypto.randomBytes(32).toString('hex');
-      req.session.save(() => {
-        res.redirect('/');
-      });
-    } else {
-      res.redirect('/');
-    }
-  });
-}
 
 
 // ─── خروج از حساب (Logout) با باطل‌سازی سشن و پاک‌سازی کوکی ─────────────────
