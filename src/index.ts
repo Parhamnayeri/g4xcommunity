@@ -84,7 +84,12 @@ client.on('interactionCreate', async (interaction) => {
     } else if (interaction.isModalSubmit()) {
       await handleModalSubmit(interaction);
     } else if (interaction.isStringSelectMenu()) {
-      await handleRegistrationSelectMenu(interaction);
+      if (interaction.customId.startsWith('ord_wiz:')) {
+        const { handleOrderWizardSelectMenu } = await import('./interactions/orderWizardInteractions');
+        await handleOrderWizardSelectMenu(interaction);
+      } else {
+        await handleRegistrationSelectMenu(interaction);
+      }
     }
   } catch (error) {
     console.error(`[Interaction] Error handling interaction:`, error);

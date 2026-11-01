@@ -35,7 +35,7 @@ import {
 } from '../services/advertiserRankService';
 
 export type OrderPanelCategory = 'g4x' | 'adv';
-export type OrderPanelType = 'mythic' | 'non_pilot' | 'pilot';
+export type OrderPanelType = 'mythic' | 'non_pilot' | 'pilot' | 'wizard';
 
 // ─── ۱. ساخت Embed های اختصاصی هر پنل (Panel Embeds) ────────────────────────
 
@@ -439,7 +439,13 @@ export async function handleOrderPanelButton(interaction: ButtonInteraction): Pr
     return;
   }
 
-  // ۲. نمایش مودال متناسب با نوع پنل
+  // ۲. نمایش ویزارد یا مودال متناسب با نوع پنل
+  if (panelType === 'wizard' || !panelType) {
+    const { startOrderWizard } = await import('./orderWizardInteractions');
+    await startOrderWizard(interaction, category);
+    return;
+  }
+
   if (panelType === 'mythic') {
     const modal = buildMythicOrderModal(category);
     await interaction.showModal(modal);

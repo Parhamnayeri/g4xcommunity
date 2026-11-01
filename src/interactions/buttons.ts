@@ -26,7 +26,26 @@ import {
 export async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
   const [action, ...params] = interaction.customId.split(':');
 
+  if (action === 'ord_wiz') {
+    const subAction = params[0];
+    if (subAction === 'start') {
+      const origin = params[1] as 'g4x' | 'adv';
+      const { startOrderWizard } = await import('./orderWizardInteractions');
+      await startOrderWizard(interaction, origin);
+      return;
+    }
+    const { handleOrderWizardButton } = await import('./orderWizardInteractions');
+    await handleOrderWizardButton(interaction);
+    return;
+  }
+
   if (action === 'ord_create') {
+    if (params.length === 1 || params[1] === 'wizard') {
+      const origin = params[0] as 'g4x' | 'adv';
+      const { startOrderWizard } = await import('./orderWizardInteractions');
+      await startOrderWizard(interaction, origin);
+      return;
+    }
     await handleOrderPanelButton(interaction);
     return;
   }

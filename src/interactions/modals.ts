@@ -15,6 +15,12 @@ import { handleOrderPanelModalSubmit } from './orderPanelInteractions';
 export async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
   const { customId } = interaction;
 
+  if (customId.startsWith('ord_wiz:')) {
+    const { handleOrderWizardModalSubmit } = await import('./orderWizardInteractions');
+    await handleOrderWizardModalSubmit(interaction);
+    return;
+  }
+
   if (customId.startsWith('modal_ord:')) {
     await handleOrderPanelModalSubmit(interaction);
     return;
