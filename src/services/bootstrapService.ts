@@ -52,26 +52,40 @@ export async function bootstrapOwner(
 
   const db = options.client || prisma;
 
-  // ۱. بررسی وجود هرگونه مالک قبلی در سیستم (Security Lock)
-  const existingOwnerRole = await db.userRole.findFirst({
-    where: { roleKey: 'owner' },
-  });
+  // ۱. بررسی وجود هرگونه مالک قبلی در سیستم (Security Lock & Idempotent Check)
+  let existingOwnerRoles: any[] = [];
+  if (typeof db.userRole.findMany === 'function') {
+    existingOwnerRoles = await db.userRole.findMany({
+      where: { roleKey: 'owner' },
+    });
+  } else if (typeof db.userRole.findFirst === 'function') {
+    const single = await db.userRole.findFirst({
+      where: { roleKey: 'owner' },
+    });
+    if (single) existingOwnerRoles = [single];
+  }
 
-  if (existingOwnerRole) {
-    if (existingOwnerRole.userId === discordId) {
-      // عملیات تکراری برای همان مالک (Idempotent)
-      return {
-        success: true,
-        discordId,
-        status: 'already_owner',
-        message: `User '${discordId}' is already the registered system Owner. No modifications required.`,
-      };
-    } else {
-      // مالک دیگری در دیتابیس وجود دارد؛ ممانعت کامل از ثبت مالک دوم
-      throw new Error(
-        `BOOTSTRAP_LOCKED: A system Owner is already registered (${existingOwnerRole.userId}). Cannot register a second owner.`
-      );
-    }
+  // ۱.۱ اگر کاربر ورودی در حال حاضر مالک سیستم است، عملیات تکراری و ایمن است (Idempotent)
+  const isTargetAlreadyOwner = existingOwnerRoles.some((r: any) => r.userId === discordId);
+  if (isTargetAlreadyOwner) {
+    return {
+      success: true,
+      discordId,
+      status: 'already_owner',
+      message: `User '${discordId}' is already the registered system Owner. No modifications required.`,
+    };
+  }
+
+  // ۱.۲ بررسی وجود هرگونه مالک رسمی دیگر (شناسه معتبر دیسکورد یا مالک ثبت‌شده دیگر)
+  const validExistingOwner = existingOwnerRoles.find(
+    (r: any) => r.userId !== discordId && (DISCORD_SNOWFLAKE_REGEX.test(r.userId) || existingOwnerRoles.length === 1)
+  );
+
+  if (validExistingOwner) {
+    // مالک دیگری در دیتابیس وجود دارد؛ ممانعت کامل از ثبت مالک دوم
+    throw new Error(
+      `BOOTSTRAP_LOCKED: A system Owner is already registered (${validExistingOwner.userId}). Cannot register a second owner.`
+    );
   }
 
   // ۲. اجرای تراکنش اتمیک ایجاد/تخصیص نقش مالک و ثبت ممیزی

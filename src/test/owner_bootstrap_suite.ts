@@ -43,8 +43,17 @@ async function runOwnerBootstrapTests() {
   const existingBooster = '777888999000111222'; // ۱۸ رقم
 
   const allTestIds = [testOwner1, testOwner2, existingBooster];
+  let existingOwnersBackup: any[] = [];
 
   try {
+    // ─── پشتیبان‌گیری و جداسازی موقت مالکین موجود جهت ایزولاسیون کامل تست ────
+    existingOwnersBackup = await prisma.userRole.findMany({
+      where: { roleKey: 'owner' },
+    });
+    await prisma.userRole.deleteMany({
+      where: { roleKey: 'owner' },
+    });
+
     // ─── پاکسازی اولیه سوابق تستی ─────────────────────────────────────────
     await prisma.auditLog.deleteMany({
       where: {
@@ -265,6 +274,25 @@ async function runOwnerBootstrapTests() {
         discordId: { in: allTestIds },
       },
     });
+
+    // ─── بازگردانی دقیق و امن مالکین اصلی سیستم ──────────────────────────
+    for (const owner of existingOwnersBackup) {
+      await prisma.userRole.upsert({
+        where: {
+          userId_roleKey: {
+            userId: owner.userId,
+            roleKey: 'owner',
+          },
+        },
+        update: {},
+        create: {
+          userId: owner.userId,
+          roleKey: 'owner',
+          grantedBy: owner.grantedBy,
+          grantedAt: owner.grantedAt,
+        },
+      });
+    }
   }
 
   console.log(`\n=== OWNER BOOTSTRAP TEST RESULTS: ${passed} PASSED / ${failed} FAILED ===\n`);
