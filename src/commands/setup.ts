@@ -10,6 +10,7 @@ import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 import { setupRegistrationChannels } from '../services/registrationChannelSetup';
 import { setupOrderPanels } from '../services/orderChannelSetup';
+import { setupPublicationChannels } from '../services/orderPublicationChannelService';
 
 import {
   buildRegistrationPanelEmbed,
@@ -160,12 +161,74 @@ export async function handleSetupCommand(message: Message, args: string[]): Prom
         content: `❌ Failed to set up order creation panels: ${err?.message || err}`,
       });
     }
+  } else if (
+    subCommand === 'publications' ||
+    subCommand === 'pub-channels' ||
+    subCommand === 'routing' ||
+    subCommand === 'publication-channels'
+  ) {
+    // ۱. اعتبارسنجی سطح دسترسی متمرکز: منحصراً مدیران مجاز (Manager / Owner)
+    const authResult = await authorize(message.author.id, Permission.SERVICE_CONFIG_MANAGE);
+    if (!authResult.allowed) {
+      await message.reply({
+        content: '❌ **Permission Denied**: Only authorized management may set up or update order publication channels.',
+      });
+      return;
+    }
+
+    if (!message.guild) {
+      await message.reply({ content: '❌ This command must be executed within a Discord server (guild).' });
+      return;
+    }
+
+    try {
+      // ۲. راه‌اندازی دو دسته‌بندی و پنج کانال اختصاصی انتشار سفارشات
+      const result = await setupPublicationChannels({
+        guild: message.guild,
+        actorId: message.author.id,
+      });
+
+      let responseText = '✅ **Order Publication Channel Architecture Setup Completed Successfully!**\n\n';
+
+      responseText += '📁 **Category: `WoW Midnight` (Dedicated Boost Channels):**\n';
+      if (result.channels.wowMidnightMythicId) {
+        responseText += `• **#mythic_plus_boosts**: <#${result.channels.wowMidnightMythicId}>\n`;
+      }
+      if (result.channels.wowMidnightNonPilotId) {
+        responseText += `• **#non_pilot_boosts**: <#${result.channels.wowMidnightNonPilotId}>\n`;
+      }
+      if (result.channels.wowMidnightPilotId) {
+        responseText += `• **#pilot_boosts**: <#${result.channels.wowMidnightPilotId}>\n`;
+      }
+
+      responseText += '\n📁 **Category: `WoW Forever` (Dedicated Boost Channels):**\n';
+      if (result.channels.wowForeverNonPilotId) {
+        responseText += `• **#non_pilot_boosts**: <#${result.channels.wowForeverNonPilotId}>\n`;
+      }
+      if (result.channels.wowForeverPilotId) {
+        responseText += `• **#pilot_boosts**: <#${result.channels.wowForeverPilotId}>\n`;
+      }
+
+      responseText += `\n🔗 **Database Routes Configured:** \`${result.routesCreated}\` active channel routes recorded.`;
+
+      if (result.warnings.length > 0) {
+        responseText += '\n⚠️ **Notes & Warnings:**\n' + result.warnings.map((w) => `• ${w}`).join('\n');
+      }
+
+      await message.reply({ content: responseText });
+    } catch (err: any) {
+      console.error('[SetupCommand] Failed to deploy order publication channels:', err);
+      await message.reply({
+        content: `❌ Failed to set up order publication channels: ${err?.message || err}`,
+      });
+    }
   } else {
     await message.reply({
       content:
         '❌ Unknown setup target. Usage:\n' +
         '• `G4!setup registration` — Deploy or refresh 8 registration & review channels\n' +
-        '• `G4!setup orders` — Deploy or refresh 2 categories & 6 order creation panels',
+        '• `G4!setup orders` — Deploy or refresh 2 categories & 6 order creation panels\n' +
+        '• `G4!setup publications` — Deploy or refresh dedicated game & service order publication channels',
     });
   }
 }

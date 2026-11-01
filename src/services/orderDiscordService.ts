@@ -27,81 +27,26 @@ export interface PublishOrderResult {
   error?: string;
 }
 
+import {
+  resolveOrderPublicationChannel,
+  OrderRoutingInfo,
+} from './orderPublicationChannelService';
+
 /**
- * Resolves the Discord orders channel with fallback priority:
- * 1. Explicit targetChannelId or order.discordChannelId
- * 2. CHANNEL_ORDERS environment variable
- * 3. ChannelRoute model in database (by gameSlug and serviceMode)
- * 4. Text channel named 'orders' or 'boost-orders' in the guild cache
+ * Resolves the Discord orders publication channel using the dedicated publication routing system:
+ * 1. Explicit targetChannelId or order.discordChannelId if valid
+ * 2. Database ChannelRoute mapping by gameSlug, serviceId, and serviceMode
+ * 3. Guild Category/Channel hierarchy (WoW Midnight / WoW Forever)
+ * 4. Fails safely by returning null if unmapped (no arbitrary fallback leaking)
  */
 export async function resolveOrdersChannel(
   client: any,
-  order?: { gameSlug?: string; orderMode?: string; discordChannelId?: string | null },
+  order?: OrderRoutingInfo,
   guildId?: string
 ): Promise<any> {
   if (!client) return null;
 
-  // 1. Existing order channel ID
-  if (order?.discordChannelId) {
-    try {
-      const channel = await client.channels.fetch(order.discordChannelId).catch(() => null);
-      if (channel && typeof channel.isTextBased === 'function' && channel.isTextBased()) {
-        return channel;
-      }
-    } catch {
-      // Continue fallback
-    }
-  }
-
-  // 2. CHANNEL_ORDERS environment variable
-  const envChannelId = process.env.CHANNEL_ORDERS;
-  if (envChannelId && envChannelId !== 'your_orders_channel_id') {
-    try {
-      const channel = await client.channels.fetch(envChannelId).catch(() => null);
-      if (channel && typeof channel.isTextBased === 'function' && channel.isTextBased()) {
-        return channel;
-      }
-    } catch {
-      // Continue fallback
-    }
-  }
-
-  // 3. ChannelRoute in DB
-  if (order?.gameSlug) {
-    try {
-      const route = await prisma.channelRoute.findFirst({
-        where: {
-          gameSlug: order.gameSlug,
-          serviceMode: order.orderMode || 'non_pilot',
-          isActive: true,
-        },
-      });
-      if (route?.discordChannelId) {
-        const channel = await client.channels.fetch(route.discordChannelId).catch(() => null);
-        if (channel && typeof channel.isTextBased === 'function' && channel.isTextBased()) {
-          return channel;
-        }
-      }
-    } catch {
-      // Continue fallback
-    }
-  }
-
-  // 4. Guild text channel named 'orders' or 'boost-orders'
-  const targetGuildId = guildId || process.env.DISCORD_GUILD_ID;
-  if (targetGuildId && client.guilds?.cache) {
-    const guild = client.guilds.cache.get(targetGuildId);
-    if (guild && guild.channels?.cache) {
-      const namedChannel = guild.channels.cache.find(
-        (c: any) =>
-          c.isTextBased?.() &&
-          (c.name === 'orders' || c.name === 'boost-orders' || c.name === 'order-board')
-      );
-      if (namedChannel) return namedChannel;
-    }
-  }
-
-  return null;
+  return await resolveOrderPublicationChannel(client, order, guildId);
 }
 
 /**
@@ -377,9 +322,12 @@ export async function publishOrRefreshOrderCard(
     client,
     {
       gameSlug: order.gameSlug,
+      serviceId: order.serviceId,
+      serviceKey: order.service?.serviceKey,
       orderMode: order.orderMode,
       discordChannelId: targetChannelId || order.discordChannelId,
-    }
+    },
+    process.env.DISCORD_GUILD_ID
   );
 
   if (!channel) {

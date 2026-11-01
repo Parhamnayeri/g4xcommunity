@@ -7,6 +7,7 @@ import { DomainError, DomainErrorCode } from './domainErrors';
 import { validateUserApproval, ensureOrderAcceptsOperations } from './orderValidationService';
 import { validatePremadeSquad } from './squadValidationService';
 import { getOrCreateOrderExecutionChannel } from './orderExecutionChannelService';
+import { publishOrRefreshOrderCard } from './orderDiscordService';
 import { Prisma } from '@prisma/client';
 
 export interface AssignCandidate {
@@ -243,6 +244,12 @@ export async function assignOrderBoosters(
       await getOrCreateOrderExecutionChannel(input.orderId, input.discordClient, { actorId: input.actorId });
     } catch (chanErr) {
       console.warn(`[AssignmentService] Could not auto-create execution channel for order #${input.orderId}:`, chanErr);
+    }
+
+    try {
+      await publishOrRefreshOrderCard(input.discordClient, input.orderId);
+    } catch (cardErr) {
+      console.warn(`[AssignmentService] Could not refresh publication card for order #${input.orderId}:`, cardErr);
     }
   }
 
