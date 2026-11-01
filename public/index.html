@@ -583,6 +583,7 @@
           ${isExchanger() ? `<button class="tab-btn ${activeTab === 'exchanger' ? 'active' : ''}" data-tab="exchanger" onclick="switchTab('exchanger')">Exchanger Portal</button>` : ''}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'admin' ? 'active' : ''}" data-tab="admin" onclick="switchTab('admin')">Admin Review Hub</button>` : ''}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'games-categories' ? 'active' : ''}" data-tab="games-categories" onclick="switchTab('games-categories')">Games &amp; Categories</button>` : ''}
+          ${isAdmin() ? `<button class="tab-btn ${activeTab === 'discord-channels' ? 'active' : ''}" data-tab="discord-channels" onclick="switchTab('discord-channels')">Discord Channels</button>` : ''}
         </div>
 
         <div id="tab-content">
@@ -656,6 +657,8 @@
         renderAdminTab(content);
       } else if (tab === 'games-categories' && isAdmin()) {
         renderGamesCategoriesTab(content);
+      } else if (tab === 'discord-channels' && isAdmin()) {
+        renderDiscordChannelsTab(content);
       }
     }
 
@@ -2209,6 +2212,19 @@
           </p>
           <div style="display: flex; gap: 0.75rem;">
             <button class="btn btn-primary" onclick="switchTab('games-categories')">Open Games &amp; Categories Manager &rarr;</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title">
+            <span>Discord Channel Provisioning &amp; Admin Mapping</span>
+            <span class="badge badge-blue">Auto &amp; Reconciled</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1rem; line-height: 1.5;">
+            Automatically create, synchronize, reconcile and repair all G4X Discord categories, order panels, registration channels, and game publication routes without manual channel IDs.
+          </p>
+          <div style="display: flex; gap: 0.75rem;">
+            <button class="btn btn-primary" onclick="switchTab('discord-channels')">Open Discord Channels Manager &rarr;</button>
           </div>
         </div>
 
@@ -4720,6 +4736,577 @@
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+    }
+
+    // ─── Discord Channels & Auto-Provisioning Management ──────────────────────
+    let adminDiscordChannelsCache = [];
+    let adminDiscordStatsCache = { total: 0, synced: 0, manual: 0, missing: 0, invalid: 0, disabled: 0 };
+    let currentChannelFilterCategory = 'all';
+    let currentChannelFilterStatus = 'all';
+    let currentChannelSearchQuery = '';
+
+    async function renderDiscordChannelsTab(container) {
+      container.innerHTML = `
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title" style="flex-wrap: wrap; gap: 0.75rem;">
+            <div>
+              <span style="font-size: 1.15rem; font-weight: 700; color: #fff;">📡 Discord Channels &amp; Auto-Provisioning</span>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0.25rem 0 0 0;">
+                Automatically create, reuse, synchronize, and repair all G4X Discord categories, order creation panels, registration review channels, and game publication routing.
+              </p>
+            </div>
+            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <button class="btn btn-primary" onclick="triggerAutoProvision()" id="btn-auto-provision">🚀 Auto-Provision &amp; Sync All</button>
+              <button class="btn btn-secondary" onclick="triggerReconcile()" id="btn-reconcile">🔄 Reconcile Status</button>
+              <button class="btn btn-secondary" onclick="loadAdminDiscordChannels()">↻ Refresh</button>
+            </div>
+          </div>
+
+          <!-- KPI Summary Cards -->
+          <div class="grid-kpis" id="discord-kpi-grid">
+            <div class="kpi-card">
+              <span class="kpi-title">Total Items</span>
+              <span class="kpi-value" id="kpi-discord-total">-</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-title">Synced &amp; Ready</span>
+              <span class="kpi-value" style="color: var(--accent-green);" id="kpi-discord-synced">-</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-title">Manual IDs</span>
+              <span class="kpi-value" style="color: #60a5fa;" id="kpi-discord-manual">-</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-title">Missing / Unmapped</span>
+              <span class="kpi-value" style="color: var(--accent-red);" id="kpi-discord-missing">-</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-title">Invalid / Warnings</span>
+              <span class="kpi-value" style="color: #f59e0b;" id="kpi-discord-invalid">-</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-title">Disabled</span>
+              <span class="kpi-value" style="color: var(--text-muted);" id="kpi-discord-disabled">-</span>
+            </div>
+          </div>
+
+          <!-- Filters -->
+          <div style="display: flex; align-items: center; gap: 1rem; margin-top: 1.25rem; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Category:</label>
+              <select id="discord-cat-filter" class="form-control" style="max-width: 220px; padding: 0.35rem 0.5rem; font-size: 0.85rem;" onchange="onDiscordCategoryFilterChange(this.value)">
+                <option value="all">All Categories</option>
+              </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Status:</label>
+              <select id="discord-status-filter" class="form-control" style="max-width: 170px; padding: 0.35rem 0.5rem; font-size: 0.85rem;" onchange="onDiscordStatusFilterChange(this.value)">
+                <option value="all">All Statuses</option>
+                <option value="SYNCED">SYNCED</option>
+                <option value="MANUAL">MANUAL</option>
+                <option value="MISSING">MISSING</option>
+                <option value="INVALID">INVALID</option>
+                <option value="DISABLED">DISABLED</option>
+              </select>
+            </div>
+            <div style="flex: 1; min-width: 220px;">
+              <input type="text" id="discord-search-input" class="form-control" placeholder="Search by channel name, key or purpose..." style="padding: 0.35rem 0.65rem; font-size: 0.85rem;" oninput="onDiscordSearchInput(this.value)" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Channels Table Card -->
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title">
+            <span>Configured Discord Categories &amp; Channels</span>
+            <span class="badge badge-blue" id="discord-channels-count-badge">0 Items</span>
+          </div>
+          <div id="discord-channels-table-container">
+            <div class="loading-spinner"></div> Loading Discord channel mappings...
+          </div>
+        </div>
+
+        <!-- Edit Channel ID Modal Container -->
+        <div id="discord-channel-modal-container"></div>
+      `;
+
+      await loadAdminDiscordChannels();
+    }
+
+    async function loadAdminDiscordChannels() {
+      const container = document.getElementById('discord-channels-table-container');
+      if (!container) return;
+
+      try {
+        const res = await fetch('/api/admin/discord/channels', {
+          credentials: 'include'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        adminDiscordChannelsCache = data.mappings || [];
+        adminDiscordStatsCache = data.stats || { total: 0, synced: 0, manual: 0, missing: 0, invalid: 0, disabled: 0 };
+
+        // Update KPIs
+        const totalEl = document.getElementById('kpi-discord-total');
+        const syncedEl = document.getElementById('kpi-discord-synced');
+        const manualEl = document.getElementById('kpi-discord-manual');
+        const missingEl = document.getElementById('kpi-discord-missing');
+        const invalidEl = document.getElementById('kpi-discord-invalid');
+        const disabledEl = document.getElementById('kpi-discord-disabled');
+        if (totalEl) totalEl.textContent = adminDiscordStatsCache.total;
+        if (syncedEl) syncedEl.textContent = adminDiscordStatsCache.synced;
+        if (manualEl) manualEl.textContent = adminDiscordStatsCache.manual;
+        if (missingEl) missingEl.textContent = adminDiscordStatsCache.missing;
+        if (invalidEl) invalidEl.textContent = adminDiscordStatsCache.invalid;
+        if (disabledEl) disabledEl.textContent = adminDiscordStatsCache.disabled;
+
+        // Populate category dropdown
+        const catSelect = document.getElementById('discord-cat-filter');
+        if (catSelect) {
+          const categories = [...new Set(adminDiscordChannelsCache.map(m => m.categoryName))].sort();
+          let opts = '<option value="all">All Categories</option>';
+          for (const c of categories) {
+            const isSel = c === currentChannelFilterCategory ? 'selected' : '';
+            opts += `<option value="${escapeHtml(c)}" ${isSel}>${escapeHtml(c)}</option>`;
+          }
+          catSelect.innerHTML = opts;
+        }
+
+        renderDiscordChannelsTable();
+      } catch (err) {
+        container.innerHTML = `
+          <div style="padding: 1.5rem; text-align: center; color: var(--accent-red);">
+            Failed to load Discord channel mappings: ${escapeHtml(err.message)}
+            <br/><br/>
+            <button class="btn btn-secondary" onclick="loadAdminDiscordChannels()">Retry</button>
+          </div>
+        `;
+      }
+    }
+
+    function renderDiscordChannelsTable() {
+      const container = document.getElementById('discord-channels-table-container');
+      const badge = document.getElementById('discord-channels-count-badge');
+      if (!container) return;
+
+      let filtered = [...adminDiscordChannelsCache];
+
+      if (currentChannelFilterCategory !== 'all') {
+        filtered = filtered.filter(m => m.categoryName === currentChannelFilterCategory);
+      }
+
+      if (currentChannelFilterStatus !== 'all') {
+        filtered = filtered.filter(m => m.syncStatus === currentChannelFilterStatus);
+      }
+
+      if (currentChannelSearchQuery.trim()) {
+        const q = currentChannelSearchQuery.toLowerCase();
+        filtered = filtered.filter(m =>
+          (m.channelName && m.channelName.toLowerCase().includes(q)) ||
+          (m.channelKey && m.channelKey.toLowerCase().includes(q)) ||
+          (m.categoryName && m.categoryName.toLowerCase().includes(q)) ||
+          (m.purpose && m.purpose.toLowerCase().includes(q)) ||
+          (m.discordChannelId && m.discordChannelId.includes(q))
+        );
+      }
+
+      if (badge) badge.textContent = `${filtered.length} Items`;
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div style="padding: 2.5rem; text-align: center; color: var(--text-muted);">
+            No Discord channel mappings match the selected criteria.
+            <br/><br/>
+            <button class="btn btn-primary" onclick="triggerAutoProvision()">Run Auto-Provisioning Now</button>
+          </div>
+        `;
+        return;
+      }
+
+      let html = `
+        <div style="overflow-x: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Channel Name</th>
+                <th>Purpose</th>
+                <th>Game / Service</th>
+                <th>Channel ID</th>
+                <th>Status</th>
+                <th>Last Sync Result</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+      `;
+
+      for (const m of filtered) {
+        const isCat = m.channelType === 'GUILD_CATEGORY';
+        const typeIcon = isCat ? '📁' : '💬';
+        const displayName = isCat ? m.channelName : `#${m.channelName}`;
+
+        let statusBadge = '<span class="badge badge-gray">PENDING</span>';
+        if (m.syncStatus === 'SYNCED') {
+          statusBadge = '<span class="badge badge-green">SYNCED</span>';
+        } else if (m.syncStatus === 'MANUAL') {
+          statusBadge = '<span class="badge badge-blue">MANUAL</span>';
+        } else if (m.syncStatus === 'MISSING') {
+          statusBadge = '<span class="badge badge-red">MISSING</span>';
+        } else if (m.syncStatus === 'INVALID') {
+          statusBadge = '<span class="badge badge-orange" style="background: rgba(245, 158, 11, 0.2); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.4);">INVALID</span>';
+        } else if (m.syncStatus === 'DISABLED') {
+          statusBadge = '<span class="badge badge-gray">DISABLED</span>';
+        }
+
+        let gameLabel = '—';
+        if (m.game) {
+          const modeStr = m.serviceMode ? ` (${m.serviceMode === 'non_pilot' ? 'Non-Pilot' : 'Pilot'})` : '';
+          gameLabel = `${escapeHtml(m.game.displayName)}${modeStr}`;
+        } else if (m.serviceMode) {
+          gameLabel = m.serviceMode === 'non_pilot' ? 'Non-Pilot' : 'Pilot';
+        }
+
+        const idBadge = m.discordChannelId
+          ? `<code style="font-size: 0.8rem; background: #0f121a; padding: 0.2rem 0.4rem; border-radius: 4px; border: 1px solid var(--card-border); color: #93c5fd;">${escapeHtml(m.discordChannelId)}</code>`
+          : '<span style="color: var(--accent-red); font-size: 0.8rem; font-style: italic;">Not set</span>';
+
+        const syncResultText = m.lastSyncResult
+          ? `<span style="font-size: 0.78rem; color: var(--text-muted); display: block; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(m.lastSyncResult)}">${escapeHtml(m.lastSyncResult)}</span>`
+          : '<span style="color: var(--text-muted); font-size: 0.78rem;">—</span>';
+
+        const needsRepair = m.syncStatus === 'MISSING' || m.syncStatus === 'INVALID';
+
+        html += `
+          <tr>
+            <td>
+              <span style="font-weight: 600; color: #fff;">📁 ${escapeHtml(m.categoryName)}</span>
+            </td>
+            <td>
+              <div style="display: flex; align-items: center; gap: 0.4rem;">
+                <span>${typeIcon}</span>
+                <span style="font-weight: 600; color: ${isCat ? '#93c5fd' : '#e2e8f0'};">${escapeHtml(displayName)}</span>
+              </div>
+              <small style="color: var(--text-muted); font-size: 0.7rem; font-family: monospace;">${escapeHtml(m.channelKey)}</small>
+            </td>
+            <td style="max-width: 240px; font-size: 0.82rem; color: var(--text-muted);">
+              ${escapeHtml(m.purpose)}
+            </td>
+            <td style="font-size: 0.82rem; color: #cbd5e1;">
+              ${gameLabel}
+            </td>
+            <td>
+              ${idBadge}
+            </td>
+            <td>
+              ${statusBadge}
+            </td>
+            <td>
+              ${syncResultText}
+            </td>
+            <td style="text-align: right; white-space: nowrap;">
+              <div style="display: inline-flex; gap: 0.35rem; align-items: center;">
+                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;" onclick="openEditChannelModal('${escapeHtml(m.channelKey)}')">Edit ID</button>
+                ${needsRepair ? `<button class="btn btn-primary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #d97706;" onclick="adminRepairChannel('${escapeHtml(m.channelKey)}')">Repair</button>` : ''}
+                <button class="btn btn-secondary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; color: ${m.isActive ? 'var(--text-muted)' : 'var(--accent-green)'};" onclick="adminToggleChannelActive('${escapeHtml(m.channelKey)}', ${!m.isActive})">${m.isActive ? 'Disable' : 'Enable'}</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }
+
+      html += `
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      container.innerHTML = html;
+    }
+
+    function onDiscordCategoryFilterChange(val) {
+      currentChannelFilterCategory = val;
+      renderDiscordChannelsTable();
+    }
+
+    function onDiscordStatusFilterChange(val) {
+      currentChannelFilterStatus = val;
+      renderDiscordChannelsTable();
+    }
+
+    function onDiscordSearchInput(val) {
+      currentChannelSearchQuery = val;
+      renderDiscordChannelsTable();
+    }
+
+    async function triggerAutoProvision() {
+      if (!confirm('Run automatic Discord channel provisioning and reconciliation?\n\nThis will safely check all required categories/channels, reuse existing ones, create any missing items, and persist their IDs in the database.')) return;
+
+      const btn = document.getElementById('btn-auto-provision');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loading-spinner" style="width: 14px; height: 14px; display: inline-block;"></span> Provisioning...';
+      }
+
+      try {
+        const res = await fetch('/api/admin/discord/provision', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({})
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        alert(`✅ Auto-Provisioning Completed Successfully!\n\n• Total Channels: ${data.totalConfigured}\n• Successfully Synced: ${data.synced}\n• Newly Created: ${data.created}\n• Reused Existing: ${data.reused}\n${data.warnings?.length ? '\nWarnings:\n' + data.warnings.join('\n') : ''}`);
+        await loadAdminDiscordChannels();
+      } catch (err) {
+        alert(`❌ Provisioning Failed: ${err.message}`);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '🚀 Auto-Provision &amp; Sync All';
+        }
+      }
+    }
+
+    async function triggerReconcile() {
+      const btn = document.getElementById('btn-reconcile');
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="loading-spinner" style="width: 14px; height: 14px; display: inline-block;"></span> Reconciling...';
+      }
+
+      try {
+        const res = await fetch('/api/admin/discord/reconcile', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({})
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        const r = data.result;
+        alert(`🔄 Discord Reconciliation Completed!\n\n• Total Checked: ${r.total}\n• Synced: ${r.synced}\n• Missing: ${r.missing}\n• Invalid: ${r.invalid}\n• Disabled: ${r.disabled}`);
+        await loadAdminDiscordChannels();
+      } catch (err) {
+        alert(`❌ Reconciliation Failed: ${err.message}`);
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = '🔄 Reconcile Status';
+        }
+      }
+    }
+
+    function openEditChannelModal(channelKey) {
+      const mapping = adminDiscordChannelsCache.find(m => m.channelKey === channelKey);
+      if (!mapping) return;
+
+      const modalContainer = document.getElementById('discord-channel-modal-container');
+      if (!modalContainer) return;
+
+      modalContainer.innerHTML = `
+        <div class="modal-backdrop" onclick="closeDiscordChannelModal()">
+          <div class="modal-content" onclick="event.stopPropagation()" style="max-width: 500px;">
+            <div class="modal-header">
+              <span class="modal-title">Edit Channel Mapping</span>
+              <button class="modal-close" onclick="closeDiscordChannelModal()">&times;</button>
+            </div>
+
+            <form id="edit-channel-form" onsubmit="saveChannelIdEdit(event, '${escapeHtml(channelKey)}')">
+              <div style="margin-bottom: 1rem; padding: 0.75rem; background: rgba(59, 130, 246, 0.1); border-radius: 6px; font-size: 0.85rem; color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.2);">
+                Category: <strong>${escapeHtml(mapping.categoryName)}</strong><br/>
+                Channel: <strong>#${escapeHtml(mapping.channelName)}</strong><br/>
+                Type: <code>${escapeHtml(mapping.channelType)}</code><br/>
+                Purpose: <em>${escapeHtml(mapping.purpose)}</em>
+              </div>
+
+              <div class="form-group">
+                <label>Discord Channel ID *</label>
+                <div style="display: flex; gap: 0.5rem;">
+                  <input type="text" id="modal-channel-id" class="form-control" value="${escapeHtml(mapping.discordChannelId || '')}" required placeholder="e.g. 123456789012345678" style="font-family: monospace;" />
+                  <button type="button" class="btn btn-secondary" onclick="validateModalChannelId('${escapeHtml(mapping.channelType)}')">Validate</button>
+                </div>
+                <small style="color: var(--text-muted); font-size: 0.75rem; display: block; margin-top: 0.25rem;">
+                  Enter the snowflake Discord channel ID from Discord Developer Mode.
+                </small>
+              </div>
+
+              <div id="modal-validation-feedback" style="display: none; padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.82rem; margin-bottom: 1rem;"></div>
+
+              <div style="padding: 0.6rem 0.75rem; background: rgba(245, 158, 11, 0.1); border-radius: 6px; border: 1px solid rgba(245, 158, 11, 0.3); font-size: 0.8rem; color: #fbbf24; margin-bottom: 1rem;">
+                ⚠️ <strong>Safety Rule:</strong> Saving a new Channel ID updates the database mapping only. It will <strong>never</strong> delete the previous Discord channel.
+              </div>
+
+              <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.25rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeDiscordChannelModal()">Cancel</button>
+                <button type="submit" id="modal-save-btn" class="btn btn-primary">Save Channel ID</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    function closeDiscordChannelModal() {
+      const modalContainer = document.getElementById('discord-channel-modal-container');
+      if (modalContainer) modalContainer.innerHTML = '';
+    }
+
+    async function validateModalChannelId(expectedType) {
+      const input = document.getElementById('modal-channel-id');
+      const feedback = document.getElementById('modal-validation-feedback');
+      if (!input || !feedback) return;
+
+      const channelId = input.value.trim();
+      if (!channelId) {
+        feedback.style.display = 'block';
+        feedback.style.background = 'rgba(239, 68, 68, 0.15)';
+        feedback.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+        feedback.style.color = '#fca5a5';
+        feedback.textContent = 'Please enter a Channel ID first.';
+        return;
+      }
+
+      feedback.style.display = 'block';
+      feedback.style.background = 'rgba(59, 130, 246, 0.15)';
+      feedback.style.border = '1px solid rgba(59, 130, 246, 0.4)';
+      feedback.style.color = '#93c5fd';
+      feedback.textContent = 'Checking Discord guild...';
+
+      try {
+        const res = await fetch('/api/admin/discord/channels/validate', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({ channelId, expectedType })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        const v = data.validation;
+        if (v.valid) {
+          feedback.style.background = 'rgba(16, 185, 129, 0.15)';
+          feedback.style.border = '1px solid rgba(16, 185, 129, 0.4)';
+          feedback.style.color = '#6ee7b7';
+          feedback.textContent = `✅ Channel verified! Found "${v.channelName}" (${v.channelType}) in connected guild.`;
+        } else {
+          feedback.style.background = 'rgba(239, 68, 68, 0.15)';
+          feedback.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+          feedback.style.color = '#fca5a5';
+          feedback.textContent = `❌ ${v.error || 'Channel not found in guild'}`;
+        }
+      } catch (err) {
+        feedback.style.background = 'rgba(239, 68, 68, 0.15)';
+        feedback.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+        feedback.style.color = '#fca5a5';
+        feedback.textContent = `Validation error: ${err.message}`;
+      }
+    }
+
+    async function saveChannelIdEdit(event, channelKey) {
+      event.preventDefault();
+      const input = document.getElementById('modal-channel-id');
+      const submitBtn = document.getElementById('modal-save-btn');
+      const feedback = document.getElementById('modal-validation-feedback');
+      if (!input || !submitBtn) return;
+
+      const discordChannelId = input.value.trim();
+      submitBtn.disabled = true;
+
+      try {
+        const res = await fetch(`/api/admin/discord/channels/${encodeURIComponent(channelKey)}`, {
+          method: 'PUT',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({ discordChannelId, validateGuild: false })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        closeDiscordChannelModal();
+        alert(`✅ Channel mapping updated successfully!\n\nNew Channel ID: ${discordChannelId}\nPrevious Discord channel was safely preserved.`);
+        await loadAdminDiscordChannels();
+      } catch (err) {
+        if (feedback) {
+          feedback.style.display = 'block';
+          feedback.style.background = 'rgba(239, 68, 68, 0.15)';
+          feedback.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+          feedback.style.color = '#fca5a5';
+          feedback.textContent = `Failed to save: ${err.message}`;
+        } else {
+          alert(`Failed to save: ${err.message}`);
+        }
+      } finally {
+        submitBtn.disabled = false;
+      }
+    }
+
+    async function adminRepairChannel(channelKey) {
+      if (!confirm(`Attempt automatic repair for channel mapping "${channelKey}"?\n\nThe bot will search for matching existing channels in the guild or recreate the missing channel with appropriate category and permissions.`)) return;
+
+      try {
+        const res = await fetch(`/api/admin/discord/channels/${encodeURIComponent(channelKey)}/repair`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({})
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        alert(`✅ Channel mapping repaired successfully!\n\nResolved ID: ${data.mapping?.discordChannelId || 'none'}\nStatus: ${data.mapping?.syncStatus}`);
+        await loadAdminDiscordChannels();
+      } catch (err) {
+        alert(`Repair failed: ${err.message}`);
+      }
+    }
+
+    async function adminToggleChannelActive(channelKey, isActive) {
+      const action = isActive ? 'enable' : 'disable';
+      if (!confirm(`Are you sure you want to ${action} channel mapping "${channelKey}"?`)) return;
+
+      try {
+        const res = await fetch(`/api/admin/discord/channels/${encodeURIComponent(channelKey)}/status`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({ isActive })
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        await loadAdminDiscordChannels();
+      } catch (err) {
+        alert(`Failed to toggle status: ${err.message}`);
+      }
     }
 
     // ─── Customer Payment Screen & Admin Payment Hub Handlers ─────────────────

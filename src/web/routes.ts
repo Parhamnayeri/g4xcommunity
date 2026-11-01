@@ -107,6 +107,16 @@ import {
   deleteGameService,
 } from '../services/gameManagementService';
 import {
+  provisionAllChannels,
+  reconcileChannelMappings,
+  validateDiscordChannel,
+  updateChannelMapping,
+  repairChannelMapping,
+  toggleChannelMappingStatus,
+  listChannelMappings,
+} from '../services/discordProvisioningService';
+import { resolveExecutionGuild } from '../services/orderExecutionChannelService';
+import {
   AdvertiserRank,
   ADVERTISER_RANK_RATES_BPS,
   ADVERTISER_RANK_LABELS,
@@ -3237,6 +3247,242 @@ router.delete(
     } catch (err: any) {
       const status = err instanceof DomainError ? 400 : 500;
       res.status(status).json({ error: err.message || 'Failed to delete service category' });
+    }
+  }
+);
+
+// ─── ۴۰. مدیریت و همگام‌سازی خودکار کانال‌های دیسکورد (Admin Discord Channels) ─────
+
+// دریافت لیست کامل نگاشت کانال‌های دیسکورد به همراه وضعیت همگام‌سازی و آمار
+router.get(
+  '/admin/discord/channels',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { guildId, categoryName, syncStatus, gameSlug } = req.query;
+      const mappings = await listChannelMappings({
+        guildId: guildId ? String(guildId) : undefined,
+        categoryName: categoryName ? String(categoryName) : undefined,
+        syncStatus: syncStatus ? String(syncStatus) : undefined,
+        gameSlug: gameSlug ? String(gameSlug) : undefined,
+      });
+
+      const stats = {
+        total: mappings.length,
+        synced: mappings.filter((m) => m.syncStatus === 'SYNCED').length,
+        manual: mappings.filter((m) => m.syncStatus === 'MANUAL').length,
+        missing: mappings.filter((m) => m.syncStatus === 'MISSING').length,
+        invalid: mappings.filter((m) => m.syncStatus === 'INVALID').length,
+        disabled: mappings.filter((m) => m.syncStatus === 'DISABLED').length,
+      };
+
+      res.json({ success: true, mappings, stats });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to load Discord channel mappings' });
+    }
+  }
+);
+
+// راه‌اندازی و همگام‌سازی خودکار کلیه کانال‌ها و دسته‌بندی‌های دیسکورد
+router.post(
+  '/admin/discord/provision',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const { client } = await import('../index');
+      const guild = resolveExecutionGuild(client, req.body.guildId);
+
+      if (!guild) {
+        res.status(400).json({
+          error: 'Discord Bot Guild is not currently connected. Please ensure bot is online and DISCORD_GUILD_ID is configured.',
+        });
+        return;
+      }
+
+      const result = await provisionAllChannels({
+        guild,
+        actorId,
+        client,
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to provision Discord channels' });
+    }
+  }
+);
+
+// تطبیق مجدد وضعیت کانال‌های دیتابیس با دیسکورد
+router.post(
+  '/admin/discord/reconcile',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const { client } = await import('../index');
+      const guild = resolveExecutionGuild(client, req.body.guildId);
+
+      if (!guild) {
+        res.status(400).json({
+          error: 'Discord Bot Guild is not currently connected.',
+        });
+        return;
+      }
+
+      const result = await reconcileChannelMappings({
+        guild,
+        actorId,
+      });
+
+      res.json({ success: true, result });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to reconcile Discord channels' });
+    }
+  }
+);
+
+// اعتبارسنجی یک شناسه کانال در سرور دیسکورد بدون ایجاد تغییر
+router.post(
+  '/admin/discord/channels/validate',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { channelId, expectedType, guildId } = req.body;
+      if (!channelId || typeof channelId !== 'string') {
+        res.status(400).json({ error: 'channelId string is required' });
+        return;
+      }
+
+      const { client } = await import('../index');
+      const guild = resolveExecutionGuild(client, guildId);
+
+      if (!guild) {
+        res.status(400).json({
+          error: 'Discord Bot Guild is not currently connected for channel validation.',
+        });
+        return;
+      }
+
+      const validation = await validateDiscordChannel(channelId, guild, expectedType);
+      res.json({ success: true, validation });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to validate Discord channel' });
+    }
+  }
+);
+
+// ویرایش دستی شناسه کانال (قانون حیاتی: هرگز کانال قبلی در دیسکورد حذف نمی‌شود)
+router.put(
+  '/admin/discord/channels/:key',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const channelKey = req.params.key;
+      const { discordChannelId, validateGuild, guildId } = req.body;
+
+      if (!discordChannelId || typeof discordChannelId !== 'string') {
+        res.status(400).json({ error: 'discordChannelId string is required' });
+        return;
+      }
+
+      let guild: any = null;
+      if (validateGuild !== false) {
+        const { client } = await import('../index');
+        guild = resolveExecutionGuild(client, guildId);
+      }
+
+      const mapping = await updateChannelMapping({
+        channelKey,
+        newChannelId: discordChannelId,
+        actorId,
+        guild,
+      });
+
+      res.json({ success: true, mapping });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to update channel mapping' });
+    }
+  }
+);
+
+// تعمیر خودکار یک کانال نامعتبر یا گم‌شده
+router.post(
+  '/admin/discord/channels/:key/repair',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const channelKey = req.params.key;
+
+      const { client } = await import('../index');
+      const guild = resolveExecutionGuild(client, req.body.guildId);
+
+      if (!guild) {
+        res.status(400).json({
+          error: 'Discord Bot Guild is not currently connected to repair channel.',
+        });
+        return;
+      }
+
+      const mapping = await repairChannelMapping({
+        channelKey,
+        guild,
+        actorId,
+      });
+
+      res.json({ success: true, mapping });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to repair channel mapping' });
+    }
+  }
+);
+
+// فعال یا غیرفعال کردن یک نگاشت اختیاری
+router.patch(
+  '/admin/discord/channels/:key/status',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const channelKey = req.params.key;
+      const { isActive } = req.body;
+
+      if (typeof isActive !== 'boolean') {
+        res.status(400).json({ error: 'isActive boolean is required' });
+        return;
+      }
+
+      const mapping = await toggleChannelMappingStatus({
+        channelKey,
+        isActive,
+        actorId,
+      });
+
+      res.json({ success: true, mapping });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to toggle channel mapping status' });
     }
   }
 );

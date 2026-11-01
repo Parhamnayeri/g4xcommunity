@@ -222,10 +222,65 @@ export async function handleSetupCommand(message: Message, args: string[]): Prom
         content: `❌ Failed to set up order publication channels: ${err?.message || err}`,
       });
     }
+  } else if (subCommand === 'all' || subCommand === 'channels' || subCommand === 'sync') {
+    // ۱. اعتبارسنجی سطح دسترسی متمرکز
+    const authResult = await authorize(message.author.id, Permission.SERVICE_CONFIG_MANAGE);
+    if (!authResult.allowed) {
+      await message.reply({
+        content: '❌ **Permission Denied**: Only authorized management may provision or synchronize Discord channels.',
+      });
+      return;
+    }
+
+    if (!message.guild) {
+      await message.reply({ content: '❌ This command must be executed within a Discord server (guild).' });
+      return;
+    }
+
+    try {
+      const { provisionAllChannels } = await import('../services/discordProvisioningService');
+      const result = await provisionAllChannels({
+        guild: message.guild,
+        actorId: message.author.id,
+        client: message.client,
+      });
+
+      let responseText = '✅ **Automatic Discord Channel Provisioning Completed!**\n\n';
+      responseText += `📊 **Summary:**\n`;
+      responseText += `• Total Channels Configured: **${result.totalConfigured}**\n`;
+      responseText += `• Successfully Synced: **${result.synced}**\n`;
+      responseText += `• Newly Created: **${result.created}**\n`;
+      responseText += `• Reused Existing: **${result.reused}**\n\n`;
+
+      // Group mappings by category
+      const categories = [...new Set(result.mappings.map((m) => m.categoryName))];
+      for (const cat of categories) {
+        const catMappings = result.mappings.filter((m) => m.categoryName === cat && m.channelType !== 'GUILD_CATEGORY');
+        responseText += `📁 **${cat}:**\n`;
+        for (const m of catMappings) {
+          const statusIcon = m.syncStatus === 'SYNCED' || m.syncStatus === 'MANUAL' ? '🟢' : '🔴';
+          const link = m.discordChannelId ? `<#${m.discordChannelId}>` : '*(missing)*';
+          responseText += `  ${statusIcon} #${m.channelName} — ${link}\n`;
+        }
+        responseText += '\n';
+      }
+
+      if (result.warnings.length > 0) {
+        responseText += '⚠️ **Notes & Warnings:**\n' + result.warnings.map((w) => `• ${w}`).join('\n');
+      }
+
+      await message.reply({ content: responseText });
+    } catch (err: any) {
+      console.error('[SetupCommand] Failed to provision all channels:', err);
+      await message.reply({
+        content: `❌ Failed to auto-provision Discord channels: ${err?.message || err}`,
+      });
+    }
   } else {
     await message.reply({
       content:
         '❌ Unknown setup target. Usage:\n' +
+        '• `G4!setup all` — Automatically create, reuse & sync ALL categories and channels\n' +
         '• `G4!setup registration` — Deploy or refresh 8 registration & review channels\n' +
         '• `G4!setup orders` — Deploy or refresh 2 categories & 6 order creation panels\n' +
         '• `G4!setup publications` — Deploy or refresh dedicated game & service order publication channels',
