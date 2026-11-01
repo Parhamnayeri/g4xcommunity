@@ -45,7 +45,7 @@ import {
   leaveTeam,
   disbandTeam,
 } from '../services/teamService';
-import { DomainError } from '../services/domainErrors';
+import { DomainError, DomainErrorCode } from '../services/domainErrors';
 import { getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
 import { marketplaceRouter } from './marketplaceRoutes';
 import { paymentRouter } from './paymentRoutes';
@@ -57,6 +57,7 @@ import {
   payOrderFromWallet,
   cancelOrderWithLifecycle,
   getOrderAuditHistory,
+  getSeparatedOrdersList,
 } from '../services/orderLifecycleService';
 import { verifyOrderWithReceipt } from '../services/payment/paymentReconciliationService';
 import {
@@ -1590,6 +1591,54 @@ router.get(
     }
   }
 );
+
+/**
+ * Authoritative Separated Orders List (G4X vs. Advertiser)
+ * Supports server-side pagination, search, status/game/source/date filtering,
+ * and strict privacy enforcement for advertisers.
+ */
+async function handleSeparatedOrdersList(req: Request, res: Response): Promise<void> {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const tab = req.query.tab ? String(req.query.tab) : (req.query.origin ? String(req.query.origin) : 'g4x');
+    const result = await getSeparatedOrdersList({
+      tab: tab === 'advertiser' ? 'advertiser' : 'g4x',
+      origin: tab as any,
+      page: req.query.page ? Number(req.query.page) : undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+      search: req.query.search ? String(req.query.search) : undefined,
+      status: req.query.status ? String(req.query.status) : undefined,
+      paymentStatus: req.query.paymentStatus ? String(req.query.paymentStatus) : undefined,
+      gameSlug: req.query.gameSlug ? String(req.query.gameSlug) : undefined,
+      source: req.query.source ? String(req.query.source) : undefined,
+      startDate: req.query.startDate ? String(req.query.startDate) : undefined,
+      endDate: req.query.endDate ? String(req.query.endDate) : undefined,
+      user: {
+        discordId: user.discordId,
+        userRoles: user.userRoles || [],
+      },
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    if (err instanceof DomainError) {
+      if (err.code === DomainErrorCode.PERMISSION_DENIED) {
+        res.status(403).json({ error: err.message, code: err.code });
+        return;
+      }
+      if (err.code === DomainErrorCode.ORDER_NOT_FOUND) {
+        res.status(404).json({ error: err.message, code: err.code });
+        return;
+      }
+      res.status(400).json({ error: err.message, code: err.code });
+      return;
+    }
+    res.status(500).json({ error: err.message || 'Failed to fetch separated orders list' });
+  }
+}
+
+router.get('/orders/dashboard-list', requireAuth, handleSeparatedOrdersList);
+router.get('/admin/orders/dashboard-list', requireAuth, handleSeparatedOrdersList);
 
 router.get(
   '/admin/orders/:id',

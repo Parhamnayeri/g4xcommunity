@@ -581,6 +581,7 @@
           <button class="tab-btn ${activeTab === 'characters-teams' ? 'active' : ''}" data-tab="characters-teams" onclick="switchTab('characters-teams')">My Characters &amp; Teams</button>
           <button class="tab-btn ${activeTab === 'applications' ? 'active' : ''}" data-tab="applications" onclick="switchTab('applications')">Member Applications</button>
           ${isExchanger() ? `<button class="tab-btn ${activeTab === 'exchanger' ? 'active' : ''}" data-tab="exchanger" onclick="switchTab('exchanger')">Exchanger Portal</button>` : ''}
+          ${isAdmin() ? `<button class="tab-btn ${activeTab === 'orders' ? 'active' : ''}" data-tab="orders" onclick="switchTab('orders')">Orders Dashboard</button>` : (isAdvertiser() ? `<button class="tab-btn ${activeTab === 'orders' ? 'active' : ''}" data-tab="orders" onclick="switchTab('orders')">My Orders</button>` : '')}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'users' ? 'active' : ''}" data-tab="users" onclick="switchTab('users')">User Management</button>` : ''}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'admin' ? 'active' : ''}" data-tab="admin" onclick="switchTab('admin')">Admin Review Hub</button>` : ''}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'games-categories' ? 'active' : ''}" data-tab="games-categories" onclick="switchTab('games-categories')">Games &amp; Categories</button>` : ''}
@@ -654,6 +655,8 @@
         renderApplicationsTab(content);
       } else if (tab === 'exchanger' && isExchanger()) {
         renderExchangerTab(content);
+      } else if (tab === 'orders') {
+        renderOrdersDashboardTab(content);
       } else if (tab === 'users' && isAdmin()) {
         renderUsersTab(content);
       } else if (tab === 'admin' && isAdmin()) {
@@ -6583,6 +6586,571 @@
       } catch (err) {
         container.innerHTML = `<span style="color: var(--accent-red);">${err.message}</span>`;
       }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Separated G4X and Advertiser Orders Dashboard Frontend
+    // ─────────────────────────────────────────────────────────────────────────
+
+    let ordersDashboardState = {
+      tab: 'g4x',
+      page: 1,
+      limit: 10,
+      search: '',
+      status: 'all',
+      paymentStatus: 'all',
+      gameSlug: 'all',
+      source: 'all',
+      startDate: '',
+      endDate: '',
+    };
+
+    async function renderOrdersDashboardTab(container) {
+      if (!isAdmin() && isAdvertiser()) {
+        ordersDashboardState.tab = 'advertiser';
+      } else if (!isAdmin()) {
+        container.innerHTML = `<div class="card"><p style="color: var(--accent-red);">Access denied. You do not have permission to view orders.</p></div>`;
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title" style="flex-wrap: wrap; gap: 1rem;">
+            <div>
+              <span style="font-size: 1.15rem; font-weight: 700;">Orders Management &amp; Tracking</span>
+              <p style="font-size: 0.8rem; color: var(--text-muted); margin: 0.25rem 0 0 0;">
+                Separated domain tracking for G4X-managed platform orders and Advertiser-originated orders.
+              </p>
+            </div>
+            ${isAdmin() ? `
+              <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <button id="orders-tab-btn-g4x" class="btn ${ordersDashboardState.tab === 'g4x' ? 'btn-primary' : 'btn-secondary'}" onclick="setOrdersDashboardSection('g4x')">
+                  🛡️ G4X Orders <span id="orders-count-g4x" class="badge badge-blue">...</span>
+                </button>
+                <button id="orders-tab-btn-adv" class="btn ${ordersDashboardState.tab === 'advertiser' ? 'btn-primary' : 'btn-secondary'}" onclick="setOrdersDashboardSection('advertiser')">
+                  📢 Advertiser Orders <span id="orders-count-adv" class="badge badge-purple">...</span>
+                </button>
+              </div>
+            ` : `
+              <div>
+                <span class="badge badge-purple" style="font-size: 0.9rem; padding: 0.4rem 0.8rem;">📢 My Advertiser Orders</span>
+              </div>
+            `}
+          </div>
+
+          <!-- Multi-criteria Filter Bar -->
+          <div style="background: var(--bg-surface); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 1.25rem;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem; align-items: flex-end;">
+              <div>
+                <label style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Search Reference / Notes</label>
+                <input type="text" id="filter-orders-search" class="form-input" style="width: 100%; padding: 0.35rem 0.6rem; font-size: 0.85rem;" placeholder="Ref, ID, or notes..." value="${ordersDashboardState.search || ''}" />
+              </div>
+
+              <div>
+                <label style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Lifecycle State</label>
+                <select id="filter-orders-status" class="form-input" style="width: 100%; padding: 0.35rem 0.6rem; font-size: 0.85rem;">
+                  <option value="all">All States</option>
+                  <option value="draft">Draft</option>
+                  <option value="payment_pending">Payment Pending</option>
+                  <option value="open_presign">Open Presign</option>
+                  <option value="presign_closed">Presign Closed</option>
+                  <option value="assigned">Assigned</option>
+                  <option value="in_progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                  <option value="disputed">Disputed</option>
+                </select>
+              </div>
+
+              <div>
+                <label style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">Payment Status</label>
+                <select id="filter-orders-payment" class="form-input" style="width: 100%; padding: 0.35rem 0.6rem; font-size: 0.85rem;">
+                  <option value="all">All Payments</option>
+                  <option value="pending">Pending</option>
+                  <option value="verified">Verified</option>
+                  <option value="unneeded">Unneeded</option>
+                  <option value="refunded">Refunded</option>
+                </select>
+              </div>
+
+              <div id="filter-source-wrapper" style="${ordersDashboardState.tab === 'g4x' ? '' : 'display: none;'}">
+                <label style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">G4X Origin / Platform</label>
+                <select id="filter-orders-source" class="form-input" style="width: 100%; padding: 0.35rem 0.6rem; font-size: 0.85rem;">
+                  <option value="all">All G4X Sources</option>
+                  <option value="direct">G4X Direct</option>
+                  <option value="g2g">G2G Platform</option>
+                  <option value="skycoach">SkyCoach Platform</option>
+                  <option value="eldorado">Eldorado Platform</option>
+                  <option value="needs_review">Needs Review (Unknown Origin)</option>
+                </select>
+              </div>
+
+              <div>
+                <label style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">From Date</label>
+                <input type="date" id="filter-orders-start-date" class="form-input" style="width: 100%; padding: 0.35rem 0.6rem; font-size: 0.85rem;" value="${ordersDashboardState.startDate || ''}" />
+              </div>
+
+              <div>
+                <label style="font-size: 0.78rem; color: var(--text-muted); display: block; margin-bottom: 0.25rem;">To Date</label>
+                <input type="date" id="filter-orders-end-date" class="form-input" style="width: 100%; padding: 0.35rem 0.6rem; font-size: 0.85rem;" value="${ordersDashboardState.endDate || ''}" />
+              </div>
+
+              <div style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-primary" style="flex: 1; padding: 0.4rem 0.75rem; font-size: 0.85rem;" onclick="applyOrdersFilters()">Filter</button>
+                <button class="btn btn-secondary" style="padding: 0.4rem 0.75rem; font-size: 0.85rem;" onclick="resetOrdersFilters()">Reset</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Orders Table Container -->
+          <div id="orders-dashboard-table-container">
+            <div class="loading-spinner"></div> Loading orders...
+          </div>
+
+          <!-- Server-side Pagination Bar -->
+          <div id="orders-dashboard-pagination-container" style="margin-top: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+          </div>
+        </div>
+
+        <!-- Order Diagnostics Modal Container -->
+        <div id="order-diagnostics-modal-container"></div>
+      `;
+
+      // Set initial dropdown values if already in state
+      if (document.getElementById('filter-orders-status')) {
+        document.getElementById('filter-orders-status').value = ordersDashboardState.status || 'all';
+      }
+      if (document.getElementById('filter-orders-payment')) {
+        document.getElementById('filter-orders-payment').value = ordersDashboardState.paymentStatus || 'all';
+      }
+      if (document.getElementById('filter-orders-source')) {
+        document.getElementById('filter-orders-source').value = ordersDashboardState.source || 'all';
+      }
+
+      fetchOrdersDashboardList();
+    }
+
+    function setOrdersDashboardSection(section) {
+      ordersDashboardState.tab = section;
+      ordersDashboardState.page = 1;
+      
+      const g4xBtn = document.getElementById('orders-tab-btn-g4x');
+      const advBtn = document.getElementById('orders-tab-btn-adv');
+      const sourceWrapper = document.getElementById('filter-source-wrapper');
+
+      if (g4xBtn && advBtn) {
+        g4xBtn.className = `btn ${section === 'g4x' ? 'btn-primary' : 'btn-secondary'}`;
+        advBtn.className = `btn ${section === 'advertiser' ? 'btn-primary' : 'btn-secondary'}`;
+      }
+
+      if (sourceWrapper) {
+        sourceWrapper.style.display = section === 'g4x' ? '' : 'none';
+      }
+
+      fetchOrdersDashboardList();
+    }
+
+    function applyOrdersFilters() {
+      ordersDashboardState.search = (document.getElementById('filter-orders-search')?.value || '').trim();
+      ordersDashboardState.status = document.getElementById('filter-orders-status')?.value || 'all';
+      ordersDashboardState.paymentStatus = document.getElementById('filter-orders-payment')?.value || 'all';
+      ordersDashboardState.source = document.getElementById('filter-orders-source')?.value || 'all';
+      ordersDashboardState.startDate = document.getElementById('filter-orders-start-date')?.value || '';
+      ordersDashboardState.endDate = document.getElementById('filter-orders-end-date')?.value || '';
+      ordersDashboardState.page = 1;
+      fetchOrdersDashboardList();
+    }
+
+    function resetOrdersFilters() {
+      ordersDashboardState.search = '';
+      ordersDashboardState.status = 'all';
+      ordersDashboardState.paymentStatus = 'all';
+      ordersDashboardState.source = 'all';
+      ordersDashboardState.startDate = '';
+      ordersDashboardState.endDate = '';
+      ordersDashboardState.page = 1;
+
+      if (document.getElementById('filter-orders-search')) document.getElementById('filter-orders-search').value = '';
+      if (document.getElementById('filter-orders-status')) document.getElementById('filter-orders-status').value = 'all';
+      if (document.getElementById('filter-orders-payment')) document.getElementById('filter-orders-payment').value = 'all';
+      if (document.getElementById('filter-orders-source')) document.getElementById('filter-orders-source').value = 'all';
+      if (document.getElementById('filter-orders-start-date')) document.getElementById('filter-orders-start-date').value = '';
+      if (document.getElementById('filter-orders-end-date')) document.getElementById('filter-orders-end-date').value = '';
+
+      fetchOrdersDashboardList();
+    }
+
+    async function fetchOrdersDashboardList(targetPage) {
+      if (targetPage) ordersDashboardState.page = targetPage;
+      const tableContainer = document.getElementById('orders-dashboard-table-container');
+      const paginationContainer = document.getElementById('orders-dashboard-pagination-container');
+      if (!tableContainer) return;
+
+      tableContainer.innerHTML = '<div class="loading-spinner"></div> Loading orders...';
+
+      try {
+        const queryParams = new URLSearchParams({
+          tab: ordersDashboardState.tab,
+          page: String(ordersDashboardState.page),
+          limit: String(ordersDashboardState.limit),
+          search: ordersDashboardState.search,
+          status: ordersDashboardState.status,
+          paymentStatus: ordersDashboardState.paymentStatus,
+          source: ordersDashboardState.tab === 'g4x' ? ordersDashboardState.source : 'all',
+          startDate: ordersDashboardState.startDate,
+          endDate: ordersDashboardState.endDate,
+        });
+
+        const res = await fetch(`/api/orders/dashboard-list?${queryParams.toString()}`, { credentials: 'include' });
+        const data = await res.json();
+
+        if (!res.ok || !data.success) {
+          tableContainer.innerHTML = `<p style="color: var(--accent-red); font-size: 0.9rem;">${data.error || 'Failed to load orders list'}</p>`;
+          return;
+        }
+
+        // Update Tab Badges
+        const g4xCountBadge = document.getElementById('orders-count-g4x');
+        const advCountBadge = document.getElementById('orders-count-adv');
+        if (g4xCountBadge && data.counts?.g4x !== undefined) g4xCountBadge.textContent = data.counts.g4x;
+        if (advCountBadge && data.counts?.advertiser !== undefined) advCountBadge.textContent = data.counts.advertiser;
+
+        renderOrdersDashboardTable(data.orders, data.pagination, tableContainer, paginationContainer);
+      } catch (err) {
+        tableContainer.innerHTML = `<p style="color: var(--accent-red); font-size: 0.9rem;">Network error: ${err.message}</p>`;
+      }
+    }
+
+    function renderOrdersDashboardTable(orders, pagination, tableContainer, paginationContainer) {
+      if (!orders || orders.length === 0) {
+        tableContainer.innerHTML = `
+          <div style="text-align: center; padding: 2.5rem 1rem; color: var(--text-muted);">
+            <div style="font-size: 2rem; margin-bottom: 0.5rem;">🔍</div>
+            <p style="font-size: 0.95rem; margin: 0;">No orders found matching the selected criteria.</p>
+          </div>
+        `;
+        if (paginationContainer) paginationContainer.innerHTML = '';
+        return;
+      }
+
+      tableContainer.innerHTML = `
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Order Ref</th>
+                <th>Game &amp; Service</th>
+                <th>${ordersDashboardState.tab === 'g4x' ? 'Origin &amp; Platform' : 'Advertiser / Owner'}</th>
+                <th>Gross (USD)</th>
+                <th>Financial &amp; Settlement</th>
+                <th>Payment</th>
+                <th>Lifecycle Status</th>
+                <th>Assignments &amp; Runs</th>
+                <th>Authorized Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${orders.map(o => {
+                // Source / Advertiser display
+                let sourceHtml = '';
+                if (o.originType === 'g4x') {
+                  if (o.sourceWebsite === 'g2g') {
+                    sourceHtml = `<div><span class="badge badge-purple" style="font-weight: 700;">G2G</span>${o.platformAccount ? `<br /><small style="color: var(--text-muted);">${o.platformAccount.displayName}</small>` : ''}</div>`;
+                  } else if (o.sourceWebsite === 'skycoach') {
+                    sourceHtml = `<div><span class="badge badge-blue" style="font-weight: 700;">SkyCoach</span>${o.platformAccount ? `<br /><small style="color: var(--text-muted);">${o.platformAccount.displayName}</small>` : ''}</div>`;
+                  } else if (o.sourceWebsite === 'eldorado') {
+                    sourceHtml = `<div><span class="badge badge-amber" style="font-weight: 700;">Eldorado</span>${o.platformAccount ? `<br /><small style="color: var(--text-muted);">${o.platformAccount.displayName}</small>` : ''}</div>`;
+                  } else {
+                    sourceHtml = `<div><span class="badge badge-gray">G4X Direct</span></div>`;
+                  }
+                } else if (o.originType === 'advertiser') {
+                  sourceHtml = `
+                    <div>
+                      <strong>${o.advertiser.displayName}</strong>
+                      <br />
+                      <span class="badge badge-purple" style="font-size: 0.72rem;">${o.advertiser.advertiserRank}</span>
+                      <small style="color: var(--text-muted); margin-left: 0.25rem;">${o.advertiser.commissionPercent} Fee</small>
+                    </div>
+                  `;
+                } else {
+                  sourceHtml = `<div><span class="badge badge-red">Needs Review</span><br /><small style="color: var(--accent-red); font-size: 0.7rem;">Unknown Origin</small></div>`;
+                }
+
+                // Financial details
+                let financialHtml = '';
+                if (isAdmin()) {
+                  financialHtml = `
+                    <div style="font-size: 0.8rem; line-height: 1.3;">
+                      <div>Plat Fee: <strong style="color: var(--text-muted);">$${o.feeInfo.platformFeeUsd || '0.00'}</strong></div>
+                      <div>Pool: <strong style="color: var(--accent-green);">$${o.feeInfo.boosterPoolUsd || '0.00'}</strong></div>
+                      ${o.feeInfo.settlementState ? `<div><span class="badge" style="font-size: 0.7rem;">${o.feeInfo.settlementState}</span></div>` : ''}
+                    </div>
+                  `;
+                } else {
+                  financialHtml = `
+                    <div style="font-size: 0.8rem; line-height: 1.3;">
+                      <div>Fee: <strong style="color: var(--text-muted);">$${o.feeInfo.advertiserFeeUsd || '0.00'}</strong></div>
+                      <div>Net: <strong style="color: var(--accent-green);">$${o.feeInfo.netAmountUsd || '0.00'}</strong></div>
+                      ${o.feeInfo.settlementState ? `<div><span class="badge" style="font-size: 0.7rem;">${o.feeInfo.settlementState}</span></div>` : ''}
+                    </div>
+                  `;
+                }
+
+                // Payment badge
+                let payBadgeClass = 'badge-gray';
+                if (o.paymentStatus === 'verified') payBadgeClass = 'badge-green';
+                else if (o.paymentStatus === 'pending') payBadgeClass = 'badge-amber';
+                else if (o.paymentStatus === 'unneeded') payBadgeClass = 'badge-blue';
+                else if (o.paymentStatus === 'refunded') payBadgeClass = 'badge-red';
+
+                // Action buttons
+                const actionsHtml = `
+                  <div class="action-btn-group">
+                    <button class="btn btn-secondary btn-xs" onclick="openOrderDiagnosticsModal(${o.id})" title="View Full Diagnostics">Diagnostics</button>
+                    ${o.authorizedActions.includes('pay_wallet') ? `
+                      <button class="btn btn-primary btn-xs" style="background: var(--accent-green); color: #000;" onclick="orderDashboardPayFromWallet(${o.id}, '${o.orderRef}')">💳 Pay Wallet</button>
+                    ` : ''}
+                    ${o.authorizedActions.includes('publish') ? `
+                      <button class="btn btn-primary btn-xs" style="background: var(--accent-purple);" onclick="orderDashboardPublish(${o.id}, '${o.orderRef}')">📢 Publish</button>
+                    ` : ''}
+                    ${o.authorizedActions.includes('staff_review') ? `
+                      <button class="btn btn-secondary btn-xs" style="color: var(--accent-blue);" onclick="orderDashboardStaffReview(${o.id})">🔍 Review</button>
+                    ` : ''}
+                    ${o.authorizedActions.includes('final_approve') ? `
+                      <button class="btn btn-primary btn-xs" onclick="orderDashboardFinalApprove(${o.id})">✅ Approve</button>
+                    ` : ''}
+                    ${o.authorizedActions.includes('cancel') ? `
+                      <button class="btn btn-danger btn-xs" onclick="orderDashboardCancel(${o.id}, '${o.orderRef}')">❌ Cancel</button>
+                    ` : ''}
+                  </div>
+                `;
+
+                return `
+                  <tr>
+                    <td>
+                      <code style="font-weight: 700;">#${o.orderRef}</code>
+                      ${o.externalOrderId ? `<br /><small style="color: var(--text-muted); font-size: 0.72rem;">Ext: ${o.externalOrderId}</small>` : ''}
+                    </td>
+                    <td>
+                      <strong>${o.gameName}</strong>
+                      <br />
+                      <span style="font-size: 0.82rem; color: var(--text-muted);">${o.serviceName}</span>
+                    </td>
+                    <td>${sourceHtml}</td>
+                    <td style="color: var(--accent-green); font-weight: 700; font-size: 0.95rem;">$${o.grossAmountUsd}</td>
+                    <td>${financialHtml}</td>
+                    <td><span class="badge ${payBadgeClass}">${o.paymentStatus.toUpperCase()}</span></td>
+                    <td>
+                      <span class="badge ${o.simplifiedStatus.colorClass}">${o.simplifiedStatus.label}</span>
+                      <br />
+                      <small style="color: var(--text-muted); font-size: 0.72rem;">${o.status}</small>
+                    </td>
+                    <td>
+                      <span style="font-size: 0.85rem;">${o.runsCount} run${o.runsCount === 1 ? '' : 's'}</span>
+                      <br />
+                      ${o.assignedBooster ? `<span class="badge badge-blue" style="font-size: 0.7rem;">Booster: ${o.assignedBooster}</span>` : '<span style="color: var(--text-muted); font-size: 0.75rem;">Unassigned</span>'}
+                      ${o.releaseStage ? `<br /><span class="badge badge-purple" style="font-size: 0.7rem;">${o.releaseStage}</span>` : ''}
+                    </td>
+                    <td>${actionsHtml}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      // Render Pagination Bar
+      if (paginationContainer) {
+        const startItem = (pagination.page - 1) * pagination.limit + 1;
+        const endItem = Math.min(pagination.totalCount, pagination.page * pagination.limit);
+
+        paginationContainer.innerHTML = `
+          <div style="font-size: 0.85rem; color: var(--text-muted);">
+            Showing <strong>${pagination.totalCount > 0 ? startItem : 0}</strong> - <strong>${endItem}</strong> of <strong>${pagination.totalCount}</strong> orders
+          </div>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <button class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;" ${pagination.hasPrev ? '' : 'disabled'} onclick="fetchOrdersDashboardList(${pagination.page - 1})">
+              &larr; Previous
+            </button>
+            <span style="font-size: 0.85rem; font-weight: 600;">Page ${pagination.page} / ${pagination.totalPages}</span>
+            <button class="btn btn-secondary" style="padding: 0.35rem 0.75rem; font-size: 0.85rem;" ${pagination.hasNext ? '' : 'disabled'} onclick="fetchOrdersDashboardList(${pagination.page + 1})">
+              Next &rarr;
+            </button>
+          </div>
+        `;
+      }
+    }
+
+    // Modal Actions
+    async function openOrderDiagnosticsModal(orderId) {
+      const modalContainer = document.getElementById('order-diagnostics-modal-container');
+      if (!modalContainer) return;
+
+      modalContainer.innerHTML = `
+        <div class="modal-backdrop" onclick="closeOrderDiagnosticsModal(event)">
+          <div class="modal-content" style="max-width: 650px; padding: 1.5rem;" onclick="event.stopPropagation()">
+            <div class="loading-spinner"></div> Loading order diagnostics...
+          </div>
+        </div>
+      `;
+
+      try {
+        const res = await fetch(`/api/admin/orders/${orderId}`, { credentials: 'include' });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          modalContainer.querySelector('.modal-content').innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <h3 style="margin: 0; color: var(--accent-red);">Error</h3>
+              <button class="btn btn-secondary btn-xs" onclick="closeOrderDiagnosticsModal()">Close</button>
+            </div>
+            <p>${data.error || 'Failed to fetch diagnostics'}</p>
+          `;
+          return;
+        }
+
+        const ord = data.order;
+        modalContainer.querySelector('.modal-content').innerHTML = `
+          <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem; margin-bottom: 1rem;">
+            <div>
+              <h3 style="margin: 0; font-size: 1.15rem;">Order #${ord.orderRef} Diagnostics</h3>
+              <span style="font-size: 0.8rem; color: var(--text-muted);">${ord.gameName} &bull; ${ord.serviceName}</span>
+            </div>
+            <button class="btn btn-secondary btn-xs" onclick="closeOrderDiagnosticsModal()">✕ Close</button>
+          </div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.75rem; margin-bottom: 1rem;">
+            <div class="stat-card" style="padding: 0.75rem;">
+              <span class="stat-label">Gross Amount</span>
+              <span class="stat-val" style="color: var(--accent-green); font-size: 1.1rem;">$${ord.grossAmountUsd}</span>
+            </div>
+            <div class="stat-card" style="padding: 0.75rem;">
+              <span class="stat-label">Booster Pool</span>
+              <span class="stat-val" style="color: var(--accent-blue); font-size: 1.1rem;">$${ord.boosterPoolUsd}</span>
+            </div>
+            <div class="stat-card" style="padding: 0.75rem;">
+              <span class="stat-label">Publication Status</span>
+              <span class="stat-val" style="color: ${ord.isPublishable ? 'var(--accent-green)' : 'var(--accent-amber)'}; font-size: 0.95rem;">
+                ${ord.isPublishable ? '✅ Publishable' : (ord.discordMessageId ? '📢 Published' : '🔒 Blocked')}
+              </span>
+            </div>
+            <div class="stat-card" style="padding: 0.75rem;">
+              <span class="stat-label">Payment State</span>
+              <span class="stat-val" style="font-size: 0.95rem;">${ord.paymentStatus.toUpperCase()}</span>
+            </div>
+          </div>
+
+          <div style="background: var(--bg-surface); padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 1rem; font-size: 0.85rem;">
+            <strong>Lifecycle Diagnosis:</strong>
+            <p style="margin: 0.25rem 0 0.5rem 0; color: var(--text-main);">${ord.explanationEnglish}</p>
+            <strong>Required Next Action:</strong>
+            <p style="margin: 0.25rem 0 0 0; color: var(--accent-amber);">${ord.requiredNextActionEnglish}</p>
+          </div>
+
+          ${ord.publicationBlockReasons && ord.publicationBlockReasons.length > 0 ? `
+            <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid var(--accent-red); padding: 0.75rem; border-radius: 8px; margin-bottom: 1rem; font-size: 0.85rem;">
+              <strong style="color: var(--accent-red);">Publication Block Reasons:</strong>
+              <ul style="margin: 0.25rem 0 0 1.25rem; padding: 0; color: var(--text-main);">
+                ${ord.publicationBlockReasons.map(r => `<li>${r}</li>`).join('')}
+              </ul>
+            </div>
+          ` : ''}
+
+          <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;">
+            <button class="btn btn-secondary" onclick="closeOrderDiagnosticsModal()">Close</button>
+          </div>
+        `;
+      } catch (err) {
+        modalContainer.querySelector('.modal-content').innerHTML = `<p style="color: var(--accent-red);">${err.message}</p>`;
+      }
+    }
+
+    function closeOrderDiagnosticsModal(event) {
+      if (event && event.target !== event.currentTarget) return;
+      const modalContainer = document.getElementById('order-diagnostics-modal-container');
+      if (modalContainer) modalContainer.innerHTML = '';
+    }
+
+    async function orderDashboardPayFromWallet(orderId, orderRef) {
+      if (!confirm(`Confirm paying for Order #${orderRef} from your backed Wallet V2 balance?`)) return;
+      try {
+        const res = await fetch(`/api/orders/${orderId}/pay-from-wallet`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          return alert(data.error || 'Wallet payment failed');
+        }
+        alert(`Order #${orderRef} successfully funded from Wallet V2!`);
+        fetchOrdersDashboardList();
+        loadWalletV2();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function orderDashboardPublish(orderId, orderRef) {
+      if (!confirm(`Publish Order #${orderRef} to the Discord Orders Board?`)) return;
+      try {
+        const res = await fetch(`/api/admin/orders/${orderId}/publish`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          return alert(data.error || 'Failed to publish order');
+        }
+        alert(`Order #${orderRef} successfully published!`);
+        fetchOrdersDashboardList();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function orderDashboardStaffReview(orderId) {
+      try {
+        const res = await fetch(`/api/orders/${orderId}/staff-review`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ notes: 'Verified via Orders Dashboard' }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Staff review failed');
+        alert('Staff review completed! Order is now ready for Final Approval.');
+        fetchOrdersDashboardList();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function orderDashboardFinalApprove(orderId) {
+      try {
+        const res = await fetch(`/api/orders/${orderId}/final-approve`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Final approval failed');
+        alert('Order final approval completed! 24-hour hold started.');
+        fetchOrdersDashboardList();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function orderDashboardCancel(orderId, orderRef) {
+      const reason = prompt(`Enter reason for cancelling Order #${orderRef}:`, 'Cancelled via Orders Dashboard');
+      if (!reason) return;
+      try {
+        const res = await fetch(`/api/orders/${orderId}/cancel`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json', 'x-csrf-token': csrfToken || '' },
+          body: JSON.stringify({ reason }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) return alert(data.error || 'Failed to cancel order');
+        alert(`Order #${orderRef} cancelled.`);
+        fetchOrdersDashboardList();
+        loadWalletV2();
+      } catch (err) { alert(err.message); }
     }
 
     // Start authentication check on load

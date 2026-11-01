@@ -14,6 +14,8 @@
  */
 
 import prisma from '../database/db';
+import { Prisma } from '@prisma/client';
+import { mapOrderStatus } from './statusSimplifier';
 import { DomainError, DomainErrorCode } from './domainErrors';
 import { ensureOrderAcceptsOperations, LEGAL_ORDER_TRANSITIONS } from './orderValidationService';
 import { publishOrRefreshOrderCard } from './orderDiscordService';
@@ -673,4 +675,489 @@ export async function getOrderAuditHistory(orderId: number) {
     },
     orderBy: { createdAt: 'desc' },
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Separated G4X and Advertiser Order Lists (Domain Engine & Privacy Enforcement)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type OrderOriginClassification = 'g4x' | 'advertiser' | 'needs_review';
+
+export interface SeparatedOrderListItem {
+  id: number;
+  orderRef: string;
+  originType: OrderOriginClassification;
+  gameSlug: string;
+  gameName: string;
+  serviceId: number;
+  serviceName: string;
+  sourceType: string;
+  sourceWebsite: string | null;
+  sourceLabel: string;
+  platformAccount: {
+    id: number;
+    displayName: string;
+    accountRef: string;
+    platform: string;
+  } | null;
+  advertiser: {
+    id: string | null;
+    username: string | null;
+    displayName: string;
+    advertiserRank: string;
+    rankCommissionBps: number;
+    commissionPercent: string;
+  };
+  grossAmountMinor: number;
+  grossAmountUsd: string;
+  currency: string;
+  feeInfo: {
+    platformFeeUsd?: string;
+    advertiserFeeUsd?: string;
+    boosterPoolUsd?: string;
+    netAmountUsd?: string;
+    platformAccountName?: string | null;
+    platformAccountRef?: string | null;
+    settlementState?: string;
+  };
+  paymentStatus: string;
+  status: string;
+  simplifiedStatus: {
+    label: string;
+    colorClass: string;
+    rawStatus: string;
+  };
+  runsCount: number;
+  assignedCount: number;
+  assignedBooster: string | null;
+  releaseStage: string | null;
+  isPublishable: boolean;
+  authorizedActions: string[];
+  notes: string | null;
+  externalOrderId: string | null;
+  createdAt: string;
+}
+
+export interface SeparatedOrdersQuery {
+  tab?: 'g4x' | 'advertiser';
+  origin?: 'g4x' | 'advertiser' | 'needs_review';
+  page?: number | string;
+  limit?: number | string;
+  search?: string;
+  status?: string;
+  paymentStatus?: string;
+  gameSlug?: string;
+  source?: string; // 'all' | 'direct' | 'g2g' | 'skycoach' | 'eldorado' | 'needs_review'
+  startDate?: string;
+  endDate?: string;
+  user: {
+    discordId: string;
+    userRoles: Array<{ roleKey?: string; role?: string }>;
+  };
+}
+
+export interface SeparatedOrdersResult {
+  success: true;
+  tab: 'g4x' | 'advertiser';
+  counts: {
+    g4x: number;
+    advertiser: number;
+    needsReview: number;
+  };
+  pagination: {
+    page: number;
+    limit: number;
+    totalCount: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+  };
+  orders: SeparatedOrderListItem[];
+}
+
+/**
+ * Classifies an order's financial origin deterministically from authoritative DB fields.
+ * Never infers origin from Discord category names, channel IDs, or freeform text labels.
+ */
+export function classifyOrderOrigin(order: {
+  creatorType?: string | null;
+  advertiserId?: string | null;
+  sourceWebsite?: string | null;
+  sourceType?: string | null;
+}): OrderOriginClassification {
+  const cType = (order.creatorType || '').toLowerCase().trim();
+  const hasAdvId = Boolean(order.advertiserId && order.advertiserId.trim());
+
+  // Indeterminate / unrecognized creator types that conflict with domain invariants
+  if (cType && cType !== 'g4x' && cType !== 'advertiser') {
+    return 'needs_review';
+  }
+
+  // Advertiser-originated orders (either explicitly creatorType=advertiser or owned by advertiserId)
+  if (hasAdvId || cType === 'advertiser') {
+    return 'advertiser';
+  }
+
+  // Pure G4X-managed orders
+  if (cType === 'g4x' && !hasAdvId) {
+    return 'g4x';
+  }
+
+  // Historical records with empty creatorType but platform/source indicators
+  if (!cType && !hasAdvId) {
+    if (order.sourceWebsite || order.sourceType) {
+      return 'g4x';
+    }
+    return 'needs_review';
+  }
+
+  return 'needs_review';
+}
+
+/**
+ * Authoritative separated order listing service for the web dashboard.
+ * Enforces server-side RBAC, strict advertiser ownership isolation (no cross-owner data leakage),
+ * multi-criteria filtering, and server-side pagination.
+ */
+export async function getSeparatedOrdersList(
+  query: SeparatedOrdersQuery
+): Promise<SeparatedOrdersResult> {
+  const userRoleNames = (query.user.userRoles || []).map((r) => ((r.roleKey || r.role || '') as string).toLowerCase());
+  const isStaff = userRoleNames.some((r) => ['owner', 'admin', 'manager', 'staff'].includes(r));
+  const isAdvertiser = userRoleNames.includes('advertiser');
+
+  const tab = (query.tab || query.origin || 'g4x') === 'advertiser' ? 'advertiser' : 'g4x';
+
+  // Strict Authorization & Privacy Enforcements
+  if (tab === 'g4x') {
+    if (!isStaff) {
+      throw new DomainError(
+        DomainErrorCode.PERMISSION_DENIED,
+        'Access denied. Only G4X administrators and staff can view G4X-managed internal and platform orders.'
+      );
+    }
+  } else {
+    // tab === 'advertiser'
+    if (!isStaff && !isAdvertiser) {
+      throw new DomainError(
+        DomainErrorCode.PERMISSION_DENIED,
+        'Access denied. You must be an advertiser or administrator to view advertiser orders.'
+      );
+    }
+  }
+
+  // Build WHERE conditions
+  const andFilters: Prisma.OrderWhereInput[] = [];
+
+  if (tab === 'g4x') {
+    if (query.source === 'g2g') {
+      andFilters.push({ sourceWebsite: 'g2g', advertiserId: null });
+    } else if (query.source === 'skycoach') {
+      andFilters.push({ sourceWebsite: 'skycoach', advertiserId: null });
+    } else if (query.source === 'eldorado') {
+      andFilters.push({ sourceWebsite: 'eldorado', advertiserId: null });
+    } else if (query.source === 'direct') {
+      andFilters.push({ sourceWebsite: null, advertiserId: null, creatorType: { not: 'advertiser' } });
+    } else if (query.source === 'needs_review') {
+      andFilters.push({
+        OR: [
+          { creatorType: { notIn: ['g4x', 'advertiser'] } },
+          { creatorType: 'g4x', advertiserId: { not: null } },
+        ],
+      });
+    } else {
+      // 'all' G4X orders
+      andFilters.push({
+        OR: [
+          { creatorType: 'g4x', advertiserId: null },
+          { creatorType: { notIn: ['advertiser'] }, advertiserId: null },
+        ],
+      });
+    }
+  } else {
+    // tab === 'advertiser'
+    if (!isStaff) {
+      // Strict privacy & ownership isolation: Ordinary Advertisers ONLY see orders they own
+      andFilters.push({
+        OR: [
+          { advertiserId: query.user.discordId },
+          { creatorId: query.user.discordId },
+        ],
+      });
+    } else {
+      // Staff viewing advertiser orders
+      andFilters.push({
+        OR: [
+          { creatorType: 'advertiser' },
+          { advertiserId: { not: null } },
+        ],
+      });
+    }
+  }
+
+  // Common filters
+  if (query.status && query.status !== 'all') {
+    andFilters.push({ status: query.status });
+  }
+
+  if (query.paymentStatus && query.paymentStatus !== 'all') {
+    andFilters.push({ paymentStatus: query.paymentStatus });
+  }
+
+  if (query.gameSlug && query.gameSlug !== 'all') {
+    andFilters.push({ gameSlug: query.gameSlug });
+  }
+
+  if (query.search && query.search.trim()) {
+    const term = query.search.trim();
+    andFilters.push({
+      OR: [
+        { orderRef: { contains: term } },
+        { externalOrderId: { contains: term } },
+        { notes: { contains: term } },
+      ],
+    });
+  }
+
+  if (query.startDate) {
+    const start = new Date(query.startDate);
+    if (!isNaN(start.getTime())) {
+      start.setHours(0, 0, 0, 0);
+      andFilters.push({ createdAt: { gte: start } });
+    }
+  }
+
+  if (query.endDate) {
+    const end = new Date(query.endDate);
+    if (!isNaN(end.getTime())) {
+      end.setHours(23, 59, 59, 999);
+      andFilters.push({ createdAt: { lte: end } });
+    }
+  }
+
+  const where: Prisma.OrderWhereInput = andFilters.length > 0 ? { AND: andFilters } : {};
+
+  // Server-side pagination
+  const page = Math.max(1, Number(query.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
+  const skip = (page - 1) * limit;
+
+  const totalCount = await prisma.order.count({ where });
+  const orders = await prisma.order.findMany({
+    where,
+    include: {
+      game: true,
+      service: true,
+      advertiser: {
+        select: {
+          discordId: true,
+          username: true,
+          displayName: true,
+          advertiserRank: true,
+        },
+      },
+      creator: {
+        select: {
+          discordId: true,
+          username: true,
+          displayName: true,
+        },
+      },
+      platformAccount: true,
+      runs: true,
+      assignments: {
+        where: { status: { in: ['assigned', 'accepted'] } },
+        include: {
+          user: {
+            select: {
+              discordId: true,
+              username: true,
+              displayName: true,
+            },
+          },
+        },
+      },
+      boostReleaseTracker: true,
+      financialSnapshot: true,
+    },
+    orderBy: { createdAt: 'desc' },
+    skip,
+    take: limit,
+  });
+
+  const totalPages = Math.ceil(totalCount / limit) || 1;
+
+  // Counts for tabs
+  let counts = { g4x: 0, advertiser: 0, needsReview: 0 };
+  if (isStaff) {
+    const [g4xCount, advCount, revCount] = await Promise.all([
+      prisma.order.count({
+        where: {
+          OR: [
+            { creatorType: 'g4x', advertiserId: null },
+            { creatorType: { notIn: ['advertiser'] }, advertiserId: null },
+          ],
+        },
+      }),
+      prisma.order.count({
+        where: {
+          OR: [
+            { creatorType: 'advertiser' },
+            { advertiserId: { not: null } },
+          ],
+        },
+      }),
+      prisma.order.count({
+        where: {
+          OR: [
+            { creatorType: { notIn: ['g4x', 'advertiser'] } },
+            { creatorType: 'g4x', advertiserId: { not: null } },
+          ],
+        },
+      }),
+    ]);
+    counts = { g4x: g4xCount, advertiser: advCount, needsReview: revCount };
+  } else if (isAdvertiser) {
+    const myAdvCount = await prisma.order.count({
+      where: {
+        OR: [
+          { advertiserId: query.user.discordId },
+          { creatorId: query.user.discordId },
+        ],
+      },
+    });
+    counts = { g4x: 0, advertiser: myAdvCount, needsReview: 0 };
+  }
+
+  // Format DTOs
+  const mappedOrders: SeparatedOrderListItem[] = orders.map((o) => {
+    const origin = classifyOrderOrigin(o);
+
+    let sourceBadge = 'G4X Direct';
+    if (origin === 'g4x') {
+      if (o.sourceWebsite === 'g2g') sourceBadge = 'G2G';
+      else if (o.sourceWebsite === 'skycoach') sourceBadge = 'SkyCoach';
+      else if (o.sourceWebsite === 'eldorado') sourceBadge = 'Eldorado';
+      else sourceBadge = 'G4X Direct';
+    } else if (origin === 'advertiser') {
+      sourceBadge = 'Advertiser';
+    } else {
+      sourceBadge = 'Needs Review';
+    }
+
+    const advDisplayName =
+      o.advertiser?.displayName ||
+      o.advertiser?.username ||
+      o.creator?.displayName ||
+      o.creator?.username ||
+      o.advertiserId ||
+      'Unassigned';
+    const advRank = o.advertiserRank || o.advertiser?.advertiserRank || 'STANDARD';
+    const commissionBps = o.rankCommissionBps ?? 0;
+    const commissionPercent = commissionBps > 0 ? `${(commissionBps / 100).toFixed(1)}%` : 'Standard';
+
+    const feeInfo: SeparatedOrderListItem['feeInfo'] = {};
+    if (isStaff) {
+      feeInfo.platformFeeUsd = (o.platformFeeMinor / 100).toFixed(2);
+      feeInfo.advertiserFeeUsd = (o.advertiserFeeMinor / 100).toFixed(2);
+      feeInfo.boosterPoolUsd = (o.boosterPoolMinor / 100).toFixed(2);
+      feeInfo.platformAccountName = o.platformAccount?.displayName || null;
+      feeInfo.platformAccountRef = o.platformAccount?.accountRef || null;
+      feeInfo.settlementState = o.boostReleaseTracker?.stage || 'PENDING';
+    } else {
+      feeInfo.advertiserFeeUsd = (o.advertiserFeeMinor / 100).toFixed(2);
+      feeInfo.netAmountUsd = ((o.grossAmountMinor - o.advertiserFeeMinor) / 100).toFixed(2);
+      feeInfo.settlementState = o.boostReleaseTracker?.stage || 'PENDING';
+    }
+
+    const activeAssignment = o.assignments?.[0]?.user;
+    const assignedBooster = activeAssignment ? (activeAssignment.displayName || activeAssignment.username) : null;
+
+    const actions: string[] = ['view_diagnostics'];
+    const isPaid = o.paymentStatus === 'verified' || o.paymentStatus === 'unneeded';
+
+    if (isStaff) {
+      if (isPaid && !o.discordMessageId && o.status !== 'cancelled' && o.status !== 'completed') {
+        actions.push('publish');
+      }
+      if (o.status !== 'cancelled' && o.status !== 'completed') {
+        actions.push('cancel');
+      }
+      if (o.boostReleaseTracker?.stage === 'PROOF_SUBMITTED') {
+        actions.push('staff_review');
+      }
+      if (o.boostReleaseTracker?.stage === 'STAFF_REVIEW') {
+        actions.push('final_approve');
+      }
+      if (o.paymentStatus === 'pending') {
+        actions.push('pay_wallet');
+        actions.push('verify_payment');
+      }
+    } else if (isAdvertiser && (o.advertiserId === query.user.discordId || o.creatorId === query.user.discordId)) {
+      if (o.paymentStatus === 'pending') {
+        actions.push('pay_wallet');
+      }
+      if (['draft', 'payment_pending', 'open_presign'].includes(o.status) && o.assignments.length === 0) {
+        actions.push('cancel');
+      }
+    }
+
+    return {
+      id: o.id,
+      orderRef: o.orderRef,
+      originType: origin,
+      gameSlug: o.gameSlug,
+      gameName: o.game.displayName,
+      serviceId: o.serviceId,
+      serviceName: o.service.displayName,
+      sourceType: o.sourceType,
+      sourceWebsite: o.sourceWebsite,
+      sourceLabel: sourceBadge,
+      platformAccount: isStaff && o.platformAccount ? {
+        id: o.platformAccount.id,
+        displayName: o.platformAccount.displayName,
+        accountRef: o.platformAccount.accountRef,
+        platform: o.platformAccount.platform,
+      } : null,
+      advertiser: {
+        id: o.advertiserId,
+        username: o.advertiser?.username || null,
+        displayName: advDisplayName,
+        advertiserRank: advRank,
+        rankCommissionBps: commissionBps,
+        commissionPercent,
+      },
+      grossAmountMinor: o.grossAmountMinor,
+      grossAmountUsd: (o.grossAmountMinor / 100).toFixed(2),
+      currency: o.currency,
+      feeInfo,
+      paymentStatus: o.paymentStatus,
+      status: o.status,
+      simplifiedStatus: mapOrderStatus(o.status, o.boostReleaseTracker?.stage),
+      runsCount: o.runs.length,
+      assignedCount: o.assignments.length,
+      assignedBooster,
+      releaseStage: o.boostReleaseTracker?.stage || null,
+      isPublishable: isPaid && !o.discordMessageId && o.status !== 'cancelled' && o.status !== 'completed',
+      authorizedActions: actions,
+      notes: o.notes,
+      externalOrderId: o.externalOrderId,
+      createdAt: o.createdAt.toISOString(),
+    };
+  });
+
+  return {
+    success: true,
+    tab,
+    counts,
+    pagination: {
+      page,
+      limit,
+      totalCount,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
+    },
+    orders: mappedOrders,
+  };
 }
