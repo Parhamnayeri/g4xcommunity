@@ -305,6 +305,7 @@ model Order {
   sourceType          String    @default("internal") @map("source_type") // internal | website | direct
   sourceWebsite       String?   @map("source_website") // g2g | skycoach | eldorado | null
   externalOrderId     String?   @map("external_order_id")
+  platformAccountId   Int?      @map("platform_account_id")
   currency            String    // USD | GOLD | USDT | IRT
   grossAmountMinor    Int       @map("gross_amount_minor")
   platformFeeMinor    Int       @default(0) @map("platform_fee_minor")
@@ -332,6 +333,7 @@ model Order {
   advertiser      User?                 @relation("AdvertiserOrders", fields: [advertiserId], references: [discordId], onDelete: SetNull)
   creator         User?                 @relation("CreatedOrders", fields: [creatorId], references: [discordId], onDelete: SetNull)
   paymentVerifier User?                 @relation("VerifiedOrderPayments", fields: [paymentVerifiedBy], references: [discordId], onDelete: SetNull)
+  platformAccount PlatformAccount?      @relation("OrderPlatformAccount", fields: [platformAccountId], references: [id], onDelete: SetNull)
   presigns        OrderPresign[]
   assignments     OrderAssignment[]
   requiredRoles   OrderRequiredRole[]
@@ -353,6 +355,7 @@ model Order {
   @@index([gameSlug, status])
   @@index([advertiserId])
   @@index([creatorId])
+  @@index([platformAccountId])
   @@index([paymentStatus])
   @@index([advertiserRank])
   @@map("orders")
@@ -1017,16 +1020,19 @@ model OrderFinancialSnapshot {
   calculationStatus           String    @default("provisional") @map("calculation_status") // provisional | reconciled | finalized
   policyVersion               Int?      @map("policy_version")
   listingCategory             String?   @map("listing_category")
+  platformAccountId           Int?      @map("platform_account_id")
   finalizedBy                 String?   @map("finalized_by")
   finalizedAt                 DateTime? @map("finalized_at")
   notes                       String?
   createdAt                   DateTime  @default(now()) @map("created_at")
   updatedAt                   DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  order     Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  finalizer User? @relation("SnapshotFinalizedBy", fields: [finalizedBy], references: [discordId], onDelete: SetNull)
+  order           Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  finalizer       User?            @relation("SnapshotFinalizedBy", fields: [finalizedBy], references: [discordId], onDelete: SetNull)
+  platformAccount PlatformAccount? @relation("SnapshotPlatformAccount", fields: [platformAccountId], references: [id], onDelete: SetNull)
 
   @@index([sourcePlatform, calculationStatus])
+  @@index([platformAccountId])
   @@index([advertiserRank])
   @@map("order_financial_snapshots")
 }
@@ -1071,6 +1077,8 @@ model PlatformAccount {
 
   batches              PlatformWithdrawalBatch[]
   transactions         PlatformAccountTransaction[]
+  orders               Order[]                      @relation("OrderPlatformAccount")
+  snapshots            OrderFinancialSnapshot[]     @relation("SnapshotPlatformAccount")
 
   @@index([platform, isActive])
   @@map("platform_accounts")

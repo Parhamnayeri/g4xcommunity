@@ -171,6 +171,10 @@ export interface SerializedOrderHistory {
   currency: string;
   grossAmountMinor: number;
   boosterPoolMinor: number;
+  platformFeeMinor?: number;
+  sourceType?: string;
+  sourceWebsite?: string | null;
+  platformAccountId?: number | null;
   status: string;
   completedAt: Date | null;
   createdAt: Date;
@@ -188,6 +192,10 @@ export function serializeOrderHistory(
     currency: order.currency,
     grossAmountMinor: order.grossAmountMinor,
     boosterPoolMinor: order.boosterPoolMinor,
+    platformFeeMinor: order.platformFeeMinor,
+    sourceType: order.sourceType,
+    sourceWebsite: order.sourceWebsite,
+    platformAccountId: order.platformAccountId,
     status: order.status,
     completedAt: order.completedAt,
     createdAt: order.createdAt,

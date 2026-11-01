@@ -93,6 +93,7 @@ import {
   mapWithdrawalStatus,
   mapApplicationStatus,
 } from '../services/statusSimplifier';
+import { createExternalOrder } from '../services/platformOrderService';
 import {
   listAdminGames,
   createGame,
@@ -1019,7 +1020,18 @@ router.post(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { user } = req as AuthenticatedRequest;
-      const { gameSlug, serviceId, grossAmountUsd, orderType, notes } = req.body;
+      const {
+        gameSlug,
+        serviceId,
+        grossAmountUsd,
+        orderType,
+        notes,
+        sourcePlatform,
+        platformAccountRef,
+        platformAccountId,
+        sourceAmountType,
+        listingCategory,
+      } = req.body;
 
       if (!gameSlug || !serviceId || !grossAmountUsd) {
         res.status(400).json({ error: 'gameSlug, serviceId, and grossAmountUsd are required' });
@@ -1029,6 +1041,34 @@ router.post(
       const grossCents = Math.round(Number(grossAmountUsd) * 100);
       if (!Number.isSafeInteger(grossCents) || grossCents <= 0) {
         res.status(400).json({ error: 'Amount must be a positive integer in cents' });
+        return;
+      }
+
+      // If an external platform source is specified, route to platformOrderService
+      if (sourcePlatform) {
+        const extResult = await createExternalOrder({
+          gameSlug,
+          serviceId: Number(serviceId),
+          amountMinor: grossCents,
+          sourcePlatform,
+          platformAccountRef,
+          platformAccountId: platformAccountId ? Number(platformAccountId) : undefined,
+          sourceAmountType: sourceAmountType === 'platform_net' ? 'platform_net' : 'gross_sale',
+          orderType,
+          listingCategory,
+          notes,
+          actorId: user.discordId,
+        });
+
+        res.json({
+          success: true,
+          order: {
+            ...extResult.order,
+            simplifiedStatus: mapOrderStatus(extResult.order.status),
+          },
+          snapshot: extResult.snapshot,
+          platformAccount: extResult.platformAccount,
+        });
         return;
       }
 

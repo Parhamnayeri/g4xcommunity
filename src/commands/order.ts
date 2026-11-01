@@ -22,6 +22,7 @@ import {
   calculateRankCommission,
   ADVERTISER_RANK_POLICY_VERSION,
 } from '../services/advertiserRankService';
+import { createExternalOrder } from '../services/platformOrderService';
 
 export async function handleOrderCommand(message: Message, args: string[]): Promise<void> {
   const subCommand = args[0]?.toLowerCase();
@@ -38,6 +39,10 @@ export async function handleOrderCommand(message: Message, args: string[]): Prom
     case 'create':
     case 'adv-create':
       await handleOrderCreate(message, args.slice(1));
+      break;
+
+    case 'ext-create':
+      await handleExternalOrderCreate(message, args.slice(1));
       break;
 
     case 'cancel':
@@ -172,6 +177,8 @@ async function handleOrderView(message: Message, args: string[]): Promise<void> 
           include: { user: true },
         },
         runs: true,
+        platformAccount: true,
+        financialSnapshot: true,
       },
     });
 
@@ -192,6 +199,42 @@ async function handleOrderView(message: Message, args: string[]): Promise<void> 
           `**Type & Mode:** ${order.orderType.toUpperCase()} (${order.orderMode})\n` +
           `**Runs:** ${order.runs.length} / ${order.quantity}`
       );
+
+    // Commercial Source & Economics (Task 12)
+    let sourceDisplay = 'G4X Direct (Community)';
+    if (order.creatorType === 'advertiser' || order.advertiserId) {
+      sourceDisplay = `Direct Advertiser (${order.advertiserRank || 'Unranked'})`;
+    } else if (order.sourceWebsite) {
+      const platformName = order.sourceWebsite.toUpperCase();
+      const acctName =
+        order.platformAccount?.displayName ||
+        order.platformAccount?.accountRef ||
+        (order.platformAccountId ? `Account #${order.platformAccountId}` : 'Unmapped');
+      sourceDisplay = `External: ${platformName} [${acctName}]`;
+    }
+
+    let economicsDisplay = `• Gross Amount: **$${(order.grossAmountMinor / 100).toFixed(2)}**\n• Booster Pool: **$${(order.boosterPoolMinor / 100).toFixed(2)}**`;
+    if (order.financialSnapshot) {
+      const snap = order.financialSnapshot;
+      const basis =
+        snap.sourceAmountType === 'platform_net'
+          ? 'Platform Net (Seller fee deducted)'
+          : 'Gross Sale';
+      const platformFee =
+        snap.platformSaleCommissionMinor > 0
+          ? `$${(snap.platformSaleCommissionMinor / 100).toFixed(2)}`
+          : '$0.00';
+      economicsDisplay += `\n• Input Basis: **${basis}**\n• Platform Seller Fee: **${platformFee}**`;
+      if (snap.notes) {
+        economicsDisplay += `\n• Economics Note: *${snap.notes}*`;
+      }
+    }
+
+    embed.addFields({
+      name: 'Commercial Source & Economics',
+      value: `**Source Platform:** ${sourceDisplay}\n${economicsDisplay}`,
+      inline: false,
+    });
 
     if (order.requiredRoles && order.requiredRoles.length > 0) {
       const roleLines = order.requiredRoles.map((r) => {
@@ -462,6 +505,97 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
 }
 
 /**
+ * Creates and publishes an externally sourced order (G2G, SkyCoach, Eldorado).
+ * Authorized for Management (ORDER_CREATE_INTERNAL).
+ */
+async function handleExternalOrderCreate(message: Message, args: string[]): Promise<void> {
+  const actorId = message.author.id;
+
+  // Usage: G4!order ext-create <gameSlug> <serviceId> <amountUsd> <platform> [accountRef] [gross|net] [orderType] [notes...]
+  const [gameSlug, serviceIdRaw, amountUsdRaw, platformRaw, accountRefRaw, basisRaw, orderTypeRaw, ...notesArr] = args;
+
+  if (!gameSlug || !serviceIdRaw || !amountUsdRaw || !platformRaw) {
+    await message.reply({
+      content:
+        '❌ **Missing Arguments**.\n' +
+        'Usage: `G4!order ext-create <gameSlug> <serviceId> <amountUsd> <platform> [accountRef] [gross|net] [orderType] [notes...]`\n' +
+        'Supported platforms: `g2g`, `skycoach`, `eldorado`\n' +
+        'Example: `G4!order ext-create wow_midnight 1 50 g2g g2g_main gross group Fast M+ Run`',
+    });
+    return;
+  }
+
+  const serviceId = Number(serviceIdRaw);
+  const amountUsd = Number(amountUsdRaw);
+  if (isNaN(serviceId) || serviceId <= 0 || isNaN(amountUsd) || amountUsd <= 0) {
+    await message.reply({
+      content: '❌ Invalid serviceId or amountUsd. Both must be positive numbers.',
+    });
+    return;
+  }
+
+  const amountMinor = Math.round(amountUsd * 100);
+  const sourcePlatform = platformRaw.toLowerCase();
+  const platformAccountRef =
+    accountRefRaw && !['gross', 'net', 'group', 'solo'].includes(accountRefRaw.toLowerCase())
+      ? accountRefRaw.toLowerCase()
+      : `${sourcePlatform}_main`;
+
+  let sourceAmountType: 'gross_sale' | 'platform_net' = 'gross_sale';
+  if (basisRaw?.toLowerCase() === 'net' || accountRefRaw?.toLowerCase() === 'net') {
+    sourceAmountType = 'platform_net';
+  }
+
+  const orderType = orderTypeRaw?.toLowerCase() || 'group';
+  const notes = notesArr.join(' ').trim() || null;
+
+  try {
+    const result = await createExternalOrder({
+      gameSlug,
+      serviceId,
+      amountMinor,
+      sourcePlatform,
+      platformAccountRef,
+      sourceAmountType,
+      orderType,
+      notes: notes || undefined,
+      actorId,
+    });
+
+    const { order, snapshot, platformAccount } = result;
+
+    const pubResult = await publishOrRefreshOrderCard(message.client, order.id, {
+      guildId: message.guild?.id,
+    });
+
+    let confirmationText =
+      `✅ **External Platform Order Created Successfully!**\n` +
+      `• Order ID: **#${order.id}**\n` +
+      `• Reference: \`${order.orderRef}\`\n` +
+      `• Platform: **${platformAccount.platform.toUpperCase()}** (${platformAccount.displayName})\n` +
+      `• Input Basis: **${sourceAmountType === 'platform_net' ? 'Platform Net (Seller fee deducted)' : 'Gross Sale'}**\n` +
+      `• Gross Amount: **$${(order.grossAmountMinor / 100).toFixed(2)}**\n` +
+      `• Platform Seller Fee: **$${(snapshot.platformSaleCommissionMinor / 100).toFixed(2)}**\n` +
+      `• Booster Pool: **$${(order.boosterPoolMinor / 100).toFixed(2)}**\n` +
+      `• Settlement Status: **Proceeds credited to pending release**\n` +
+      `• Order Status: **${order.status}**`;
+
+    if (pubResult.success) {
+      confirmationText += `\n📢 **Published to Orders Board** (Message ID: \`${pubResult.messageId}\`)`;
+    } else {
+      confirmationText += `\n⚠️ **Card Publication Warning**: ${pubResult.error || 'Configured orders channel not found'}`;
+    }
+
+    await message.reply({ content: confirmationText });
+  } catch (err: any) {
+    console.error('[OrderCommand] External order creation failed:', err);
+    await message.reply({
+      content: `❌ **External Order Creation Failed**: ${err?.message || err}`,
+    });
+  }
+}
+
+/**
  * Authoritative payment verification command for managers and administrators.
  */
 async function handleOrderVerifyPayment(message: Message, args: string[]): Promise<void> {
@@ -633,9 +767,11 @@ async function sendOrderHelp(message: Message): Promise<void> {
         '• `G4!order list [game]`\n' +
         '  *List open orders available for pre-signing.*\n\n' +
         '• `G4!order view <orderId>`\n' +
-        '  *View comprehensive details, required roles, and pre-sign status.*\n\n' +
+        '  *View comprehensive details, source platform, economics, and required roles.*\n\n' +
         '• `G4!order create <gameSlug> <serviceId> <amountUsd> [type] [notes...]`\n' +
-        '  *Create a new boost order and publish it to the Discord orders board. (Authorized Advertisers & Management only).*\n\n' +
+        '  *Create a new direct boost order. (Authorized Advertisers & Management).*\n\n' +
+        '• `G4!order ext-create <gameSlug> <serviceId> <amountUsd> <platform> [accountRef] [gross|net] [type] [notes...]`\n' +
+        '  *Create an externally sourced order with explicit source platform & fee policy snapshot (G2G, SkyCoach, Eldorado).*\n\n' +
         '• `G4!order cancel <orderId> [reason...]`\n' +
         '  *Cancel an open or active order. (Authorized Management & Order Owners only).*\n\n' +
         '• `G4!order help`\n' +

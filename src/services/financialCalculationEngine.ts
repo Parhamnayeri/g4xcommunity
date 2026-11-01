@@ -20,6 +20,7 @@
  */
 
 import prisma from '../database/db';
+import { Prisma } from '@prisma/client';
 import { authorize } from './authorizationService';
 import { Permission } from './permissionTypes';
 import {
@@ -158,6 +159,8 @@ export interface CalculateOrderSnapshotInput {
   sourcePlatform: 'g2g' | 'skycoach' | 'eldorado' | 'website' | 'advertiser' | 'direct';
   sourceAmountType: 'gross_sale' | 'platform_net';
   sourceAmountMinor: number;
+  platformAccountId?: number | null;
+  platformAccountRef?: string | null;
   currency?: string;
   gameSlug?: string;
   listingCategory?: string;
@@ -171,12 +174,17 @@ export interface CalculateOrderSnapshotInput {
 /**
  * محاسبه و ثبت اسنپ‌شات اولیه مالی سفارش
  */
-export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnapshotInput) {
+export async function calculateOrderFinancialSnapshot(
+  input: CalculateOrderSnapshotInput,
+  tx: Prisma.TransactionClient | typeof prisma = prisma
+) {
   const {
     orderId,
     sourcePlatform,
     sourceAmountType,
     sourceAmountMinor,
+    platformAccountId,
+    platformAccountRef,
     currency = 'USD',
     gameSlug,
     listingCategory,
@@ -198,7 +206,7 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
   }
 
   // Authoritative Order verification
-  const order = await prisma.order.findUnique({
+  const order = await tx.order.findUnique({
     where: { id: orderId },
   });
 
@@ -208,6 +216,50 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
       throw new Error(
         `ADVERTISER_MISMATCH: Provided advertiserId '${advertiserId}' does not match authoritative order owner '${authOwnerId}'`
       );
+    }
+  }
+
+  // Authoritative Platform Account Resolution & Validation
+  let resolvedPlatformAccountId: number | null = platformAccountId ?? order?.platformAccountId ?? null;
+
+  if (platformAccountRef) {
+    const acct = await tx.platformAccount.findUnique({
+      where: { accountRef: platformAccountRef.toLowerCase() },
+    });
+    if (!acct) {
+      throw new Error(`PLATFORM_ACCOUNT_NOT_FOUND: Platform account '${platformAccountRef}' does not exist`);
+    }
+    if (!acct.isActive) {
+      throw new Error(`ACCOUNT_INACTIVE: Platform account '${acct.accountRef}' is deactivated`);
+    }
+    if (acct.platform.toLowerCase() !== sourcePlatform.toLowerCase()) {
+      throw new Error(
+        `PLATFORM_MISMATCH: Platform account '${acct.accountRef}' belongs to '${acct.platform}', not '${sourcePlatform}'`
+      );
+    }
+    resolvedPlatformAccountId = acct.id;
+  } else if (resolvedPlatformAccountId) {
+    const acct = await tx.platformAccount.findUnique({
+      where: { id: resolvedPlatformAccountId },
+    });
+    if (!acct) {
+      throw new Error(`PLATFORM_ACCOUNT_NOT_FOUND: Platform account with ID #${resolvedPlatformAccountId} does not exist`);
+    }
+    if (!acct.isActive) {
+      throw new Error(`ACCOUNT_INACTIVE: Platform account '${acct.accountRef}' is deactivated`);
+    }
+    if (acct.platform.toLowerCase() !== sourcePlatform.toLowerCase()) {
+      throw new Error(
+        `PLATFORM_MISMATCH: Platform account '${acct.accountRef}' belongs to '${acct.platform}', not '${sourcePlatform}'`
+      );
+    }
+  } else if (['g2g', 'skycoach', 'eldorado'].includes(sourcePlatform)) {
+    // If not provided on an existing order or raw calculation, resolve to the active primary account
+    const defaultAccount = await tx.platformAccount.findFirst({
+      where: { platform: sourcePlatform, isActive: true },
+    });
+    if (defaultAccount) {
+      resolvedPlatformAccountId = defaultAccount.id;
     }
   }
 
@@ -229,7 +281,7 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
   let snapTimestamp: Date = new Date();
 
   // Check if an existing snapshot already exists for this order
-  const existingSnapshot = await prisma.orderFinancialSnapshot.findUnique({
+  const existingSnapshot = await tx.orderFinancialSnapshot.findUnique({
     where: { orderId },
   });
 
@@ -239,6 +291,7 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
       existingSnapshot.sourceAmountMinor !== sourceAmountMinor ||
       existingSnapshot.sourcePlatform !== sourcePlatform ||
       existingSnapshot.currency !== currency.toUpperCase() ||
+      (resolvedPlatformAccountId && existingSnapshot.platformAccountId && existingSnapshot.platformAccountId !== resolvedPlatformAccountId) ||
       (advertiserId && existingSnapshot.advertiserId && existingSnapshot.advertiserId !== advertiserId);
 
     if (hasConflict) {
@@ -442,17 +495,23 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
     boosterPoolMinor = externalNetBaseMinor - g4xFeeMinor;
   }
 
+  // Task 9 guard: Do not invent Booster Cut percentages or allocate the entire gross by default where required deductions are unknown
+  if (snapshotNotes && snapshotNotes.includes('ELDORADO_FEE_UNKNOWN')) {
+    boosterPoolMinor = 0;
+  }
+
   if (boosterPoolMinor < 0) {
     boosterPoolMinor = 0;
   }
 
   // ذخیره یا به‌روزرسانی اسنپ‌شات در دیتابیس
-  const snapshot = await prisma.orderFinancialSnapshot.upsert({
+  const snapshot = await tx.orderFinancialSnapshot.upsert({
     where: { orderId },
     update: {
       sourcePlatform,
       sourceAmountType,
       sourceAmountMinor,
+      platformAccountId: resolvedPlatformAccountId ?? existingSnapshot?.platformAccountId ?? null,
       grossSaleMinor,
       platformSaleCommissionMinor,
       platformOrderNetMinor,
@@ -480,6 +539,7 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
       sourcePlatform,
       sourceAmountType,
       sourceAmountMinor,
+      platformAccountId: resolvedPlatformAccountId ?? null,
       grossSaleMinor,
       platformSaleCommissionMinor,
       platformOrderNetMinor,
@@ -503,6 +563,18 @@ export async function calculateOrderFinancialSnapshot(input: CalculateOrderSnaps
       snapshotTimestamp: snapTimestamp ?? new Date(),
     },
   });
+
+  // Keep authoritative Order table economics in sync with the calculated snapshot
+  if (order) {
+    await tx.order.update({
+      where: { id: orderId },
+      data: {
+        platformFeeMinor: platformSaleCommissionMinor,
+        boosterPoolMinor,
+        ...(resolvedPlatformAccountId ? { platformAccountId: resolvedPlatformAccountId } : {}),
+      },
+    });
+  }
 
   return snapshot;
 }
