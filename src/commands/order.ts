@@ -23,6 +23,13 @@ import {
   ADVERTISER_RANK_POLICY_VERSION,
 } from '../services/advertiserRankService';
 import { createExternalOrder } from '../services/platformOrderService';
+import {
+  getOrderDiagnostics,
+  payOrderFromWallet,
+  publishOrder,
+  cancelOrderWithLifecycle,
+} from '../services/orderLifecycleService';
+import { verifyOrderWithReceipt } from '../services/payment/paymentReconciliationService';
 
 export async function handleOrderCommand(message: Message, args: string[]): Promise<void> {
   const subCommand = args[0]?.toLowerCase();
@@ -34,6 +41,22 @@ export async function handleOrderCommand(message: Message, args: string[]): Prom
 
     case 'view':
       await handleOrderView(message, args.slice(1));
+      break;
+
+    case 'manage':
+      await handleOrderManage(message, args.slice(1));
+      break;
+
+    case 'funding':
+      await handleOrderFunding(message, args.slice(1));
+      break;
+
+    case 'pay-wallet':
+      await handleOrderPayWallet(message, args.slice(1));
+      break;
+
+    case 'publish':
+      await handleOrderPublish(message, args.slice(1));
       break;
 
     case 'create':
@@ -256,6 +279,22 @@ async function handleOrderView(message: Message, args: string[]): Promise<void> 
       embed.addFields({
         name: 'Notes',
         value: cleanNotes,
+        inline: false,
+      });
+    }
+
+    if (order.paymentStatus === 'pending') {
+      embed.setColor(0xfee75c);
+      embed.addFields({
+        name: '⚠️ Funding Status: Payment Pending (Unfunded Draft)',
+        value:
+          `• **Gross Required:** $${(order.grossAmountMinor / 100).toFixed(2)}\n` +
+          `• **Discord Publication:** 🔒 **Blocked** (Unpaid orders cannot accept booster pre-signs or claims)\n` +
+          `• **Why Blocked:** Public booster presign and squad formation strictly require verified financial backing.\n` +
+          `• **Legitimate Next Actions:**\n` +
+          `  1. Pay with wallet: \`G4!order pay-wallet ${order.id}\`\n` +
+          `  2. Verify payment receipt: \`G4!order verify-payment ${order.id} <receiptRef>\`\n` +
+          `  3. Web Management: [Open Portal](https://g4x.online/admin/orders/${order.id})`,
         inline: false,
       });
     }
@@ -598,6 +637,179 @@ async function handleExternalOrderCreate(message: Message, args: string[]): Prom
 /**
  * Authoritative payment verification command for managers and administrators.
  */
+async function handleOrderManage(message: Message, args: string[]): Promise<void> {
+  const query = args[0];
+  if (!query) {
+    await message.reply({
+      content: '❌ **Missing Order ID**. Usage: `G4!order manage <orderId>`',
+    });
+    return;
+  }
+
+  const orderId = Number(query);
+  if (isNaN(orderId) || orderId <= 0) {
+    await message.reply({ content: '❌ Invalid Order ID.' });
+    return;
+  }
+
+  try {
+    const diag = await getOrderDiagnostics(orderId);
+
+    const embed = new EmbedBuilder()
+      .setColor(diag.isPublishable ? 0x57f287 : 0xfee75c)
+      .setTitle(`🛠️ Order Management & Lifecycle Controls • #${diag.orderId}`)
+      .setDescription(
+        `**Order Reference:** \`${diag.orderRef}\`\n` +
+          `**Game & Service:** ${diag.gameName} — ${diag.serviceName}\n` +
+          `**Lifecycle Category:** \`${diag.category.toUpperCase()}\`\n` +
+          `**Status:** \`${diag.status.toUpperCase()}\` | **Payment Status:** \`${diag.paymentStatus.toUpperCase()}\``
+      );
+
+    let sourceText = diag.sourceWebsite ? `External (${diag.sourceWebsite.toUpperCase()})` : 'G4X Direct';
+    if (diag.platformAccountName) sourceText += ` [${diag.platformAccountName}]`;
+
+    embed.addFields({
+      name: '💰 Financial & Source Summary',
+      value:
+        `• **Source:** ${sourceText}\n` +
+        `• **Gross Required:** **$${diag.grossAmountUsd} ${diag.currency}**\n` +
+        `• **Booster Pool:** **$${diag.boosterPoolUsd} ${diag.currency}**\n` +
+        `• **Creator Wallet Available:** **$${(diag.creatorWalletAvailableCents / 100).toFixed(2)}**\n` +
+        `• **Active Payment Receipt:** ${diag.activeReceiptRef ? `\`${diag.activeReceiptRef}\`` : '*None*'}`,
+      inline: false,
+    });
+
+    embed.addFields({
+      name: diag.isPublishable ? '✅ Publication Status: Eligible' : '🔒 Publication Status: Blocked',
+      value:
+        `• **Discord Orders Board:** ${diag.discordMessageId ? `Published (\`${diag.discordMessageId}\`)` : 'Not Published (Draft)'}\n` +
+        `• **Diagnosis:** ${diag.explanationEnglish}`,
+      inline: false,
+    });
+
+    embed.addFields({
+      name: '👉 Legitimate Next Action Required',
+      value: diag.requiredNextActionEnglish,
+      inline: false,
+    });
+
+    embed.addFields({
+      name: '⚡ Authorized Management Actions',
+      value:
+        `• Fund via Wallet: \`G4!order pay-wallet ${diag.orderId}\`\n` +
+        `• Publish Card: \`G4!order publish ${diag.orderId}\`\n` +
+        `• Verify Receipt: \`G4!order verify-payment ${diag.orderId} <receiptRef>\`\n` +
+        `• Cancel Order: \`G4!order cancel ${diag.orderId} [reason]\`\n` +
+        `• Web Admin Dashboard: [Open Portal](https://g4x.online/admin/orders/${diag.orderId})`,
+      inline: false,
+    });
+
+    embed.setFooter({ text: 'G4X Order Lifecycle Engine' });
+    embed.setTimestamp();
+
+    await message.reply({ embeds: [embed] });
+  } catch (err: any) {
+    await message.reply({
+      content: `❌ Failed to load order management details: ${err?.message || err}`,
+    });
+  }
+}
+
+async function handleOrderFunding(message: Message, args: string[]): Promise<void> {
+  const query = args[0];
+  if (!query) {
+    await message.reply({ content: '❌ **Missing Order ID**. Usage: `G4!order funding <orderId>`' });
+    return;
+  }
+  const orderId = Number(query);
+  if (isNaN(orderId) || orderId <= 0) {
+    await message.reply({ content: '❌ Invalid Order ID.' });
+    return;
+  }
+
+  try {
+    const diag = await getOrderDiagnostics(orderId);
+    const embed = new EmbedBuilder()
+      .setColor(diag.paymentStatus === 'verified' ? 0x57f287 : 0xe67e22)
+      .setTitle(`💳 Order #${diag.orderId} — Funding & Payment Diagnosis`)
+      .setDescription(
+        `**Order:** \`${diag.orderRef}\`\n` +
+          `**Lifecycle Status:** \`${diag.status.toUpperCase()}\` | **Payment:** \`${diag.paymentStatus.toUpperCase()}\`\n` +
+          `**Gross Required:** **$${diag.grossAmountUsd}**\n` +
+          `**Creator Wallet Available:** **$${(diag.creatorWalletAvailableCents / 100).toFixed(2)}** (${diag.hasSufficientWalletBalance ? '✅ Sufficient' : '⚠️ Insufficient'})\n` +
+          `**Payment Request Generated:** ${diag.hasActivePaymentRequest ? 'Yes' : 'No'}\n` +
+          `**Active Verified Receipt:** ${diag.activeReceiptRef ? `\`${diag.activeReceiptRef}\`` : '*None*'}`
+      )
+      .addFields({
+        name: '📋 Required Funding Action',
+        value: diag.requiredNextActionEnglish,
+        inline: false,
+      })
+      .setFooter({ text: 'G4X Financial Engine' });
+
+    await message.reply({ embeds: [embed] });
+  } catch (err: any) {
+    await message.reply({ content: `❌ Failed to inspect funding: ${err?.message || err}` });
+  }
+}
+
+async function handleOrderPayWallet(message: Message, args: string[]): Promise<void> {
+  const actorId = message.author.id;
+  const orderId = Number(args[0]);
+  if (isNaN(orderId) || orderId <= 0) {
+    await message.reply({
+      content: '❌ **Invalid Order ID**. Usage: `G4!order pay-wallet <orderId>`',
+    });
+    return;
+  }
+
+  try {
+    const result = await payOrderFromWallet(orderId, actorId);
+    const pubResult = await publishOrRefreshOrderCard(message.client, orderId, {
+      guildId: message.guild?.id,
+    });
+    let reply = `✅ **Order #${orderId} Successfully Funded from Wallet Balance!**\nPayment verified and reserved from available USD balance.\nStatus: \`${result.order?.status || 'open_presign'}\`.`;
+    if (pubResult.success) {
+      reply += `\n📢 **Published to Orders Board** (Message ID: \`${pubResult.messageId}\`)`;
+    } else {
+      reply += `\n⚠️ Publication note: ${pubResult.error || 'Awaiting channel routing'}`;
+    }
+    await message.reply({ content: reply });
+  } catch (err: any) {
+    await message.reply({
+      content: `❌ **Wallet Payment Failed**: ${err.message || err}`,
+    });
+  }
+}
+
+async function handleOrderPublish(message: Message, args: string[]): Promise<void> {
+  const actorId = message.author.id;
+  const orderId = Number(args[0]);
+  if (isNaN(orderId) || orderId <= 0) {
+    await message.reply({
+      content: '❌ **Invalid Order ID**. Usage: `G4!order publish <orderId>`',
+    });
+    return;
+  }
+
+  try {
+    const result = await publishOrder(orderId, actorId, message.client, {
+      guildId: message.guild?.id,
+    });
+    await message.reply({
+      content: `📢 **Order #${orderId} Successfully Published!**\nMessage ID: \`${result.messageId}\`\nChannel ID: \`${result.channelId}\``,
+    });
+  } catch (err: any) {
+    await message.reply({
+      content: `❌ **Publication Denied**: ${err.message || err}`,
+    });
+  }
+}
+
+/**
+ * Authoritative payment verification command for managers and administrators.
+ * Strictly verifies against real payment receipts. Synthetic shortcuts without evidence are rejected.
+ */
 async function handleOrderVerifyPayment(message: Message, args: string[]): Promise<void> {
   const actorId = message.author.id;
   const auth = await authorize(actorId, Permission.ORDER_PAYMENT_VERIFY);
@@ -611,62 +823,37 @@ async function handleOrderVerifyPayment(message: Message, args: string[]): Promi
   const orderId = Number(args[0]);
   if (isNaN(orderId) || orderId <= 0) {
     await message.reply({
-      content: '❌ **Invalid Order ID**. Usage: `G4!order verify-payment <orderId> [receiptRef]`',
+      content: '❌ **Invalid Order ID**. Usage: `G4!order verify-payment <orderId> <receiptRef>`',
     });
     return;
   }
 
   const receiptRef = args.slice(1).join(' ').trim() || null;
-
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-  });
-
-  if (!order) {
-    await message.reply({ content: `❌ Order #${orderId} not found.` });
+  if (!receiptRef) {
+    await message.reply({
+      content:
+        '❌ **Missing Payment Receipt Reference**.\n' +
+        'Usage: `G4!order verify-payment <orderId> <receiptRef>`\n\n' +
+        '🔒 *Administrative payment verification strictly requires a valid verified payment receipt. Synthetic approvals without financial backing are prohibited. If funding from available balance, use `G4!order pay-wallet <orderId>`.*',
+    });
     return;
   }
 
-  if (order.paymentStatus === 'verified') {
-    await message.reply({ content: `ℹ️ Order #${orderId} payment is already verified.` });
-    return;
+  try {
+    const result = await verifyOrderWithReceipt(orderId, receiptRef, actorId);
+    const pubResult = await publishOrRefreshOrderCard(message.client, orderId, {
+      guildId: message.guild?.id,
+    });
+    let reply = `✅ **Payment Verified for Order #${orderId} via Receipt \`${receiptRef}\`!**\nStatus updated to \`${result.order?.status || 'open_presign'}\`.`;
+    if (pubResult.success) {
+      reply += '\n📢 Published to Orders Board.';
+    }
+    await message.reply({ content: reply });
+  } catch (err: any) {
+    await message.reply({
+      content: `❌ **Payment Verification Failed**: ${err.message || err}`,
+    });
   }
-
-  const updatedOrder = await prisma.$transaction(async (tx) => {
-    const ord = await tx.order.update({
-      where: { id: orderId },
-      data: {
-        paymentStatus: 'verified',
-        paymentVerifiedBy: actorId,
-        paymentVerifiedAt: new Date(),
-        status: order.status === 'payment_pending' || order.status === 'draft' ? 'open_presign' : order.status,
-      },
-      include: { game: true, service: true, requiredRoles: true },
-    });
-
-    await tx.auditLog.create({
-      data: {
-        actorId,
-        action: 'ORDER_PAYMENT_VERIFIED',
-        entityType: 'Order',
-        entityId: String(orderId),
-        previousValues: JSON.stringify({ paymentStatus: order.paymentStatus, status: order.status }),
-        newValues: JSON.stringify({ paymentStatus: 'verified', status: ord.status, receiptRef }),
-        reason: receiptRef ? `Payment verified with reference: ${receiptRef}` : 'Payment verified by administrator',
-        isSuccess: true,
-      },
-    });
-
-    return ord;
-  });
-
-  // Publish to Discord now that payment has been authoritatively verified
-  const pubResult = await publishOrRefreshOrderCard(message.client, updatedOrder.id, {
-    guildId: message.guild?.id,
-  });
-  await message.reply({
-    content: `✅ **Payment Verified for Order #${updatedOrder.id}!**\nStatus updated to \`${updatedOrder.status}\`.${pubResult.success ? '\n📢 Published to Orders Board.' : ''}`,
-  });
 }
 
 /**
@@ -693,59 +880,9 @@ async function handleOrderCancel(message: Message, args: string[]): Promise<void
   const reason = args.slice(1).join(' ').trim() || 'Cancelled via Discord command';
 
   try {
-    const order = await prisma.order.findUnique({
-      where: { id: orderId },
-    });
-
-    if (!order) {
-      await message.reply({ content: `❌ Order #${orderId} not found.` });
-      return;
-    }
-
-    // Check authorization
-    const auth = await authorize(actorId, Permission.ORDER_CANCEL, {
-      orderId: orderId,
-      targetUserId: actorId,
-    });
-
-    if (!auth.allowed) {
-      await message.reply({
-        content: `❌ **Permission Denied**: ${auth.reason || 'You do not have permission to cancel this order.'}`,
-      });
-      return;
-    }
-
-    ensureOrderAcceptsOperations(order);
-
-    // Cancel order and release reservations
-    await prisma.$transaction(async (tx) => {
-      await tx.order.update({
-        where: { id: order.id },
-        data: { status: 'cancelled' },
-      });
-
-      await tx.boosterReservation.updateMany({
-        where: { orderId: order.id, status: 'active' },
-        data: {
-          status: 'cancelled',
-          releaseReason: reason,
-          releasedAt: new Date(),
-        },
-      });
-    });
-
-    // Update published Discord card
-    publishOrRefreshOrderCard(message.client, order.id).catch((e) =>
-      console.warn('[OrderCommand] Card refresh error after cancellation:', e)
-    );
-
-    // Lock private coordination channel if exists
-    handleOrderCancellationChannel(order.id, reason, message.client).catch((e) =>
-      console.warn('[OrderCommand] Channel lock error after cancellation:', e)
-    );
-
+    const result = await cancelOrderWithLifecycle(orderId, actorId, reason, message.client);
     await message.reply({
-      content: `✅ **Order #${order.id} Cancelled**: The order has been marked as cancelled and all active reservations released.`,
+      content: `✅ **Order #${result.order.id} Cancelled**: The order has been marked as cancelled and all active reservations/funds released.`,
     });
   } catch (err: any) {
     console.error(`[OrderCommand] Failed to cancel order #${orderId}:`, err);
@@ -768,6 +905,16 @@ async function sendOrderHelp(message: Message): Promise<void> {
         '  *List open orders available for pre-signing.*\n\n' +
         '• `G4!order view <orderId>`\n' +
         '  *View comprehensive details, source platform, economics, and required roles.*\n\n' +
+        '• `G4!order manage <orderId>`\n' +
+        '  *Inspect order lifecycle status, publication eligibility, and authorized actions.*\n\n' +
+        '• `G4!order funding <orderId>`\n' +
+        '  *Check funding status, wallet balance, payment requests, and receipt evidence.*\n\n' +
+        '• `G4!order pay-wallet <orderId>`\n' +
+        '  *Fund order from backed available WalletV2 balance and transition to verified/publishable.*\n\n' +
+        '• `G4!order verify-payment <orderId> <receiptRef>`\n' +
+        '  *Verify order payment using an authoritative, unconsumed PaymentReceipt reference.*\n\n' +
+        '• `G4!order publish <orderId>`\n' +
+        '  *Publish an eligible, verified order to the Discord Orders Board.*\n\n' +
         '• `G4!order create <gameSlug> <serviceId> <amountUsd> [type] [notes...]`\n' +
         '  *Create a new direct boost order. (Authorized Advertisers & Management).*\n\n' +
         '• `G4!order ext-create <gameSlug> <serviceId> <amountUsd> <platform> [accountRef] [gross|net] [type] [notes...]`\n' +

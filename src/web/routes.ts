@@ -49,6 +49,15 @@ import { DomainError } from '../services/domainErrors';
 import { getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
 import { marketplaceRouter } from './marketplaceRoutes';
 import { paymentRouter } from './paymentRoutes';
+import { getGlobalDiscordClient } from '../services/orderDiscordService';
+import {
+  getOrderDiagnostics,
+  getCategorizedOrders,
+  publishOrder,
+  payOrderFromWallet,
+  cancelOrderWithLifecycle,
+  getOrderAuditHistory,
+} from '../services/orderLifecycleService';
 import { verifyOrderWithReceipt } from '../services/payment/paymentReconciliationService';
 import {
   generateUsdtWithdrawalQuote,
@@ -1271,83 +1280,60 @@ router.post(
     try {
       const { user } = req as AuthenticatedRequest;
       const orderId = Number(req.params.id);
-
-      const order = await prisma.order.findUnique({
-        where: { id: orderId },
-      });
-
-      if (!order) {
-        res.status(404).json({ error: 'Order not found' });
-        return;
-      }
-
-      if (order.creatorId !== user.discordId && order.advertiserId !== user.discordId) {
-        res.status(403).json({ error: 'Only the order creator can fund this order from wallet' });
-        return;
-      }
-
-      if (order.paymentStatus === 'verified') {
-        res.json({ success: true, message: 'Order is already funded and verified', order });
-        return;
-      }
-
-      const updated = await prisma.$transaction(async (tx) => {
-        const wallet = await tx.walletV2.findUnique({
-          where: { userId: user.discordId },
-        });
-
-        if (!wallet || wallet.availableCents < order.grossAmountMinor) {
-          throw new Error('INSUFFICIENT_FUNDS: Available wallet balance is insufficient to fund this order.');
-        }
-
-        const newAvailable = wallet.availableCents - order.grossAmountMinor;
-        const newReserved = wallet.reservedCents + order.grossAmountMinor;
-
-        await tx.walletV2.update({
-          where: { userId: user.discordId },
-          data: {
-            availableCents: newAvailable,
-            reservedCents: newReserved,
-          },
-        });
-
-        await tx.ledgerEntryV2.create({
-          data: {
-            entryRef: `LEDGER_ORD_PAY_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-            userId: user.discordId,
-            amountCents: order.grossAmountMinor,
-            entryType: 'ORDER_RESERVE',
-            direction: 'DEBIT',
-            balanceAfterAvailableCents: newAvailable,
-            balanceAfterReservedCents: newReserved,
-            description: `Payment reserved from available USD balance for Order #${order.orderRef}`,
-            createdBy: user.discordId,
-          },
-        });
-
-        const ord = await tx.order.update({
-          where: { id: orderId },
-          data: {
-            paymentStatus: 'verified',
-            status: order.status === 'payment_pending' ? 'open_presign' : order.status,
-            paymentVerifiedBy: user.discordId,
-            paymentVerifiedAt: new Date(),
-          },
-        });
-
-        return ord;
-      });
-
-      res.json({
-        success: true,
-        message: 'Order funded and payment verified from wallet balance',
-        order: {
-          ...updated,
-          simplifiedStatus: mapOrderStatus(updated.status),
-        },
-      });
+      const result = await payOrderFromWallet(orderId, user.discordId);
+      res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Failed to pay for order' });
+    }
+  }
+);
+
+router.get(
+  '/orders/:id/funding-status',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const orderId = Number(req.params.id);
+      const diagnostics = await getOrderDiagnostics(orderId);
+      res.json({ success: true, diagnostics });
+    } catch (err: any) {
+      res.status(404).json({ error: err.message || 'Order not found' });
+    }
+  }
+);
+
+router.post(
+  '/orders/:id/publish',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      const discordClient = getGlobalDiscordClient();
+      const result = await publishOrder(orderId, user.discordId, discordClient);
+      res.json({ message: 'Order published to Discord Orders Board', ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to publish order' });
+    }
+  }
+);
+
+router.post(
+  '/orders/:id/cancel',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      const { reason = 'Cancelled via web portal' } = req.body;
+      const discordClient = getGlobalDiscordClient();
+      const result = await cancelOrderWithLifecycle(orderId, user.discordId, reason, discordClient);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to cancel order' });
     }
   }
 );
@@ -1539,13 +1525,25 @@ router.get(
   '/admin/orders',
   requireAuth,
   requireRole('owner', 'manager', 'admin', 'staff'),
-  async (_req: Request, res: Response): Promise<void> => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
+      const view = req.query.view ? String(req.query.view) : undefined;
+      const gameSlug = req.query.gameSlug ? String(req.query.gameSlug) : undefined;
+
+      if (view === 'dashboard' || view === 'categorized') {
+        const categorized = await getCategorizedOrders({ gameSlug });
+        res.json({ success: true, ...categorized });
+        return;
+      }
+
+      const categorized = await getCategorizedOrders({ gameSlug });
       const orders = await prisma.order.findMany({
+        where: gameSlug ? { gameSlug } : {},
         include: {
           service: true,
           runs: true,
           boostReleaseTracker: true,
+          platformAccount: true,
         },
         orderBy: { createdAt: 'desc' },
         take: 50,
@@ -1553,6 +1551,7 @@ router.get(
 
       res.json({
         success: true,
+        counts: categorized.counts,
         orders: orders.map((o) => ({
           id: o.id,
           orderRef: o.orderRef,
@@ -1561,7 +1560,11 @@ router.get(
           grossAmountUsd: (o.grossAmountMinor / 100).toFixed(2),
           boosterPoolUsd: (o.boosterPoolMinor / 100).toFixed(2),
           status: o.status,
+          paymentStatus: o.paymentStatus,
           creatorType: o.creatorType,
+          sourceType: o.sourceType,
+          sourceWebsite: o.sourceWebsite,
+          platformAccount: o.platformAccount?.displayName || null,
           runsCount: o.runs.length,
           releaseStage: o.boostReleaseTracker?.stage || null,
           simplifiedStatus: mapOrderStatus(o.status, o.boostReleaseTracker?.stage),
@@ -1569,6 +1572,69 @@ router.get(
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to fetch admin orders' });
+    }
+  }
+);
+
+router.get(
+  '/admin/orders/dashboard',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const gameSlug = req.query.gameSlug ? String(req.query.gameSlug) : undefined;
+      const result = await getCategorizedOrders({ gameSlug });
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch categorized orders' });
+    }
+  }
+);
+
+router.get(
+  '/admin/orders/:id',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const orderId = Number(req.params.id);
+      const diagnostics = await getOrderDiagnostics(orderId);
+      res.json({ success: true, order: diagnostics });
+    } catch (err: any) {
+      res.status(404).json({ error: err.message || 'Order not found' });
+    }
+  }
+);
+
+router.get(
+  '/admin/orders/:id/audit-history',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const orderId = Number(req.params.id);
+      const auditLogs = await getOrderAuditHistory(orderId);
+      res.json({ success: true, auditLogs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch audit history' });
+    }
+  }
+);
+
+router.post(
+  '/admin/orders/:id/publish',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      const discordClient = getGlobalDiscordClient();
+      const result = await publishOrder(orderId, user.discordId, discordClient);
+      res.json({ message: 'Order published to Discord Orders Board', ...result });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to publish order' });
     }
   }
 );
