@@ -9,6 +9,7 @@ import { Message, TextChannel } from 'discord.js';
 import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 import { setupRegistrationChannels } from '../services/registrationChannelSetup';
+import { setupOrderPanels } from '../services/orderChannelSetup';
 
 import {
   buildRegistrationPanelEmbed,
@@ -103,9 +104,69 @@ export async function handleSetupCommand(message: Message, args: string[]): Prom
         content: `❌ Failed to set up registration channels: ${err?.message || err}`,
       });
     }
+  } else if (subCommand === 'orders' || subCommand === 'order-panels' || subCommand === 'order_panels') {
+    // ۱. اعتبارسنجی سطح دسترسی متمرکز: منحصراً مدیران مجاز (Manager / Owner)
+    const authResult = await authorize(message.author.id, Permission.SERVICE_CONFIG_MANAGE);
+    if (!authResult.allowed) {
+      await message.reply({
+        content: '❌ **Permission Denied**: Only authorized management may set up or update order creation panels.',
+      });
+      return;
+    }
+
+    if (!message.guild) {
+      await message.reply({ content: '❌ This command must be executed within a Discord server (guild).' });
+      return;
+    }
+
+    try {
+      // ۲. راه‌اندازی دو دسته‌بندی و شش کانال اختصاصی پنل‌های سفارش
+      const result = await setupOrderPanels({
+        guild: message.guild,
+        actorId: message.author.id,
+      });
+
+      let responseText = '✅ **Order Creation Panel Architecture Setup Completed Successfully!**\n\n';
+
+      responseText += '📁 **Category: `G4X ORDERS` (Direct Community Carry Panels):**\n';
+      const panelNames: Record<string, string> = {
+        mythic: 'wow_midnight_mythic',
+        non_pilot: 'non_pilot',
+        pilot: 'pilot',
+      };
+      for (const [key, label] of Object.entries(panelNames)) {
+        const info = result.g4xChannels[key];
+        if (info) {
+          responseText += `• **#${label}**: <#${info.channelId}> ${info.panelDeployed ? '*(Panel Active)*' : ''}\n`;
+        }
+      }
+
+      responseText += '\n📁 **Category: `ADVERTISER ORDERS` (Commercial Advertiser Panels):**\n';
+      for (const [key, label] of Object.entries(panelNames)) {
+        const info = result.advertiserChannels[key];
+        if (info) {
+          responseText += `• **#${label}**: <#${info.channelId}> ${info.panelDeployed ? '*(Panel Active)*' : ''}\n`;
+        }
+      }
+
+      if (result.warnings.length > 0) {
+        responseText += '\n⚠️ **Notes & Warnings:**\n' + result.warnings.map((w) => `• ${w}`).join('\n');
+      }
+
+      await message.reply({ content: responseText });
+    } catch (err: any) {
+      console.error('[SetupCommand] Failed to deploy order panel architecture:', err);
+      await message.reply({
+        content: `❌ Failed to set up order creation panels: ${err?.message || err}`,
+      });
+    }
   } else {
     await message.reply({
-      content: '❌ Unknown setup target. Usage: `G4!setup registration`',
+      content:
+        '❌ Unknown setup target. Usage:\n' +
+        '• `G4!setup registration` — Deploy or refresh 8 registration & review channels\n' +
+        '• `G4!setup orders` — Deploy or refresh 2 categories & 6 order creation panels',
     });
   }
 }
+

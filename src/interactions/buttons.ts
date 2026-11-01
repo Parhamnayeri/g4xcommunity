@@ -16,6 +16,7 @@ import {
   handleAdminReviewButton,
   handleProvideInfoButton,
 } from './registrationInteractions';
+import { handleOrderPanelButton } from './orderPanelInteractions';
 import {
   handlePresignButton,
   handlePresignWithdrawButton,
@@ -24,6 +25,11 @@ import {
 
 export async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
   const [action, ...params] = interaction.customId.split(':');
+
+  if (action === 'ord_create') {
+    await handleOrderPanelButton(interaction);
+    return;
+  }
 
   if (action === 'reg_start') {
     await handleRegistrationButton(interaction);

@@ -10,9 +10,15 @@
 
 import { ModalSubmitInteraction } from 'discord.js';
 import { handleRegistrationModalSubmit } from './registrationInteractions';
+import { handleOrderPanelModalSubmit } from './orderPanelInteractions';
 
 export async function handleModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
   const { customId } = interaction;
+
+  if (customId.startsWith('modal_ord:')) {
+    await handleOrderPanelModalSubmit(interaction);
+    return;
+  }
 
   if (
     customId.startsWith('reg_modal:') ||
