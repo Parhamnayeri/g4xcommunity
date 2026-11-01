@@ -457,131 +457,236 @@ export async function handleOrderPanelButton(interaction: ButtonInteraction): Pr
   }
 }
 
+// Helper function to safely read TextInput values without throwing DiscordjsTypeError
+export function safeGetModalTextInput(
+  interaction: ModalSubmitInteraction,
+  customId: string
+): string | null {
+  try {
+    const val = interaction.fields.getTextInputValue(customId);
+    return typeof val === 'string' ? val : null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── ۵. مدیریت سابمیت فرم‌های مودال (Modal Submit Interaction Handler) ─────────
 
 export async function handleOrderPanelModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
-  const parts = interaction.customId.split(':');
-  const category = parts[1] as OrderPanelCategory;
-  const panelType = parts[2] as OrderPanelType;
-  const actorId = interaction.user.id;
-
-  // ۱. اعتبارسنجی مجدد سطح دسترسی سمت سرور (جلوگیری از دور زدن کلاینت با customId ساختگی)
-  const isAdv = category === 'adv';
-  if (isAdv) {
-    const auth = await authorize(actorId, Permission.ORDER_CREATE_ADVERTISER);
-    if (!auth.allowed) {
-      await interaction.reply({
-        content:
-          '❌ **Permission Denied**: You do not have permission to create Advertiser orders.',
-        ephemeral: true,
-      });
-      return;
-    }
-  } else {
-    const auth = await authorize(actorId, Permission.ORDER_CREATE_INTERNAL);
-    if (!auth.allowed) {
-      await interaction.reply({
-        content:
-          '❌ **Permission Denied**: You do not have permission to create G4X Direct orders.',
-        ephemeral: true,
-      });
-      return;
-    }
-  }
-
-  // ۲. استعلام کاربر و رنک تجاری ادورتایزر در صورت لزوم
-  const user = await prisma.user.findUnique({
-    where: { discordId: actorId },
-  });
-
-  let advRank: AdvertiserRank | null = null;
-  if (isAdv) {
-    if (!user?.advertiserRank || !isValidAdvertiserRank(user.advertiserRank)) {
-      await interaction.reply({
-        content:
-          '❌ **Unresolved Commercial Rank**: Advertiser does not have an approved commercial rank configured by management.',
-        ephemeral: true,
-      });
-      return;
-    }
-    advRank = user.advertiserRank as AdvertiserRank;
-  }
-
-  // ۳. استخراج و اعتبارسنجی مقادیر فرم
-  const rawAmount = interaction.fields.getTextInputValue('amount_usd').trim();
-  if (!/^\d+(\.\d{1,2})?$/.test(rawAmount)) {
-    await interaction.reply({
-      content: '❌ **Invalid Order Amount**: Total amount must be a positive number in USD (e.g. `45.00`).',
-      ephemeral: true,
-    });
-    return;
-  }
-
-  const amountUsd = parseFloat(rawAmount);
-  if (isNaN(amountUsd) || amountUsd <= 0) {
-    await interaction.reply({
-      content: '❌ **Invalid Order Amount**: Total amount must be a positive number in USD (e.g. `45.00`).',
-      ephemeral: true,
-    });
-    return;
-  }
-
-  const grossCents = Math.round(amountUsd * 100);
-  if (!Number.isSafeInteger(grossCents) || grossCents <= 0) {
-    await interaction.reply({
-      content: '❌ **Invalid Order Amount**: Order gross amount cannot be processed.',
-      ephemeral: true,
-    });
-    return;
-  }
-
-  const rawRuns = interaction.fields.getTextInputValue('runs_count') || '1';
-  let runsCount = parseInt(rawRuns.replace(/[^0-9]/g, ''), 10);
-  if (isNaN(runsCount) || runsCount < 1) {
-    runsCount = 1;
-  }
-
-  let gameSlug = '';
-  let serviceIdOrKey = '';
-  let orderMode: 'non_pilot' | 'pilot' = 'non_pilot';
-  let orderType = 'group';
-  let assembledNotes = '';
-
-  if (panelType === 'mythic') {
-    gameSlug = 'wow_midnight';
-    serviceIdOrKey = 'mythic_plus';
-    orderMode = 'non_pilot';
-    orderType = 'group';
-
-    const keyLevel = interaction.fields.getTextInputValue('key_level');
-    const customerInfo = interaction.fields.getTextInputValue('customer_info') || '';
-    const notes = interaction.fields.getTextInputValue('notes') || '';
-
-    assembledNotes = `[Mythic+ Target: ${keyLevel}]`;
-    if (customerInfo) assembledNotes += ` [Customer: ${customerInfo}]`;
-    if (notes) assembledNotes += ` ${notes}`;
-  } else if (panelType === 'non_pilot') {
-    gameSlug = interaction.fields.getTextInputValue('game_slug').trim().toLowerCase();
-    serviceIdOrKey = interaction.fields.getTextInputValue('service_id').trim().toLowerCase();
-    orderMode = 'non_pilot';
-    orderType = 'solo';
-
-    const notes = interaction.fields.getTextInputValue('notes') || '';
-    assembledNotes = notes;
-  } else if (panelType === 'pilot') {
-    gameSlug = interaction.fields.getTextInputValue('game_slug').trim().toLowerCase();
-    serviceIdOrKey = interaction.fields.getTextInputValue('service_id').trim().toLowerCase();
-    orderMode = 'pilot';
-    orderType = 'pilot';
-
-    const vpnLocation = interaction.fields.getTextInputValue('vpn_location');
-    const notes = interaction.fields.getTextInputValue('notes') || '';
-    assembledNotes = `[Required VPN: ${vpnLocation}]`;
-    if (notes) assembledNotes += ` ${notes}`;
-  }
-
-  // ۴. تطبیق بازی و سرویس در پایگاه داده
   try {
+    const parts = interaction.customId.split(':');
+    const category = parts[1] as OrderPanelCategory;
+    const panelType = parts[2] as OrderPanelType;
+    const actorId = interaction.user.id;
+
+    if (!category || (category !== 'g4x' && category !== 'adv')) {
+      await interaction.reply({
+        content: '❌ **Invalid Order Category**: Order submission is missing a valid category identifier.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    // ۱. اعتبارسنجی مجدد سطح دسترسی سمت سرور (جلوگیری از دور زدن کلاینت با customId ساختگی)
+    const isAdv = category === 'adv';
+    if (isAdv) {
+      const auth = await authorize(actorId, Permission.ORDER_CREATE_ADVERTISER);
+      if (!auth.allowed) {
+        await interaction.reply({
+          content:
+            '❌ **Permission Denied**: You do not have permission to create Advertiser orders.',
+          ephemeral: true,
+        });
+        return;
+      }
+    } else {
+      const auth = await authorize(actorId, Permission.ORDER_CREATE_INTERNAL);
+      if (!auth.allowed) {
+        await interaction.reply({
+          content:
+            '❌ **Permission Denied**: You do not have permission to create G4X Direct orders.',
+          ephemeral: true,
+        });
+        return;
+      }
+    }
+
+    // ۲. استعلام کاربر و رنک تجاری ادورتایزر در صورت لزوم
+    const user = await prisma.user.findUnique({
+      where: { discordId: actorId },
+    });
+
+    let advRank: AdvertiserRank | null = null;
+    if (isAdv) {
+      if (!user?.advertiserRank || !isValidAdvertiserRank(user.advertiserRank)) {
+        await interaction.reply({
+          content:
+            '❌ **Unresolved Commercial Rank**: Advertiser does not have an approved commercial rank configured by management.',
+          ephemeral: true,
+        });
+        return;
+      }
+      advRank = user.advertiserRank as AdvertiserRank;
+    }
+
+    // ۳. استخراج و اعتبارسنجی مقادیر فرم
+    const rawAmount = safeGetModalTextInput(interaction, 'amount_usd')?.trim();
+    if (!rawAmount || !/^\d+(\.\d{1,2})?$/.test(rawAmount)) {
+      await interaction.reply({
+        content: '❌ **Invalid Order Amount**: Total amount must be a positive number in USD (e.g. `45.00`).',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const amountUsd = parseFloat(rawAmount);
+    if (isNaN(amountUsd) || amountUsd <= 0) {
+      await interaction.reply({
+        content: '❌ **Invalid Order Amount**: Total amount must be a positive number in USD (e.g. `45.00`).',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const grossCents = Math.round(amountUsd * 100);
+    if (!Number.isSafeInteger(grossCents) || grossCents <= 0) {
+      await interaction.reply({
+        content: '❌ **Invalid Order Amount**: Order gross amount cannot be processed.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    let gameSlug = '';
+    let serviceIdOrKey = '';
+    let orderMode: 'non_pilot' | 'pilot' = 'non_pilot';
+    let orderType = 'group';
+    let runsCount = 1;
+    let assembledNotes = '';
+
+    if (panelType === 'mythic') {
+      gameSlug = 'wow_midnight';
+      serviceIdOrKey = 'mythic_plus';
+      orderMode = 'non_pilot';
+      orderType = 'group';
+
+      const keyLevel = safeGetModalTextInput(interaction, 'key_level')?.trim();
+      if (!keyLevel) {
+        await interaction.reply({
+          content: '❌ **Missing Key Level**: Target dungeon and key level are required (e.g. `+10 Ara-Kara`).',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const rawRuns = safeGetModalTextInput(interaction, 'runs_count')?.trim();
+      if (rawRuns && rawRuns.length > 0) {
+        const parsedRuns = parseInt(rawRuns, 10);
+        if (!/^\d+$/.test(rawRuns) || isNaN(parsedRuns) || parsedRuns < 1) {
+          await interaction.reply({
+            content: '❌ **Invalid Runs Count**: Number of runs must be a positive integer (e.g. `1`, `5`).',
+            ephemeral: true,
+          });
+          return;
+        }
+        runsCount = parsedRuns;
+      } else {
+        runsCount = 1;
+      }
+
+      const customerInfo = safeGetModalTextInput(interaction, 'customer_info')?.trim() || '';
+      const notes = safeGetModalTextInput(interaction, 'notes')?.trim() || '';
+
+      assembledNotes = `[Mythic+ Target: ${keyLevel}]`;
+      if (customerInfo) assembledNotes += ` [Customer: ${customerInfo}]`;
+      if (notes) assembledNotes += ` ${notes}`;
+    } else if (panelType === 'non_pilot') {
+      const rawGameSlug = safeGetModalTextInput(interaction, 'game_slug')?.trim();
+      if (!rawGameSlug) {
+        await interaction.reply({
+          content: '❌ **Missing Game Slug**: Please specify a valid game slug (e.g. `wow_midnight`, `rainbow_six_siege`).',
+          ephemeral: true,
+        });
+        return;
+      }
+      gameSlug = rawGameSlug.toLowerCase();
+
+      const rawServiceId = safeGetModalTextInput(interaction, 'service_id')?.trim();
+      if (!rawServiceId) {
+        await interaction.reply({
+          content: '❌ **Missing Service ID**: Please specify a valid service ID or key (e.g. `raid_boost`, `afk_leveling`).',
+          ephemeral: true,
+        });
+        return;
+      }
+      serviceIdOrKey = rawServiceId.toLowerCase();
+
+      const rawRuns = safeGetModalTextInput(interaction, 'runs_count')?.trim();
+      if (rawRuns && rawRuns.length > 0) {
+        const parsedRuns = parseInt(rawRuns, 10);
+        if (!/^\d+$/.test(rawRuns) || isNaN(parsedRuns) || parsedRuns < 1) {
+          await interaction.reply({
+            content: '❌ **Invalid Runs Count**: Runs / matches / quantity must be a positive integer (e.g. `1`, `5`).',
+            ephemeral: true,
+          });
+          return;
+        }
+        runsCount = parsedRuns;
+      } else {
+        runsCount = 1;
+      }
+
+      orderMode = 'non_pilot';
+      orderType = 'solo';
+
+      const notes = safeGetModalTextInput(interaction, 'notes')?.trim() || '';
+      assembledNotes = notes;
+    } else if (panelType === 'pilot') {
+      const rawGameSlug = safeGetModalTextInput(interaction, 'game_slug')?.trim();
+      if (!rawGameSlug) {
+        await interaction.reply({
+          content: '❌ **Missing Game Slug**: Please specify a valid game slug (e.g. `wow_classic_era`, `poe2`).',
+          ephemeral: true,
+        });
+        return;
+      }
+      gameSlug = rawGameSlug.toLowerCase();
+
+      const rawServiceId = safeGetModalTextInput(interaction, 'service_id')?.trim();
+      if (!rawServiceId) {
+        await interaction.reply({
+          content: '❌ **Missing Service ID**: Please specify a valid service ID or key (e.g. `pilot_boost`).',
+          ephemeral: true,
+        });
+        return;
+      }
+      serviceIdOrKey = rawServiceId.toLowerCase();
+
+      const rawVpnLocation = safeGetModalTextInput(interaction, 'vpn_location')?.trim();
+      if (!rawVpnLocation) {
+        await interaction.reply({
+          content: '❌ **Missing VPN Location**: Pilot orders strictly require specifying the desired VPN Country & City for account security.',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      orderMode = 'pilot';
+      orderType = 'pilot';
+      runsCount = 1;
+
+      const notes = safeGetModalTextInput(interaction, 'notes')?.trim() || '';
+      assembledNotes = `[Required VPN: ${rawVpnLocation}]`;
+      if (notes) assembledNotes += ` ${notes}`;
+    } else {
+      await interaction.reply({
+        content: `❌ **Unknown Order Panel Type**: \`${panelType}\``,
+        ephemeral: true,
+      });
+      return;
+    }
+
+    // ۴. تطبیق بازی و سرویس در پایگاه داده
     const game = await prisma.game.findUnique({
       where: { slug: gameSlug },
     });

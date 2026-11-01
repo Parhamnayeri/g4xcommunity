@@ -363,7 +363,7 @@ async function runOrderPanelsSuite() {
       '9. Non-Pilot panel successfully creates non-pilot order with accurate properties'
     );
 
-    // ─── تست ۱۰: ایجاد سفارش Pilot و ذخیره الزامات امنیتی VPN ────────────────
+    // ─── تست ۱۰: ایجاد سفارش Pilot و ذخیره الزامات امنیتی VPN (عدم وجود runs_count در مودال پایلوت) ───
     let replyPilotCreated = '';
     const mockPilotSubmit: any = {
       customId: 'modal_ord:adv:pilot',
@@ -373,10 +373,13 @@ async function runOrderPanelsSuite() {
           if (f === 'game_slug') return 'wow_classic_era';
           if (f === 'service_id') return 'pilot_boost';
           if (f === 'amount_usd') return '80.00';
-          if (f === 'runs_count') return '1';
+          if (f === 'runs_count') {
+            // شبیه‌سازی دقیق رفتار دیسکورد: فیلد runs_count در فرم پایلوت وجود ندارد و باید خطا پرتاب کند
+            throw new Error('DiscordjsTypeError [ModalSubmitInteractionFieldNotFound]: Required field with custom id "runs_count" not found.');
+          }
           if (f === 'vpn_location') return 'Sweden / Stockholm';
           if (f === 'notes') return 'Stream via Discord required';
-          return '';
+          throw new Error(`DiscordjsTypeError [ModalSubmitInteractionFieldNotFound]: Required field with custom id "${f}" not found.`);
         },
       },
       reply: async (p: any) => {
@@ -392,9 +395,10 @@ async function runOrderPanelsSuite() {
     assert(
       createdPilotOrder !== null &&
         createdPilotOrder.orderMode === 'pilot' &&
+        createdPilotOrder.quantity === 1 &&
         createdPilotOrder.notes?.includes('Sweden / Stockholm') &&
         createdPilotOrder.creatorType === 'advertiser',
-      '10. Pilot panel creates pilot order with preserved VPN security requirements'
+      '10. Pilot panel creates pilot order with preserved VPN security requirements without runs_count crash'
     );
 
     // ─── تست ۱۱: تفکیک دقیق متادیتا و اسنپ‌شات کمیسیون ادورتایزر ─────────────
@@ -462,6 +466,241 @@ async function runOrderPanelsSuite() {
     assert(
       setupCommandReply.includes('Order Creation Panel Architecture Setup Completed Successfully'),
       '15. G4!setup orders executes successfully for authorized management and outputs confirmation'
+    );
+
+    // ─── تست ۱۶: اعتبارسنجی نبود فیلد اجباری VPN در مودال پایلوت ─────────────
+    let replyMissingVpn = '';
+    const mockMissingVpnModal: any = {
+      customId: 'modal_ord:adv:pilot',
+      user: { id: uAdvertiser },
+      fields: {
+        getTextInputValue: (f: string) => {
+          if (f === 'game_slug') return 'wow_classic_era';
+          if (f === 'service_id') return 'pilot_boost';
+          if (f === 'amount_usd') return '50.00';
+          if (f === 'vpn_location') return '';
+          throw new Error(`DiscordjsTypeError [ModalSubmitInteractionFieldNotFound]: Required field with custom id "${f}" not found.`);
+        },
+      },
+      reply: async (p: any) => {
+        replyMissingVpn = p.content;
+      },
+    };
+    await handleOrderPanelModalSubmit(mockMissingVpnModal);
+    assert(
+      replyMissingVpn.includes('Missing VPN Location'),
+      '16. Pilot modal rejects submission when VPN location is missing or empty'
+    );
+
+    // ─── تست ۱۷: اعتبارسنجی نبود Game Slug در مودال پایلوت ───────────────────
+    let replyMissingGameSlug = '';
+    const mockMissingGameModal: any = {
+      customId: 'modal_ord:adv:pilot',
+      user: { id: uAdvertiser },
+      fields: {
+        getTextInputValue: (f: string) => {
+          if (f === 'service_id') return 'pilot_boost';
+          if (f === 'amount_usd') return '50.00';
+          if (f === 'vpn_location') return 'Germany / Frankfurt';
+          throw new Error(`DiscordjsTypeError [ModalSubmitInteractionFieldNotFound]: Required field with custom id "${f}" not found.`);
+        },
+      },
+      reply: async (p: any) => {
+        replyMissingGameSlug = p.content;
+      },
+    };
+    await handleOrderPanelModalSubmit(mockMissingGameModal);
+    assert(
+      replyMissingGameSlug.includes('Missing Game Slug'),
+      '17. Pilot modal rejects submission when Game Slug is missing'
+    );
+
+    // ─── تست ۱۸: اعتبارسنجی نبود Service ID در مودال پایلوت ──────────────────
+    let replyMissingServiceId = '';
+    const mockMissingServiceModal: any = {
+      customId: 'modal_ord:adv:pilot',
+      user: { id: uAdvertiser },
+      fields: {
+        getTextInputValue: (f: string) => {
+          if (f === 'game_slug') return 'wow_classic_era';
+          if (f === 'amount_usd') return '50.00';
+          if (f === 'vpn_location') return 'Germany / Frankfurt';
+          throw new Error(`DiscordjsTypeError [ModalSubmitInteractionFieldNotFound]: Required field with custom id "${f}" not found.`);
+        },
+      },
+      reply: async (p: any) => {
+        replyMissingServiceId = p.content;
+      },
+    };
+    await handleOrderPanelModalSubmit(mockMissingServiceModal);
+    assert(
+      replyMissingServiceId.includes('Missing Service ID'),
+      '18. Pilot modal rejects submission when Service ID is missing'
+    );
+
+    // ─── تست ۱۹: ایجاد Non-Pilot در صورت خالی بودن یا نبود فیلد اختیاری runs_count ───
+    let replyNonPilotNoRuns = '';
+    const mockNonPilotNoRunsSubmit: any = {
+      customId: 'modal_ord:g4x:non_pilot',
+      user: { id: uManager },
+      fields: {
+        getTextInputValue: (f: string) => {
+          if (f === 'game_slug') return 'rainbow_six_siege';
+          if (f === 'service_id') return 'non_pilot_boost';
+          if (f === 'amount_usd') return '40.00';
+          if (f === 'notes') return 'Omitted runs_count test';
+          throw new Error(`DiscordjsTypeError [ModalSubmitInteractionFieldNotFound]: Required field with custom id "${f}" not found.`);
+        },
+      },
+      reply: async (p: any) => {
+        replyNonPilotNoRuns = p.content;
+      },
+    };
+    await handleOrderPanelModalSubmit(mockNonPilotNoRunsSubmit);
+    const createdNoRunsOrder = await prisma.order.findFirst({
+      where: { creatorId: uManager, notes: 'Omitted runs_count test' },
+    });
+    assert(
+      createdNoRunsOrder !== null && createdNoRunsOrder.quantity === 1,
+      '19. Non-Pilot modal gracefully defaults to quantity 1 when optional runs_count is omitted'
+    );
+
+    // ─── تست ۲۰: اعتبارسنجی runs_count نامعتبر در Non-Pilot ──────────────────
+    let replyNonPilotInvalidRuns = '';
+    const mockNonPilotInvalidRunsSubmit: any = {
+      customId: 'modal_ord:g4x:non_pilot',
+      user: { id: uManager },
+      fields: {
+        getTextInputValue: (f: string) => {
+          if (f === 'game_slug') return 'rainbow_six_siege';
+          if (f === 'service_id') return 'non_pilot_boost';
+          if (f === 'amount_usd') return '40.00';
+          if (f === 'runs_count') return 'not_a_number';
+          return '';
+        },
+      },
+      reply: async (p: any) => {
+        replyNonPilotInvalidRuns = p.content;
+      },
+    };
+    await handleOrderPanelModalSubmit(mockNonPilotInvalidRunsSubmit);
+    assert(
+      replyNonPilotInvalidRuns.includes('Invalid Runs Count'),
+      '20. Non-Pilot modal rejects non-numeric runs_count with English ephemeral error'
+    );
+
+    // ─── تست ۲۱: اعتبارسنجی runs_count منفی یا صفر در Non-Pilot ──────────────
+    let replyNonPilotZeroRuns = '';
+    const mockNonPilotZeroRunsSubmit: any = {
+      customId: 'modal_ord:g4x:non_pilot',
+      user: { id: uManager },
+      fields: {
+        getTextInputValue: (f: string) => {
+          if (f === 'game_slug') return 'rainbow_six_siege';
+          if (f === 'service_id') return 'non_pilot_boost';
+          if (f === 'amount_usd') return '40.00';
+          if (f === 'runs_count') return '0';
+          return '';
+        },
+      },
+      reply: async (p: any) => {
+        replyNonPilotZeroRuns = p.content;
+      },
+    };
+    await handleOrderPanelModalSubmit(mockNonPilotZeroRunsSubmit);
+    assert(
+      replyNonPilotZeroRuns.includes('Invalid Runs Count'),
+      '21. Non-Pilot modal rejects zero or negative runs_count'
+    );
+
+    // ─── تست ۲۲: ایجاد Mythic+ در صورت خالی بودن یا نبود فیلد اختیاری runs_count ───
+    let replyMythicNoRuns = '';
+    const mockMythicNoRunsSubmit: any = {
+      customId: 'modal_ord:g4x:mythic',
+      user: { id: uManager },
+      fields: {
+        getTextInputValue: (f: string) => {
+          if (f === 'key_level') return '+12 Grim Batol';
+          if (f === 'amount_usd') return '70.00';
+          if (f === 'notes') return 'No runs specified';
+          throw new Error(`DiscordjsTypeError [ModalSubmitInteractionFieldNotFound]: Required field with custom id "${f}" not found.`);
+        },
+      },
+      reply: async (p: any) => {
+        replyMythicNoRuns = p.content;
+      },
+    };
+    await handleOrderPanelModalSubmit(mockMythicNoRunsSubmit);
+    const createdMythicNoRuns = await prisma.order.findFirst({
+      where: { creatorId: uManager, notes: { contains: '+12 Grim Batol' } },
+    });
+    assert(
+      createdMythicNoRuns !== null && createdMythicNoRuns.quantity === 1,
+      '22. Mythic+ modal gracefully defaults to quantity 1 when optional runs_count is omitted'
+    );
+
+    // ─── تست ۲۳: اعتبارسنجی نبود key_level در Mythic+ ─────────────────────────
+    let replyMissingKey = '';
+    const mockMissingKeySubmit: any = {
+      customId: 'modal_ord:g4x:mythic',
+      user: { id: uManager },
+      fields: {
+        getTextInputValue: (f: string) => {
+          if (f === 'amount_usd') return '70.00';
+          throw new Error(`DiscordjsTypeError [ModalSubmitInteractionFieldNotFound]: Required field with custom id "${f}" not found.`);
+        },
+      },
+      reply: async (p: any) => {
+        replyMissingKey = p.content;
+      },
+    };
+    await handleOrderPanelModalSubmit(mockMissingKeySubmit);
+    assert(
+      replyMissingKey.includes('Missing Key Level'),
+      '23. Mythic+ modal rejects submission when key_level is missing'
+    );
+
+    // ─── تست ۲۴: اعتبارسنجی runs_count نامعتبر در Mythic+ ────────────────────
+    let replyMythicInvalidRuns = '';
+    const mockMythicInvalidRunsSubmit: any = {
+      customId: 'modal_ord:g4x:mythic',
+      user: { id: uManager },
+      fields: {
+        getTextInputValue: (f: string) => {
+          if (f === 'key_level') return '+10 Necrotic Wake';
+          if (f === 'amount_usd') return '70.00';
+          if (f === 'runs_count') return 'xyz';
+          return '';
+        },
+      },
+      reply: async (p: any) => {
+        replyMythicInvalidRuns = p.content;
+      },
+    };
+    await handleOrderPanelModalSubmit(mockMythicInvalidRunsSubmit);
+    assert(
+      replyMythicInvalidRuns.includes('Invalid Runs Count'),
+      '24. Mythic+ modal rejects non-numeric runs_count'
+    );
+
+    // ─── تست ۲۵: مدیریت خطا در صورت نبود فیلد amount_usd بدون کرش کردن ربات ──
+    let replyMissingAmount = '';
+    const mockMissingAmountSubmit: any = {
+      customId: 'modal_ord:g4x:pilot',
+      user: { id: uManager },
+      fields: {
+        getTextInputValue: (f: string) => {
+          throw new Error(`DiscordjsTypeError [ModalSubmitInteractionFieldNotFound]: Required field with custom id "${f}" not found.`);
+        },
+      },
+      reply: async (p: any) => {
+        replyMissingAmount = p.content;
+      },
+    };
+    await handleOrderPanelModalSubmit(mockMissingAmountSubmit);
+    assert(
+      replyMissingAmount.includes('Invalid Order Amount'),
+      '25. Handler catches missing amount field gracefully without uncaught DiscordjsTypeError crash'
     );
   } catch (err) {
     console.error('Unhandled error in order panels suite:', err);
