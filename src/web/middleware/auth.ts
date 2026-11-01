@@ -142,8 +142,10 @@ export function requireCsrf(req: Request, res: Response, next: NextFunction): vo
   // ۲. بررسی توکن ضد CSRF
   const sessionCsrf = req.session?.csrfToken;
   const headerCsrf = req.headers['x-csrf-token'] as string;
+  const bodyCsrf = (req.body && (req.body._csrf || req.body.csrfToken)) as string | undefined;
+  const clientCsrf = headerCsrf || bodyCsrf;
 
-  if (!sessionCsrf || !headerCsrf || sessionCsrf !== headerCsrf) {
+  if (!sessionCsrf || !clientCsrf || sessionCsrf !== clientCsrf) {
     res.status(403).json({
       error: 'Forbidden',
       message: 'Invalid or missing CSRF token',

@@ -133,7 +133,13 @@ import {
 import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 
+import { ownerGateRouter } from './ownerGate';
+
 export const router = Router();
+
+// ─── دروازه ورود اختصاصی و امن مالک (OwnerGate) ─────────────────────────────
+router.use('/OwnerGate', ownerGateRouter);
+router.use('/ownergate', ownerGateRouter);
 
 // ─── روت‌های بازار مبادله، معاملات طلا و شارژ همتا‌به‌همتا (Finance V2.2) ──────
 router.use('/marketplace', marketplaceRouter);
