@@ -581,6 +581,7 @@
           <button class="tab-btn ${activeTab === 'characters-teams' ? 'active' : ''}" data-tab="characters-teams" onclick="switchTab('characters-teams')">My Characters &amp; Teams</button>
           <button class="tab-btn ${activeTab === 'applications' ? 'active' : ''}" data-tab="applications" onclick="switchTab('applications')">Member Applications</button>
           ${isExchanger() ? `<button class="tab-btn ${activeTab === 'exchanger' ? 'active' : ''}" data-tab="exchanger" onclick="switchTab('exchanger')">Exchanger Portal</button>` : ''}
+          ${isAdmin() ? `<button class="tab-btn ${activeTab === 'users' ? 'active' : ''}" data-tab="users" onclick="switchTab('users')">User Management</button>` : ''}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'admin' ? 'active' : ''}" data-tab="admin" onclick="switchTab('admin')">Admin Review Hub</button>` : ''}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'games-categories' ? 'active' : ''}" data-tab="games-categories" onclick="switchTab('games-categories')">Games &amp; Categories</button>` : ''}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'discord-channels' ? 'active' : ''}" data-tab="discord-channels" onclick="switchTab('discord-channels')">Discord Channels</button>` : ''}
@@ -653,6 +654,8 @@
         renderApplicationsTab(content);
       } else if (tab === 'exchanger' && isExchanger()) {
         renderExchangerTab(content);
+      } else if (tab === 'users' && isAdmin()) {
+        renderUsersTab(content);
       } else if (tab === 'admin' && isAdmin()) {
         renderAdminTab(content);
       } else if (tab === 'games-categories' && isAdmin()) {
@@ -2200,6 +2203,21 @@
 
     async function renderAdminTab(container) {
       container.innerHTML = `
+        <div class="card" style="margin-bottom: 1.5rem; background: linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(20, 23, 33, 0.95)); border: 1px solid rgba(16, 185, 129, 0.35);">
+          <div class="card-title">
+            <span style="display: flex; align-items: center; gap: 0.5rem;">
+              👥 <strong>User Management &amp; Role Governance</strong>
+            </span>
+            <span class="badge badge-green">RBAC &amp; Governance</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1rem; line-height: 1.5;">
+            Search and filter community members, inspect profiles, assign or revoke roles (Booster, Pilot, Advertiser, Exchanger, Staff, Admin), review registration applications, suspend or reactivate accounts with audit logs, and view history.
+          </p>
+          <div style="display: flex; gap: 0.75rem;">
+            <button class="btn btn-primary" onclick="switchTab('users')">Open User Management &rarr;</button>
+          </div>
+        </div>
+
         <div class="card" style="margin-bottom: 1.5rem; background: linear-gradient(135deg, rgba(88, 101, 242, 0.12), rgba(20, 23, 33, 0.95)); border: 1px solid rgba(88, 101, 242, 0.35);">
           <div class="card-title">
             <span style="display: flex; align-items: center; gap: 0.5rem;">
@@ -5306,6 +5324,663 @@
         await loadAdminDiscordChannels();
       } catch (err) {
         alert(`Failed to toggle status: ${err.message}`);
+      }
+    }
+
+    // ─── Admin User Management & Role Governance ─────────────────────────────
+    let adminUsersPage = 1;
+    let adminUsersLimit = 20;
+    let adminUsersSearch = '';
+    let adminUsersRole = '';
+    let adminUsersApproval = '';
+    let adminUsersStatus = 'all';
+    let adminUsersCache = [];
+    let adminUsersPagination = { total: 0, page: 1, limit: 20, totalPages: 1 };
+    let selectedAdminUser = null;
+
+    async function renderUsersTab(container) {
+      container.innerHTML = `
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title" style="flex-wrap: wrap; gap: 0.75rem;">
+            <div>
+              <span style="font-size: 1.15rem; font-weight: 700; color: #fff;">👥 User Management &amp; Role Governance</span>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0.25rem 0 0 0;">
+                Paginated user registry, Discord sync, RBAC hierarchy, account suspensions, application reviews, and audit trails.
+              </p>
+            </div>
+            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <span id="user-management-stats-badge" class="badge badge-blue">Loading...</span>
+              <button class="btn btn-secondary" onclick="loadAdminUsers(adminUsersPage)">🔄 Refresh</button>
+            </div>
+          </div>
+
+          <!-- Search & Filter Bar -->
+          <div style="display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; background: rgba(0,0,0,0.25); padding: 0.85rem; border-radius: 8px; border: 1px solid var(--card-border); margin-top: 1rem;">
+            <div style="flex: 2; min-width: 220px;">
+              <input type="text" id="admin-users-search-input" class="form-input" placeholder="Search by Username or Discord ID..." style="width: 100%; padding: 0.5rem 0.75rem; border-radius: 6px; background: #0f121a; border: 1px solid var(--card-border); color: #fff;" value="${escapeHtml(adminUsersSearch)}" onkeydown="if(event.key === 'Enter') applyUserSearchFilter()" />
+            </div>
+
+            <div style="flex: 1; min-width: 130px;">
+              <select id="admin-users-role-select" class="form-input" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: #0f121a; border: 1px solid var(--card-border); color: #fff;" onchange="applyUserRoleFilter(this.value)">
+                <option value="" ${adminUsersRole === '' ? 'selected' : ''}>All Roles</option>
+                <option value="owner" ${adminUsersRole === 'owner' ? 'selected' : ''}>Owner</option>
+                <option value="manager" ${adminUsersRole === 'manager' ? 'selected' : ''}>Manager</option>
+                <option value="admin" ${adminUsersRole === 'admin' ? 'selected' : ''}>Admin</option>
+                <option value="staff" ${adminUsersRole === 'staff' ? 'selected' : ''}>Staff</option>
+                <option value="advertiser" ${adminUsersRole === 'advertiser' ? 'selected' : ''}>Advertiser</option>
+                <option value="booster" ${adminUsersRole === 'booster' ? 'selected' : ''}>Booster</option>
+                <option value="pilot" ${adminUsersRole === 'pilot' ? 'selected' : ''}>Pilot</option>
+                <option value="exchanger" ${adminUsersRole === 'exchanger' ? 'selected' : ''}>Exchanger</option>
+              </select>
+            </div>
+
+            <div style="flex: 1; min-width: 130px;">
+              <select id="admin-users-status-select" class="form-input" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: #0f121a; border: 1px solid var(--card-border); color: #fff;" onchange="applyUserStatusFilter(this.value)">
+                <option value="all" ${adminUsersStatus === 'all' ? 'selected' : ''}>All Statuses</option>
+                <option value="active" ${adminUsersStatus === 'active' ? 'selected' : ''}>Active</option>
+                <option value="suspended" ${adminUsersStatus === 'suspended' ? 'selected' : ''}>Suspended</option>
+              </select>
+            </div>
+
+            <div style="flex: 1; min-width: 130px;">
+              <select id="admin-users-approval-select" class="form-input" style="width: 100%; padding: 0.5rem; border-radius: 6px; background: #0f121a; border: 1px solid var(--card-border); color: #fff;" onchange="applyUserApprovalFilter(this.value)">
+                <option value="" ${adminUsersApproval === '' ? 'selected' : ''}>All Approvals</option>
+                <option value="approved" ${adminUsersApproval === 'approved' ? 'selected' : ''}>Approved</option>
+                <option value="pending" ${adminUsersApproval === 'pending' ? 'selected' : ''}>Pending</option>
+                <option value="suspended" ${adminUsersApproval === 'suspended' ? 'selected' : ''}>Suspended</option>
+                <option value="rejected" ${adminUsersApproval === 'rejected' ? 'selected' : ''}>Rejected</option>
+              </select>
+            </div>
+
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-primary" onclick="applyUserSearchFilter()">Search</button>
+              <button class="btn btn-secondary" onclick="resetUserFilters()">Reset</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Users Table Card -->
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div id="admin-users-table-container">
+            <div class="loading-spinner"></div>
+            <p style="text-align: center; color: var(--text-muted); padding: 1rem;">Loading user directory...</p>
+          </div>
+
+          <!-- Pagination Bar -->
+          <div id="admin-users-pagination-bar" style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--card-border); flex-wrap: wrap; gap: 0.75rem;">
+            <!-- Rendered by renderAdminUsersPagination -->
+          </div>
+        </div>
+
+        <!-- Dynamic Modal Container for Profile & Role Management -->
+        <div id="admin-user-modal-container"></div>
+      `;
+
+      loadAdminUsers(adminUsersPage);
+    }
+
+    async function loadAdminUsers(page = 1) {
+      adminUsersPage = page;
+      const container = document.getElementById('admin-users-table-container');
+      const statsBadge = document.getElementById('user-management-stats-badge');
+      if (container) {
+        container.innerHTML = '<div class="loading-spinner"></div><p style="text-align: center; color: var(--text-muted); padding: 1rem;">Loading users...</p>';
+      }
+
+      try {
+        const queryParams = new URLSearchParams({
+          page: String(adminUsersPage),
+          limit: String(adminUsersLimit),
+          search: adminUsersSearch,
+          role: adminUsersRole,
+          approvalStatus: adminUsersApproval,
+          accountStatus: adminUsersStatus,
+        });
+
+        const res = await fetch(`/api/admin/users?${queryParams.toString()}`, { credentials: 'include' });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        adminUsersCache = data.users || [];
+        adminUsersPagination = data.pagination || { total: 0, page: 1, limit: 20, totalPages: 1 };
+
+        if (statsBadge) {
+          statsBadge.textContent = `${adminUsersPagination.total} Total Users (Page ${adminUsersPagination.page}/${adminUsersPagination.totalPages})`;
+        }
+
+        renderAdminUsersTable();
+        renderAdminUsersPagination();
+      } catch (err) {
+        if (container) {
+          container.innerHTML = `<p style="color: var(--accent-red); padding: 1rem; text-align: center;">Error loading users: ${escapeHtml(err.message)}</p>`;
+        }
+      }
+    }
+
+    function applyUserSearchFilter() {
+      const input = document.getElementById('admin-users-search-input');
+      adminUsersSearch = input ? input.value.trim() : '';
+      loadAdminUsers(1);
+    }
+
+    function applyUserRoleFilter(val) {
+      adminUsersRole = val;
+      loadAdminUsers(1);
+    }
+
+    function applyUserStatusFilter(val) {
+      adminUsersStatus = val;
+      loadAdminUsers(1);
+    }
+
+    function applyUserApprovalFilter(val) {
+      adminUsersApproval = val;
+      loadAdminUsers(1);
+    }
+
+    function resetUserFilters() {
+      adminUsersSearch = '';
+      adminUsersRole = '';
+      adminUsersApproval = '';
+      adminUsersStatus = 'all';
+      const searchInput = document.getElementById('admin-users-search-input');
+      const roleSelect = document.getElementById('admin-users-role-select');
+      const statusSelect = document.getElementById('admin-users-status-select');
+      const approvalSelect = document.getElementById('admin-users-approval-select');
+      if (searchInput) searchInput.value = '';
+      if (roleSelect) roleSelect.value = '';
+      if (statusSelect) statusSelect.value = 'all';
+      if (approvalSelect) approvalSelect.value = '';
+      loadAdminUsers(1);
+    }
+
+    function renderAdminUsersTable() {
+      const container = document.getElementById('admin-users-table-container');
+      if (!container) return;
+
+      if (adminUsersCache.length === 0) {
+        container.innerHTML = `
+          <div style="text-align: center; padding: 2.5rem; color: var(--text-muted);">
+            <p style="font-size: 1.1rem; margin-bottom: 0.5rem;">No users found matching current filters.</p>
+            <button class="btn btn-secondary" onclick="resetUserFilters()">Clear Filters</button>
+          </div>
+        `;
+        return;
+      }
+
+      const roleBadge = (r) => {
+        if (r === 'owner') return `<span class="badge" style="background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.4);">👑 Owner</span>`;
+        if (r === 'manager') return `<span class="badge badge-purple">Manager</span>`;
+        if (r === 'admin') return `<span class="badge badge-blue">Admin</span>`;
+        if (r === 'staff') return `<span class="badge badge-blue">Staff</span>`;
+        if (r === 'advertiser') return `<span class="badge badge-amber">Advertiser</span>`;
+        if (r === 'booster') return `<span class="badge badge-green">Booster</span>`;
+        if (r === 'pilot') return `<span class="badge badge-blue">Pilot</span>`;
+        if (r === 'exchanger') return `<span class="badge" style="background: rgba(20, 184, 166, 0.2); color: #2dd4bf; border: 1px solid rgba(20, 184, 166, 0.4);">Exchanger</span>`;
+        return `<span class="badge">${escapeHtml(r)}</span>`;
+      };
+
+      const approvalBadge = (type, status) => {
+        const typeLabels = { booster: 'Booster', pilot: 'Pilot', advertiser: 'Adv', exchanger: 'Exch' };
+        const label = typeLabels[type] || type;
+        if (status === 'approved') return `<span class="badge badge-green" title="${label}: Approved">✓ ${label}</span>`;
+        if (status === 'pending') return `<span class="badge badge-amber" title="${label}: Pending">⏳ ${label}</span>`;
+        if (status === 'suspended') return `<span class="badge badge-red" title="${label}: Suspended">⊘ ${label}</span>`;
+        if (status === 'rejected') return `<span class="badge badge-red" title="${label}: Rejected">✗ ${label}</span>`;
+        return `<span class="badge" style="opacity: 0.35;" title="${label}: None">${label}</span>`;
+      };
+
+      container.innerHTML = `
+        <div style="overflow-x: auto;">
+          <table class="table" style="width: 100%; border-collapse: collapse; font-size: 0.88rem;">
+            <thead>
+              <tr style="border-bottom: 1px solid var(--card-border); text-align: left; color: var(--text-muted);">
+                <th style="padding: 0.75rem;">User</th>
+                <th style="padding: 0.75rem;">Discord ID</th>
+                <th style="padding: 0.75rem;">Assigned Roles</th>
+                <th style="padding: 0.75rem;">Approvals</th>
+                <th style="padding: 0.75rem;">Status</th>
+                <th style="padding: 0.75rem;">Registered / Active</th>
+                <th style="padding: 0.75rem; text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${adminUsersCache.map(u => `
+                <tr style="border-bottom: 1px solid rgba(35, 41, 58, 0.5); transition: background 0.15s ease;" onmouseover="this.style.background='rgba(255,255,255,0.02)'" onmouseout="this.style.background='transparent'">
+                  <td style="padding: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 0.65rem;">
+                      <div style="width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), #3b82f6); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; font-size: 0.9rem; flex-shrink: 0;">
+                        ${escapeHtml((u.displayName || u.username || 'U').charAt(0).toUpperCase())}
+                      </div>
+                      <div>
+                        <div style="font-weight: 600; color: #fff; display: flex; align-items: center; gap: 0.4rem;">
+                          ${escapeHtml(u.displayName || u.username)}
+                          ${u.isOwner ? `<span title="Primary System Owner">👑</span>` : ''}
+                        </div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">
+                          @${escapeHtml(u.username)}
+                          ${u.advertiserRank ? ` · <span style="color: var(--accent-amber); font-weight: 600;">${escapeHtml(u.advertiserRank)}</span>` : ''}
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                  <td style="padding: 0.75rem;">
+                    <code style="background: rgba(0,0,0,0.3); padding: 0.2rem 0.4rem; border-radius: 4px; font-size: 0.8rem; color: #93c5fd; cursor: pointer;" title="Click to copy" onclick="navigator.clipboard.writeText('${escapeHtml(u.discordId)}'); alert('Copied ID: ${escapeHtml(u.discordId)}');">
+                      ${escapeHtml(u.discordId)}
+                    </code>
+                  </td>
+                  <td style="padding: 0.75rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">
+                      ${u.roles.length > 0 ? u.roles.map(roleBadge).join('') : '<span style="color: var(--text-muted); font-size: 0.8rem;">None</span>'}
+                    </div>
+                  </td>
+                  <td style="padding: 0.75rem;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.25rem;">
+                      ${approvalBadge('booster', u.approvalsSummary.booster)}
+                      ${approvalBadge('pilot', u.approvalsSummary.pilot)}
+                      ${approvalBadge('advertiser', u.approvalsSummary.advertiser)}
+                      ${approvalBadge('exchanger', u.approvalsSummary.exchanger)}
+                    </div>
+                  </td>
+                  <td style="padding: 0.75rem;">
+                    <div>
+                      ${u.isActive ? `<span class="badge badge-green">Active</span>` : `<span class="badge badge-red">Suspended</span>`}
+                    </div>
+                    ${u.restrictions.includes('PROTECTED_OWNER') ? `<div style="margin-top: 0.2rem;"><span class="badge" style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; font-size: 0.7rem;">Owner Protected</span></div>` : ''}
+                  </td>
+                  <td style="padding: 0.75rem; font-size: 0.78rem; color: var(--text-muted);">
+                    <div>Reg: ${new Date(u.createdAt).toLocaleDateString()}</div>
+                    ${u.lastActivityAt ? `<div>Active: ${new Date(u.lastActivityAt).toLocaleDateString()}</div>` : ''}
+                  </td>
+                  <td style="padding: 0.75rem; text-align: right;">
+                    <div style="display: inline-flex; gap: 0.4rem; align-items: center;">
+                      <button class="btn btn-secondary" style="padding: 0.3rem 0.65rem; font-size: 0.78rem;" onclick="openAdminUserModal('${escapeHtml(u.discordId)}')">Profile</button>
+                      ${u.isOwner ? `
+                        <span style="font-size: 0.75rem; color: var(--text-muted); padding: 0.3rem 0.5rem; background: rgba(245,158,11,0.08); border-radius: 4px; border: 1px solid rgba(245,158,11,0.2);">Owner</span>
+                      ` : (u.isActive ? `
+                        <button class="btn btn-danger" style="padding: 0.3rem 0.65rem; font-size: 0.78rem;" onclick="toggleUserStatusPrompt('${escapeHtml(u.discordId)}', true)">Suspend</button>
+                      ` : `
+                        <button class="btn btn-success" style="padding: 0.3rem 0.65rem; font-size: 0.78rem;" onclick="toggleUserStatusPrompt('${escapeHtml(u.discordId)}', false)">Reactivate</button>
+                      `)}
+                    </div>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderAdminUsersPagination() {
+      const container = document.getElementById('admin-users-pagination-bar');
+      if (!container) return;
+
+      const { total, page, limit, totalPages } = adminUsersPagination;
+      if (total === 0) {
+        container.innerHTML = '';
+        return;
+      }
+
+      const startIdx = (page - 1) * limit + 1;
+      const endIdx = Math.min(total, page * limit);
+
+      container.innerHTML = `
+        <div style="color: var(--text-muted); font-size: 0.85rem;">
+          Showing <strong>${startIdx} - ${endIdx}</strong> of <strong>${total}</strong> users
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <button class="btn btn-secondary" style="padding: 0.3rem 0.65rem; font-size: 0.8rem;" ${page <= 1 ? 'disabled' : ''} onclick="loadAdminUsers(${page - 1})">&larr; Prev</button>
+          <span style="font-size: 0.85rem; padding: 0 0.5rem;">Page <strong>${page}</strong> of <strong>${totalPages}</strong></span>
+          <button class="btn btn-secondary" style="padding: 0.3rem 0.65rem; font-size: 0.8rem;" ${page >= totalPages ? 'disabled' : ''} onclick="loadAdminUsers(${page + 1})">Next &rarr;</button>
+        </div>
+      `;
+    }
+
+    async function toggleUserStatusPrompt(discordId, currentActive) {
+      const actionWord = currentActive ? 'Suspend' : 'Reactivate';
+      const reason = prompt(
+        `Confirm ${actionWord} User (${discordId})?\n\n` +
+        (currentActive 
+          ? 'Suspending this user will block all future logins and actions, while preserving historical records and existing financial obligations.\n\nPlease enter the mandatory audit reason:' 
+          : 'Please enter the mandatory audit reason to reactivate this account:'),
+        currentActive ? 'Administrative suspension due to policy review' : 'Reactivated after verification'
+      );
+
+      if (!reason || !reason.trim() || reason.trim().length < 3) {
+        if (reason !== null) alert('Action cancelled: A valid audit reason (min 3 characters) is strictly mandatory.');
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/admin/users/${encodeURIComponent(discordId)}/status`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || '',
+          },
+          body: JSON.stringify({
+            isActive: !currentActive,
+            reason: reason.trim(),
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        alert(`User successfully ${!currentActive ? 'reactivated' : 'suspended'}. Audit log recorded.`);
+        await loadAdminUsers(adminUsersPage);
+
+        // If the modal is currently open for this user, refresh it
+        const modalContainer = document.getElementById('admin-user-modal-container');
+        if (modalContainer && modalContainer.innerHTML.includes(discordId)) {
+          openAdminUserModal(discordId);
+        }
+      } catch (err) {
+        alert(`Failed to update status: ${err.message}`);
+      }
+    }
+
+    async function openAdminUserModal(discordId) {
+      const modalContainer = document.getElementById('admin-user-modal-container');
+      if (!modalContainer) return;
+
+      modalContainer.innerHTML = `
+        <div class="modal-backdrop" onclick="closeAdminUserModal()">
+          <div class="modal-content" style="max-width: 850px; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation()">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--card-border); padding-bottom: 0.75rem; margin-bottom: 1rem;">
+              <h3 style="margin: 0; font-size: 1.15rem; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+                👤 User Profile &amp; Governance
+              </h3>
+              <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem;" onclick="closeAdminUserModal()">✕</button>
+            </div>
+            <div id="admin-user-modal-body">
+              <div class="loading-spinner"></div>
+              <p style="text-align: center; color: var(--text-muted); padding: 1.5rem;">Loading user profile details...</p>
+            </div>
+          </div>
+        </div>
+      `;
+
+      try {
+        const [profileRes, auditRes] = await Promise.all([
+          fetch(`/api/admin/users/${encodeURIComponent(discordId)}`, { credentials: 'include' }),
+          fetch(`/api/admin/users/${encodeURIComponent(discordId)}/audit?limit=20`, { credentials: 'include' }),
+        ]);
+
+        if (!profileRes.ok) {
+          const err = await profileRes.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${profileRes.status}`);
+        }
+
+        const profileData = await profileRes.json();
+        const p = profileData.profile;
+        let auditLogs = [];
+        if (auditRes.ok) {
+          const auditData = await auditRes.json().catch(() => ({}));
+          auditLogs = auditData.logs || [];
+        }
+
+        selectedAdminUser = p;
+        renderAdminUserModalContent(p, auditLogs);
+      } catch (err) {
+        const body = document.getElementById('admin-user-modal-body');
+        if (body) {
+          body.innerHTML = `<p style="color: var(--accent-red); padding: 1.5rem; text-align: center;">Error loading profile: ${escapeHtml(err.message)}</p>`;
+        }
+      }
+    }
+
+    function closeAdminUserModal() {
+      const modalContainer = document.getElementById('admin-user-modal-container');
+      if (modalContainer) modalContainer.innerHTML = '';
+      selectedAdminUser = null;
+    }
+
+    function renderAdminUserModalContent(p, auditLogs) {
+      const body = document.getElementById('admin-user-modal-body');
+      if (!body) return;
+
+      const allRoles = ['owner', 'manager', 'admin', 'staff', 'advertiser', 'booster', 'pilot', 'exchanger'];
+      const userRoles = p.roles || [];
+      const isOwnerAccount = p.isOwner;
+
+      body.innerHTML = `
+        <!-- Top Profile Card -->
+        <div style="background: rgba(0,0,0,0.3); border: 1px solid var(--card-border); border-radius: 8px; padding: 1rem; margin-bottom: 1.25rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+          <div style="display: flex; align-items: center; gap: 0.85rem;">
+            <div style="width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg, var(--primary), #3b82f6); display: flex; align-items: center; justify-content: center; font-size: 1.25rem; font-weight: 700; color: #fff;">
+              ${escapeHtml((p.displayName || p.username || 'U').charAt(0).toUpperCase())}
+            </div>
+            <div>
+              <div style="font-size: 1.1rem; font-weight: 700; color: #fff; display: flex; align-items: center; gap: 0.5rem;">
+                ${escapeHtml(p.displayName || p.username)}
+                ${isOwnerAccount ? `<span title="Primary System Owner">👑</span>` : ''}
+                ${p.isActive ? `<span class="badge badge-green" style="font-size: 0.7rem;">Active</span>` : `<span class="badge badge-red" style="font-size: 0.7rem;">Suspended</span>`}
+              </div>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem;">
+                Discord: <strong>@${escapeHtml(p.username)}</strong> · ID: <code style="color: #93c5fd;">${escapeHtml(p.discordId)}</code>
+              </div>
+              <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 0.15rem;">
+                Registered: ${new Date(p.createdAt).toLocaleString()} · Last Known Activity: ${p.lastActivityAt ? new Date(p.lastActivityAt).toLocaleString() : 'None recorded'}
+              </div>
+            </div>
+          </div>
+
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            ${isOwnerAccount ? `
+              <span class="badge" style="background: rgba(245,158,11,0.2); color: #fbbf24; border: 1px solid rgba(245,158,11,0.4); padding: 0.4rem 0.75rem;">👑 Protected Owner Account</span>
+            ` : (p.isActive ? `
+              <button class="btn btn-danger" onclick="toggleUserStatusPrompt('${escapeHtml(p.discordId)}', true)">Suspend Account</button>
+            ` : `
+              <button class="btn btn-success" onclick="toggleUserStatusPrompt('${escapeHtml(p.discordId)}', false)">Reactivate Account</button>
+            `)}
+          </div>
+        </div>
+
+        <!-- Historical Data Preservation Notice -->
+        <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; padding: 0.75rem 1rem; margin-bottom: 1.25rem; font-size: 0.85rem;">
+          <div style="font-weight: 700; color: #93c5fd; margin-bottom: 0.35rem; display: flex; align-items: center; gap: 0.4rem;">
+            🛡️ Historical Records &amp; Data Preservation
+          </div>
+          <div style="color: var(--text-muted); line-height: 1.5;">
+            Orders Created/Customer/Advertiser: <strong>${p.orderStats.asCreator + p.orderStats.asCustomer + p.orderStats.asAdvertiser}</strong> · Completed Runs: <strong>${p.orderStats.completedRuns}</strong> · Proofs: <strong>${p.historicalCounts.proofs}</strong> · Disputes: <strong>${p.orderStats.disputesOpened}</strong> · Ledger Entries: <strong>${p.historicalCounts.ledgerEntries}</strong>
+          </div>
+          <div style="margin-top: 0.4rem; font-size: 0.8rem; color: ${p.hasHistoricalRecords ? 'var(--accent-amber)' : 'var(--accent-green)'};">
+            ${p.hasHistoricalRecords ? '⚠️ Historical data present. Account cannot be deleted — suspension must be used instead to block new operations while preserving financial integrity.' : '✓ Clean account without historical orders or financial transactions.'}
+          </div>
+        </div>
+
+        <!-- Role Assignment & RBAC Section -->
+        <div style="background: rgba(0,0,0,0.2); border: 1px solid var(--card-border); border-radius: 8px; padding: 1rem; margin-bottom: 1.25rem;">
+          <div style="font-weight: 700; color: #fff; margin-bottom: 0.35rem; display: flex; justify-content: space-between; align-items: center;">
+            <span>Assigned Platform Roles &amp; RBAC</span>
+            <span style="font-size: 0.75rem; color: var(--text-muted);">Synchronized with Discord</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.8rem; margin-bottom: 0.85rem;">
+            Grant or revoke authorized roles. Sensitive changes require an audit reason and write to AuditLog.
+          </p>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.6rem; margin-bottom: 1rem;">
+            ${allRoles.map(r => {
+              const hasRole = userRoles.includes(r);
+              const isOwnerRole = r === 'owner';
+              const canModifyOwner = currentUser && currentUser.roles && currentUser.roles.includes('owner');
+              const disabled = isOwnerRole && !canModifyOwner;
+
+              return `
+                <div style="background: #0f121a; border: 1px solid ${hasRole ? 'rgba(88, 101, 242, 0.4)' : 'var(--card-border)'}; border-radius: 6px; padding: 0.6rem; display: flex; justify-content: space-between; align-items: center;">
+                  <div>
+                    <div style="font-weight: 600; font-size: 0.85rem; color: ${hasRole ? '#fff' : 'var(--text-muted)'}; text-transform: capitalize;">
+                      ${isOwnerRole ? '👑 ' : ''}${r}
+                    </div>
+                    <div style="font-size: 0.7rem; color: ${hasRole ? 'var(--accent-green)' : 'var(--text-muted)'};">
+                      ${hasRole ? '✓ Active' : 'Not Assigned'}
+                    </div>
+                  </div>
+                  <div>
+                    ${hasRole ? `
+                      <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem; color: var(--accent-red);" ${disabled ? 'disabled title="Only Owner can revoke Owner"' : ''} onclick="submitUserRoleChange('${escapeHtml(p.discordId)}', '${r}', 'revoke')">Revoke</button>
+                    ` : `
+                      <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem; font-size: 0.75rem; color: var(--accent-green);" ${disabled ? 'disabled title="Only Owner can grant Owner"' : ''} onclick="submitUserRoleChange('${escapeHtml(p.discordId)}', '${r}', 'grant')">+ Grant</button>
+                    `}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+
+        <!-- Registration Applications Section -->
+        <div style="background: rgba(0,0,0,0.2); border: 1px solid var(--card-border); border-radius: 8px; padding: 1rem; margin-bottom: 1.25rem;">
+          <div style="font-weight: 700; color: #fff; margin-bottom: 0.5rem;">
+            Member Applications (${p.registrationApplications.length})
+          </div>
+          ${p.registrationApplications.length === 0 ? `
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;">No registration applications submitted by this user.</p>
+          ` : `
+            <div style="display: flex; flex-direction: column; gap: 0.6rem;">
+              ${p.registrationApplications.map(app => `
+                <div style="background: #0f121a; border: 1px solid var(--card-border); border-radius: 6px; padding: 0.75rem;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.4rem; flex-wrap: wrap; gap: 0.5rem;">
+                    <div>
+                      <strong style="text-transform: capitalize; color: #fff;">${escapeHtml(app.category)} Application</strong>
+                      ${app.gameSlug ? `<span style="color: var(--text-muted); font-size: 0.8rem;"> (${escapeHtml(app.gameSlug)})</span>` : ''}
+                      <span class="badge ${app.status === 'approved' ? 'badge-green' : (app.status === 'pending' || app.status === 'under_review' ? 'badge-amber' : 'badge-red')}" style="margin-left: 0.5rem;">
+                        ${escapeHtml(app.status)}
+                      </span>
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted);">
+                      Submitted: ${new Date(app.submittedAt).toLocaleDateString()}
+                    </div>
+                  </div>
+
+                  <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem; background: rgba(0,0,0,0.2); padding: 0.4rem 0.6rem; border-radius: 4px; max-height: 80px; overflow-y: auto;">
+                    <code>${escapeHtml(app.qualifications)}</code>
+                  </div>
+
+                  ${(app.status === 'pending' || app.status === 'under_review' || app.status === 'info_requested') ? `
+                    <div style="display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem;">
+                      <button class="btn btn-success" style="padding: 0.25rem 0.65rem; font-size: 0.75rem;" onclick="submitApplicationReview('${escapeHtml(p.discordId)}', ${app.id}, 'approve')">✓ Approve Application</button>
+                      <button class="btn btn-danger" style="padding: 0.25rem 0.65rem; font-size: 0.75rem;" onclick="submitApplicationReview('${escapeHtml(p.discordId)}', ${app.id}, 'reject')">✗ Reject</button>
+                      <button class="btn btn-secondary" style="padding: 0.25rem 0.65rem; font-size: 0.75rem;" onclick="submitApplicationReview('${escapeHtml(p.discordId)}', ${app.id}, 'request_info')">Request Info</button>
+                    </div>
+                  ` : ''}
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+
+        <!-- Recent Audit Trail Section -->
+        <div style="background: rgba(0,0,0,0.2); border: 1px solid var(--card-border); border-radius: 8px; padding: 1rem;">
+          <div style="font-weight: 700; color: #fff; margin-bottom: 0.5rem;">
+            Relevant Audit History (${auditLogs.length})
+          </div>
+          ${auditLogs.length === 0 ? `
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0;">No audit logs recorded for this user.</p>
+          ` : `
+            <div style="max-height: 220px; overflow-y: auto;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 0.8rem;">
+                <thead>
+                  <tr style="text-align: left; color: var(--text-muted); border-bottom: 1px solid var(--card-border);">
+                    <th style="padding: 0.4rem;">Action</th>
+                    <th style="padding: 0.4rem;">Actor</th>
+                    <th style="padding: 0.4rem;">Reason</th>
+                    <th style="padding: 0.4rem; text-align: right;">Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${auditLogs.map(log => `
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.03);">
+                      <td style="padding: 0.4rem;"><code style="color: #93c5fd;">${escapeHtml(log.action)}</code></td>
+                      <td style="padding: 0.4rem; color: var(--text-muted);">${escapeHtml(log.actor ? (log.actor.displayName || log.actor.username) : (log.actorId || 'System'))}</td>
+                      <td style="padding: 0.4rem;">${escapeHtml(log.reason || '—')}</td>
+                      <td style="padding: 0.4rem; text-align: right; color: var(--text-muted);">${new Date(log.createdAt).toLocaleString()}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    async function submitUserRoleChange(discordId, roleKey, action) {
+      const verb = action === 'grant' ? 'grant' : 'revoke';
+      const reason = prompt(
+        `Confirm ${verb.toUpperCase()} role '${roleKey}' for user ${discordId}?\n\nPlease enter the mandatory audit reason:`,
+        `Administrative role ${verb}`
+      );
+
+      if (!reason || !reason.trim() || reason.trim().length < 3) {
+        if (reason !== null) alert('Action cancelled: A valid audit reason (min 3 characters) is strictly mandatory.');
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/admin/users/${encodeURIComponent(discordId)}/roles`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || '',
+          },
+          body: JSON.stringify({
+            roleKey,
+            action,
+            reason: reason.trim(),
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        alert(`Role '${roleKey}' successfully ${action === 'grant' ? 'granted' : 'revoked'}.${data.discordSync && !data.discordSync.success ? ' (Note: Discord sync warning: ' + data.discordSync.reason + ')' : ''}`);
+        await openAdminUserModal(discordId);
+        await loadAdminUsers(adminUsersPage);
+      } catch (err) {
+        alert(`Failed to update role: ${err.message}`);
+      }
+    }
+
+    async function submitApplicationReview(discordId, applicationId, decision) {
+      let reason = '';
+      if (decision === 'reject') {
+        reason = prompt('Enter mandatory rejection reason:', 'Qualifications or verification criteria not met');
+        if (!reason || !reason.trim()) {
+          alert('Rejection cancelled: A rejection reason is required.');
+          return;
+        }
+      }
+
+      const reviewNotes = prompt('Optional review notes for audit log:', decision === 'approve' ? 'Approved through Admin User Management' : '');
+
+      try {
+        const res = await fetch(`/api/admin/users/${encodeURIComponent(discordId)}/applications/${applicationId}/review`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || '',
+          },
+          body: JSON.stringify({
+            decision,
+            reason: reason ? reason.trim() : undefined,
+            reviewNotes: reviewNotes ? reviewNotes.trim() : undefined,
+          }),
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        alert(`Application #${applicationId} review decision '${decision}' successfully applied.`);
+        await openAdminUserModal(discordId);
+        await loadAdminUsers(adminUsersPage);
+      } catch (err) {
+        alert(`Failed to review application: ${err.message}`);
       }
     }
 

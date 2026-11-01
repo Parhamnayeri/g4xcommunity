@@ -23,6 +23,7 @@
     "test:order-panels": "ts-node src/test/discord_order_panels_suite.ts",
     "test:routing": "ts-node src/test/game_order_publication_routing_suite.ts",
     "test:publication": "ts-node src/test/order_publication_and_embeds_suite.ts",
+    "test:users": "ts-node src/test/admin_user_management_suite.ts",
     "test:games": "ts-node src/test/admin_game_and_category_management_suite.ts",
     "test:provisioning": "ts-node src/test/discord_auto_provisioning_suite.ts",
     "test:finance": "ts-node src/test/financial_calculation_suite.ts",

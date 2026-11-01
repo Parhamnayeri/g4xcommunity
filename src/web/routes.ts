@@ -155,6 +155,14 @@ import {
 } from '../services/financialCalculationEngine';
 import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
+import {
+  listAdminUsers,
+  getAdminUserProfile,
+  updateUserAccountStatus,
+  assignOrRevokeUserRole,
+  deleteUserSafely,
+  getUserAuditLogs,
+} from '../services/adminUserService';
 
 import { ownerGateRouter } from './ownerGate';
 
@@ -3483,6 +3491,235 @@ router.patch(
     } catch (err: any) {
       const status = err instanceof DomainError ? 400 : 500;
       res.status(status).json({ error: err.message || 'Failed to toggle channel mapping status' });
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// بخش مدیریت کاربران در پنل ادمین (Admin User Management)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ۱. فهرست کاربران با صفحه‌بندی، جستجو و فیلتر
+router.get(
+  '/admin/users',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 20;
+      const search = (req.query.search as string) || '';
+      const role = (req.query.role as string) || '';
+      const approvalStatus = (req.query.approvalStatus as string) || '';
+      const accountStatus = (req.query.accountStatus as any) || 'all';
+
+      const result = await listAdminUsers({
+        page,
+        limit,
+        search,
+        role,
+        approvalStatus,
+        accountStatus,
+      });
+
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to list users' });
+    }
+  }
+);
+
+// ۲. مشاهده پروفایل جامع کاربر
+router.get(
+  '/admin/users/:discordId',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const discordId = req.params.discordId;
+      const profile = await getAdminUserProfile(discordId);
+      res.json({ success: true, profile });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to fetch user profile' });
+    }
+  }
+);
+
+// ۳. تعلیق یا فعال‌سازی مجدد کاربر
+router.post(
+  '/admin/users/:discordId/status',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const targetUserId = req.params.discordId;
+      const { isActive, reason } = req.body;
+
+      if (typeof isActive !== 'boolean') {
+        res.status(400).json({ error: 'isActive boolean is required' });
+        return;
+      }
+      if (!reason || typeof reason !== 'string') {
+        res.status(400).json({ error: 'Audit reason string is required' });
+        return;
+      }
+
+      const result = await updateUserAccountStatus({
+        targetUserId,
+        actorId,
+        isActive,
+        reason,
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to update user status' });
+    }
+  }
+);
+
+// ۴. تخصیص یا سلب رول
+router.post(
+  '/admin/users/:discordId/roles',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const targetUserId = req.params.discordId;
+      const { roleKey, action, reason } = req.body;
+
+      if (!roleKey || typeof roleKey !== 'string') {
+        res.status(400).json({ error: 'roleKey string is required' });
+        return;
+      }
+      if (action !== 'grant' && action !== 'revoke') {
+        res.status(400).json({ error: "action must be 'grant' or 'revoke'" });
+        return;
+      }
+      if (!reason || typeof reason !== 'string') {
+        res.status(400).json({ error: 'Audit reason string is required' });
+        return;
+      }
+
+      let discordClient: any = null;
+      try {
+        const { client } = await import('../index');
+        discordClient = client;
+      } catch (_) {}
+
+      const result = await assignOrRevokeUserRole({
+        targetUserId,
+        actorId,
+        roleKey,
+        action,
+        reason,
+        discordClient,
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to update user role' });
+    }
+  }
+);
+
+// ۵. بررسی و تعیین تکلیف درخواست عضویت کاربر از طریق سرویس موجود
+router.post(
+  '/admin/users/:discordId/applications/:appId/review',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const applicationId = parseInt(req.params.appId);
+      const { decision, reason, reviewNotes } = req.body;
+
+      if (isNaN(applicationId)) {
+        res.status(400).json({ error: 'Valid applicationId is required' });
+        return;
+      }
+      if (!decision) {
+        res.status(400).json({ error: 'Review decision is required' });
+        return;
+      }
+
+      let discordClient: any = null;
+      try {
+        const { client } = await import('../index');
+        discordClient = client;
+      } catch (_) {}
+
+      const application = await reviewApplication({
+        reviewerId: actorId,
+        applicationId,
+        decision,
+        reason,
+        reviewNotes,
+        discordClient,
+      });
+
+      res.json({ success: true, application });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to review application' });
+    }
+  }
+);
+
+// ۶. لاگ‌های ممیزی کاربر
+router.get(
+  '/admin/users/:discordId/audit',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const discordId = req.params.discordId;
+      const limit = parseInt(req.query.limit as string) || 50;
+      const logs = await getUserAuditLogs(discordId, limit);
+      res.json({ success: true, logs });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to fetch user audit logs' });
+    }
+  }
+);
+
+// ۷. حذف امن کاربر (با ممانعت صریح در صورت داشتن سوابق تاریخی یا مالی)
+router.delete(
+  '/admin/users/:discordId',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const targetUserId = req.params.discordId;
+      const { reason } = req.body;
+
+      if (!reason || typeof reason !== 'string') {
+        res.status(400).json({ error: 'Audit reason string is required' });
+        return;
+      }
+
+      const result = await deleteUserSafely({
+        targetUserId,
+        actorId,
+        reason,
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to delete user' });
     }
   }
 );
