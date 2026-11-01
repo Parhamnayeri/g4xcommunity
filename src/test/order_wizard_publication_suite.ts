@@ -278,7 +278,7 @@ async function runRegressionSuite() {
       guildId: testGuildId,
       fields: {
         getTextInputValue: (f: string) => {
-          if (f === 'amount_usd') return '50.00';
+          if (f === 'amount_usd') return '50-45';
           if (f === 'key_level') return '+10 Necrotic Wake';
           if (f === 'runs_count') return '1';
           return '';
@@ -318,7 +318,7 @@ async function runRegressionSuite() {
       fields: {
         getTextInputValue: (f: string) => {
           if (f === 'site_order_id') return siteIdTest;
-          if (f === 'amount_usd') return '50.00';
+          if (f === 'amount_usd') return '50-45';
           if (f === 'key_level') return '+10 Necrotic Wake';
           if (f === 'runs_count') return '1';
           return '';
@@ -357,7 +357,7 @@ async function runRegressionSuite() {
       fields: {
         getTextInputValue: (f: string) => {
           if (f === 'site_order_id') return siteIdTest;
-          if (f === 'amount_usd') return '50.00';
+          if (f === 'amount_usd') return '50-45';
           if (f === 'key_level') return '+10 Necrotic Wake';
           if (f === 'runs_count') return '1';
           return '';
@@ -396,7 +396,7 @@ async function runRegressionSuite() {
       fields: {
         getTextInputValue: (f: string) => {
           if (f === 'site_order_id') return siteIdTest; // Same ID, different platform!
-          if (f === 'amount_usd') return '60.00';
+          if (f === 'amount_usd') return '60-50';
           if (f === 'key_level') return '+10 Mists of Tirna Scithe';
           if (f === 'runs_count') return '1';
           return '';
@@ -511,7 +511,7 @@ async function runRegressionSuite() {
       fields: {
         getTextInputValue: (f: string) => {
           if (f === 'site_order_id') return `G2G-ZERO-${ts}`;
-          if (f === 'amount_usd') return '100.00';
+          if (f === 'amount_usd') return '100-91.01';
           if (f === 'key_level') return '+12 Ara-Kara';
           if (f === 'runs_count') return '1';
           return '';

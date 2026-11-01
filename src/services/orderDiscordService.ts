@@ -18,6 +18,7 @@ import prisma from '../database/db';
 import { DomainError, DomainErrorCode } from './domainErrors';
 import { ensureOrderAcceptsOperations } from './orderValidationService';
 import { ensureUserExists } from './registrationService';
+import { formatBoosterShareDisplay } from './financialCalculationEngine';
 
 let _globalDiscordClient: any = null;
 export function setGlobalDiscordClient(c: any): void {
@@ -236,6 +237,30 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
         name: '📝 Run Notes',
         value: sanitizedNotes,
         inline: false,
+      });
+    }
+  }
+
+  // Authoritative Booster Pool & Share Compensation Display
+  if (order.boosterPoolMinor && order.boosterPoolMinor > 0) {
+    const poolUsd = `$${(order.boosterPoolMinor / 100).toFixed(2)} USD`;
+    const isMythic =
+      order.orderType === 'group' ||
+      (order.service?.displayName || '').toLowerCase().includes('mythic') ||
+      (order.service?.slug || '').toLowerCase().includes('mythic');
+
+    if (isMythic) {
+      const shareInfo = formatBoosterShareDisplay(order.boosterPoolMinor, 4);
+      embed.addFields({
+        name: '💰 Booster Reward',
+        value: `• **Total Booster Pool:** **${poolUsd}**\n• **Per Booster Share (4 Boosters):** **${shareInfo.displayText}** *(${shareInfo.breakdownText})*`,
+        inline: false,
+      });
+    } else {
+      embed.addFields({
+        name: '💰 Booster Reward',
+        value: `• **Total Booster Pool:** **${poolUsd}**`,
+        inline: true,
       });
     }
   }

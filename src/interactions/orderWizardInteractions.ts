@@ -43,7 +43,13 @@ import {
   markWizardSubmitted,
   deleteWizardSession,
 } from '../services/orderWizardStateService';
-import { calculateOrderFinancialSnapshot } from '../services/financialCalculationEngine';
+import {
+  calculateOrderFinancialSnapshot,
+  parseExternalOrderAmountPair,
+  parseDecimalStringToCents,
+  validateExternalOrderDefensibleNet,
+  formatBoosterShareDisplay,
+} from '../services/financialCalculationEngine';
 import { creditOrderSalesProceeds } from '../services/platformBalanceService';
 import { publishOrRefreshOrderCard } from '../services/orderDiscordService';
 
@@ -386,14 +392,14 @@ export function buildWizardOrderModal(session: OrderWizardSession): ModalBuilder
     .setRequired(true)
     .setMaxLength(100);
 
-  // Amount in USD ($) — Common to all services
+  // Amount in USD ($) — Differentiated by origin: Pair for G4X external, Single for Advertiser
   const amountInput = new TextInputBuilder()
     .setCustomId('amount_usd')
-    .setLabel('Total Order Amount ($ USD)')
-    .setPlaceholder('e.g. 50.00')
+    .setLabel(isG4x ? 'Site Gross - Booster Pool (USD)' : 'Total Order Amount ($ USD)')
+    .setPlaceholder(isG4x ? 'e.g. 120-100 or 120.50-100.25' : 'e.g. 50.00')
     .setStyle(TextInputStyle.Short)
     .setRequired(true)
-    .setMaxLength(20);
+    .setMaxLength(30);
 
   if (isMythic) {
     // ─── Mythic+ Modal (Max 5 rows) ───
@@ -801,35 +807,7 @@ export async function handleOrderWizardModalSubmit(
     // 2. Mark session submitted atomically to block double-click duplicates (Requirement 13)
     await markWizardSubmitted(sessionId);
 
-    // 3. Extract and validate common amount input
-    const rawAmount = safeGetModalTextInput(interaction, 'amount_usd')?.trim();
-    if (!rawAmount || !/^\d+(\.\d{1,2})?$/.test(rawAmount)) {
-      await interaction.reply({
-        content: '❌ **Invalid Amount**: Total order amount must be a positive number in USD (e.g. `45.00`).',
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const amountUsd = parseFloat(rawAmount);
-    if (isNaN(amountUsd) || amountUsd <= 0) {
-      await interaction.reply({
-        content: '❌ **Invalid Amount**: Total order amount must be greater than zero.',
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const grossCents = Math.round(amountUsd * 100);
-    if (!Number.isSafeInteger(grossCents) || grossCents <= 0) {
-      await interaction.reply({
-        content: '❌ **Invalid Amount**: Order gross amount is not a valid integer.',
-        ephemeral: true,
-      });
-      return;
-    }
-
-    // 4. Validate domain game & service from session
+    // 3. Validate domain game & service from session
     if (!session.gameSlug || !session.serviceId) {
       await interaction.reply({
         content: '❌ **Session Error**: Game or service missing from wizard session.',
@@ -844,11 +822,88 @@ export async function handleOrderWizardModalSubmit(
       session.serviceKey === 'mythic_plus' ||
       Boolean(session.serviceName && session.serviceName.toLowerCase().includes('mythic'));
     const isPilot = session.orderMode === 'pilot';
+    const isAdv = session.origin === 'adv';
+
+    // 4. Extract and validate amount input according to commercial origin
+    const rawAmount = safeGetModalTextInput(interaction, 'amount_usd')?.trim();
+    let grossCents: number;
+    let boosterPoolMinor: number;
+    let expectedPlatformNetMinor = 0;
+    let platformFeeMinor = 0;
+    let advRank: AdvertiserRank | null = null;
+    let rankCommissionBps: number | null = null;
+
+    if (!isAdv) {
+      // ── FLOW A: G4X External Order Amount Pair (Gross - BoosterPool) ──
+      try {
+        const parsed = parseExternalOrderAmountPair(rawAmount || '');
+        grossCents = parsed.grossMinor;
+        boosterPoolMinor = parsed.boosterPoolMinor;
+      } catch (err: any) {
+        await interaction.reply({
+          content: `❌ **Invalid Amount Format**: ${err.message || 'Expected "Gross - BoosterPool" (e.g. 120-100 or 120.50-100.25).'}\n• Sourced G4X orders require marketplace gross and booster pool separated by a dash.`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      if (!session.platform) {
+        await interaction.reply({
+          content: '❌ **Session Error**: Sourcing platform missing from G4X wizard session.',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Financial Defensible Net Validation (Fail-closed on missing policy or deficit risk)
+      try {
+        const netValidation = await validateExternalOrderDefensibleNet({
+          platform: session.platform as any,
+          grossMinor: grossCents,
+          boosterPoolMinor,
+          gameSlug: game.slug,
+          listingCategory: 'currency',
+        });
+        expectedPlatformNetMinor = netValidation.platformNetMinor;
+      } catch (err: any) {
+        await interaction.reply({
+          content: `❌ **Financial Validation Failed**: ${err.message}`,
+          ephemeral: true,
+        });
+        return;
+      }
+    } else {
+      // ── FLOW B: Advertiser Direct Order Single Amount ──
+      try {
+        grossCents = parseDecimalStringToCents(rawAmount || '', 'Total Order Amount');
+        if (grossCents <= 0) {
+          throw new Error('Total order amount must be greater than zero');
+        }
+      } catch (err: any) {
+        await interaction.reply({
+          content: `❌ **Invalid Amount**: ${err.message || 'Total order amount must be a positive number in USD (e.g. 50.00).'}`,
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const user = await prisma.user.findUnique({ where: { discordId: actorId } });
+      if (!user?.advertiserRank || !isValidAdvertiserRank(user.advertiserRank)) {
+        await interaction.reply({
+          content: '❌ **Unresolved Commercial Rank**: Advertiser does not have an approved commercial rank configured.',
+          ephemeral: true,
+        });
+        return;
+      }
+      advRank = user.advertiserRank as AdvertiserRank;
+      const calc = calculateRankCommission(grossCents, advRank);
+      platformFeeMinor = calc.g4xFeeMinor;
+      boosterPoolMinor = calc.remainingMinor;
+      rankCommissionBps = calc.rankCommissionBasisPoints;
+    }
 
     let runsCount = 1;
     let assembledNotes = '';
-
-    const isAdv = session.origin === 'adv';
     let siteOrderId: string | null = null;
 
     if (!isAdv) {
@@ -937,28 +992,6 @@ export async function handleOrderWizardModalSubmit(
     }
 
     const orderRef = `ORD_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-    // 6. User and Commercial Rank validation for Advertisers
-    let advRank: AdvertiserRank | null = null;
-    let rankCommissionBps: number | null = null;
-    let platformFeeMinor = 0;
-    let boosterPoolMinor = grossCents;
-
-    if (isAdv) {
-      const user = await prisma.user.findUnique({ where: { discordId: actorId } });
-      if (!user?.advertiserRank || !isValidAdvertiserRank(user.advertiserRank)) {
-        await interaction.reply({
-          content: '❌ **Unresolved Commercial Rank**: Advertiser does not have an approved commercial rank configured.',
-          ephemeral: true,
-        });
-        return;
-      }
-      advRank = user.advertiserRank as AdvertiserRank;
-      const calc = calculateRankCommission(grossCents, advRank);
-      platformFeeMinor = calc.g4xFeeMinor;
-      boosterPoolMinor = calc.remainingMinor;
-      rankCommissionBps = calc.rankCommissionBasisPoints;
-    }
 
     // 7. Atomic Database Transaction: Order creation, Wallet Check, Financial Snapshots & Platform Credits
     const createdOrder = await prisma.$transaction(async (tx) => {
@@ -1070,13 +1103,14 @@ export async function handleOrderWizardModalSubmit(
 
       // C. Financial Calculation Engine Integration
       if (!isAdv && session.platform) {
-        // G4X External order financial snapshot
+        // G4X External order financial snapshot with authoritative explicit booster pool
         const snapshot = await calculateOrderFinancialSnapshot(
           {
             orderId: ord.id,
             sourcePlatform: session.platform as any,
             sourceAmountType: 'gross_sale',
             sourceAmountMinor: grossCents,
+            explicitBoosterPoolMinor: boosterPoolMinor,
             platformAccountId: session.platformAccountId,
             currency: 'USD',
             gameSlug: game.slug,
@@ -1169,6 +1203,7 @@ export async function handleOrderWizardModalSubmit(
 
     // 8. Ephemeral Confirmation in English
     const isPublishable = createdOrder.paymentStatus === 'verified' || createdOrder.paymentStatus === 'unneeded';
+    const shareInfo = isMythic ? formatBoosterShareDisplay(createdOrder.boosterPoolMinor, 4) : null;
 
     let confirmEmbed: EmbedBuilder;
     if (!isAdv) {
@@ -1184,8 +1219,10 @@ export async function handleOrderWizardModalSubmit(
           `• **Game:** **${game.displayName}**\n` +
           `• **Service:** **${service.displayName}**\n` +
           `• **Mode:** \`${createdOrder.orderMode === 'pilot' ? '✈️ Pilot' : '🛡️ Non-Pilot'}\`\n` +
-          `• **Order Amount:** **$${(createdOrder.grossAmountMinor / 100).toFixed(2)} USD**\n` +
-          `• **Booster Pool:** **$${(createdOrder.boosterPoolMinor / 100).toFixed(2)} USD**\n` +
+          `• **Site Gross Amount:** **$${(createdOrder.grossAmountMinor / 100).toFixed(2)} USD**\n` +
+          (expectedPlatformNetMinor > 0 ? `• **Expected Platform Net:** **$${(expectedPlatformNetMinor / 100).toFixed(2)} USD** *(after ${(session.platform || '').toUpperCase()} seller fees)*\n` : '') +
+          `• **Total Booster Pool:** **$${(createdOrder.boosterPoolMinor / 100).toFixed(2)} USD**\n` +
+          (shareInfo ? `• **Per Booster Share (4 Boosters):** **${shareInfo.displayText}** *(${shareInfo.breakdownText})*\n` : '') +
           `• **External Settlement:** \`Pending\` (Awaiting platform reconciliation)\n` +
           `• **Publication Status:** \`Approved & Published for Booster Presign\``
         )
@@ -1206,7 +1243,8 @@ export async function handleOrderWizardModalSubmit(
           `• **Mode:** \`${createdOrder.orderMode === 'pilot' ? '✈️ Pilot' : '🛡️ Non-Pilot'}\`\n` +
           (advRank ? `• **Advertiser Rank:** \`${advRank}\`\n` : '') +
           `• **Total Amount:** **$${(createdOrder.grossAmountMinor / 100).toFixed(2)} USD**\n` +
-          `• **Booster Pool:** **$${(createdOrder.boosterPoolMinor / 100).toFixed(2)} USD**\n` +
+          `• **Total Booster Pool:** **$${(createdOrder.boosterPoolMinor / 100).toFixed(2)} USD**\n` +
+          (shareInfo ? `• **Per Booster Share (4 Boosters):** **${shareInfo.displayText}** *(${shareInfo.breakdownText})*\n` : '') +
           `• **Runs / Quantity:** \`${runsCount}\`\n` +
           `• **Payment Status:** **${isFunded ? '✅ VERIFIED (Funded via Wallet V2)' : '⏳ PENDING (Awaiting Funding)'}**\n` +
           `• **Publication Status:** \`${isFunded ? 'Published for Booster Presign' : 'Blocked — Awaiting Verified Payment'}\``

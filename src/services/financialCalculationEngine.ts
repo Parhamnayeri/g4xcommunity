@@ -152,6 +152,213 @@ export function splitPoolEquallyWithRemainder(
   return allocations;
 }
 
+// ─── ۱.ب. اعتبارسنجی جفت‌مبلغ سفارشات خارجی و توزیع استخر بوسترها ─────────────
+
+export interface ParsedAmountPair {
+  grossMinor: number;
+  boosterPoolMinor: number;
+  grossUsd: string;
+  boosterPoolUsd: string;
+}
+
+/**
+ * Parses a decimal string (up to 2 decimals) into safe integer cents
+ */
+export function parseDecimalStringToCents(val: string, label: string = 'Amount'): number {
+  if (!val || typeof val !== 'string' || !/^\d+(\.\d+)?$/.test(val.trim())) {
+    throw new Error(`MALFORMED_NUMBER: ${label} is not a valid number`);
+  }
+
+  const trimmed = val.trim();
+  const parts = trimmed.split('.');
+  if (parts.length > 1 && parts[1].length > 2) {
+    throw new Error(`EXCESSIVE_DECIMAL_PLACES: ${label} cannot have more than two decimal places (got ${parts[1].length})`);
+  }
+
+  const whole = parseInt(parts[0], 10);
+  if (!Number.isSafeInteger(whole)) {
+    throw new Error(`UNSAFE_INTEGER_CENTS: ${label} whole part is unsafe for integer-cent accounting`);
+  }
+
+  let frac = 0;
+  if (parts.length > 1) {
+    frac = parseInt(parts[1].padEnd(2, '0'), 10);
+  }
+
+  const cents = whole * 100 + frac;
+  if (!Number.isSafeInteger(cents) || cents < 0) {
+    throw new Error(`UNSAFE_INTEGER_CENTS: ${label} value is unsafe for integer-cent accounting`);
+  }
+
+  return cents;
+}
+
+/**
+ * Parses and validates external marketplace order amount pair: "Site Gross - Booster Pool (USD)"
+ * Format: "Gross - BoosterPool" (e.g. "120-100", "120.50-100.25", "120 - 100")
+ *
+ * Enforces:
+ * - Rejection of negative or zero amounts
+ * - Rejection of malformed values (must have exactly two numbers separated by a single dash)
+ * - Rejection of more than two decimal places on either number
+ * - Rejection of Booster Pool exceeding Site Gross amount
+ * - Rejection of numbers unsafe for integer-cent accounting
+ * - Does NOT parse '-' as mathematical subtraction
+ */
+export function parseExternalOrderAmountPair(raw: string): ParsedAmountPair {
+  if (!raw || typeof raw !== 'string') {
+    throw new Error('MALFORMED_AMOUNT_PAIR: Amount input must be a non-empty string in "Gross - BoosterPool" format (e.g. 120-100)');
+  }
+
+  const trimmed = raw.trim();
+
+  // Match <digits(.decimals)> - <digits(.decimals)> with optional whitespace around dash
+  // Leading minus signs are rejected by using \d+
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/);
+  if (!match) {
+    throw new Error('MALFORMED_AMOUNT_PAIR: Invalid amount pair format. Expected "Gross - BoosterPool" (e.g. 120-100 or 120.50-100.25)');
+  }
+
+  const [, grossStr, poolStr] = match;
+
+  const grossMinor = parseDecimalStringToCents(grossStr, 'Site Gross Amount');
+  const boosterPoolMinor = parseDecimalStringToCents(poolStr, 'Booster Pool');
+
+  if (grossMinor <= 0) {
+    throw new Error('INVALID_AMOUNT: Site Gross amount must be strictly greater than zero');
+  }
+
+  if (boosterPoolMinor <= 0) {
+    throw new Error('INVALID_AMOUNT: Booster Pool amount must be strictly greater than zero');
+  }
+
+  if (boosterPoolMinor > grossMinor) {
+    throw new Error(
+      `EXCESSIVE_BOOSTER_POOL_INPUT: Booster Pool ($${(boosterPoolMinor / 100).toFixed(2)}) cannot exceed Site Gross amount ($${(grossMinor / 100).toFixed(2)})`
+    );
+  }
+
+  return {
+    grossMinor,
+    boosterPoolMinor,
+    grossUsd: (grossMinor / 100).toFixed(2),
+    boosterPoolUsd: (boosterPoolMinor / 100).toFixed(2),
+  };
+}
+
+export interface BoosterShareDisplay {
+  isExact: boolean;
+  minShareMinor: number;
+  maxShareMinor: number;
+  displayText: string;
+  breakdownText: string;
+}
+
+/**
+ * Calculates and formats the per-booster share for display.
+ * If division is not exact, displays a range and precise penny distribution.
+ */
+export function formatBoosterShareDisplay(
+  poolMinor: number,
+  boosterCount: number = 4
+): BoosterShareDisplay {
+  if (boosterCount <= 0) {
+    throw new Error('INVALID_BOOSTER_COUNT: Booster count must be greater than zero');
+  }
+
+  const baseShare = Math.floor(poolMinor / boosterCount);
+  const remainder = poolMinor % boosterCount;
+  const minShareMinor = baseShare;
+  const maxShareMinor = remainder > 0 ? baseShare + 1 : baseShare;
+
+  if (remainder === 0) {
+    const amountStr = `$${(baseShare / 100).toFixed(2)}`;
+    return {
+      isExact: true,
+      minShareMinor,
+      maxShareMinor,
+      displayText: `${amountStr} each`,
+      breakdownText: `${boosterCount} × ${amountStr}`,
+    };
+  } else {
+    const minStr = `$${(minShareMinor / 100).toFixed(2)}`;
+    const maxStr = `$${(maxShareMinor / 100).toFixed(2)}`;
+    const higherCount = remainder;
+    const lowerCount = boosterCount - remainder;
+    return {
+      isExact: false,
+      minShareMinor,
+      maxShareMinor,
+      displayText: `${minStr} - ${maxStr} each`,
+      breakdownText: `${higherCount} × ${maxStr}, ${lowerCount} × ${minStr}`,
+    };
+  }
+}
+
+export interface DefensibleNetValidationResult {
+  platform: 'g2g' | 'skycoach' | 'eldorado';
+  policyVersion: number;
+  percentageRate: number;
+  platformCommissionMinor: number;
+  platformNetMinor: number;
+  boosterPoolMinor: number;
+  isDefensible: boolean;
+}
+
+/**
+ * Validates that an external order's Booster Pool does not exceed the defensible net available
+ * after applicable seller platform fees. Fails closed if the policy is missing.
+ */
+export async function validateExternalOrderDefensibleNet(options: {
+  platform: 'g2g' | 'skycoach' | 'eldorado';
+  grossMinor: number;
+  boosterPoolMinor: number;
+  gameSlug?: string;
+  listingCategory?: string;
+}): Promise<DefensibleNetValidationResult> {
+  const { platform, grossMinor, boosterPoolMinor, gameSlug, listingCategory } = options;
+
+  let policy: any = null;
+  if (platform === 'g2g') {
+    policy = await getFeePolicy({ platform: 'g2g', feeType: 'sale_commission' });
+  } else if (platform === 'skycoach') {
+    policy = await getFeePolicy({ platform: 'skycoach', feeType: 'sale_commission' });
+  } else if (platform === 'eldorado') {
+    policy = await getFeePolicy({
+      platform: 'eldorado',
+      feeType: 'sale_commission',
+      gameSlug,
+      listingCategory: listingCategory || 'currency',
+    });
+  }
+
+  if (!policy || policy.percentageRate === null || policy.percentageRate === undefined || !policy.isApproved) {
+    throw new Error(
+      `MISSING_FEE_POLICY: Applicable fee policy for platform '${platform}' is missing or unapproved. Fail closed; financial review required.`
+    );
+  }
+
+  const percentageRate = policy.percentageRate;
+  const platformCommissionMinor = Math.round(grossMinor * percentageRate);
+  const platformNetMinor = grossMinor - platformCommissionMinor;
+
+  if (boosterPoolMinor > platformNetMinor) {
+    throw new Error(
+      `EXCESSIVE_BOOSTER_POOL: Booster pool ($${(boosterPoolMinor / 100).toFixed(2)}) exceeds defensible net available after platform seller fees ($${(platformNetMinor / 100).toFixed(2)}). Platform: ${platform.toUpperCase()}, Seller Commission: ${(percentageRate * 100).toFixed(2)}% ($${(platformCommissionMinor / 100).toFixed(2)}). Deficit risk detected.`
+    );
+  }
+
+  return {
+    platform,
+    policyVersion: policy.version,
+    percentageRate,
+    platformCommissionMinor,
+    platformNetMinor,
+    boosterPoolMinor,
+    isDefensible: true,
+  };
+}
+
 // ─── ۲. محاسبه اسنپ‌شات مالی سفارش (Calculate Order Financial Snapshot) ─────────
 
 export interface CalculateOrderSnapshotInput {
@@ -159,6 +366,7 @@ export interface CalculateOrderSnapshotInput {
   sourcePlatform: 'g2g' | 'skycoach' | 'eldorado' | 'website' | 'advertiser' | 'direct';
   sourceAmountType: 'gross_sale' | 'platform_net';
   sourceAmountMinor: number;
+  explicitBoosterPoolMinor?: number;
   platformAccountId?: number | null;
   platformAccountRef?: string | null;
   currency?: string;
@@ -193,6 +401,7 @@ export async function calculateOrderFinancialSnapshot(
     actorId,
     notes,
     allowProvisional = true,
+    explicitBoosterPoolMinor,
   } = input;
 
   if (
@@ -306,6 +515,13 @@ export async function calculateOrderFinancialSnapshot(
 
   if (sourcePlatform === 'g2g') {
     const policy = await getFeePolicy({ platform: 'g2g', feeType: 'sale_commission' });
+    if (!policy || policy.percentageRate === null || policy.percentageRate === undefined || !policy.isApproved) {
+      if (!allowProvisional || explicitBoosterPoolMinor !== undefined) {
+        throw new Error(
+          `MISSING_FEE_POLICY: Applicable fee policy for platform 'g2g' sale commission is missing or unapproved. Fail closed; financial review required.`
+        );
+      }
+    }
     policyVersion = policy?.version ?? 1;
     const saleCommissionRate = policy?.percentageRate ?? 0.0899; // 8.99%
 
@@ -326,6 +542,13 @@ export async function calculateOrderFinancialSnapshot(
     // کارمزد مصوب جدید: ۱۰٪ به ازای هر سفارش (10% per order).
     // هرگز نباید هر دو کارمزد کسر شوند و هیچ کارمزد ۵ دلاری روی سفارشات یا دسته وضع نمی‌گردد.
     const policy = await getFeePolicy({ platform: 'skycoach', feeType: 'sale_commission' });
+    if (!policy || policy.percentageRate === null || policy.percentageRate === undefined || !policy.isApproved) {
+      if (!allowProvisional || explicitBoosterPoolMinor !== undefined) {
+        throw new Error(
+          `MISSING_FEE_POLICY: Applicable fee policy for platform 'skycoach' sale commission is missing or unapproved. Fail closed; financial review required.`
+        );
+      }
+    }
     policyVersion = policy?.version ?? 2;
     const orderFeeRate = policy?.percentageRate ?? 0.10;
 
@@ -355,11 +578,11 @@ export async function calculateOrderFinancialSnapshot(
         listingCategory,
       });
 
-      if (!policy || policy.percentageRate === null || policy.percentageRate === undefined) {
+      if (!policy || policy.percentageRate === null || policy.percentageRate === undefined || !policy.isApproved) {
         // قانون اکید: N/A هرگز نباید به عنوان ۰٪ تلقی شود. در صورت نامشخص بودن، نهایی‌سازی مسدود می‌گردد.
-        if (!allowProvisional) {
+        if (!allowProvisional || explicitBoosterPoolMinor !== undefined) {
           throw new Error(
-            `ELDORADO_CATEGORY_RATE_UNDEFINED: Fee policy for Eldorado game '${gameSlug}' and category '${listingCategory}' is undefined (N/A). Cannot assume 0% or finalize calculation.`
+            `ELDORADO_CATEGORY_RATE_UNDEFINED: MISSING_FEE_POLICY: Fee policy for Eldorado game '${gameSlug || 'unknown'}' and category '${listingCategory || 'currency'}' is undefined (N/A) or unapproved. Fail closed; financial review required.`
           );
         }
         platformSaleCommissionMinor = 0;
@@ -483,9 +706,21 @@ export async function calculateOrderFinancialSnapshot(
     g4xFeeMinor = Math.round(externalNetBaseMinor * g4xFeeRate);
   }
 
-  // استخر بوسترها: باقیمانده خالص پس از کسر تمامی کارمزدهای مصوب
+  // استخر بوسترها: باقیمانده خالص پس از کسر تمامی کارمزدهای مصوب یا مقدار صریح ارزیابی‌شده
   let boosterPoolMinor: number;
-  if (sourcePlatform === 'advertiser') {
+  if (explicitBoosterPoolMinor !== undefined) {
+    if (!Number.isSafeInteger(explicitBoosterPoolMinor) || explicitBoosterPoolMinor <= 0) {
+      throw new Error(
+        `INVALID_BOOSTER_POOL: Booster pool must be a positive safe integer in minor units (cents), got ${explicitBoosterPoolMinor}`
+      );
+    }
+    if (explicitBoosterPoolMinor > platformOrderNetMinor) {
+      throw new Error(
+        `EXCESSIVE_BOOSTER_POOL: Booster pool (${explicitBoosterPoolMinor} cents) exceeds defensible net available after platform seller fees (${platformOrderNetMinor} cents). Deficit risk detected.`
+      );
+    }
+    boosterPoolMinor = explicitBoosterPoolMinor;
+  } else if (sourcePlatform === 'advertiser') {
     if (snapAdvertiserRank && snapRemainingMinor !== null) {
       boosterPoolMinor = snapRemainingMinor;
     } else {
@@ -496,7 +731,7 @@ export async function calculateOrderFinancialSnapshot(
   }
 
   // Task 9 guard: Do not invent Booster Cut percentages or allocate the entire gross by default where required deductions are unknown
-  if (snapshotNotes && snapshotNotes.includes('ELDORADO_FEE_UNKNOWN')) {
+  if (explicitBoosterPoolMinor === undefined && snapshotNotes && snapshotNotes.includes('ELDORADO_FEE_UNKNOWN')) {
     boosterPoolMinor = 0;
   }
 

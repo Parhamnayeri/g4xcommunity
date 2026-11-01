@@ -443,7 +443,7 @@ async function runWizardSuite() {
       fields: {
         getTextInputValue: (field: string) => {
           if (field === 'site_order_id') return 'G2G-WZ-999001';
-          if (field === 'amount_usd') return '75.00';
+          if (field === 'amount_usd') return '75-65';
           if (field === 'key_level') return '+12 Ara-Kara';
           if (field === 'runs_count') return '2';
           if (field === 'customer_info') return 'Customer#9999';
