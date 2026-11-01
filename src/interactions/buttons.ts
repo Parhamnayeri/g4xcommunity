@@ -204,6 +204,14 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
       });
       break;
     }
+    case 'order_status_badge': {
+      const orderId = Number(params[0]);
+      await interaction.reply({
+        content: `ℹ️ Order #${orderId} is currently not open for pre-signing. Click **View Details** for current squad and progress details.`,
+        ephemeral: true,
+      });
+      break;
+    }
     case 'order_accept': {
       const orderId = params[0];
       await interaction.reply({

@@ -22,6 +22,7 @@ import { handleTeamCommand } from './commands/team';
 import { handleButtonInteraction } from './interactions/buttons';
 import { handleModalSubmit } from './interactions/modals';
 import { handleRegistrationSelectMenu } from './interactions/registrationInteractions';
+import { setGlobalDiscordClient } from './services/orderDiscordService';
 
 // ─── ایجاد کلاینت دیسکورد ────────────────────────────────────────────────
 const client = new Client({
@@ -34,6 +35,8 @@ const client = new Client({
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction],
 });
+
+setGlobalDiscordClient(client);
 
 import { startNotificationWorker } from './services/notificationWorker';
 

@@ -19,6 +19,14 @@ import { DomainError, DomainErrorCode } from './domainErrors';
 import { ensureOrderAcceptsOperations } from './orderValidationService';
 import { ensureUserExists } from './registrationService';
 
+let _globalDiscordClient: any = null;
+export function setGlobalDiscordClient(c: any): void {
+  _globalDiscordClient = c;
+}
+export function getGlobalDiscordClient(): any {
+  return _globalDiscordClient;
+}
+
 export interface PublishOrderResult {
   success: boolean;
   messageId?: string;
@@ -29,8 +37,14 @@ export interface PublishOrderResult {
 
 import {
   resolveOrderPublicationChannel,
+  validateBotChannelPermissions,
   OrderRoutingInfo,
 } from './orderPublicationChannelService';
+
+export interface PublishCardOptions {
+  targetChannelId?: string;
+  guildId?: string;
+}
 
 /**
  * Resolves the Discord orders publication channel using the dedicated publication routing system:
@@ -52,6 +66,7 @@ export async function resolveOrdersChannel(
 /**
  * Builds the public Discord Embed for an order card.
  * EXCLUDES financial secrets, private customer info, and sensitive trade details.
+ * Contains English status, game & service, boost type, requirements, and roster information.
  */
 export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: any[] = []): EmbedBuilder {
   const embed = new EmbedBuilder();
@@ -75,7 +90,7 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
     case 'assigned':
       statusColor = 0x3498db; // Blue
       statusEmoji = '🔵';
-      statusText = 'Assigned (Assembling Squad)';
+      statusText = 'Assigned (Squad Formed)';
       break;
     case 'in_progress':
       statusColor = 0x9b59b6; // Purple
@@ -97,6 +112,11 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
       statusEmoji = '🔴';
       statusText = 'Cancelled';
       break;
+    case 'disputed':
+      statusColor = 0xe67e22; // Orange
+      statusEmoji = '⚠️';
+      statusText = 'Under Dispute';
+      break;
   }
 
   embed.setColor(statusColor);
@@ -107,14 +127,31 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
   const modeText =
     order.orderMode === 'pilot'
       ? 'Pilot (Account Play)'
-      : `Self-Play (${order.orderType?.toUpperCase() || 'GROUP'})`;
+      : `Non-Pilot / Self-Play (${order.orderType?.toUpperCase() || 'GROUP'})`;
 
   embed.setDescription(
     `**Game:** ${gameTitle}\n` +
       `**Service:** ${serviceTitle}\n` +
-      `**Mode:** ${modeText}\n` +
+      `**Boost Type:** ${modeText}\n` +
       `**Status:** ${statusEmoji} **${statusText}**`
   );
+
+  // Requirements & Qualification Eligibility
+  const requirementsList: string[] = [];
+  const requiredQualification = order.orderMode === 'pilot' ? 'Pilot' : 'Booster';
+  requirementsList.push(`• **Eligibility:** Approved G4X ${requiredQualification} qualification required.`);
+
+  if (order.keyRequirements && order.keyRequirements.length > 0) {
+    for (const kr of order.keyRequirements) {
+      requirementsList.push(`• **${kr.requirementKey || 'Requirement'}:** ${kr.requirementValue || 'Required'}`);
+    }
+  }
+
+  embed.addFields({
+    name: '📋 Requirements & Eligibility',
+    value: requirementsList.join('\n'),
+    inline: false,
+  });
 
   // Role slots & presigns calculation
   const activePresigns = presigns.filter((p) => p.status === 'registered');
@@ -147,6 +184,30 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
     embed.addFields({
       name: '👥 Available Booster Slots',
       value: `Total Registered Pre-signs: **${totalPresigned}**`,
+      inline: true,
+    });
+  }
+
+  // Active roster / candidate information
+  if (activeAssignments.length > 0) {
+    const rosterLines = activeAssignments.map((a: any) => {
+      const uName = a.user?.displayName || a.user?.username || a.userId;
+      let rIcon = '👤';
+      const r = (a.assignedRole || '').toLowerCase();
+      if (r === 'tank') rIcon = '🛡️';
+      else if (r === 'healer') rIcon = '💚';
+      else if (r === 'dps') rIcon = '⚔️';
+      return `• ${rIcon} **${(a.assignedRole || 'Booster').toUpperCase()}:** ${uName} (<@${a.userId}>)`;
+    });
+    embed.addFields({
+      name: '✅ Assigned Squad Roster',
+      value: rosterLines.join('\n'),
+      inline: false,
+    });
+  } else if (activePresigns.length > 0 && order.status === 'open_presign') {
+    embed.addFields({
+      name: '👥 Registered Candidates',
+      value: `**${activePresigns.length}** booster(s) registered for pre-sign selection.`,
       inline: true,
     });
   }
@@ -184,7 +245,8 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
 
 /**
  * Builds the interactive components (buttons) for the order card.
- * Includes Tank, Healer, DPS, Withdraw, and Details buttons based on role applicability.
+ * In open_presign: Tank, Healer, DPS, Withdraw, and View Details buttons.
+ * In other states: Status indicator badge and View Details buttons.
  */
 export function buildOrderComponents(
   order: any,
@@ -195,26 +257,26 @@ export function buildOrderComponents(
 
   const activePresigns = presigns.filter((p) => p.status === 'registered');
 
-  // Determine applicable roles
-  let hasTank = false;
-  let hasHealer = false;
-  let hasDps = false;
-
-  if (order.requiredRoles && order.requiredRoles.length > 0) {
-    for (const req of order.requiredRoles) {
-      const r = req.roleName.toLowerCase();
-      if (r === 'tank') hasTank = true;
-      if (r === 'healer') hasHealer = true;
-      if (r === 'dps') hasDps = true;
-    }
-  } else if (order.gameSlug === 'wow_midnight' || order.gameSlug === 'wow') {
-    // Default WoW group roles
-    hasTank = true;
-    hasHealer = true;
-    hasDps = true;
-  }
-
   if (isOpen) {
+    // Determine applicable roles
+    let hasTank = false;
+    let hasHealer = false;
+    let hasDps = false;
+
+    if (order.requiredRoles && order.requiredRoles.length > 0) {
+      for (const req of order.requiredRoles) {
+        const r = req.roleName.toLowerCase();
+        if (r === 'tank') hasTank = true;
+        if (r === 'healer') hasHealer = true;
+        if (r === 'dps') hasDps = true;
+      }
+    } else if (order.gameSlug === 'wow_midnight' || order.gameSlug === 'wow') {
+      // Default WoW group roles
+      hasTank = true;
+      hasHealer = true;
+      hasDps = true;
+    }
+
     if (hasTank) {
       const req = order.requiredRoles?.find((r: any) => r.roleName.toLowerCase() === 'tank');
       const count = activePresigns.filter((p) => p.registeredRole.toLowerCase() === 'tank').length;
@@ -268,6 +330,62 @@ export function buildOrderComponents(
         .setStyle(ButtonStyle.Danger)
         .setEmoji('↩️')
     );
+  } else {
+    // Non-open lifecycle status indicator badge
+    let badgeLabel = 'Unavailable';
+    let badgeEmoji = '🔒';
+    let badgeStyle = ButtonStyle.Secondary;
+
+    switch (order.status) {
+      case 'assigned':
+        badgeLabel = 'Assigned to Squad';
+        badgeEmoji = '🔵';
+        badgeStyle = ButtonStyle.Primary;
+        break;
+      case 'in_progress':
+        badgeLabel = 'In Progress';
+        badgeEmoji = '⚔️';
+        badgeStyle = ButtonStyle.Primary;
+        break;
+      case 'pending_review':
+        badgeLabel = 'Pending Review';
+        badgeEmoji = '📋';
+        badgeStyle = ButtonStyle.Secondary;
+        break;
+      case 'completed':
+        badgeLabel = 'Completed';
+        badgeEmoji = '🏁';
+        badgeStyle = ButtonStyle.Success;
+        break;
+      case 'cancelled':
+        badgeLabel = 'Cancelled';
+        badgeEmoji = '🔴';
+        badgeStyle = ButtonStyle.Danger;
+        break;
+      case 'disputed':
+        badgeLabel = 'Under Dispute';
+        badgeEmoji = '⚠️';
+        badgeStyle = ButtonStyle.Danger;
+        break;
+      case 'presign_closed':
+        badgeLabel = 'Pre-sign Closed';
+        badgeEmoji = '🟡';
+        badgeStyle = ButtonStyle.Secondary;
+        break;
+      default:
+        badgeLabel = `Status: ${order.status}`;
+        badgeEmoji = 'ℹ️';
+        break;
+    }
+
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`order_status_badge:${order.id}`)
+        .setLabel(badgeLabel)
+        .setStyle(badgeStyle)
+        .setEmoji(badgeEmoji)
+        .setDisabled(true)
+    );
   }
 
   // Details button (Always present)
@@ -289,14 +407,38 @@ export function buildOrderComponents(
 export async function publishOrRefreshOrderCard(
   client: any,
   orderId: number,
-  targetChannelId?: string
+  optionsOrChannelId?: string | PublishCardOptions
 ): Promise<PublishOrderResult> {
+  const activeClient = client || _globalDiscordClient;
+  if (!activeClient) {
+    return {
+      success: false,
+      error: 'DISCORD_CLIENT_NOT_INITIALIZED: Discord client is not available',
+    };
+  }
+
+  let explicitChannelId: string | undefined;
+  let targetGuildId: string | undefined;
+
+  if (typeof optionsOrChannelId === 'string') {
+    // If caller passed a guild ID (e.g. from message.guild?.id), adapt cleanly
+    if (activeClient.guilds?.cache && activeClient.guilds.cache.has(optionsOrChannelId)) {
+      targetGuildId = optionsOrChannelId;
+    } else {
+      explicitChannelId = optionsOrChannelId;
+    }
+  } else if (optionsOrChannelId && typeof optionsOrChannelId === 'object') {
+    explicitChannelId = optionsOrChannelId.targetChannelId;
+    targetGuildId = optionsOrChannelId.guildId;
+  }
+
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
       game: true,
       service: true,
       requiredRoles: true,
+      keyRequirements: true,
       presigns: {
         include: { user: true },
       },
@@ -319,21 +461,30 @@ export async function publishOrRefreshOrderCard(
   }
 
   const channel = await resolveOrdersChannel(
-    client,
+    activeClient,
     {
       gameSlug: order.gameSlug,
       serviceId: order.serviceId,
       serviceKey: order.service?.serviceKey,
       orderMode: order.orderMode,
-      discordChannelId: targetChannelId || order.discordChannelId,
+      discordChannelId: explicitChannelId || order.discordChannelId,
     },
-    process.env.DISCORD_GUILD_ID
+    targetGuildId || process.env.DISCORD_GUILD_ID
   );
 
   if (!channel) {
     return {
       success: false,
-      error: 'NO_ORDERS_CHANNEL_RESOLVED: Could not find configured orders channel',
+      error: 'NO_ORDERS_CHANNEL_RESOLVED: Could not find configured orders channel for this game/service',
+    };
+  }
+
+  // Validate bot channel permissions
+  const permCheck = validateBotChannelPermissions(channel);
+  if (!permCheck.valid) {
+    return {
+      success: false,
+      error: `MISSING_PERMISSIONS: Bot lacks required permission(s) [${permCheck.missing.join(', ')}] in channel #${channel.name || channel.id}`,
     };
   }
 
@@ -346,7 +497,7 @@ export async function publishOrRefreshOrderCard(
       const targetCh =
         channel.id === order.discordChannelId
           ? channel
-          : await client.channels.fetch(order.discordChannelId).catch(() => null);
+          : await activeClient.channels.fetch(order.discordChannelId).catch(() => null);
 
       if (targetCh && typeof targetCh.isTextBased === 'function' && targetCh.isTextBased()) {
         const existingMsg = await targetCh.messages.fetch(order.discordMessageId).catch(() => null);
@@ -360,21 +511,50 @@ export async function publishOrRefreshOrderCard(
           };
         }
       }
-    } catch (err) {
-      console.warn(`[OrderDiscord] Could not edit existing message #${order.discordMessageId}, republishing:`, err);
+    } catch (err: any) {
+      console.warn(`[OrderDiscord] Could not edit existing message #${order.discordMessageId}:`, err?.message || err);
+      // If error is transient (not 10008 Unknown Message or 404), retry editing once before republishing
+      if (err?.code !== 10008 && err?.status !== 404) {
+        try {
+          await new Promise((res) => setTimeout(res, 500));
+          const targetCh =
+            channel.id === order.discordChannelId
+              ? channel
+              : await activeClient.channels.fetch(order.discordChannelId).catch(() => null);
+          if (targetCh) {
+            const existingMsg = await targetCh.messages.fetch(order.discordMessageId).catch(() => null);
+            if (existingMsg) {
+              await existingMsg.edit({ embeds: [embed], components });
+              return {
+                success: true,
+                messageId: existingMsg.id,
+                channelId: targetCh.id,
+                isNew: false,
+              };
+            }
+          }
+        } catch (retryErr) {
+          console.warn(`[OrderDiscord] Retry edit failed, proceeding to republish:`, retryErr);
+        }
+      }
     }
   }
 
-  // Publish new message
+  // Publish new message with retry on transient Discord failures
   let sentMsg: any = null;
   try {
     sentMsg = await channel.send({ embeds: [embed], components });
   } catch (apiErr: any) {
-    console.error(`[OrderDiscord] Discord API error while sending order #${order.id} card:`, apiErr);
-    return {
-      success: false,
-      error: `DISCORD_API_ERROR: ${apiErr?.message || apiErr}`,
-    };
+    try {
+      await new Promise((res) => setTimeout(res, 500));
+      sentMsg = await channel.send({ embeds: [embed], components });
+    } catch (retryApiErr: any) {
+      console.error(`[OrderDiscord] Discord API error while sending order #${order.id} card:`, retryApiErr);
+      return {
+        success: false,
+        error: `DISCORD_API_ERROR: ${retryApiErr?.message || retryApiErr}`,
+      };
+    }
   }
 
   // Persist references with safe retry reconciliation

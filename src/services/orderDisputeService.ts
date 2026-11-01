@@ -310,6 +310,13 @@ export async function openOrderDispute(input: OpenDisputeInput) {
       .setTimestamp();
 
     await notifyOrderExecutionChannel(order.id, discordClient, embed);
+
+    try {
+      const { publishOrRefreshOrderCard } = await import('./orderDiscordService');
+      await publishOrRefreshOrderCard(discordClient, order.id);
+    } catch (err) {
+      console.warn(`[OrderDisputeService] Could not refresh public card after dispute opened:`, err);
+    }
   }
 
   return result;
@@ -660,6 +667,13 @@ export async function resolveOrderDispute(input: ResolveDisputeInput) {
       .setTimestamp();
 
     await notifyOrderExecutionChannel(dispute.orderId, discordClient, embed);
+
+    try {
+      const { publishOrRefreshOrderCard } = await import('./orderDiscordService');
+      await publishOrRefreshOrderCard(discordClient, dispute.orderId);
+    } catch (err) {
+      console.warn(`[OrderDisputeService] Could not refresh public card after dispute resolved:`, err);
+    }
   }
 
   return resolvedDispute;

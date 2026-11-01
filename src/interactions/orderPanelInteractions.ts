@@ -804,23 +804,45 @@ export async function handleOrderPanelModalSubmit(interaction: ModalSubmitIntera
       return ord;
     });
 
-    // ۷. پاسخ نهایی کاربر به صورت محرمانه (Ephemeral)
+    // ۷. انتشار سفارش به کانال مربوطه در صورت تأیید مالی
+    let pubResult: any = null;
     if (createdOrder.paymentStatus === 'verified') {
+      try {
+        const { publishOrRefreshOrderCard } = await import('../services/orderDiscordService');
+        pubResult = await publishOrRefreshOrderCard(interaction.client, createdOrder.id, {
+          guildId: interaction.guild?.id,
+        });
+      } catch (pubErr) {
+        console.warn('[OrderPanelModalSubmit] Auto-publish warning:', pubErr);
+      }
+    }
+
+    // ۸. پاسخ نهایی کاربر به صورت محرمانه (Ephemeral)
+    if (createdOrder.paymentStatus === 'verified') {
+      let content =
+        `✅ **Order Created and Backed Successfully!**\n` +
+        `• **Order ID:** \`#${createdOrder.id}\`\n` +
+        `• **Reference:** \`${createdOrder.orderRef}\`\n` +
+        `• **Game & Service:** ${game.displayName} — ${service.displayName}\n` +
+        `• **Category:** ${category === 'adv' ? 'Advertiser' : 'G4X Direct'}\n` +
+        `• **Mode:** \`${createdOrder.orderMode.toUpperCase()}\` (${createdOrder.orderType})\n` +
+        `• **Gross Amount:** **$${(grossCents / 100).toFixed(2)}**\n` +
+        (isAdv && advRank ? `• **Advertiser Rank:** ${advRank} (${((rankCommissionBps || 0) / 100).toFixed(2)}% fee)\n` : '') +
+        `• **Booster Pool:** **$${(boosterPoolMinor / 100).toFixed(2)}**\n` +
+        `• **Payment Status:** \`verified (wallet reserved)\`\n` +
+        `• **Order Status:** \`${createdOrder.status}\`\n` +
+        (panelType === 'mythic' ? `• **Squad Requirement:** 4 Boosters (1 Tank, 1 Healer, 2 DPS)\n` : '');
+
+      if (pubResult?.success) {
+        content += `\n📢 **Published to Boost Orders Board** (Message ID: \`${pubResult.messageId}\`)`;
+      } else if (pubResult?.error) {
+        content += `\n⚠️ **Publication Note**: ${pubResult.error}`;
+      } else {
+        content += `\nℹ️ *Order is funded and queued for booster pre-signing.*`;
+      }
+
       await interaction.reply({
-        content:
-          `✅ **Order Created and Backed Successfully!**\n` +
-          `• **Order ID:** \`#${createdOrder.id}\`\n` +
-          `• **Reference:** \`${createdOrder.orderRef}\`\n` +
-          `• **Game & Service:** ${game.displayName} — ${service.displayName}\n` +
-          `• **Category:** ${category === 'adv' ? 'Advertiser' : 'G4X Direct'}\n` +
-          `• **Mode:** \`${createdOrder.orderMode.toUpperCase()}\` (${createdOrder.orderType})\n` +
-          `• **Gross Amount:** **$${(grossCents / 100).toFixed(2)}**\n` +
-          (isAdv && advRank ? `• **Advertiser Rank:** ${advRank} (${((rankCommissionBps || 0) / 100).toFixed(2)}% fee)\n` : '') +
-          `• **Booster Pool:** **$${(boosterPoolMinor / 100).toFixed(2)}**\n` +
-          `• **Payment Status:** \`verified (wallet reserved)\`\n` +
-          `• **Order Status:** \`${createdOrder.status}\`\n` +
-          (panelType === 'mythic' ? `• **Squad Requirement:** 4 Boosters (1 Tank, 1 Healer, 2 DPS)\n` : '') +
-          `\nℹ️ *Order is funded and ready for management publication.*`,
+        content,
         ephemeral: true,
       });
     } else {

@@ -170,6 +170,14 @@ export async function completeOrderRun(
     }
   }
 
+  // Refresh public order card in Discord
+  try {
+    const { publishOrRefreshOrderCard } = await import('./orderDiscordService');
+    await publishOrRefreshOrderCard(discordClient, run.orderId);
+  } catch (err) {
+    console.warn(`[RunValidationService] Failed to refresh public order card:`, err);
+  }
+
   return updatedRun;
 }
 

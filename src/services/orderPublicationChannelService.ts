@@ -338,6 +338,54 @@ export async function setupPublicationChannels(
 }
 
 /**
+ * Validates that the Discord bot has necessary permissions in the target channel
+ * (ViewChannel, SendMessages, EmbedLinks, ReadMessageHistory).
+ */
+export function validateBotChannelPermissions(
+  channel: any,
+  requiredPermissions: bigint[] = [
+    PermissionFlagsBits.ViewChannel,
+    PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.EmbedLinks,
+    PermissionFlagsBits.ReadMessageHistory,
+  ]
+): { valid: boolean; missing: string[] } {
+  if (!channel || !channel.guild) {
+    return { valid: true, missing: [] };
+  }
+
+  const me = channel.guild.members?.me || channel.guild.me;
+  if (!me) {
+    return { valid: true, missing: [] };
+  }
+
+  const permissions = channel.permissionsFor ? channel.permissionsFor(me) : null;
+  if (!permissions) {
+    return { valid: true, missing: [] };
+  }
+
+  const missing: string[] = [];
+  const permNames: Record<string, string> = {
+    [PermissionFlagsBits.ViewChannel.toString()]: 'ViewChannel',
+    [PermissionFlagsBits.SendMessages.toString()]: 'SendMessages',
+    [PermissionFlagsBits.EmbedLinks.toString()]: 'EmbedLinks',
+    [PermissionFlagsBits.ReadMessageHistory.toString()]: 'ReadMessageHistory',
+    [PermissionFlagsBits.ManageChannels.toString()]: 'ManageChannels',
+  };
+
+  for (const perm of requiredPermissions) {
+    if (typeof permissions.has === 'function' && !permissions.has(perm)) {
+      missing.push(permNames[perm.toString()] || perm.toString());
+    }
+  }
+
+  return {
+    valid: missing.length === 0,
+    missing,
+  };
+}
+
+/**
  * تعیین دقیق و امن کانال دیسکورد جهت انتشار سفارش بر اساس بازی، نوع سرویس و حالت
  */
 export async function resolveOrderPublicationChannel(
@@ -395,7 +443,50 @@ export async function resolveOrderPublicationChannel(
     }
   }
 
-  // ۲. بررسی جدول رسمی channel_routes در پایگاه داده
+  // ۲. بررسی جدول Admin-configured DiscordChannelMapping (یکپارچه‌سازی با سیستم Provisioning)
+  if (gameSlug) {
+    try {
+      const isMythic =
+        gameSlug === 'wow_midnight' &&
+        (serviceKey === 'mythic_plus' ||
+          effectiveServiceId === 10 ||
+          (serviceMode === 'non_pilot' && (serviceKey?.includes('mythic') || false)));
+
+      let mappingKey: string | null = null;
+      if (gameSlug === 'wow_midnight') {
+        if (isMythic) mappingKey = 'publication:wow_midnight:mythic';
+        else if (serviceMode === 'pilot') mappingKey = 'publication:wow_midnight:pilot';
+        else mappingKey = 'publication:wow_midnight:non_pilot';
+      } else if (gameSlug === 'wow_forever') {
+        if (serviceMode === 'pilot') mappingKey = 'publication:wow_forever:pilot';
+        else mappingKey = 'publication:wow_forever:non_pilot';
+      } else {
+        mappingKey = `publication:game:${gameSlug}:${serviceMode}`;
+      }
+
+      if (mappingKey) {
+        const mapping = await prisma.discordChannelMapping.findFirst({
+          where: {
+            channelKey: mappingKey,
+            isActive: true,
+            syncStatus: { in: ['SYNCED', 'MANUAL'] },
+            ...(targetGuildId ? { guildId: targetGuildId } : {}),
+          },
+        });
+
+        if (mapping?.discordChannelId) {
+          const ch = await client.channels.fetch(mapping.discordChannelId).catch(() => null);
+          if (ch && typeof ch.isTextBased === 'function' && ch.isTextBased()) {
+            return ch;
+          }
+        }
+      }
+    } catch (mappingErr) {
+      console.warn('[ResolveOrderPublicationChannel] DiscordChannelMapping lookup warning:', mappingErr);
+    }
+  }
+
+  // ۳. بررسی جدول رسمی channel_routes در پایگاه داده
   if (gameSlug) {
     try {
       // الف. اولویت با روت دارای service_id اختصاصی (مانند mythic_plus)
@@ -440,7 +531,7 @@ export async function resolveOrderPublicationChannel(
     }
   }
 
-  // ۳. نگاشت مستقیم بر اساس ساختار دسته‌بندی و نام کانال در گیلد (Guild Cache Resolution)
+  // ۴. نگاشت مستقیم بر اساس ساختار دسته‌بندی و نام کانال در گیلد (Guild Cache Resolution)
   if (client.guilds?.cache && gameSlug) {
     const guild = targetGuildId
       ? client.guilds.cache.get(targetGuildId)
@@ -511,9 +602,35 @@ export async function resolveOrderPublicationChannel(
           }
         }
       }
+      // ── ج. سایر بازی‌های ثبت‌شده در سیستم ──────────────────────────────────
+      if (gameSlug !== 'wow_midnight' && gameSlug !== 'wow_forever') {
+        try {
+          const game = await prisma.game.findUnique({ where: { slug: gameSlug } });
+          if (game && game.isActive) {
+            const gameCat = guild.channels.cache.find(
+              (c: any) =>
+                (c.type === ChannelType.GuildCategory || c.type === 4) &&
+                (c.name.toLowerCase() === game.displayName.toLowerCase() ||
+                  c.name.toLowerCase() === game.slug.toLowerCase())
+            );
+            if (gameCat) {
+              const expectedName = serviceMode === 'pilot' ? 'pilot_boosts' : 'non_pilot_boosts';
+              const expectedAlias = serviceMode === 'pilot' ? 'pilot-boosts' : 'non-pilot-boosts';
+              const ch = guild.channels.cache.find(
+                (c: any) =>
+                  c.parentId === gameCat.id &&
+                  (c.name === expectedName || c.name === expectedAlias)
+              );
+              if (ch) return ch;
+            }
+          }
+        } catch {
+          // Continue to fail-safe return null
+        }
+      }
     }
   }
 
-  // ۴. قانون شکست امن: در صورت نبود کانال اختصاصی، null بازگردانده می‌شود تا هیچ سفارش در کانال نامربوط منتشر نشود.
+  // ۵. قانون شکست امن: در صورت نبود کانال اختصاصی، null بازگردانده می‌شود تا هیچ سفارش در کانال نامربوط منتشر نشود.
   return null;
 }

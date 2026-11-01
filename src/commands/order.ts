@@ -437,7 +437,9 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
 
     // 5. Card Publication: Only verified orders may be published for public claims
     if (order.paymentStatus === 'verified') {
-      const pubResult = await publishOrRefreshOrderCard(message.client, order.id, message.guild?.id);
+      const pubResult = await publishOrRefreshOrderCard(message.client, order.id, {
+        guildId: message.guild?.id,
+      });
       let confirmationText = `✅ **Order Created and Funded Successfully!**\n• Order ID: **#${order.id}**\n• Reference: \`${order.orderRef}\`\n• Game: **${game.displayName}**\n• Service: **${service.displayName}**\n• Payment: **verified (wallet reserved)**\n• Status: **${order.status}**`;
       if (pubResult.success) {
         confirmationText += `\n📢 **Published to Orders Board** (Message ID: \`${pubResult.messageId}\`)`;
@@ -525,7 +527,9 @@ async function handleOrderVerifyPayment(message: Message, args: string[]): Promi
   });
 
   // Publish to Discord now that payment has been authoritatively verified
-  const pubResult = await publishOrRefreshOrderCard(message.client, updatedOrder.id, message.guild?.id);
+  const pubResult = await publishOrRefreshOrderCard(message.client, updatedOrder.id, {
+    guildId: message.guild?.id,
+  });
   await message.reply({
     content: `✅ **Payment Verified for Order #${updatedOrder.id}!**\nStatus updated to \`${updatedOrder.status}\`.${pubResult.success ? '\n📢 Published to Orders Board.' : ''}`,
   });
