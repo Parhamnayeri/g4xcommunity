@@ -120,6 +120,8 @@ model Game {
   slug            String @id
   displayName     String @map("display_name")
   serviceCategory String @map("service_category") // non_pilot | pilot | both
+  description     String?
+  sortOrder       Int      @default(0) @map("sort_order")
   isActive        Boolean @default(true) @map("is_active")
   createdAt       DateTime @default(now()) @map("created_at")
 
@@ -145,6 +147,8 @@ model GameService {
   serviceMode          String  @default("non_pilot") @map("service_mode") // pilot | non_pilot
   profileMode          String  @map("profile_mode") // raiderio | manual | none
   requiresPilotApproval Boolean @default(false) @map("requires_pilot_approval")
+  description          String?
+  sortOrder            Int     @default(0) @map("sort_order")
   isActive             Boolean @default(true) @map("is_active")
 
   game          Game            @relation(fields: [gameSlug], references: [slug], onDelete: Cascade)

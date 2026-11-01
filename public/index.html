@@ -326,6 +326,73 @@
       to { transform: rotate(360deg); }
     }
 
+    .modal-backdrop {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(5px);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      padding: 1rem;
+    }
+
+    .modal-content {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+      color: var(--text-main);
+      width: 100%;
+    }
+
+    .action-btn-group {
+      display: inline-flex;
+      gap: 0.35rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .btn-xs {
+      padding: 0.2rem 0.5rem;
+      font-size: 0.75rem;
+      border-radius: 4px;
+    }
+
+    .grid-kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .kpi-card {
+      background: #141721;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .kpi-title {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+    }
+
+    .kpi-value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      color: #fff;
+    }
+
     footer {
       border-top: 1px solid var(--card-border);
       padding: 1.5rem;
@@ -515,6 +582,7 @@
           <button class="tab-btn ${activeTab === 'applications' ? 'active' : ''}" data-tab="applications" onclick="switchTab('applications')">Member Applications</button>
           ${isExchanger() ? `<button class="tab-btn ${activeTab === 'exchanger' ? 'active' : ''}" data-tab="exchanger" onclick="switchTab('exchanger')">Exchanger Portal</button>` : ''}
           ${isAdmin() ? `<button class="tab-btn ${activeTab === 'admin' ? 'active' : ''}" data-tab="admin" onclick="switchTab('admin')">Admin Review Hub</button>` : ''}
+          ${isAdmin() ? `<button class="tab-btn ${activeTab === 'games-categories' ? 'active' : ''}" data-tab="games-categories" onclick="switchTab('games-categories')">Games &amp; Categories</button>` : ''}
         </div>
 
         <div id="tab-content">
@@ -586,6 +654,8 @@
         renderExchangerTab(content);
       } else if (tab === 'admin' && isAdmin()) {
         renderAdminTab(content);
+      } else if (tab === 'games-categories' && isAdmin()) {
+        renderGamesCategoriesTab(content);
       }
     }
 
@@ -2127,6 +2197,21 @@
 
     async function renderAdminTab(container) {
       container.innerHTML = `
+        <div class="card" style="margin-bottom: 1.5rem; background: linear-gradient(135deg, rgba(88, 101, 242, 0.12), rgba(20, 23, 33, 0.95)); border: 1px solid rgba(88, 101, 242, 0.35);">
+          <div class="card-title">
+            <span style="display: flex; align-items: center; gap: 0.5rem;">
+              🎮 <strong>Games &amp; Service Categories Management</strong>
+            </span>
+            <span class="badge badge-purple">Admin Catalog</span>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1rem; line-height: 1.5;">
+            Configure games (WoW Midnight, WoW Forever, and additional games), edit display names and descriptions, configure service categories (Mythic+, Pilot, Non-Pilot), claim windows, keystone/role constraints, and reorder catalog displays.
+          </p>
+          <div style="display: flex; gap: 0.75rem;">
+            <button class="btn btn-primary" onclick="switchTab('games-categories')">Open Games &amp; Categories Manager &rarr;</button>
+          </div>
+        </div>
+
         <div class="card" style="margin-bottom: 1.5rem;">
           <div class="card-title">
             <span>Advertiser Commercial Ranks &amp; Commissions</span>
@@ -3791,6 +3876,851 @@
         if (content) content.innerHTML = `<span style="color: var(--accent-red);">${err.message}</span>`;
       }
     };
+
+    function closeAdminModal() {
+      const container = document.getElementById('admin-rank-modal-container');
+      if (container) container.innerHTML = '';
+    }
+
+    function closeRankModal() {
+      closeAdminModal();
+    }
+
+    // ─── Games & Service Categories Management ──────────────────────────────
+    let adminGamesCache = [];
+    let selectedGameFilter = 'all';
+
+    function closeGameCategoryModal() {
+      const container = document.getElementById('game-category-modal-container');
+      if (container) container.innerHTML = '';
+    }
+
+    async function renderGamesCategoriesTab(container) {
+      container.innerHTML = `
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title" style="flex-wrap: wrap; gap: 0.75rem;">
+            <div>
+              <span style="font-size: 1.15rem; font-weight: 700; color: #fff;">🎮 Games &amp; Service Categories</span>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin: 0.25rem 0 0 0;">
+                Configure games, service categories, keystone &amp; role constraints, claim windows, and catalog display ordering.
+              </p>
+            </div>
+            <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
+              <button class="btn btn-primary" onclick="openGameModal(null)">+ Add Game</button>
+              <button class="btn btn-secondary" onclick="loadAdminGamesData()">↻ Refresh</button>
+            </div>
+          </div>
+
+          <!-- KPI Summary Cards -->
+          <div class="grid-kpis" id="games-kpi-grid">
+            <div class="kpi-card">
+              <span class="kpi-title">Total Games</span>
+              <span class="kpi-value" id="kpi-total-games">-</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-title">Active Games</span>
+              <span class="kpi-value" style="color: var(--accent-green);" id="kpi-active-games">-</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-title">Total Categories</span>
+              <span class="kpi-value" id="kpi-total-services">-</span>
+            </div>
+            <div class="kpi-card">
+              <span class="kpi-title">Active Categories</span>
+              <span class="kpi-value" style="color: var(--accent-green);" id="kpi-active-services">-</span>
+            </div>
+          </div>
+
+          <!-- Game Filter -->
+          <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; flex-wrap: wrap;">
+            <label style="font-size: 0.85rem; font-weight: 600; color: var(--text-muted);">Filter Categories by Game:</label>
+            <select id="game-filter-select" class="form-control" style="max-width: 260px; padding: 0.4rem 0.6rem; font-size: 0.85rem;" onchange="onGameFilterChange(this.value)">
+              <option value="all">All Games</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Games List Card -->
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title">
+            <span>Configured Games</span>
+            <span class="badge badge-blue" id="games-count-badge">0 Games</span>
+          </div>
+          <div id="games-table-container">
+            <div class="loading-spinner"></div> Loading games...
+          </div>
+        </div>
+
+        <!-- Service Categories Card -->
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div class="card-title" style="flex-wrap: wrap; gap: 0.5rem;">
+            <span>Service Categories &amp; Operational Rules</span>
+            <span class="badge badge-purple" id="services-count-badge">0 Categories</span>
+          </div>
+          <div id="services-table-container">
+            <div class="loading-spinner"></div> Loading service categories...
+          </div>
+        </div>
+
+        <!-- Modal Container -->
+        <div id="game-category-modal-container"></div>
+      `;
+
+      await loadAdminGamesData();
+    }
+
+    async function loadAdminGamesData() {
+      const gamesTable = document.getElementById('games-table-container');
+      const servicesTable = document.getElementById('services-table-container');
+      if (gamesTable) gamesTable.innerHTML = '<div class="loading-spinner"></div> Loading games...';
+      if (servicesTable) servicesTable.innerHTML = '<div class="loading-spinner"></div> Loading service categories...';
+
+      try {
+        const res = await fetch('/api/admin/games', { credentials: 'include' });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        adminGamesCache = data.games || [];
+
+        // Update KPIs
+        const totalGames = adminGamesCache.length;
+        const activeGames = adminGamesCache.filter(g => g.isActive).length;
+        let totalServices = 0;
+        let activeServices = 0;
+        adminGamesCache.forEach(g => {
+          (g.services || []).forEach(s => {
+            totalServices++;
+            if (s.isActive) activeServices++;
+          });
+        });
+
+        const kpiTotalG = document.getElementById('kpi-total-games');
+        const kpiActiveG = document.getElementById('kpi-active-games');
+        const kpiTotalS = document.getElementById('kpi-total-services');
+        const kpiActiveS = document.getElementById('kpi-active-services');
+        if (kpiTotalG) kpiTotalG.textContent = totalGames;
+        if (kpiActiveG) kpiActiveG.textContent = activeGames;
+        if (kpiTotalS) kpiTotalS.textContent = totalServices;
+        if (kpiActiveS) kpiActiveS.textContent = activeServices;
+
+        // Update Filter Select
+        const filterSelect = document.getElementById('game-filter-select');
+        if (filterSelect) {
+          const curVal = selectedGameFilter;
+          filterSelect.innerHTML = `<option value="all" ${curVal === 'all' ? 'selected' : ''}>All Games (${totalGames})</option>` +
+            adminGamesCache.map(g => `<option value="${g.slug}" ${curVal === g.slug ? 'selected' : ''}>${escapeHtml(g.displayName)} (${(g.services || []).length})</option>`).join('');
+        }
+
+        renderGamesTable();
+        renderServicesTable();
+      } catch (err) {
+        if (gamesTable) gamesTable.innerHTML = `<div style="color: var(--accent-red); padding: 1rem;">Failed to load catalog: ${escapeHtml(err.message)}</div>`;
+        if (servicesTable) servicesTable.innerHTML = `<div style="color: var(--accent-red); padding: 1rem;">Failed to load services: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function onGameFilterChange(val) {
+      selectedGameFilter = val;
+      renderServicesTable();
+    }
+
+    function renderGamesTable() {
+      const container = document.getElementById('games-table-container');
+      const countBadge = document.getElementById('games-count-badge');
+      if (!container) return;
+
+      if (countBadge) countBadge.textContent = `${adminGamesCache.length} Game${adminGamesCache.length === 1 ? '' : 's'}`;
+
+      if (adminGamesCache.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-muted); padding: 1rem;">No games configured yet. Click "+ Add Game" to add one.</p>';
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 70px;">Sort</th>
+                <th>Slug</th>
+                <th>Display Name</th>
+                <th>Internal Name</th>
+                <th>Service Mode</th>
+                <th>Description</th>
+                <th>Status</th>
+                <th>Categories</th>
+                <th>References</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${adminGamesCache.map((g, idx) => {
+                const isFirst = idx === 0;
+                const isLast = idx === adminGamesCache.length - 1;
+                const refCount = g.referenceCounts ? g.referenceCounts.totalReferences : 0;
+                const hasRefs = refCount > 0;
+
+                let modeBadge = '<span class="badge">Both</span>';
+                if (g.serviceCategory === 'non_pilot') modeBadge = '<span class="badge badge-blue">Non-Pilot Only</span>';
+                else if (g.serviceCategory === 'pilot') modeBadge = '<span class="badge badge-purple">Pilot Only</span>';
+
+                return `
+                  <tr style="${!g.isActive ? 'opacity: 0.65; background: rgba(0,0,0,0.15);' : ''}">
+                    <td>
+                      <div class="action-btn-group">
+                        <button class="btn btn-secondary btn-xs" ${isFirst ? 'disabled' : ''} onclick="adminMoveGame('${g.slug}', 'up')" title="Move Up">▲</button>
+                        <button class="btn btn-secondary btn-xs" ${isLast ? 'disabled' : ''} onclick="adminMoveGame('${g.slug}', 'down')" title="Move Down">▼</button>
+                      </div>
+                    </td>
+                    <td><code style="font-size: 0.85rem; color: #93c5fd;">${escapeHtml(g.slug)}</code></td>
+                    <td><strong>${escapeHtml(g.displayName)}</strong></td>
+                    <td style="color: var(--text-muted); font-size: 0.85rem;">${escapeHtml(g.name)}</td>
+                    <td>${modeBadge}</td>
+                    <td style="font-size: 0.85rem; color: var(--text-muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                      ${g.description ? escapeHtml(g.description) : '<span style="opacity: 0.5;">—</span>'}
+                    </td>
+                    <td>
+                      ${g.isActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-red">Disabled</span>'}
+                    </td>
+                    <td>
+                      <span class="badge badge-blue">${(g.services || []).length} Services</span>
+                    </td>
+                    <td>
+                      ${hasRefs ? `<span class="badge" title="Orders: ${g.referenceCounts.orders}, Characters: ${g.referenceCounts.characters}, Squads: ${g.referenceCounts.squads}">${refCount} refs</span>` : '<span class="badge" style="opacity: 0.4;">0 refs</span>'}
+                    </td>
+                    <td style="text-align: right;">
+                      <div class="action-btn-group" style="justify-content: flex-end;">
+                        <button class="btn btn-primary btn-xs" onclick="openServiceModal('${g.slug}', null)" title="Add service to this game">+ Service</button>
+                        <button class="btn btn-secondary btn-xs" onclick="openGameModal('${g.slug}')">Edit</button>
+                        <button class="btn ${g.isActive ? 'btn-danger' : 'btn-success'} btn-xs" onclick="adminToggleGameStatus('${g.slug}', ${!g.isActive})">
+                          ${g.isActive ? 'Disable' : 'Enable'}
+                        </button>
+                        <button class="btn btn-danger btn-xs" onclick="adminDeleteGame('${g.slug}')" ${hasRefs ? 'title="Referenced by historical data; safe block will apply"' : ''}>
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function renderServicesTable() {
+      const container = document.getElementById('services-table-container');
+      const countBadge = document.getElementById('services-count-badge');
+      if (!container) return;
+
+      let filteredGames = adminGamesCache;
+      if (selectedGameFilter !== 'all') {
+        filteredGames = adminGamesCache.filter(g => g.slug === selectedGameFilter);
+      }
+
+      const allServices = [];
+      filteredGames.forEach(g => {
+        (g.services || []).forEach(s => {
+          allServices.push({ ...s, gameDisplayName: g.displayName, gameIsActive: g.isActive });
+        });
+      });
+
+      if (countBadge) countBadge.textContent = `${allServices.length} Categor${allServices.length === 1 ? 'y' : 'ies'}`;
+
+      if (allServices.length === 0) {
+        container.innerHTML = '<p style="color: var(--text-muted); padding: 1rem;">No service categories found for the selected view.</p>';
+        return;
+      }
+
+      container.innerHTML = `
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 70px;">Sort</th>
+                <th>Game</th>
+                <th>Service Key</th>
+                <th>Display Name</th>
+                <th>Mode</th>
+                <th>Profile Mode</th>
+                <th>Rules &amp; Constraints</th>
+                <th>Status</th>
+                <th>References</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${allServices.map((s, idx) => {
+                const sGame = adminGamesCache.find(g => g.slug === s.gameSlug);
+                const siblings = (sGame ? sGame.services : []) || [];
+                const sIdx = siblings.findIndex(x => x.id === s.id);
+                const isFirst = sIdx === 0;
+                const isLast = sIdx === siblings.length - 1;
+                const refCount = s.referenceCounts ? s.referenceCounts.totalReferences : 0;
+                const hasRefs = refCount > 0;
+                const st = s.settings || {};
+
+                return `
+                  <tr style="${(!s.isActive || !s.gameIsActive) ? 'opacity: 0.65; background: rgba(0,0,0,0.15);' : ''}">
+                    <td>
+                      <div class="action-btn-group">
+                        <button class="btn btn-secondary btn-xs" ${isFirst ? 'disabled' : ''} onclick="adminMoveService('${s.gameSlug}', ${s.id}, 'up')" title="Move Up">▲</button>
+                        <button class="btn btn-secondary btn-xs" ${isLast ? 'disabled' : ''} onclick="adminMoveService('${s.gameSlug}', ${s.id}, 'down')" title="Move Down">▼</button>
+                      </div>
+                    </td>
+                    <td><span class="badge badge-blue">${escapeHtml(s.gameDisplayName)}</span></td>
+                    <td><code style="font-size: 0.85rem; color: #c4b5fd;">${escapeHtml(s.serviceKey)}</code></td>
+                    <td><strong>${escapeHtml(s.displayName)}</strong></td>
+                    <td><span class="badge ${s.serviceMode === 'pilot' ? 'badge-purple' : 'badge-blue'}">${s.serviceMode}</span></td>
+                    <td><span class="badge">${s.profileMode}</span></td>
+                    <td>
+                      <div style="display: flex; gap: 0.25rem; flex-wrap: wrap; font-size: 0.75rem;">
+                        ${s.requiresPilotApproval ? '<span class="badge badge-amber" title="Requires pilot verification before claiming">Pilot Approval Req</span>' : ''}
+                        ${st.claimWindowSeconds ? `<span class="badge" title="Claim Window">${st.claimWindowSeconds}s Window</span>` : ''}
+                        ${st.requiresKey ? '<span class="badge badge-purple" title="Keystone level required (e.g. Mythic+)">Keystone Req</span>' : ''}
+                        ${st.requiresRoles ? '<span class="badge badge-blue" title="Specific team roles required">Roles Req</span>' : ''}
+                        ${st.acceptsSquads === false ? '<span class="badge badge-red">No Squads</span>' : ''}
+                        ${st.proofRequired === false ? '<span class="badge">Proof Opt</span>' : ''}
+                      </div>
+                    </td>
+                    <td>
+                      ${(!s.isActive || !s.gameIsActive) ?
+                        `<span class="badge badge-red">${!s.gameIsActive ? 'Game Disabled' : 'Disabled'}</span>` :
+                        '<span class="badge badge-green">Active</span>'
+                      }
+                    </td>
+                    <td>
+                      ${hasRefs ? `<span class="badge" title="Orders: ${s.referenceCounts.orders}, Approvals: ${s.referenceCounts.approvals}, Applications: ${s.referenceCounts.applications}">${refCount} refs</span>` : '<span class="badge" style="opacity: 0.4;">0 refs</span>'}
+                    </td>
+                    <td style="text-align: right;">
+                      <div class="action-btn-group" style="justify-content: flex-end;">
+                        <button class="btn btn-secondary btn-xs" onclick="openServiceModal('${s.gameSlug}', ${s.id})">Edit</button>
+                        <button class="btn ${s.isActive ? 'btn-danger' : 'btn-success'} btn-xs" onclick="adminToggleServiceStatus(${s.id}, ${!s.isActive})">
+                          ${s.isActive ? 'Disable' : 'Enable'}
+                        </button>
+                        <button class="btn btn-danger btn-xs" onclick="adminDeleteService(${s.id})" ${hasRefs ? 'title="Referenced by historical data; safe block will apply"' : ''}>
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function openGameModal(existingSlug = null) {
+      const modal = document.getElementById('game-category-modal-container');
+      if (!modal) return;
+
+      const isEdit = !!existingSlug;
+      const game = isEdit ? adminGamesCache.find(g => g.slug === existingSlug) : null;
+      if (isEdit && !game) return alert('Game not found in cache');
+
+      const title = isEdit ? `Edit Game: ${escapeHtml(game.displayName)}` : 'Add New Game';
+      const slugVal = game ? escapeHtml(game.slug) : '';
+      const nameVal = game ? escapeHtml(game.name) : '';
+      const displayVal = game ? escapeHtml(game.displayName) : '';
+      const descVal = game && game.description ? escapeHtml(game.description) : '';
+      const modeVal = game ? game.serviceCategory : 'both';
+      const sortVal = game ? (game.sortOrder ?? 0) : adminGamesCache.length;
+      const activeChecked = (!game || game.isActive) ? 'checked' : '';
+
+      modal.innerHTML = `
+        <div class="modal-backdrop" onclick="closeGameCategoryModal()">
+          <div class="modal-content" style="max-width: 600px; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation()">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+              <h3 style="margin: 0; font-size: 1.15rem; color: #fff;">${title}</h3>
+              <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem;" onclick="closeGameCategoryModal()">✕</button>
+            </div>
+
+            <form id="game-form" onsubmit="saveGame(event, ${isEdit}, '${slugVal}')">
+              <div class="form-group">
+                <label>Slug (Unique URL &amp; Identifier) *</label>
+                <input type="text" id="game-slug" class="form-control" value="${slugVal}" ${isEdit ? 'disabled' : 'required'} pattern="^[a-z0-9_-]{2,50}$" placeholder="e.g. wow_midnight or diablo4" />
+                <small style="color: var(--text-muted); font-size: 0.75rem; display: block; margin-top: 0.25rem;">
+                  ${isEdit ? 'Immutable identifier to preserve order routes and historical records.' : 'Lowercase letters, numbers, underscores, and dashes only (2-50 characters).'}
+                </small>
+              </div>
+
+              <div class="form-group">
+                <label>Display Name (User-facing) *</label>
+                <input type="text" id="game-displayName" class="form-control" value="${displayVal}" required placeholder="e.g. World of Warcraft Midnight" />
+              </div>
+
+              <div class="form-group">
+                <label>Internal Name *</label>
+                <input type="text" id="game-name" class="form-control" value="${nameVal}" ${isEdit ? 'disabled' : 'required'} placeholder="e.g. wow_midnight" />
+              </div>
+
+              <div class="form-group">
+                <label>Service Category Support Mode</label>
+                <select id="game-serviceCategory" class="form-control">
+                  <option value="both" ${modeVal === 'both' ? 'selected' : ''}>Both (Non-Pilot and Pilot supported)</option>
+                  <option value="non_pilot" ${modeVal === 'non_pilot' ? 'selected' : ''}>Non-Pilot Only (Self-play boosts only)</option>
+                  <option value="pilot" ${modeVal === 'pilot' ? 'selected' : ''}>Pilot Only (Account-sharing boosts only)</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>Description (Optional)</label>
+                <textarea id="game-description" class="form-control" rows="3" placeholder="Overview of game, expansion version, or guidelines...">${descVal}</textarea>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                <div class="form-group" style="margin-bottom: 0;">
+                  <label>Sort Order</label>
+                  <input type="number" id="game-sortOrder" class="form-control" value="${sortVal}" />
+                </div>
+                <div class="form-group" style="margin-bottom: 0; display: flex; align-items: center; gap: 0.5rem; padding-top: 1.5rem;">
+                  <input type="checkbox" id="game-isActive" ${activeChecked} style="width: 18px; height: 18px;" />
+                  <label for="game-isActive" style="margin: 0; cursor: pointer;">Active (Accept Orders &amp; Registrations)</label>
+                </div>
+              </div>
+
+              <div id="game-form-error" style="color: var(--accent-red); font-size: 0.85rem; margin-bottom: 1rem; display: none;"></div>
+
+              <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.5rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeGameCategoryModal()">Cancel</button>
+                <button type="submit" id="game-form-submit-btn" class="btn btn-primary">${isEdit ? 'Save Changes' : 'Create Game'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    async function saveGame(event, isEdit, slug) {
+      event.preventDefault();
+      const errBox = document.getElementById('game-form-error');
+      const submitBtn = document.getElementById('game-form-submit-btn');
+      if (errBox) errBox.style.display = 'none';
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        const displayName = document.getElementById('game-displayName').value.trim();
+        const serviceCategory = document.getElementById('game-serviceCategory').value;
+        const description = document.getElementById('game-description').value.trim() || null;
+        const sortOrder = parseInt(document.getElementById('game-sortOrder').value, 10) || 0;
+        const isActive = document.getElementById('game-isActive').checked;
+
+        let url = '/api/admin/games';
+        let method = 'POST';
+        let payload = {};
+
+        if (isEdit) {
+          url = `/api/admin/games/${encodeURIComponent(slug)}`;
+          method = 'PUT';
+          payload = { displayName, serviceCategory, description, sortOrder, isActive };
+        } else {
+          const newSlug = document.getElementById('game-slug').value.trim();
+          const name = document.getElementById('game-name').value.trim();
+          payload = { slug: newSlug, name, displayName, serviceCategory, description, sortOrder, isActive };
+        }
+
+        const res = await fetch(url, {
+          method,
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        closeGameCategoryModal();
+        await loadAdminGamesData();
+      } catch (err) {
+        if (errBox) {
+          errBox.textContent = err.message;
+          errBox.style.display = 'block';
+        } else {
+          alert(err.message);
+        }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    }
+
+    function openServiceModal(gameSlug, serviceId = null) {
+      const modal = document.getElementById('game-category-modal-container');
+      if (!modal) return;
+
+      const isEdit = !!serviceId;
+      const game = adminGamesCache.find(g => g.slug === gameSlug);
+      if (!game) return alert('Associated game not found');
+
+      const s = isEdit ? (game.services || []).find(x => x.id === serviceId) : null;
+      if (isEdit && !s) return alert('Service category not found');
+
+      const title = isEdit ? `Edit Service Category: ${escapeHtml(s.displayName)}` : `Add Service Category to ${escapeHtml(game.displayName)}`;
+      const keyVal = s ? escapeHtml(s.serviceKey) : '';
+      const displayVal = s ? escapeHtml(s.displayName) : '';
+      const descVal = s && s.description ? escapeHtml(s.description) : '';
+      const modeVal = s ? s.serviceMode : 'non_pilot';
+      const profVal = s ? s.profileMode : 'none';
+      const sortVal = s ? (s.sortOrder ?? 0) : (game.services || []).length;
+      const pilotReqChecked = s && s.requiresPilotApproval ? 'checked' : '';
+      const activeChecked = (!s || s.isActive) ? 'checked' : '';
+
+      const st = (s && s.settings) ? s.settings : {};
+      const claimVal = st.claimWindowSeconds ?? 300;
+      const proofChecked = (st.proofRequired ?? true) ? 'checked' : '';
+      const pauseChecked = (st.allowPause ?? true) ? 'checked' : '';
+      const replaceChecked = (st.allowReplacement ?? true) ? 'checked' : '';
+      const squadsChecked = (st.acceptsSquads ?? true) ? 'checked' : '';
+      const keyChecked = (st.requiresKey ?? false) ? 'checked' : '';
+      const rolesChecked = (st.requiresRoles ?? false) ? 'checked' : '';
+
+      modal.innerHTML = `
+        <div class="modal-backdrop" onclick="closeGameCategoryModal()">
+          <div class="modal-content" style="max-width: 650px; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation()">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem;">
+              <h3 style="margin: 0; font-size: 1.15rem; color: #fff;">${title}</h3>
+              <button class="btn btn-secondary" style="padding: 0.2rem 0.5rem;" onclick="closeGameCategoryModal()">✕</button>
+            </div>
+
+            <form id="service-form" onsubmit="saveService(event, ${isEdit}, '${gameSlug}', ${serviceId || 0})">
+              <div style="margin-bottom: 1rem; padding: 0.5rem 0.75rem; background: rgba(59, 130, 246, 0.1); border-radius: 6px; font-size: 0.85rem; color: #93c5fd;">
+                Game: <strong>${escapeHtml(game.displayName)}</strong> (<code>${escapeHtml(game.slug)}</code>)
+              </div>
+
+              <div class="form-group">
+                <label>Service Key (Identifier) *</label>
+                <input type="text" id="service-key" class="form-control" value="${keyVal}" ${isEdit ? 'disabled' : 'required'} pattern="^[a-z0-9_-]{2,50}$" placeholder="e.g. mythic_plus, non_pilot, pilot, raid_clear" />
+                <small style="color: var(--text-muted); font-size: 0.75rem; display: block; margin-top: 0.25rem;">
+                  ${isEdit ? 'Identifier referenced by existing orders and channel routes.' : 'Unique within this game. Letters, numbers, underscores, and dashes.'}
+                </small>
+              </div>
+
+              <div class="form-group">
+                <label>Display Name *</label>
+                <input type="text" id="service-displayName" class="form-control" value="${displayVal}" required placeholder="e.g. Mythic+ Boosts, Non-Pilot Carry" />
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                <div class="form-group">
+                  <label>Service Mode *</label>
+                  <select id="service-mode" class="form-control">
+                    <option value="non_pilot" ${modeVal === 'non_pilot' ? 'selected' : ''}>Non-Pilot (Self-play)</option>
+                    <option value="pilot" ${modeVal === 'pilot' ? 'selected' : ''}>Pilot (Account-sharing)</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>Profile Integration Mode</label>
+                  <select id="service-profileMode" class="form-control">
+                    <option value="none" ${profVal === 'none' ? 'selected' : ''}>None (No character verification)</option>
+                    <option value="raiderio" ${profVal === 'raiderio' ? 'selected' : ''}>Raider.IO (Mythic+ Score / Dungeon)</option>
+                    <option value="manual" ${profVal === 'manual' ? 'selected' : ''}>Manual Verification</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label>Description (Optional)</label>
+                <textarea id="service-description" class="form-control" rows="2" placeholder="Description of service expectations...">${descVal}</textarea>
+              </div>
+
+              <!-- Operational Settings Card -->
+              <div style="margin-top: 1rem; padding: 1rem; background: #0f121a; border: 1px solid var(--card-border); border-radius: 8px;">
+                <h4 style="margin: 0 0 0.75rem 0; font-size: 0.9rem; color: #fff;">Operational Rules &amp; Settings</h4>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 0.75rem;">
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label>Claim Window (Seconds)</label>
+                    <input type="number" id="setting-claimWindow" class="form-control" value="${claimVal}" min="60" max="86400" />
+                  </div>
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label>Sort Order</label>
+                    <input type="number" id="service-sortOrder" class="form-control" value="${sortVal}" />
+                  </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.75rem; font-size: 0.85rem;">
+                  <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                    <input type="checkbox" id="service-pilotApproval" ${pilotReqChecked} />
+                    <span>Requires Pilot Approval</span>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                    <input type="checkbox" id="setting-proofRequired" ${proofChecked} />
+                    <span>Proof Required for Payout</span>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                    <input type="checkbox" id="setting-requiresKey" ${keyChecked} />
+                    <span>Requires Keystone / Level (Mythic+)</span>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                    <input type="checkbox" id="setting-requiresRoles" ${rolesChecked} />
+                    <span>Requires Squad Roles (Tank/Healer)</span>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                    <input type="checkbox" id="setting-acceptsSquads" ${squadsChecked} />
+                    <span>Accepts Premade Squads</span>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                    <input type="checkbox" id="setting-allowPause" ${pauseChecked} />
+                    <span>Allow Order Pause</span>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                    <input type="checkbox" id="setting-allowReplacement" ${replaceChecked} />
+                    <span>Allow Booster Replacement</span>
+                  </label>
+                  <label style="display: flex; align-items: center; gap: 0.4rem; cursor: pointer;">
+                    <input type="checkbox" id="service-isActive" ${activeChecked} />
+                    <span style="font-weight: 700; color: var(--accent-green);">Service Active</span>
+                  </label>
+                </div>
+              </div>
+
+              <div id="service-form-error" style="color: var(--accent-red); font-size: 0.85rem; margin-top: 1rem; display: none;"></div>
+
+              <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.5rem;">
+                <button type="button" class="btn btn-secondary" onclick="closeGameCategoryModal()">Cancel</button>
+                <button type="submit" id="service-form-submit-btn" class="btn btn-primary">${isEdit ? 'Save Category' : 'Create Category'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+    }
+
+    async function saveService(event, isEdit, gameSlug, serviceId) {
+      event.preventDefault();
+      const errBox = document.getElementById('service-form-error');
+      const submitBtn = document.getElementById('service-form-submit-btn');
+      if (errBox) errBox.style.display = 'none';
+      if (submitBtn) submitBtn.disabled = true;
+
+      try {
+        const displayName = document.getElementById('service-displayName').value.trim();
+        const serviceMode = document.getElementById('service-mode').value;
+        const profileMode = document.getElementById('service-profileMode').value;
+        const description = document.getElementById('service-description').value.trim() || null;
+        const sortOrder = parseInt(document.getElementById('service-sortOrder').value, 10) || 0;
+        const isActive = document.getElementById('service-isActive').checked;
+        const requiresPilotApproval = document.getElementById('service-pilotApproval').checked;
+
+        const settings = {
+          claimWindowSeconds: parseInt(document.getElementById('setting-claimWindow').value, 10) || 300,
+          proofRequired: document.getElementById('setting-proofRequired').checked,
+          allowPause: document.getElementById('setting-allowPause').checked,
+          allowReplacement: document.getElementById('setting-allowReplacement').checked,
+          acceptsSquads: document.getElementById('setting-acceptsSquads').checked,
+          requiresKey: document.getElementById('setting-requiresKey').checked,
+          requiresRoles: document.getElementById('setting-requiresRoles').checked
+        };
+
+        let url = `/api/admin/games/${encodeURIComponent(gameSlug)}/services`;
+        let method = 'POST';
+        let payload = {};
+
+        if (isEdit) {
+          url = `/api/admin/services/${serviceId}`;
+          method = 'PUT';
+          payload = { displayName, serviceMode, profileMode, requiresPilotApproval, description, sortOrder, isActive, settings };
+        } else {
+          const serviceKey = document.getElementById('service-key').value.trim();
+          payload = { serviceKey, displayName, serviceMode, profileMode, requiresPilotApproval, description, sortOrder, isActive, settings };
+        }
+
+        const res = await fetch(url, {
+          method,
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+        closeGameCategoryModal();
+        await loadAdminGamesData();
+      } catch (err) {
+        if (errBox) {
+          errBox.textContent = err.message;
+          errBox.style.display = 'block';
+        } else {
+          alert(err.message);
+        }
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    }
+
+    async function adminToggleGameStatus(slug, newStatus) {
+      const verb = newStatus ? 'enable' : 'disable';
+      const warning = !newStatus ? ' Disabling this game will prevent new orders and booster registrations from being created, but preserves all historical orders and proofs.' : '';
+      if (!confirm(`Are you sure you want to ${verb} game "${slug}"?${warning}`)) return;
+
+      try {
+        const res = await fetch(`/api/admin/games/${encodeURIComponent(slug)}/status`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({ isActive: newStatus })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        await loadAdminGamesData();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function adminToggleServiceStatus(id, newStatus) {
+      const verb = newStatus ? 'enable' : 'disable';
+      const warning = !newStatus ? ' Disabling this service category will prevent new orders under this category, while keeping historical orders intact.' : '';
+      if (!confirm(`Are you sure you want to ${verb} this service category?${warning}`)) return;
+
+      try {
+        const res = await fetch(`/api/admin/services/${id}/status`, {
+          method: 'PATCH',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({ isActive: newStatus })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        await loadAdminGamesData();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function adminMoveGame(slug, direction) {
+      const idx = adminGamesCache.findIndex(g => g.slug === slug);
+      if (idx === -1) return;
+      if (direction === 'up' && idx === 0) return;
+      if (direction === 'down' && idx === adminGamesCache.length - 1) return;
+
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      const copy = [...adminGamesCache];
+      const temp = copy[idx];
+      copy[idx] = copy[targetIdx];
+      copy[targetIdx] = temp;
+
+      const orderedSlugs = copy.map(g => g.slug);
+
+      try {
+        const res = await fetch('/api/admin/games/reorder', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({ orderedSlugs })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        await loadAdminGamesData();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function adminMoveService(gameSlug, serviceId, direction) {
+      const game = adminGamesCache.find(g => g.slug === gameSlug);
+      if (!game || !game.services) return;
+
+      const services = [...game.services];
+      const idx = services.findIndex(s => s.id === serviceId);
+      if (idx === -1) return;
+      if (direction === 'up' && idx === 0) return;
+      if (direction === 'down' && idx === services.length - 1) return;
+
+      const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+      const temp = services[idx];
+      services[idx] = services[targetIdx];
+      services[targetIdx] = temp;
+
+      const orderedServiceIds = services.map(s => s.id);
+
+      try {
+        const res = await fetch('/api/admin/services/reorder', {
+          method: 'POST',
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-csrf-token': csrfToken || ''
+          },
+          body: JSON.stringify({ gameSlug, orderedServiceIds })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        await loadAdminGamesData();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function adminDeleteGame(slug) {
+      if (!confirm(`Are you sure you want to delete game "${slug}"?\n\nNote: Games referenced by historical orders, characters, or registrations CANNOT be hard-deleted to preserve ledger integrity. You should disable it instead.`)) return;
+
+      try {
+        const res = await fetch(`/api/admin/games/${encodeURIComponent(slug)}`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: {
+            'x-csrf-token': csrfToken || ''
+          }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        alert(`Game "${slug}" was successfully deleted.`);
+        await loadAdminGamesData();
+      } catch (err) {
+        alert(`Deletion Rejected: ${err.message}`);
+      }
+    }
+
+    async function adminDeleteService(id) {
+      if (!confirm(`Are you sure you want to delete service category #${id}?\n\nNote: Categories referenced by historical orders or approvals CANNOT be hard-deleted. You should disable it instead.`)) return;
+
+      try {
+        const res = await fetch(`/api/admin/services/${id}`, {
+          method: 'DELETE',
+          credentials: 'include',
+          headers: {
+            'x-csrf-token': csrfToken || ''
+          }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        alert(`Service category #${id} was successfully deleted.`);
+        await loadAdminGamesData();
+      } catch (err) {
+        alert(`Deletion Rejected: ${err.message}`);
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
 
     // ─── Customer Payment Screen & Admin Payment Hub Handlers ─────────────────
     let currentPaymentRequest = null;

@@ -94,6 +94,19 @@ import {
   mapApplicationStatus,
 } from '../services/statusSimplifier';
 import {
+  listAdminGames,
+  createGame,
+  updateGame,
+  toggleGameStatus,
+  reorderGames,
+  deleteGame,
+  createGameService,
+  updateGameService,
+  toggleGameServiceStatus,
+  reorderGameServices,
+  deleteGameService,
+} from '../services/gameManagementService';
+import {
   AdvertiserRank,
   ADVERTISER_RANK_RATES_BPS,
   ADVERTISER_RANK_LABELS,
@@ -2992,6 +3005,238 @@ router.get(
       res.json({ success: true, history: logs });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to fetch audit history' });
+    }
+  }
+);
+
+// ─── ۱۳. مدیریت بازی‌ها و کتگوری‌های سرویس‌ها توسط ادمین (Admin Games & Categories) ─────────
+
+// دریافت لیست کامل بازی‌ها همراه با سرویس‌ها و رفرنس‌ها
+router.get(
+  '/admin/games',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const games = await listAdminGames();
+      res.json({ success: true, games });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to list games' });
+    }
+  }
+);
+
+// ایجاد بازی جدید
+router.post(
+  '/admin/games',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const game = await createGame(req.body, actorId);
+      res.status(201).json({ success: true, game });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to create game' });
+    }
+  }
+);
+
+// ویرایش بازی (با محافظت از تغییرناپذیری شناسه در صورت وجود سوابق)
+router.put(
+  '/admin/games/:slug',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const slug = req.params.slug;
+      const game = await updateGame(slug, req.body, actorId);
+      res.json({ success: true, game });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to update game' });
+    }
+  }
+);
+
+// فعال / غیرفعال کردن بازی
+router.patch(
+  '/admin/games/:slug/status',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const slug = req.params.slug;
+      const { isActive } = req.body;
+      if (typeof isActive !== 'boolean') {
+        res.status(400).json({ error: 'isActive boolean is required' });
+        return;
+      }
+      const game = await toggleGameStatus(slug, isActive, actorId);
+      res.json({ success: true, game });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to toggle game status' });
+    }
+  }
+);
+
+// مرتب‌سازی بازی‌ها
+router.post(
+  '/admin/games/reorder',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const items = req.body.items || (Array.isArray(req.body.orderedSlugs)
+        ? req.body.orderedSlugs.map((slug: string, idx: number) => ({ slug, sortOrder: idx }))
+        : req.body);
+      const result = await reorderGames(items, actorId);
+      res.json(result);
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to reorder games' });
+    }
+  }
+);
+
+// حذف ایمن بازی (ممنوعیت در صورت داشتن رکوردهای تاریخی)
+router.delete(
+  '/admin/games/:slug',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const slug = req.params.slug;
+      const result = await deleteGame(slug, actorId);
+      res.json(result);
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to delete game' });
+    }
+  }
+);
+
+// ایجاد کتگوری/سرویس جدید برای بازی
+router.post(
+  '/admin/games/:slug/services',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const gameSlug = req.params.slug;
+      const service = await createGameService(gameSlug, req.body, actorId);
+      res.status(201).json({ success: true, service });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to create service category' });
+    }
+  }
+);
+
+// ویرایش کتگوری/سرویس و تنظیمات آن
+router.put(
+  '/admin/services/:id',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        res.status(400).json({ error: 'Invalid service ID' });
+        return;
+      }
+      const service = await updateGameService(id, req.body, actorId);
+      res.json({ success: true, service });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to update service category' });
+    }
+  }
+);
+
+// فعال / غیرفعال کردن کتگوری/سرویس
+router.patch(
+  '/admin/services/:id/status',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        res.status(400).json({ error: 'Invalid service ID' });
+        return;
+      }
+      const { isActive } = req.body;
+      if (typeof isActive !== 'boolean') {
+        res.status(400).json({ error: 'isActive boolean is required' });
+        return;
+      }
+      const service = await toggleGameServiceStatus(id, isActive, actorId);
+      res.json({ success: true, service });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to toggle service status' });
+    }
+  }
+);
+
+// مرتب‌سازی کتگوری‌ها/سرویس‌ها
+router.post(
+  '/admin/services/reorder',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const items = req.body.items || (Array.isArray(req.body.orderedServiceIds)
+        ? req.body.orderedServiceIds.map((id: number, idx: number) => ({ id, sortOrder: idx }))
+        : req.body);
+      const result = await reorderGameServices(items, actorId);
+      res.json(result);
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to reorder services' });
+    }
+  }
+);
+
+// حذف ایمن کتگوری/سرویس (ممنوعیت در صورت داشتن رکوردهای تاریخی)
+router.delete(
+  '/admin/services/:id',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        res.status(400).json({ error: 'Invalid service ID' });
+        return;
+      }
+      const result = await deleteGameService(id, actorId);
+      res.json(result);
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to delete service category' });
     }
   }
 );
