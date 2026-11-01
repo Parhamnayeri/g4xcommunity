@@ -559,14 +559,17 @@ export async function runOrderPublicationAndEmbedsSuite() {
     const tankBtn = (rowOpen.components as any[]).find((c) => c.custom_id?.includes('presign_tank'));
     const healerBtn = (rowOpen.components as any[]).find((c) => c.custom_id?.includes('presign_healer'));
     const dpsBtn = (rowOpen.components as any[]).find((c) => c.custom_id?.includes('presign_dps'));
-    const withdrawBtn = (rowOpen.components as any[]).find((c) => c.custom_id?.includes('presign_withdraw'));
-    const viewBtn = (rowOpen.components as any[]).find((c) => c.custom_id?.includes('order_view'));
+    const keyBtn = (rowOpen.components as any[]).find((c) => c.custom_id?.includes('presign_key'));
 
     assert(Boolean(tankBtn && !tankBtn.disabled), 'Test 7.1: Tank presign button available when slots open');
     assert(Boolean(healerBtn && !healerBtn.disabled), 'Test 7.2: Healer presign button available when slots open');
     assert(Boolean(dpsBtn && !dpsBtn.disabled), 'Test 7.3: DPS presign button available when slots open');
-    assert(Boolean(withdrawBtn), 'Test 7.4: Withdraw button present in open_presign');
-    assert(Boolean(viewBtn), 'Test 7.5: View Details button present in open_presign');
+    assert(Boolean(keyBtn && (rowOpen.components as any[]).length === 4), 'Test 7.4: Exactly 4 buttons (Tank, Healer, DPS, Key Owner) present in Mythic+ open_presign');
+
+    const nonPilotComps = buildOrderComponents(wmNonPilotOrder, []);
+    const rowNonPilot = nonPilotComps[0].toJSON();
+    const withdrawBtn = (rowNonPilot.components as any[]).find((c) => c.custom_id?.includes('presign_withdraw'));
+    assert(Boolean(withdrawBtn), 'Test 7.5: Withdraw button present in non-mythic open_presign');
 
     // ثبت یک پیش‌ثبت‌نام برای تانک و آزمایش دکمه غیرفعال در ظرفیت کامل (1/1)
     await prisma.orderPresign.create({

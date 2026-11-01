@@ -321,6 +321,8 @@ model Order {
   discordChannelId    String?   @map("discord_channel_id")
   discordMessageId    String?   @map("discord_message_id")
   executionChannelId  String?   @map("execution_channel_id")
+  reviewChannelId     String?   @map("review_channel_id")
+  reviewMessageId     String?   @map("review_message_id")
   presignDeadline     DateTime? @map("presign_deadline")
   publishedAt         DateTime? @map("published_at")
   completedAt         DateTime? @map("completed_at")
@@ -411,6 +413,7 @@ model OrderPresign {
   hasKey         String    @default("unknown") @map("has_key") // yes | no | unknown
   keyDungeon     String?   @map("key_dungeon")
   keyLevel       Int?      @map("key_level")
+  keyVerified    Boolean   @default(false) @map("key_verified")
   status         String    @default("registered") // registered | withdrawn | selected | rejected
   registeredAt   DateTime  @default(now()) @map("registered_at")
   updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")

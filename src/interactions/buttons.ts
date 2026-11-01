@@ -20,8 +20,10 @@ import { handleOrderPanelButton } from './orderPanelInteractions';
 import {
   handlePresignButton,
   handlePresignWithdrawButton,
+  handleKeyOwnerButton,
   handleOrderViewButton,
 } from '../services/orderDiscordService';
+import { handleReviewDashboardButton } from './presignReviewInteractions';
 
 export async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
   const [action, ...params] = interaction.customId.split(':');
@@ -85,6 +87,27 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
         return;
       }
       await handlePresignWithdrawButton(interaction, orderId);
+      break;
+    }
+    case 'presign_key': {
+      const orderId = Number(params[0]);
+      if (isNaN(orderId) || orderId <= 0) {
+        await interaction.reply({ content: '❌ Invalid order ID parameter.', ephemeral: true });
+        return;
+      }
+      await handleKeyOwnerButton(interaction, orderId);
+      break;
+    }
+    case 'review_apps':
+    case 'review_premades':
+    case 'review_assign':
+    case 'review_refresh': {
+      const orderId = Number(params[0]);
+      if (isNaN(orderId) || orderId <= 0) {
+        await interaction.reply({ content: '❌ Invalid order ID parameter.', ephemeral: true });
+        return;
+      }
+      await handleReviewDashboardButton(interaction, action, orderId);
       break;
     }
     case 'order_view': {

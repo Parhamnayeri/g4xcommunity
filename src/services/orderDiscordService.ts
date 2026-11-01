@@ -19,6 +19,14 @@ import { DomainError, DomainErrorCode } from './domainErrors';
 import { ensureOrderAcceptsOperations } from './orderValidationService';
 import { ensureUserExists } from './registrationService';
 import { formatBoosterShareDisplay } from './financialCalculationEngine';
+import {
+  formatRolesDisplay,
+  isMythicPlusOrder,
+  parsePresignRoles,
+  publishOrUpdateOrderReviewDashboard,
+  toggleBoosterKeyOwner,
+  toggleBoosterRolePresign,
+} from './presignReviewService';
 
 let _globalDiscordClient: any = null;
 export function setGlobalDiscordClient(c: any): void {
@@ -288,7 +296,60 @@ export function buildOrderComponents(
   const activePresigns = presigns.filter((p) => p.status === 'registered');
 
   if (isOpen) {
-    // Determine applicable roles
+    const isMythic = isMythicPlusOrder(order);
+
+    if (isMythic) {
+      // Exactly four actions for Mythic+ orders: Tank, Healer, DPS, Key Owner
+      const tankCount = activePresigns.filter((p) =>
+        parsePresignRoles(p.registeredRole).includes('tank')
+      ).length;
+      const healerCount = activePresigns.filter((p) =>
+        parsePresignRoles(p.registeredRole).includes('healer')
+      ).length;
+      const dpsCount = activePresigns.filter((p) =>
+        parsePresignRoles(p.registeredRole).includes('dps')
+      ).length;
+      const keyCount = activePresigns.filter((p) => p.hasKey === 'yes').length;
+
+      const reqTank = order.requiredRoles?.find((r: any) => r.roleName.toLowerCase() === 'tank');
+      const isTankFull = reqTank ? tankCount >= reqTank.quantity : tankCount >= 1;
+
+      const reqHealer = order.requiredRoles?.find((r: any) => r.roleName.toLowerCase() === 'healer');
+      const isHealerFull = reqHealer ? healerCount >= reqHealer.quantity : healerCount >= 1;
+
+      const reqDps = order.requiredRoles?.find((r: any) => r.roleName.toLowerCase() === 'dps');
+      const isDpsFull = reqDps ? dpsCount >= reqDps.quantity : dpsCount >= 2;
+
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`presign_tank:${order.id}`)
+          .setLabel(`Tank (${tankCount}/1)`)
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('🛡️')
+          .setDisabled(isTankFull),
+        new ButtonBuilder()
+          .setCustomId(`presign_healer:${order.id}`)
+          .setLabel(`Healer (${healerCount}/1)`)
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('💚')
+          .setDisabled(isHealerFull),
+        new ButtonBuilder()
+          .setCustomId(`presign_dps:${order.id}`)
+          .setLabel(`DPS (${dpsCount}/2)`)
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji('⚔️')
+          .setDisabled(isDpsFull),
+        new ButtonBuilder()
+          .setCustomId(`presign_key:${order.id}`)
+          .setLabel(`Key Owner${keyCount > 0 ? ` (${keyCount})` : ''}`)
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji('🔑')
+      );
+
+      return [row];
+    }
+
+    // Determine applicable roles for non-Mythic orders
     let hasTank = false;
     let hasHealer = false;
     let hasDps = false;
@@ -301,7 +362,6 @@ export function buildOrderComponents(
         if (r === 'dps') hasDps = true;
       }
     } else if (order.gameSlug === 'wow_midnight' || order.gameSlug === 'wow') {
-      // Default WoW group roles
       hasTank = true;
       hasHealer = true;
       hasDps = true;
@@ -309,7 +369,7 @@ export function buildOrderComponents(
 
     if (hasTank) {
       const req = order.requiredRoles?.find((r: any) => r.roleName.toLowerCase() === 'tank');
-      const count = activePresigns.filter((p) => p.registeredRole.toLowerCase() === 'tank').length;
+      const count = activePresigns.filter((p) => parsePresignRoles(p.registeredRole).includes('tank')).length;
       const isFull = req ? count >= req.quantity : count >= 1;
 
       row.addComponents(
@@ -324,7 +384,7 @@ export function buildOrderComponents(
 
     if (hasHealer) {
       const req = order.requiredRoles?.find((r: any) => r.roleName.toLowerCase() === 'healer');
-      const count = activePresigns.filter((p) => p.registeredRole.toLowerCase() === 'healer').length;
+      const count = activePresigns.filter((p) => parsePresignRoles(p.registeredRole).includes('healer')).length;
       const isFull = req ? count >= req.quantity : count >= 1;
 
       row.addComponents(
@@ -339,7 +399,7 @@ export function buildOrderComponents(
 
     if (hasDps) {
       const req = order.requiredRoles?.find((r: any) => r.roleName.toLowerCase() === 'dps');
-      const count = activePresigns.filter((p) => p.registeredRole.toLowerCase() === 'dps').length;
+      const count = activePresigns.filter((p) => parsePresignRoles(p.registeredRole).includes('dps')).length;
       const isFull = req ? count >= req.quantity : count >= 3;
 
       row.addComponents(
@@ -349,6 +409,17 @@ export function buildOrderComponents(
           .setStyle(ButtonStyle.Secondary)
           .setEmoji('⚔️')
           .setDisabled(isFull)
+      );
+    }
+
+    // Default Claim button if no specific roles
+    if (!hasTank && !hasHealer && !hasDps) {
+      row.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`presign_dps:${order.id}`)
+          .setLabel(`Pre-sign (${activePresigns.length})`)
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('✋')
       );
     }
 
@@ -662,209 +733,84 @@ export async function handlePresignButton(
   orderId: number
 ): Promise<void> {
   const userId = interaction.user.id;
-  const normalizedRole = role.toLowerCase();
+  await ensureUserExists(userId, interaction.user.username);
 
-  // 1. Ensure user record exists
-  await ensureUserExists(
-    userId,
-    interaction.user.username
-  );
-
-  // 2. Fetch order with required relations
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: {
-      game: true,
-      service: true,
-      requiredRoles: true,
-    },
-  });
-
-  if (!order) {
-    await interaction.reply({
-      content: `❌ **Order Not Found**: Order #${orderId} does not exist.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  // 3. Ensure order is open and accepts operations
-  if (order.status === 'completed' || order.status === 'cancelled') {
-    await interaction.reply({
-      content: `❌ **Order Closed**: Order #${orderId} has been closed or cancelled and cannot accept pre-signs.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (order.status !== 'open_presign') {
-    await interaction.reply({
-      content: `❌ **Pre-sign Unavailable**: Order #${orderId} is currently **${order.status}** and not accepting pre-signs.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (order.presignDeadline && new Date() > order.presignDeadline) {
-    await interaction.reply({
-      content: `❌ **Pre-sign Window Closed**: The pre-sign deadline for Order #${orderId} expired at ${order.presignDeadline.toISOString()}.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  // 4. Validate Booster Qualification / Approval
-  const approval = await prisma.userGameApproval.findFirst({
-    where: {
-      userId,
-      gameSlug: order.gameSlug,
-      OR: [{ serviceId: null }, { serviceId: order.serviceId }],
-      approvalType: order.orderMode === 'pilot' ? 'pilot' : 'booster',
-    },
-  });
-
-  if (!approval || approval.status !== 'approved') {
-    await interaction.reply({
-      content: `❌ **Booster Approval Required**: You do not have an approved **${order.orderMode === 'pilot' ? 'Pilot' : 'Booster'}** qualification for **${order.game.displayName}**.\nPlease apply in the registration channel first.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  // 5. Validate Role Eligibility
-  if (order.requiredRoles && order.requiredRoles.length > 0) {
-    const requiredRoleNames = order.requiredRoles.map((r) => r.roleName.toLowerCase());
-    if (!requiredRoleNames.includes(normalizedRole)) {
-      await interaction.reply({
-        content: `❌ **Invalid Role**: Role **${role.toUpperCase()}** is not needed for this order. Required: [${requiredRoleNames.join(', ')}].`,
-        ephemeral: true,
-      });
-      return;
-    }
-  }
-
-  // 6. Check Conflicting Active Reservation
-  const activeReservation = await prisma.boosterReservation.findFirst({
-    where: {
-      userId,
-      status: 'active',
-    },
-  });
-
-  if (activeReservation && activeReservation.orderId !== order.id) {
-    await interaction.reply({
-      content: `❌ **Conflicting Assignment**: You already have an active execution reservation on Order #${activeReservation.orderId}.`,
-      ephemeral: true,
-    });
-    return;
-  }
-
-  // 7. Atomic Role Capacity & Idempotent Pre-sign via Transaction
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      // Check existing pre-sign on this order
-      const existingPresign = await tx.orderPresign.findFirst({
-        where: { orderId, userId },
-      });
-
-      // If user is ALREADY registered for this role, operation is safely idempotent
-      if (
-        existingPresign &&
-        existingPresign.status === 'registered' &&
-        existingPresign.registeredRole.toLowerCase() === normalizedRole
-      ) {
-        return { outcome: 'already_registered', presign: existingPresign };
-      }
-
-      // Check slot capacity for the requested role
-      let maxCapacity = 1;
-      const reqRole = order.requiredRoles.find((r) => r.roleName.toLowerCase() === normalizedRole);
-      if (reqRole) {
-        maxCapacity = reqRole.quantity;
-      } else if (normalizedRole === 'dps') {
-        maxCapacity = 3;
-      }
-
-      const activePresignsForRole = await tx.orderPresign.count({
-        where: {
-          orderId,
-          registeredRole: normalizedRole,
-          status: 'registered',
-          userId: { not: userId },
-        },
-      });
-
-      const assignedForRole = await tx.orderAssignment.count({
-        where: {
-          orderId,
-          assignedRole: normalizedRole,
-          status: 'assigned',
-        },
-      });
-
-      const totalOccupied = activePresignsForRole + assignedForRole;
-      if (totalOccupied >= maxCapacity) {
-        throw new DomainError(
-          DomainErrorCode.ROLE_CAPACITY_EXCEEDED,
-          `Role capacity for **${role.toUpperCase()}** is currently full (${totalOccupied}/${maxCapacity}).`
-        );
-      }
-
-      // Update or create pre-sign record
-      if (existingPresign) {
-        const updated = await tx.orderPresign.update({
-          where: { id: existingPresign.id },
-          data: {
-            registeredRole: normalizedRole,
-            status: 'registered',
-          },
-        });
-        const isSwitch = existingPresign.status === 'registered';
-        return { outcome: isSwitch ? 'role_switched' : 'reactivated', presign: updated };
-      }
-
-      const created = await tx.orderPresign.create({
-        data: {
-          orderId,
-          userId,
-          claimType: 'individual',
-          registeredRole: normalizedRole,
-          status: 'registered',
-        },
-      });
-
-      return { outcome: 'created', presign: created };
-    });
-
-    // Provide friendly, informative ephemeral response
-    let messageText = `✅ **Pre-sign Confirmed**: You are registered as **${role.toUpperCase()}** for Order #${orderId}.`;
+    const result = await toggleBoosterRolePresign(orderId, userId, role);
+    let messageText = `✅ **Pre-sign Confirmed**: You are registered as **${role.toUpperCase()}** for Order #${orderId}. (Roles: ${formatRolesDisplay(result.activeRoles)})`;
     if (result.outcome === 'already_registered') {
       messageText = `ℹ️ You are already registered as **${role.toUpperCase()}** for Order #${orderId}.`;
-    } else if (result.outcome === 'role_switched') {
-      messageText = `✅ **Role Updated**: Switched your pre-sign role to **${role.toUpperCase()}** for Order #${orderId}.`;
+    } else if (result.outcome === 'role_added') {
+      messageText = `✅ **Role Added**: Added **${role.toUpperCase()}** to your available roles for Order #${orderId}. (Active: ${formatRolesDisplay(result.activeRoles)})`;
+    } else if (result.outcome === 'role_removed') {
+      messageText = `↩️ **Role Removed**: Unregistered as **${role.toUpperCase()}** for Order #${orderId}. (Remaining: ${formatRolesDisplay(result.activeRoles)})`;
+    } else if (result.outcome === 'role_removed_key_retained') {
+      messageText = `ℹ️ **Role Removed**: You have removed all execution roles for Order #${orderId}, but your Key Owner declaration remains active.`;
+    } else if (result.outcome === 'withdrawn') {
+      messageText = `↩️ **Application Withdrawn**: All role preferences removed for Order #${orderId}.`;
     }
 
-    await interaction.reply({
-      content: messageText,
-      ephemeral: true,
-    });
+    await interaction.reply({ content: messageText, ephemeral: true });
 
-    // Asynchronously refresh the order card in the Discord channel
     publishOrRefreshOrderCard(interaction.client, orderId).catch((err) =>
       console.warn('[OrderDiscord] Card refresh error after presign:', err)
     );
+    publishOrUpdateOrderReviewDashboard(interaction.client, orderId).catch((err) =>
+      console.warn('[OrderDiscord] Review dashboard refresh error after presign:', err)
+    );
+    return;
   } catch (err: any) {
     if (err instanceof DomainError && err.code === DomainErrorCode.ROLE_CAPACITY_EXCEEDED) {
-      await interaction.reply({
-        content: `❌ **Slot Full**: ${err.message}`,
-        ephemeral: true,
-      });
+      await interaction.reply({ content: `❌ **Slot Full**: ${err.message}`, ephemeral: true });
       return;
     }
-
+    if (err instanceof DomainError && err.code === DomainErrorCode.ORDER_ALREADY_CLOSED) {
+      await interaction.reply({ content: `❌ **Order Closed**: Order #${orderId} has been closed or cancelled and cannot accept pre-signs.`, ephemeral: true });
+      return;
+    }
+    if (err instanceof DomainError && err.code === DomainErrorCode.BOOSTER_NOT_APPROVED) {
+      await interaction.reply({ content: `❌ **Booster Approval Required**: ${err.message}`, ephemeral: true });
+      return;
+    }
     console.error(`[OrderDiscord] Error during presign for order #${orderId}:`, err);
     await interaction.reply({
       content: `❌ **Pre-sign Failed**: ${err?.message || 'An unexpected error occurred.'}`,
+      ephemeral: true,
+    });
+    return;
+  }
+}
+
+/**
+ * Handles Mythic+ Key Owner button clicks (presign_key).
+ */
+export async function handleKeyOwnerButton(
+  interaction: ButtonInteraction,
+  orderId: number
+): Promise<void> {
+  const userId = interaction.user.id;
+  await ensureUserExists(userId, interaction.user.username);
+
+  try {
+    const result = await toggleBoosterKeyOwner(orderId, userId);
+    let msg = `🔑 **Key Owner Declared**: Registered your Mythic+ key declaration (${result.keyDetails || '+10 Key'}) for Order #${orderId}.`;
+    if (result.outcome === 'key_revoked') {
+      msg = `↩️ **Key Declaration Revoked**: Removed your Key Owner declaration for Order #${orderId}.`;
+    } else if (result.outcome === 'key_updated') {
+      msg = `🔑 **Key Declaration Updated**: Updated your Mythic+ key declaration for Order #${orderId}.`;
+    }
+
+    await interaction.reply({ content: msg, ephemeral: true });
+
+    publishOrRefreshOrderCard(interaction.client, orderId).catch((err) =>
+      console.warn('[OrderDiscord] Card refresh error after key declare:', err)
+    );
+    publishOrUpdateOrderReviewDashboard(interaction.client, orderId).catch((err) =>
+      console.warn('[OrderDiscord] Review dashboard refresh error after key declare:', err)
+    );
+  } catch (err: any) {
+    await interaction.reply({
+      content: `❌ **Key Declaration Failed**: ${err?.message || 'An unexpected error occurred.'}`,
       ephemeral: true,
     });
   }
@@ -917,17 +863,20 @@ export async function handlePresignWithdrawButton(
 
   await prisma.orderPresign.update({
     where: { id: activePresign.id },
-    data: { status: 'withdrawn' },
+    data: { status: 'withdrawn', registeredRole: 'withdrawn', hasKey: 'no' },
   });
 
   await interaction.reply({
-    content: `✅ **Pre-sign Withdrawn**: Your **${activePresign.registeredRole.toUpperCase()}** pre-sign has been removed from Order #${orderId}.`,
+    content: `↩️ **Pre-sign Withdrawn**: Your application on Order #${orderId} has been withdrawn.`,
     ephemeral: true,
   });
 
-  // Refresh Discord card to reflect updated counts
+  // Refresh Discord card & review dashboard to reflect updated counts
   publishOrRefreshOrderCard(interaction.client, orderId).catch((err) =>
     console.warn('[OrderDiscord] Card refresh error after withdrawal:', err)
+  );
+  publishOrUpdateOrderReviewDashboard(interaction.client, orderId).catch((err) =>
+    console.warn('[OrderDiscord] Review dashboard refresh error after withdrawal:', err)
   );
 }
 
