@@ -439,28 +439,9 @@ export async function handleOrderPanelButton(interaction: ButtonInteraction): Pr
     return;
   }
 
-  // ۲. نمایش ویزارد یا مودال متناسب با نوع پنل
-  if (panelType === 'wizard' || !panelType) {
-    const { startOrderWizard } = await import('./orderWizardInteractions');
-    await startOrderWizard(interaction, category);
-    return;
-  }
-
-  if (panelType === 'mythic') {
-    const modal = buildMythicOrderModal(category);
-    await interaction.showModal(modal);
-  } else if (panelType === 'non_pilot') {
-    const modal = buildNonPilotOrderModal(category);
-    await interaction.showModal(modal);
-  } else if (panelType === 'pilot') {
-    const modal = buildPilotOrderModal(category);
-    await interaction.showModal(modal);
-  } else {
-    await interaction.reply({
-      content: `❌ Unknown order panel type: \`${panelType}\``,
-      ephemeral: true,
-    });
-  }
+  // ۲. همه دکمه‌های پنل‌ها (میتیک، نان‌پایلوت، پایلوت و جنرال) وارد ویزارد هدایت‌شده می‌شوند
+  const { startOrderWizard } = await import('./orderWizardInteractions');
+  await startOrderWizard(interaction, category, panelType);
 }
 
 // Helper function to safely read TextInput values without throwing DiscordjsTypeError
@@ -479,50 +460,40 @@ export function safeGetModalTextInput(
 // ─── ۵. مدیریت سابمیت فرم‌های مودال (Modal Submit Interaction Handler) ─────────
 
 export async function handleOrderPanelModalSubmit(interaction: ModalSubmitInteraction): Promise<void> {
-  try {
-    const parts = interaction.customId.split(':');
-    const category = parts[1] as OrderPanelCategory;
-    const panelType = parts[2] as OrderPanelType;
-    const actorId = interaction.user.id;
+  const parts = interaction.customId.split(':');
+  const category = parts[1] as OrderPanelCategory;
+  const actorId = interaction.user.id;
 
-    if (!category || (category !== 'g4x' && category !== 'adv')) {
+  // ۱. اعتبارسنجی سطح دسترسی سرور-ساید
+  if (category === 'adv') {
+    const auth = await authorize(actorId, Permission.ORDER_CREATE_ADVERTISER);
+    if (!auth.allowed) {
       await interaction.reply({
-        content: '❌ **Invalid Order Category**: Order submission is missing a valid category identifier.',
+        content: '❌ **Permission Denied**: You do not have permission to create Advertiser orders.',
         ephemeral: true,
       });
       return;
     }
-
-    // ۱. اعتبارسنجی مجدد سطح دسترسی سمت سرور (جلوگیری از دور زدن کلاینت با customId ساختگی)
-    const isAdv = category === 'adv';
-    if (isAdv) {
-      const auth = await authorize(actorId, Permission.ORDER_CREATE_ADVERTISER);
-      if (!auth.allowed) {
-        await interaction.reply({
-          content:
-            '❌ **Permission Denied**: You do not have permission to create Advertiser orders.',
-          ephemeral: true,
-        });
-        return;
-      }
-    } else {
-      const auth = await authorize(actorId, Permission.ORDER_CREATE_INTERNAL);
-      if (!auth.allowed) {
-        await interaction.reply({
-          content:
-            '❌ **Permission Denied**: You do not have permission to create G4X Direct orders.',
-          ephemeral: true,
-        });
-        return;
-      }
+  } else if (category === 'g4x') {
+    const auth = await authorize(actorId, Permission.ORDER_CREATE_INTERNAL);
+    if (!auth.allowed) {
+      await interaction.reply({
+        content: '❌ **Permission Denied**: You do not have permission to create G4X Direct orders.',
+        ephemeral: true,
+      });
+      return;
     }
+  }
 
-    // ۲. استعلام کاربر و رنک تجاری ادورتایزر در صورت لزوم
-    const user = await prisma.user.findUnique({
-      where: { discordId: actorId },
-    });
+  // ۲. اطلاع‌رسانی بازنشستگی مودال‌های مستقیم و الزام ورود از طریق ویزارد
+  await interaction.reply({
+    content:
+      '⚠️ **Legacy Order Modal Retired**: Direct order creation modals have been upgraded to the G4X Guided Order Wizard.\n\nPlease click the **Create Order** button on the panel to proceed with the guided wizard.',
+    ephemeral: true,
+  });
+}
+/*
 
-    let advRank: AdvertiserRank | null = null;
     if (isAdv) {
       if (!user?.advertiserRank || !isValidAdvertiserRank(user.advertiserRank)) {
         await interaction.reply({
@@ -990,3 +961,5 @@ export async function handleOrderPanelModalSubmit(interaction: ModalSubmitIntera
     }
   }
 }
+*/
+

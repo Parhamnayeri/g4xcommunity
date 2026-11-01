@@ -309,18 +309,19 @@ async function runWizardSuite() {
       'Selecting Mythic+ service immediately presents service-specific Modal'
     );
 
-    // Verify Mythic+ modal components
+    // Verify Mythic+ modal components (G4X flow includes site_order_id)
     const mythicRows = modalShownStaff.components;
     const mythicCustomIds = mythicRows.map((r: any) => r.components[0].data.custom_id);
     assert(
       mythicCustomIds.includes('amount_usd') &&
       mythicCustomIds.includes('key_level') &&
       mythicCustomIds.includes('runs_count') &&
-      mythicCustomIds.includes('customer_info') &&
+      mythicCustomIds.includes('site_order_id') &&
       mythicCustomIds.includes('notes'),
-      'Mythic+ Modal includes amount, key_level, runs_count, customer_info, notes (5 inputs max)',
+      'Mythic+ Modal for G4X includes site_order_id, amount, key_level, runs_count, notes (5 inputs max)',
       JSON.stringify(mythicCustomIds)
     );
+
 
     // Test Pilot Service Modal (runs_count must be omitted, vpn_location must be present)
     const pilotService = await prisma.gameService.findFirst({
@@ -347,12 +348,14 @@ async function runWizardSuite() {
     const pilotCustomIds = pilotModal.components.map((r: any) => (r.components[0] as any).data.custom_id);
 
     assert(
+      pilotCustomIds.includes('site_order_id') &&
       pilotCustomIds.includes('amount_usd') &&
       pilotCustomIds.includes('vpn_location') &&
       !pilotCustomIds.includes('runs_count'),
-      'Pilot modal requires vpn_location and strictly omits runs_count (Requirement 9)',
+      'Pilot modal requires site_order_id, vpn_location and strictly omits runs_count (Requirement 9)',
       JSON.stringify(pilotCustomIds)
     );
+
 
     // ─── TEST 6: Security - Cross-User, Expiry, Double-Submit ──────────────
     console.log('\n--- 7. Testing Wizard Security Protections ---');
@@ -431,7 +434,7 @@ async function runWizardSuite() {
     // ─── TEST 7: Order Submission & Financial Snapshot (Flow A) ─────────────
     console.log('\n--- 9. Testing Flow A Order Submission & Financial Integration ---');
 
-    // Mock staff wallet with $0 to verify payment_pending preservation
+    // Mock staff wallet with $0 to verify that G4X operational orders do NOT require manager wallet funds
     let replySubmitA: any = null;
     const mockModalSubmitA: any = {
       customId: `ord_wiz:modal:${g4xSessionId}`,
@@ -439,6 +442,7 @@ async function runWizardSuite() {
       guildId: testGuildId,
       fields: {
         getTextInputValue: (field: string) => {
+          if (field === 'site_order_id') return 'G2G-WZ-999001';
           if (field === 'amount_usd') return '75.00';
           if (field === 'key_level') return '+12 Ara-Kara';
           if (field === 'runs_count') return '2';
@@ -472,12 +476,16 @@ async function runWizardSuite() {
       'G4X Order recorded external source platform: g2g'
     );
     assert(
+      createdOrderA!.externalOrderId === 'G2G-WZ-999001',
+      'G4X Order recorded external Site Order ID: G2G-WZ-999001'
+    );
+    assert(
       createdOrderA!.platformAccountId !== null,
       'G4X Order linked to active PlatformAccount'
     );
     assert(
-      createdOrderA!.paymentStatus === 'pending' && createdOrderA!.status === 'payment_pending',
-      'Unfunded order preserves payment_pending until backed funding is verified (Requirement 11)'
+      createdOrderA!.paymentStatus === 'unneeded' && createdOrderA!.status === 'open_presign',
+      'G4X external operational order uses paymentStatus unneeded and open_presign without manager wallet funding'
     );
     assert(
       createdOrderA!.requiredRoles.length === 3,

@@ -67,7 +67,8 @@ export function safeGetModalTextInput(
  */
 export async function startOrderWizard(
   interaction: ButtonInteraction,
-  origin: 'g4x' | 'adv'
+  origin: 'g4x' | 'adv',
+  panelType?: 'mythic' | 'non_pilot' | 'pilot' | 'wizard'
 ): Promise<void> {
   const actorId = interaction.user.id;
 
@@ -107,11 +108,12 @@ export async function startOrderWizard(
     }
   }
 
-  // 2. Create wizard session bound to user, guild, and origin
+  // 2. Create wizard session bound to user, guild, origin, and panel prefilter
   const session = await createWizardSession({
     userId: actorId,
     guildId: interaction.guildId,
     origin,
+    prefilterPanel: panelType && panelType !== 'wizard' ? panelType : undefined,
   });
 
   // 3. Render initial step based on Flow
@@ -125,7 +127,7 @@ export async function startOrderWizard(
         'Platform fees and account balances will be recorded authoritatively.'
       )
       .setColor(0x5865f2)
-      .setFooter({ text: 'G4X Community • Step 1 of 4' })
+      .setFooter({ text: 'G4X Community • Step 1 of 4: Select Source Platform' })
       .setTimestamp();
 
     await interaction.reply({
@@ -135,7 +137,7 @@ export async function startOrderWizard(
     });
   } else {
     // Flow B: Step 1 is Game Selection
-    const gameRow = await buildGameSelectRow(session.sessionId);
+    const gameRow = await buildGameSelectRow(session.sessionId, session.prefilterPanel);
     if (!gameRow) {
       await interaction.reply({
         content: '⚠️ **No Active Games**: There are currently no active games enabled for boosting. Please contact management.',
@@ -150,7 +152,7 @@ export async function startOrderWizard(
         'Select the game title for your boost order from the list of enabled games below.'
       )
       .setColor(0xe67e22)
-      .setFooter({ text: 'G4X Community • Step 1 of 3' })
+      .setFooter({ text: 'G4X Community • Step 1 of 3: Select Game' })
       .setTimestamp();
 
     await interaction.reply({
@@ -205,13 +207,54 @@ export async function buildPlatformSelectRow(
  * Builds the Game select menu row from active database games.
  */
 export async function buildGameSelectRow(
-  sessionId: string
+  sessionId: string,
+  prefilterPanel?: 'mythic' | 'non_pilot' | 'pilot'
 ): Promise<ActionRowBuilder<StringSelectMenuBuilder> | null> {
-  const games = await prisma.game.findMany({
-    where: { isActive: true },
+  const whereClause: any = { isActive: true };
+
+  if (prefilterPanel === 'mythic') {
+    whereClause.services = {
+      some: {
+        isActive: true,
+        OR: [
+          { serviceKey: 'mythic_plus' },
+          { displayName: { contains: 'mythic' } },
+        ],
+      },
+    };
+  } else if (prefilterPanel === 'pilot') {
+    whereClause.services = {
+      some: {
+        isActive: true,
+        OR: [
+          { serviceMode: 'pilot' },
+          { requiresPilotApproval: true },
+          { serviceMode: 'both' },
+        ],
+      },
+    };
+  } else if (prefilterPanel === 'non_pilot') {
+    whereClause.services = {
+      some: {
+        isActive: true,
+        serviceMode: { not: 'pilot' },
+      },
+    };
+  }
+
+  let games = await prisma.game.findMany({
+    where: whereClause,
     orderBy: { sortOrder: 'asc' },
     take: 25, // Discord select menu item limit
   });
+
+  if (games.length === 0) {
+    games = await prisma.game.findMany({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+      take: 25,
+    });
+  }
 
   if (games.length === 0) return null;
 
@@ -237,13 +280,39 @@ export async function buildGameSelectRow(
  */
 export async function buildServiceSelectRow(
   sessionId: string,
-  gameSlug: string
+  gameSlug: string,
+  prefilterPanel?: 'mythic' | 'non_pilot' | 'pilot'
 ): Promise<ActionRowBuilder<StringSelectMenuBuilder> | null> {
-  const services = await prisma.gameService.findMany({
-    where: { gameSlug, isActive: true },
+  const whereClause: any = { gameSlug, isActive: true };
+
+  if (prefilterPanel === 'mythic') {
+    whereClause.OR = [
+      { serviceKey: 'mythic_plus' },
+      { displayName: { contains: 'mythic' } },
+    ];
+  } else if (prefilterPanel === 'pilot') {
+    whereClause.OR = [
+      { serviceMode: 'pilot' },
+      { requiresPilotApproval: true },
+      { serviceMode: 'both' },
+    ];
+  } else if (prefilterPanel === 'non_pilot') {
+    whereClause.serviceMode = { not: 'pilot' };
+  }
+
+  let services = await prisma.gameService.findMany({
+    where: whereClause,
     orderBy: { sortOrder: 'asc' },
     take: 25,
   });
+
+  if (services.length === 0) {
+    services = await prisma.gameService.findMany({
+      where: { gameSlug, isActive: true },
+      orderBy: { sortOrder: 'asc' },
+      take: 25,
+    });
+  }
 
   if (services.length === 0) return null;
 
@@ -298,6 +367,7 @@ export function buildModeSelectRow(
  * Constructs dynamic, service-specific Modal for free-text order details.
  */
 export function buildWizardOrderModal(session: OrderWizardSession): ModalBuilder {
+  const isG4x = session.origin === 'g4x';
   const isMythic =
     session.serviceKey === 'mythic_plus' ||
     Boolean(session.serviceName && session.serviceName.toLowerCase().includes('mythic'));
@@ -307,7 +377,16 @@ export function buildWizardOrderModal(session: OrderWizardSession): ModalBuilder
     .setCustomId(`ord_wiz:modal:${session.sessionId}`)
     .setTitle(`${session.serviceName?.slice(0, 30) || 'Order'} Details`);
 
-  // 1. Amount in USD ($) — Common to all services
+  // Sourcing marketplace Site Order ID (Required for G4X external orders)
+  const siteOrderIdInput = new TextInputBuilder()
+    .setCustomId('site_order_id')
+    .setLabel('Site Order ID (External Marketplace)')
+    .setPlaceholder('e.g. G2G-123456 or 987654321')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(100);
+
+  // Amount in USD ($) — Common to all services
   const amountInput = new TextInputBuilder()
     .setCustomId('amount_usd')
     .setLabel('Total Order Amount ($ USD)')
@@ -317,7 +396,7 @@ export function buildWizardOrderModal(session: OrderWizardSession): ModalBuilder
     .setMaxLength(20);
 
   if (isMythic) {
-    // ─── Mythic+ Modal (5 rows maximum) ───
+    // ─── Mythic+ Modal (Max 5 rows) ───
     const keyLevelInput = new TextInputBuilder()
       .setCustomId('key_level')
       .setLabel('Dungeon Target & Key Level')
@@ -350,15 +429,25 @@ export function buildWizardOrderModal(session: OrderWizardSession): ModalBuilder
       .setRequired(false)
       .setMaxLength(500);
 
-    modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(keyLevelInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(runsInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(customerInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
-    );
+    if (isG4x) {
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(siteOrderIdInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(keyLevelInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(runsInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
+      );
+    } else {
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(keyLevelInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(runsInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(customerInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
+      );
+    }
   } else if (isPilot) {
-    // ─── Pilot Modal (4 rows — runs_count omitted per Requirement 9) ───
+    // ─── Pilot Modal (Max 5 rows) ───
     const vpnInput = new TextInputBuilder()
       .setCustomId('vpn_location')
       .setLabel('Required VPN Location (Country & City)')
@@ -383,14 +472,24 @@ export function buildWizardOrderModal(session: OrderWizardSession): ModalBuilder
       .setRequired(false)
       .setMaxLength(500);
 
-    modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(vpnInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(customerInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
-    );
+    if (isG4x) {
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(siteOrderIdInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(vpnInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(customerInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
+      );
+    } else {
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(vpnInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(customerInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
+      );
+    }
   } else {
-    // ─── Standard Non-Pilot Modal (4 rows) ───
+    // ─── Standard Non-Pilot Modal (Max 5 rows) ───
     const runsInput = new TextInputBuilder()
       .setCustomId('runs_count')
       .setLabel('Runs / Matches / Quantity (Default: 1)')
@@ -415,12 +514,22 @@ export function buildWizardOrderModal(session: OrderWizardSession): ModalBuilder
       .setRequired(false)
       .setMaxLength(500);
 
-    modal.addComponents(
-      new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(runsInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(customerInput),
-      new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
-    );
+    if (isG4x) {
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(siteOrderIdInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(runsInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(customerInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
+      );
+    } else {
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(amountInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(runsInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(customerInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
+      );
+    }
   }
 
   return modal;
@@ -459,7 +568,7 @@ export async function handleOrderWizardSelectMenu(
         step: 'game',
       });
 
-      const gameRow = await buildGameSelectRow(sessionId);
+      const gameRow = await buildGameSelectRow(sessionId, session.prefilterPanel);
       if (!gameRow) {
         await interaction.update({
           content: '⚠️ **No Active Games**: There are currently no active games enabled. Please contact management.',
@@ -476,7 +585,7 @@ export async function handleOrderWizardSelectMenu(
           'Now select the target game from the enabled games below.'
         )
         .setColor(0x5865f2)
-        .setFooter({ text: 'G4X Community • Step 2 of 4' })
+        .setFooter({ text: 'G4X Community • Step 2 of 4: Select Game' })
         .setTimestamp();
 
       await interaction.update({
@@ -507,7 +616,7 @@ export async function handleOrderWizardSelectMenu(
         step: 'service',
       });
 
-      const serviceRow = await buildServiceSelectRow(sessionId, game.slug);
+      const serviceRow = await buildServiceSelectRow(sessionId, game.slug, session.prefilterPanel);
       if (!serviceRow) {
         await interaction.update({
           content: `⚠️ **No Active Services**: No active boost services are currently configured for **${game.displayName}**.`,
@@ -526,7 +635,7 @@ export async function handleOrderWizardSelectMenu(
           'Select the specific boost service from the dropdown below.'
         )
         .setColor(isAdv ? 0xe67e22 : 0x5865f2)
-        .setFooter({ text: `G4X Community • ${isAdv ? 'Step 2 of 3' : 'Step 3 of 4'}` })
+        .setFooter({ text: `G4X Community • ${isAdv ? 'Step 2 of 3: Select Service' : 'Step 3 of 4: Select Service'}` })
         .setTimestamp();
 
       await interaction.update({
@@ -558,10 +667,19 @@ export async function handleOrderWizardSelectMenu(
         serviceMode: service.serviceMode as any,
       });
 
-      // Check if Mode Selection is required (e.g. service allows both pilot and non-pilot)
+      // Determine mode from prefilter or service config
+      let determinedMode: 'pilot' | 'non_pilot' | null = null;
+      if (session.prefilterPanel === 'pilot') {
+        determinedMode = 'pilot';
+      } else if (session.prefilterPanel === 'non_pilot' || session.prefilterPanel === 'mythic') {
+        determinedMode = 'non_pilot';
+      }
+
+      // Check if Mode Selection is required (e.g. service allows both pilot and non-pilot and no prefilter)
       const requiresModeChoice =
-        service.serviceMode === 'both' ||
-        (service.serviceMode === 'non_pilot' && service.requiresPilotApproval === true);
+        !determinedMode &&
+        (service.serviceMode === 'both' ||
+          (service.serviceMode === 'non_pilot' && service.requiresPilotApproval === true));
 
       if (requiresModeChoice) {
         await updateWizardSession(sessionId, { step: 'mode' });
@@ -586,16 +704,16 @@ export async function handleOrderWizardSelectMenu(
         return;
       }
 
-      // Automatic mode: deterministic from service configuration
-      const determinedMode = service.serviceMode === 'pilot' ? 'pilot' : 'non_pilot';
+      // Automatic mode: deterministic from prefilter or service configuration
+      const finalMode = determinedMode || (service.serviceMode === 'pilot' ? 'pilot' : 'non_pilot');
       await updateWizardSession(sessionId, {
-        orderMode: determinedMode,
+        orderMode: finalMode,
         step: 'modal',
       });
 
       const modal = buildWizardOrderModal({
         ...updatedSession,
-        orderMode: determinedMode,
+        orderMode: finalMode,
       });
 
       // Open the modal directly on the interaction
@@ -730,6 +848,37 @@ export async function handleOrderWizardModalSubmit(
     let runsCount = 1;
     let assembledNotes = '';
 
+    const isAdv = session.origin === 'adv';
+    let siteOrderId: string | null = null;
+
+    if (!isAdv) {
+      siteOrderId = safeGetModalTextInput(interaction, 'site_order_id')?.trim() || null;
+      if (!siteOrderId) {
+        await interaction.reply({
+          content: '❌ **Missing Site Order ID**: External marketplace Order ID is required for G4X orders (e.g. `G2G-123456`).',
+          ephemeral: true,
+        });
+        return;
+      }
+
+      // Enforce uniqueness within the source platform and platform account scope
+      const existingExternalOrder = await prisma.order.findFirst({
+        where: {
+          externalOrderId: siteOrderId,
+          sourceWebsite: session.platform || undefined,
+          ...(session.platformAccountId ? { platformAccountId: session.platformAccountId } : {}),
+        },
+      });
+
+      if (existingExternalOrder) {
+        await interaction.reply({
+          content: `❌ **Duplicate Site Order ID**: An order with Site Order ID \`${siteOrderId}\` already exists on \`${(session.platform || 'platform').toUpperCase()}\` (Order #${existingExternalOrder.orderRef}).`,
+          ephemeral: true,
+        });
+        return;
+      }
+    }
+
     // 5. Extract fields tailored exclusively to the rendered modal type (Requirement 8 & 9)
     if (isMythic) {
       const keyLevel = safeGetModalTextInput(interaction, 'key_level')?.trim();
@@ -788,7 +937,6 @@ export async function handleOrderWizardModalSubmit(
     }
 
     const orderRef = `ORD_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    const isAdv = session.origin === 'adv';
 
     // 6. User and Commercial Rank validation for Advertisers
     let advRank: AdvertiserRank | null = null;
@@ -814,48 +962,59 @@ export async function handleOrderWizardModalSubmit(
 
     // 7. Atomic Database Transaction: Order creation, Wallet Check, Financial Snapshots & Platform Credits
     const createdOrder = await prisma.$transaction(async (tx) => {
-      // A. Wallet funding check (Requirement 11: preserve payment_pending until backed funding is verified)
-      const wallet = await tx.walletV2.findUnique({ where: { userId: actorId } });
-      const hasSufficientFunds = Boolean(wallet && wallet.availableCents >= grossCents);
-
       let paymentStatus = 'pending';
       let orderStatus = 'payment_pending';
       let paymentVerifiedBy: string | null = null;
       let paymentVerifiedAt: Date | null = null;
 
-      if (hasSufficientFunds && wallet) {
-        const newAvailable = wallet.availableCents - grossCents;
-        const newReserved = wallet.reservedCents + grossCents;
-
-        await tx.walletV2.update({
-          where: { userId: actorId },
-          data: {
-            availableCents: newAvailable,
-            reservedCents: newReserved,
-          },
-        });
-
-        await tx.ledgerEntryV2.create({
-          data: {
-            entryRef: `LEDGER_ORD_RES_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-            userId: actorId,
-            amountCents: grossCents,
-            entryType: 'ORDER_RESERVE',
-            direction: 'DEBIT',
-            balanceAfterAvailableCents: newAvailable,
-            balanceAfterReservedCents: newReserved,
-            description: `Authoritative funds reserved from available balance for Order #${orderRef}`,
-            createdBy: actorId,
-          },
-        });
-
-        paymentStatus = 'verified';
+      if (!isAdv) {
+        // G4X External Operational Order Policy:
+        // Do NOT require manager wallet funding, do NOT reserve from creator wallet, do NOT debit ORDER_RESERVE.
+        // Sets paymentStatus to 'unneeded' (supported by schema and web routes for external orders).
+        // External cash remains unverified / pending settlement until reconciled.
+        paymentStatus = 'unneeded';
         orderStatus = 'open_presign';
         paymentVerifiedBy = actorId;
         paymentVerifiedAt = new Date();
+      } else {
+        // Advertiser Order Flow: Requires backed WalletV2 funds or stays in payment_pending
+        const wallet = await tx.walletV2.findUnique({ where: { userId: actorId } });
+        const hasSufficientFunds = Boolean(wallet && wallet.availableCents >= grossCents);
+
+        if (hasSufficientFunds && wallet) {
+          const newAvailable = wallet.availableCents - grossCents;
+          const newReserved = wallet.reservedCents + grossCents;
+
+          await tx.walletV2.update({
+            where: { userId: actorId },
+            data: {
+              availableCents: newAvailable,
+              reservedCents: newReserved,
+            },
+          });
+
+          await tx.ledgerEntryV2.create({
+            data: {
+              entryRef: `LEDGER_ORD_RES_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
+              userId: actorId,
+              amountCents: grossCents,
+              entryType: 'ORDER_RESERVE',
+              direction: 'DEBIT',
+              balanceAfterAvailableCents: newAvailable,
+              balanceAfterReservedCents: newReserved,
+              description: `Authoritative funds reserved from available balance for Order #${orderRef}`,
+              createdBy: actorId,
+            },
+          });
+
+          paymentStatus = 'verified';
+          orderStatus = 'open_presign';
+          paymentVerifiedBy = actorId;
+          paymentVerifiedAt = new Date();
+        }
       }
 
-      // B. Create Order Entity with explicit source platform & account
+      // B. Create Order Entity with explicit source platform, account & external order id
       const ord = await tx.order.create({
         data: {
           orderRef,
@@ -879,9 +1038,10 @@ export async function handleOrderWizardModalSubmit(
           paymentVerifiedBy,
           paymentVerifiedAt,
           notes: assembledNotes || null,
-          sourceType: isAdv ? 'direct' : 'website',
+          sourceType: isAdv ? 'direct' : 'external',
           sourceWebsite: isAdv ? null : (session.platform || null),
           platformAccountId: isAdv ? null : (session.platformAccountId || null),
+          externalOrderId: siteOrderId,
           runs: {
             create: Array.from({ length: runsCount }, (_, i) => ({
               runNumber: i + 1,
@@ -908,7 +1068,7 @@ export async function handleOrderWizardModalSubmit(
         },
       });
 
-      // C. Financial Calculation Engine Integration (Requirement 10 & 12)
+      // C. Financial Calculation Engine Integration
       if (!isAdv && session.platform) {
         // G4X External order financial snapshot
         const snapshot = await calculateOrderFinancialSnapshot(
@@ -934,7 +1094,7 @@ export async function handleOrderWizardModalSubmit(
           },
         });
 
-        // Credit platform account pending proceeds
+        // Credit platform account pending proceeds (isPendingRelease: true, NOT available received cash)
         if (session.platformAccountRef && snapshot.platformOrderNetMinor > 0) {
           await creditOrderSalesProceeds(
             {
@@ -943,6 +1103,8 @@ export async function handleOrderWizardModalSubmit(
               orderRef: ord.orderRef,
               amountMinor: snapshot.platformOrderNetMinor,
               currency: 'USD',
+              isPendingRelease: true,
+              actorId,
             },
             tx
           );
@@ -987,6 +1149,7 @@ export async function handleOrderWizardModalSubmit(
             origin: session.origin,
             platform: session.platform || null,
             platformAccountId: session.platformAccountId || null,
+            siteOrderId: siteOrderId || null,
             gameSlug: ord.gameSlug,
             serviceId: ord.serviceId,
             serviceName: service.displayName,
@@ -1005,38 +1168,65 @@ export async function handleOrderWizardModalSubmit(
     });
 
     // 8. Ephemeral Confirmation in English
-    const isFunded = createdOrder.paymentStatus === 'verified';
-    const confirmEmbed = new EmbedBuilder()
-      .setTitle(`✅ Order #${createdOrder.orderRef} Created Successfully`)
-      .setDescription(
-        `Your order has been submitted to the G4X system via the Guided Dropdown Wizard.\n\n` +
-        `• **Order Reference:** \`#${createdOrder.orderRef}\`\n` +
-        `• **Game:** **${game.displayName}**\n` +
-        `• **Service:** **${service.displayName}**\n` +
-        `• **Mode:** \`${createdOrder.orderMode === 'pilot' ? '✈️ Pilot' : '🛡️ Non-Pilot'}\`\n` +
-        (session.platform ? `• **Source Platform:** \`${session.platform.toUpperCase()}\`\n` : '') +
-        (isAdv && advRank ? `• **Advertiser Rank:** \`${advRank}\`\n` : '') +
-        `• **Total Amount:** **$${(createdOrder.grossAmountMinor / 100).toFixed(2)}**\n` +
-        `• **Booster Pool:** **$${(createdOrder.boosterPoolMinor / 100).toFixed(2)}**\n` +
-        `• **Runs / Quantity:** \`${runsCount}\`\n` +
-        `• **Payment Status:** **${isFunded ? '✅ VERIFIED (Funded via Wallet V2)' : '⏳ PENDING (Awaiting Funding)'}**\n` +
-        `• **Order State:** \`${createdOrder.status}\``
-      )
-      .setColor(isFunded ? 0x2ecc71 : 0xf39c12)
-      .setFooter({
-        text: isFunded
-          ? 'Order is verified and eligible for publication'
-          : 'Payment pending — backed funds or receipt verification required',
-      })
-      .setTimestamp();
+    const isPublishable = createdOrder.paymentStatus === 'verified' || createdOrder.paymentStatus === 'unneeded';
+
+    let confirmEmbed: EmbedBuilder;
+    if (!isAdv) {
+      // G4X External Operational Order Confirmation
+      confirmEmbed = new EmbedBuilder()
+        .setTitle(`✅ Order #${createdOrder.orderRef} Created Successfully`)
+        .setDescription(
+          `G4X operational order sourced from external marketplace has been recorded and approved for publication.\n\n` +
+          `• **Internal Order ID:** \`#${createdOrder.id}\`\n` +
+          `• **Order Reference:** \`#${createdOrder.orderRef}\`\n` +
+          `• **Source Platform:** \`${(session.platform || 'G4X').toUpperCase()}\`\n` +
+          `• **Site Order ID:** \`${siteOrderId || 'N/A'}\`\n` +
+          `• **Game:** **${game.displayName}**\n` +
+          `• **Service:** **${service.displayName}**\n` +
+          `• **Mode:** \`${createdOrder.orderMode === 'pilot' ? '✈️ Pilot' : '🛡️ Non-Pilot'}\`\n` +
+          `• **Order Amount:** **$${(createdOrder.grossAmountMinor / 100).toFixed(2)} USD**\n` +
+          `• **Booster Pool:** **$${(createdOrder.boosterPoolMinor / 100).toFixed(2)} USD**\n` +
+          `• **External Settlement:** \`Pending\` (Awaiting platform reconciliation)\n` +
+          `• **Publication Status:** \`Approved & Published for Booster Presign\``
+        )
+        .setColor(0x2ecc71)
+        .setFooter({ text: 'G4X External Platform Order • Zero Manager Wallet Deduction' })
+        .setTimestamp();
+    } else {
+      // Advertiser Order Confirmation
+      const isFunded = createdOrder.paymentStatus === 'verified';
+      confirmEmbed = new EmbedBuilder()
+        .setTitle(`✅ Order #${createdOrder.orderRef} Created Successfully`)
+        .setDescription(
+          `Your order has been submitted to the G4X system via the Guided Dropdown Wizard.\n\n` +
+          `• **Internal Order ID:** \`#${createdOrder.id}\`\n` +
+          `• **Order Reference:** \`#${createdOrder.orderRef}\`\n` +
+          `• **Game:** **${game.displayName}**\n` +
+          `• **Service:** **${service.displayName}**\n` +
+          `• **Mode:** \`${createdOrder.orderMode === 'pilot' ? '✈️ Pilot' : '🛡️ Non-Pilot'}\`\n` +
+          (advRank ? `• **Advertiser Rank:** \`${advRank}\`\n` : '') +
+          `• **Total Amount:** **$${(createdOrder.grossAmountMinor / 100).toFixed(2)} USD**\n` +
+          `• **Booster Pool:** **$${(createdOrder.boosterPoolMinor / 100).toFixed(2)} USD**\n` +
+          `• **Runs / Quantity:** \`${runsCount}\`\n` +
+          `• **Payment Status:** **${isFunded ? '✅ VERIFIED (Funded via Wallet V2)' : '⏳ PENDING (Awaiting Funding)'}**\n` +
+          `• **Publication Status:** \`${isFunded ? 'Published for Booster Presign' : 'Blocked — Awaiting Verified Payment'}\``
+        )
+        .setColor(isFunded ? 0x2ecc71 : 0xf39c12)
+        .setFooter({
+          text: isFunded
+            ? 'Order is verified and eligible for publication'
+            : 'Payment pending — backed funds or receipt verification required',
+        })
+        .setTimestamp();
+    }
 
     await interaction.reply({
       embeds: [confirmEmbed],
       ephemeral: true,
     });
 
-    // 9. If funded, automatically publish or refresh card
-    if (isFunded) {
+    // 9. If publishable (verified or unneeded for external orders), automatically publish card
+    if (isPublishable) {
       publishOrRefreshOrderCard(interaction.client, createdOrder.id, {
         guildId: interaction.guild?.id,
       }).catch((err) => {

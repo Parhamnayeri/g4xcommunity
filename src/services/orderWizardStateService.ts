@@ -31,6 +31,7 @@ export interface OrderWizardSession {
   serviceName?: string;
   serviceMode?: 'pilot' | 'non_pilot';
   orderMode?: 'pilot' | 'non_pilot';
+  prefilterPanel?: 'mythic' | 'non_pilot' | 'pilot';
   step: WizardStep;
   createdAt: number;
   expiresAt: number;
@@ -108,6 +109,7 @@ export async function createWizardSession(input: {
   userId: string;
   guildId: string | null;
   origin: WizardOrigin;
+  prefilterPanel?: 'mythic' | 'non_pilot' | 'pilot';
 }): Promise<OrderWizardSession> {
   pruneExpiredSessions();
 
@@ -119,6 +121,7 @@ export async function createWizardSession(input: {
     userId: input.userId,
     guildId: input.guildId,
     origin: input.origin,
+    prefilterPanel: input.prefilterPanel,
     step: input.origin === 'g4x' ? 'platform' : 'game',
     createdAt: now,
     expiresAt: now + SESSION_TTL_MS,

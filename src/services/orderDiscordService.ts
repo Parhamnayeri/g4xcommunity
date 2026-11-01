@@ -222,17 +222,22 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
     });
   }
 
-  // Safe requirements & notes (excluding financial secrets)
+  // Safe requirements & notes (excluding financial secrets & private customer data)
   if (order.notes && typeof order.notes === 'string' && order.notes.trim().length > 0) {
-    // Basic sanitization against accidental leakage
+    // Strip sensitive customer information and financial terms against leakage
     const sanitizedNotes = order.notes
+      .replace(/\[Customer[^\]]*\]/gi, '')
+      .replace(/\[Required VPN[^\]]*\]/gi, '')
       .replace(/fee|price|commission|wallet|gross|payout/gi, '***')
+      .trim()
       .slice(0, 300);
-    embed.addFields({
-      name: '📝 Run Notes',
-      value: sanitizedNotes,
-      inline: false,
-    });
+    if (sanitizedNotes.length > 0) {
+      embed.addFields({
+        name: '📝 Run Notes',
+        value: sanitizedNotes,
+        inline: false,
+      });
+    }
   }
 
   embed.setFooter({
@@ -457,6 +462,35 @@ export async function publishOrRefreshOrderCard(
     return {
       success: false,
       error: `PAYMENT_NOT_VERIFIED: Order #${order.id} cannot be published for public claims. Payment status is '${order.paymentStatus}'`,
+    };
+  }
+
+  // Approved External Platform Order Policy validation
+  if (order.paymentStatus === 'unneeded') {
+    if (
+      order.creatorType !== 'g4x' ||
+      !order.sourceWebsite ||
+      !['g2g', 'skycoach', 'eldorado'].includes(order.sourceWebsite.toLowerCase()) ||
+      !order.externalOrderId
+    ) {
+      return {
+        success: false,
+        error: `EXTERNAL_POLICY_VIOLATION: Order #${order.id} does not qualify for external-order publication policy. Valid source platform and Site Order ID are required.`,
+      };
+    }
+    if (!order.game?.isActive || !order.service?.isActive) {
+      return {
+        success: false,
+        error: `INACTIVE_GAME_OR_SERVICE: Order #${order.id} cannot be published because the game or service is inactive.`,
+      };
+    }
+  }
+
+  // Advertiser Order Guard: Must be genuine funded verified
+  if (order.creatorType === 'advertiser' && order.paymentStatus !== 'verified') {
+    return {
+      success: false,
+      error: `ADVERTISER_UNFUNDED: Advertiser Order #${order.id} cannot be published until payment is verified.`,
     };
   }
 
