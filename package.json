@@ -43,6 +43,7 @@
     "test:platform": "ts-node src/test/platform_balances_and_reconciliation_suite.ts",
     "test": "ts-node src/test/financial_calculation_suite.ts && ts-node src/test/platform_balances_and_reconciliation_suite.ts && ts-node src/test/finance_v2_suite.ts && ts-node src/test/finance_v2_1_hardening_suite.ts && ts-node src/test/finance_v2_2_marketplace_suite.ts",
     "bootstrap:owner": "ts-node scripts/bootstrap-owner.ts",
+    "audit:evidence": "ts-node scripts/audit-deposit-evidence-conflicts.ts",
     "audit:policies": "ts-node scripts/audit-financial-policies.ts",
     "audit:advertiser-ranks": "ts-node scripts/advertiser-rank-migration-report.ts",
     "audit": "ts-node scripts/audit-financial-policies.ts",
@@ -57,7 +58,8 @@
     "test:presign:review": "ts-node src/test/presign_review_and_premade_assignment_suite.ts",
     "test:assign:command": "ts-node src/test/premade_presign_and_command_assignment_suite.ts",
     "test:parity": "ts-node src/test/cross_entrypoint_order_parity_suite.ts",
-    "test:wallet": "ts-node src/test/wallet_phase5_suite.ts"
+    "test:wallet": "ts-node src/test/wallet_phase5_suite.ts",
+    "test:migration": "ts-node src/test/migration_evidence_preservation_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"

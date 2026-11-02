@@ -769,6 +769,13 @@ export async function submitIrtDeposit(input: SubmitIrtDepositInput) {
           );
         }
 
+        // در صورتی که این رکورد جزو تعارضات شواهد گذشته علامت‌گذاری شده باشد، نیازمند ممیزی دستی است:
+        if (duplicateFunding.legacyEvidenceResolution) {
+          throw new Error(
+            `DEPOSIT_REQUIRES_MANUAL_RECONCILIATION: Deposit request #${duplicateFunding.id} is flagged for manual reconciliation (${duplicateFunding.legacyEvidenceResolution}).`
+          );
+        }
+
         // ۵. در صورتی که درخواست مربوط به همین کاربر و در انتظار تایید باشد -> بررسی انطباق مشخصات تغییرناپذیر
         if (duplicateFunding.fundingMethod !== 'IRT') {
           throw new Error(
@@ -820,8 +827,41 @@ export async function submitIrtDeposit(input: SubmitIrtDepositInput) {
           isRecovery = true;
         }
 
-        let attempt = payReq.attempts?.find((a) => a.trackingNumber === cleanEvidence) || payReq.attempts?.[0];
-        if (!attempt) {
+        // تطابق دقیق PaymentAttempt جهت جلوگیری قطعی از بازگرداندن شواهد نامربوط یا متعارض
+        const existingAttempts = payReq.attempts || [];
+
+        // ۱. بررسی تلاش پرداخت با روش متعارض
+        const conflictingMethodAttempt = existingAttempts.find((a) => a.method !== 'CARD_TO_CARD_IRT');
+        if (conflictingMethodAttempt) {
+          throw new Error(
+            `CONFLICTING_DEPOSIT_RETRY: Deposit request #${duplicateFunding.id} has an existing payment attempt with conflicting method '${conflictingMethodAttempt.method}'.`
+          );
+        }
+
+        // ۲. بررسی تلاش پرداخت با کد رهگیری متعارض
+        const conflictingTrackingAttempt = existingAttempts.find(
+          (a) => a.trackingNumber && a.trackingNumber !== cleanEvidence
+        );
+        if (conflictingTrackingAttempt) {
+          throw new Error(
+            `CONFLICTING_DEPOSIT_RETRY: Deposit request #${duplicateFunding.id} has an existing payment attempt bound to a different tracking reference.`
+          );
+        }
+
+        // ۳. استخراج تلاش پرداخت منطبق (Exact Matching: fundingRequest + method + trackingNumber)
+        let attempt = existingAttempts.find(
+          (a) => a.method === 'CARD_TO_CARD_IRT' && a.trackingNumber === cleanEvidence
+        );
+
+        if (attempt) {
+          // بررسی تعارض فیش در صورت وجود فیش روی attempt
+          if (effectiveReceiptKey && attempt.receiptScreenshotUrl && !attempt.receiptScreenshotUrl.includes(effectiveReceiptKey)) {
+            throw new Error(
+              `CONFLICTING_DEPOSIT_RETRY: Payment attempt for deposit #${duplicateFunding.id} is bound to a different receipt evidence.`
+            );
+          }
+        } else {
+          // در صورت فقدان تلاش منطبق، رکورد متناظر با حفظ دقیق نرخ ارز اولیه و جزئیات تغییرناپذیر ایجاد می‌شود
           const attemptRef = `ATT_DEP_${duplicateFunding.id}_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
           attempt = await tx.paymentAttempt.create({
             data: {

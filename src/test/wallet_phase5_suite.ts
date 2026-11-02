@@ -33,6 +33,7 @@ import {
 } from '../services/financeV2/walletPageService';
 import { creditAvailableCents, getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
 import { LedgerV2EntryType } from '../services/financeV2/financeV2Types';
+import { getOrCreatePaymentRequestForFunding } from '../services/payment/paymentReconciliationService';
 
 async function createAuthenticatedAgent(userId: string) {
   const agent = request.agent(app);
@@ -456,8 +457,100 @@ async function runWalletPhase5Suite() {
     assert.strictEqual(identicalRetryRes.body.success, true);
     assert.strictEqual(identicalRetryRes.body.fundingRequest.id, fundingId, '5.3b Must return existing funding request');
     assert.strictEqual(identicalRetryRes.body.paymentRequest.id, linkedPaymentReq!.id, '5.3b Must return existing paymentRequest');
+    assert.strictEqual(identicalRetryRes.body.paymentAttempt.id, linkedPaymentReq!.attempts[0].id, '5.3b Must return exact matching PaymentAttempt');
 
-    // 5.3c Different user duplicate tracking reference rejection
+    // Verify liability count is strictly 1 (no duplicate liability)
+    const liabilityCount = await prisma.advertiserFundingRequest.count({
+      where: { evidenceRef: trackingRef },
+    });
+    assert.strictEqual(liabilityCount, 1, '5.3b Liability count must remain exactly 1 after retry');
+
+    // Verify balance is untouched (no phantom credit on retry)
+    const retryBalanceCheck = await advClient.agent.get('/api/wallet/overview');
+    assert.strictEqual(
+      retryBalanceCheck.body.wallet.availableCents,
+      5000,
+      '5.3b Balance must NOT be credited on retry (still 5000 cents)'
+    );
+
+    // 5.3c Retry with conflicting/unrelated PaymentAttempt rejected
+    const conflictEvidence = `TRACK_CONFLICT_${Date.now()}`;
+    const conflictFunding = await prisma.advertiserFundingRequest.create({
+      data: {
+        fundingRef: `FUND_CONF_${Date.now()}`,
+        advertiserId: userAdvertiser,
+        fundingMethod: 'IRT',
+        status: 'PENDING_ADMIN_VERIFICATION',
+        targetUsdCents: 1000,
+        externalCurrency: 'IRT',
+        externalAmountUnits: '964250',
+        exchangeRate: 95000,
+        currencyPurchaseFeeRate: 0.015,
+        feeAmountUnits: '14250',
+        evidenceRef: conflictEvidence,
+        payerIdentifier: 'Conflict Depositor',
+      },
+    });
+    const conflictPayReq = await getOrCreatePaymentRequestForFunding(conflictFunding.id, userAdvertiser);
+    // Create an unrelated/conflicting PaymentAttempt (different tracking number)
+    await prisma.paymentAttempt.create({
+      data: {
+        attemptRef: `ATT_CONF_${Date.now()}`,
+        paymentRequestId: conflictPayReq.id,
+        method: 'CARD_TO_CARD_IRT',
+        provider: 'MANUAL_BANK',
+        status: 'pending',
+        trackingNumber: 'UNRELATED_TRACKING_12345',
+        paidAmountIrt: '964250',
+        expectedAmount: '964250',
+        expectedCurrency: 'IRT',
+        exchangeRate: 95000,
+      },
+    });
+
+    const unrelatedAttemptRetryRes = await advClient.agent
+      .post('/api/wallet/deposits/irt')
+      .set('x-csrf-token', advClient.csrfToken)
+      .send({
+        targetUsdCents: 1000,
+        evidenceRef: conflictEvidence,
+        payerIdentifier: 'Conflict Depositor',
+      });
+    assert.strictEqual(unrelatedAttemptRetryRes.status, 400, '5.3c Retry with conflicting attempt rejected with 400');
+    assert(unrelatedAttemptRetryRes.body.error.includes('CONFLICTING_DEPOSIT_RETRY'));
+
+    // 5.3d Retry on deposit flagged with legacyEvidenceResolution requires manual reconciliation
+    const flaggedEvidence = `TRACK_FLAGGED_${Date.now()}`;
+    await prisma.advertiserFundingRequest.create({
+      data: {
+        fundingRef: `FUND_FLAGGED_${Date.now()}`,
+        advertiserId: userAdvertiser,
+        fundingMethod: 'IRT',
+        status: 'PENDING_ADMIN_VERIFICATION',
+        targetUsdCents: 1000,
+        externalCurrency: 'IRT',
+        externalAmountUnits: '964250',
+        exchangeRate: 95000,
+        currencyPurchaseFeeRate: 0.015,
+        feeAmountUnits: '14250',
+        evidenceRef: flaggedEvidence,
+        payerIdentifier: 'Flagged Depositor',
+        legacyEvidenceResolution: 'LEGACY_CONFLICT_MANUAL_RECONCILIATION_REQUIRED',
+      },
+    });
+
+    const flaggedRetryRes = await advClient.agent
+      .post('/api/wallet/deposits/irt')
+      .set('x-csrf-token', advClient.csrfToken)
+      .send({
+        targetUsdCents: 1000,
+        evidenceRef: flaggedEvidence,
+        payerIdentifier: 'Flagged Depositor',
+      });
+    assert.strictEqual(flaggedRetryRes.status, 400, '5.3d Retry on flagged duplicate rejected with 400');
+    assert(flaggedRetryRes.body.error.includes('DEPOSIT_REQUIRES_MANUAL_RECONCILIATION'));
+
+    // 5.3e Different user duplicate tracking reference rejection
     const diffUserSubmitRes = await vicClient.agent
       .post('/api/wallet/deposits/irt')
       .set('x-csrf-token', vicClient.csrfToken)
