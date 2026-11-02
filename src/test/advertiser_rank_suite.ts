@@ -152,11 +152,12 @@ async function runAdvertiserRankSuite() {
     const testGameSlug = 'wow_test_rank';
     await prisma.game.upsert({
       where: { slug: testGameSlug },
-      update: {},
+      update: { isActive: true },
       create: {
         slug: testGameSlug,
         displayName: 'WoW Test Rank',
         serviceCategory: 'both',
+        isActive: true,
       },
     });
 
@@ -171,7 +172,13 @@ async function runAdvertiserRankSuite() {
           displayName: 'Rank Boost Service',
           serviceMode: 'non_pilot',
           profileMode: 'none',
+          isActive: true,
         },
+      });
+    } else {
+      testService = await prisma.gameService.update({
+        where: { id: testService.id },
+        data: { isActive: true },
       });
     }
 

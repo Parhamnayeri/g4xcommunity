@@ -215,6 +215,19 @@ async function runAdvertiserPhase4Suite() {
     assert(fundedOverview.body.wallet.canPlaceOrders === true, '15. canPlaceOrders returns true when spendable balance > 0');
 
     // ─── ۶. ایجاد سفارش مستقیم با انجماد کمیسیون رنک (Order Creation) ─────────
+    // تست رد شدن سفارش Mythic+ در صورت عدم ارائه کلید و دانجن
+    const missingKeyRes = await agentAdvA.agent
+      .post('/api/orders/create')
+      .set('x-csrf-token', agentAdvA.csrfToken)
+      .send({
+        gameSlug: testGame.slug,
+        serviceId: testService.id,
+        grossAmountUsd: '50.00',
+        orderType: 'group',
+        notes: 'Boost notes without key',
+      });
+    assert(missingKeyRes.status === 400, '16a. Missing Mythic+ key/dungeon is rejected with 400 validation error');
+
     const createRes = await agentAdvA.agent
       .post('/api/orders/create')
       .set('x-csrf-token', agentAdvA.csrfToken)
@@ -223,6 +236,7 @@ async function runAdvertiserPhase4Suite() {
         serviceId: testService.id,
         grossAmountUsd: '50.00',
         orderType: 'group',
+        keyLevel: '+10 Ara-Kara',
         notes: 'Initial test boost notes',
       });
 
@@ -448,6 +462,7 @@ async function runAdvertiserPhase4Suite() {
           serviceId: testService.id,
           grossAmountUsd: '50.00',
           orderType: 'group',
+          keyLevel: '+10 Ara-Kara',
           notes: 'Race order 1',
         }),
       agentAdvB.agent
@@ -458,6 +473,7 @@ async function runAdvertiserPhase4Suite() {
           serviceId: testService.id,
           grossAmountUsd: '50.00',
           orderType: 'group',
+          keyLevel: '+10 Ara-Kara',
           notes: 'Race order 2',
         }),
     ]);
@@ -485,6 +501,7 @@ async function runAdvertiserPhase4Suite() {
         gameSlug: testGame.slug,
         serviceId: testService.id,
         grossAmountUsd: '10.00',
+        keyLevel: '+10 Ara-Kara',
         idempotencyKey: uniqueIdempKey,
         notes: 'Idempotency order test',
       });
@@ -495,6 +512,7 @@ async function runAdvertiserPhase4Suite() {
         gameSlug: testGame.slug,
         serviceId: testService.id,
         grossAmountUsd: '10.00',
+        keyLevel: '+10 Ara-Kara',
         idempotencyKey: uniqueIdempKey,
         notes: 'Idempotency duplicate retry',
       });

@@ -577,12 +577,13 @@ async function runFinanceV2TestSuite() {
     );
 
     // 10c-1. Verify fail-closed live payout gate blocks execution by default
+    const validHexTx = '0x' + 'abcdef1234567890'.repeat(4);
     let livePayoutBlocked = false;
     try {
       await adminExecuteManualPayout(
         confirmedReq.id,
         testAdminId,
-        { externalTxHash: '0xabcdef9876543210abcdef9876543210', notes: 'Paid on BSC' }
+        { externalTxHash: validHexTx, notes: 'Paid on BSC' }
       );
     } catch (err: any) {
       if (err.message.includes('LIVE_PAYOUTS_DISABLED')) {
@@ -594,12 +595,39 @@ async function runFinanceV2TestSuite() {
       '10c-1. Manual payout execution strictly blocked under default fail-closed configuration'
     );
 
-    // Admin manual payout with valid TxHash under isolated test gate
+    // Admin manual payout with valid TxHash and authoritative RPC verification under isolated test gate
+    const mockBscRpc = async (method: string, _params: any[]) => {
+      if (method === 'eth_chainId') return '0x38';
+      if (method === 'eth_blockNumber') return '0x1000';
+      if (method === 'eth_getTransactionReceipt') {
+        return {
+          status: '0x1',
+          blockNumber: '0x0ff0',
+          logs: [
+            {
+              address: '0x55d398326f99059ff775485246999027b3197955',
+              topics: [
+                '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+                '0x0000000000000000000000001111111111111111111111111111111111111111',
+                '0x000000000000000000000000' + confirmedReq.destinationAddress.slice(2).toLowerCase(),
+              ],
+              data: '0x' + (BigInt(4960) * 10_000_000_000_000_000n).toString(16).padStart(64, '0'),
+            },
+          ],
+        };
+      }
+      throw new Error(`Unsupported method: ${method}`);
+    };
+
     process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED = 'true';
     const { request: paidReq } = await adminExecuteManualPayout(
       confirmedReq.id,
       testAdminId,
-      { externalTxHash: '0xabcdef9876543210abcdef9876543210', notes: 'Paid on BSC' }
+      {
+        externalTxHash: validHexTx,
+        notes: 'Paid on BSC',
+        bscVerificationOptions: { rpcClient: mockBscRpc },
+      }
     );
     process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED = 'false';
 

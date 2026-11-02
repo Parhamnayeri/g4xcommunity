@@ -456,6 +456,9 @@ export interface CreateAdvertiserBoostOrderInput {
   orderMode?: 'pilot' | 'non_pilot';
   runsCount?: number;
   keyLevel?: string | null;
+  dungeonName?: string | null;
+  requiredBoosterCount?: number | null;
+  requiredRoles?: Array<{ roleName: string; quantity: number }> | null;
   vpnLocation?: string | null;
   customerInfo?: string | null;
   notes?: string | null;
@@ -516,14 +519,30 @@ export async function createAdvertiserBoostOrder(
   }
 
   let keyLevel = input.keyLevel?.trim() || null;
-  if (isMythic && !keyLevel) {
-    keyLevel = '+10 Ara-Kara';
+  let dungeonName = input.dungeonName?.trim() || null;
+
+  if (isMythic) {
+    if (!keyLevel && !dungeonName) {
+      throw new DomainError(
+        DomainErrorCode.VALIDATION_ERROR,
+        'Target dungeon and key level are required for Mythic+ orders (e.g. "+10 Ara-Kara")'
+      );
+    }
+    const combined = `${keyLevel || ''} ${dungeonName || ''}`.trim();
+    const hasDigits = /\d+/.test(combined);
+    const textWithoutDigits = combined.replace(/[\d+]/g, '').trim();
+    if (!hasDigits || textWithoutDigits.length < 2) {
+      throw new DomainError(
+        DomainErrorCode.VALIDATION_ERROR,
+        'Target dungeon and key level are required for Mythic+ orders (e.g. "+10 Ara-Kara")'
+      );
+    }
   }
 
   // Assemble notes deterministically
   let assembledNotes = '';
-  if (isMythic && keyLevel) {
-    assembledNotes += `[Mythic+ Target: ${keyLevel}]`;
+  if (isMythic && (keyLevel || dungeonName)) {
+    assembledNotes += `[Mythic+ Target: ${keyLevel || dungeonName}]`;
   }
   if (orderMode === 'pilot' && input.vpnLocation) {
     assembledNotes += `[Required VPN: ${input.vpnLocation.trim()}]`;
@@ -688,7 +707,28 @@ export async function createAdvertiserBoostOrder(
                 ],
               },
             }
-          : {}),
+          : (orderMode === 'pilot'
+              ? {
+                  requiredRoles: {
+                    create: [{ roleName: 'pilot', quantity: 1 }],
+                  },
+                }
+              : (input.requiredRoles && input.requiredRoles.length > 0
+                  ? {
+                      requiredRoles: {
+                        create: input.requiredRoles.map((r) => ({
+                          roleName: r.roleName.toLowerCase(),
+                          quantity: Math.max(1, Math.floor(Number(r.quantity) || 1)),
+                        })),
+                      },
+                    }
+                  : (input.requiredBoosterCount && input.requiredBoosterCount > 0
+                      ? {
+                          requiredRoles: {
+                            create: [{ roleName: 'booster', quantity: Math.floor(input.requiredBoosterCount) }],
+                          },
+                        }
+                      : {})))),
       },
       include: {
         service: true,
@@ -706,14 +746,17 @@ export async function createAdvertiserBoostOrder(
       });
     }
 
-    if (isMythic && keyLevel) {
+    if (isMythic && (keyLevel || dungeonName)) {
+      const combined = `${keyLevel || ''} ${dungeonName || ''}`.trim();
+      const numLevel = parseInt(combined.replace(/\D/g, ''), 10) || null;
+      const parsedDungeon = dungeonName || keyLevel?.replace(/[+\d]/g, '').trim() || keyLevel;
       await tx.orderKeyRequirement.create({
         data: {
           orderId: ord.id,
-          dungeonName: keyLevel,
-          keyLevel: parseInt(keyLevel.replace(/\D/g, ''), 10) || 10,
+          dungeonName: parsedDungeon || keyLevel,
+          keyLevel: numLevel,
           isMandatory: true,
-          notes: `Target Mythic+ dungeon & key: ${keyLevel}`,
+          notes: `Target Mythic+ dungeon & key: ${keyLevel || combined}`,
         },
       });
     }
@@ -768,6 +811,8 @@ export async function createAdvertiserBoostOrder(
         isSuccess: true,
       },
     });
+
+    (ord as any).financialSnapshot = snapshot;
 
     return {
       order: ord,

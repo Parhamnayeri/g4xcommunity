@@ -55,7 +55,8 @@
     "test:disputes": "ts-node src/test/order_disputes_and_proof_review_suite.ts",
     "test:platform:dashboard": "ts-node src/test/admin_platform_finance_dashboard_suite.ts",
     "test:presign:review": "ts-node src/test/presign_review_and_premade_assignment_suite.ts",
-    "test:assign:command": "ts-node src/test/premade_presign_and_command_assignment_suite.ts"
+    "test:assign:command": "ts-node src/test/premade_presign_and_command_assignment_suite.ts",
+    "test:parity": "ts-node src/test/cross_entrypoint_order_parity_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"
