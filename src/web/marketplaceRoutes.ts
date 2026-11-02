@@ -36,10 +36,12 @@ import {
   acceptP2pFundingRequest,
   settleP2pFunding,
   assertApprovedExchanger,
+  verifyGoldTradeQuoteHash,
 } from '../services/financeV2/exchangerMarketplaceService';
 import {
   ExchangerOfferStatus,
   GoldTradeSettlementMethod,
+  GoldTradeStatus,
 } from '../services/financeV2/financeV2Types';
 import { mapGoldTradeStatus, mapApplicationStatus } from '../services/statusSimplifier';
 import { getWalletV2Summary } from '../services/financeV2/financeV2WalletService';
@@ -673,7 +675,42 @@ marketplaceRouter.post(
         return;
       }
 
-      // ۱. بررسی بازیابی در صورت تلاش مجدد برای جلوگیری از تکرار تعهد (Idempotency Recovery)
+      if (!quote.quoteHash || !quote.tradeRef || !quote.quoteExpiresAt) {
+        res.status(400).json({ error: 'QUOTE_TAMPERED: Missing quote reference, expiry or signature' });
+        return;
+      }
+
+      // ۱. اعتبارسنجی قطعی امضای HMAC پیش‌فاکتور ارسالی پیش از هرگونه پردازش
+      // هرگز نباید صرف برابری tradeRef به عنوان مدرک اصالت پیش‌فاکتور تلقی شود!
+      const isValidHmac = verifyGoldTradeQuoteHash(
+        {
+          tradeRef: quote.tradeRef,
+          sellerId: quote.sellerId,
+          buyerId: quote.buyerId,
+          offerId: quote.acceptedOfferId,
+          offerVersion: quote.offerVersion,
+          feePayer: quote.feePayer,
+          gameSlug: quote.gameSlug,
+          region: quote.region,
+          realm: quote.realm,
+          faction: quote.faction,
+          goldQuantity: quote.goldQuantity,
+          agreedValuationUsdCents: quote.agreedValuationUsdCents,
+          settlementMethod: quote.settlementMethod,
+          commissionPercentage: quote.commissionPercentage || 0,
+          quotedPayableAmount: quote.quotedPayableAmount || '',
+          quotedPayableCurrency: quote.quotedPayableCurrency || '',
+          expiresAt: new Date(quote.quoteExpiresAt),
+        },
+        quote.quoteHash
+      );
+
+      if (!isValidHmac) {
+        res.status(400).json({ error: 'QUOTE_TAMPERED: Supplied quote signature is invalid' });
+        return;
+      }
+
+      // ۲. بررسی بازیابی در صورت تلاش مجدد برای جلوگیری از تکرار تعهد (Idempotency Recovery)
       let trade = await prisma.goldTrade.findUnique({
         where: { tradeRef: quote.tradeRef },
         include: {
@@ -683,16 +720,49 @@ marketplaceRouter.post(
       });
 
       if (!trade) {
-        // ۲. ایجاد رکورد معامله پس از اعتبارسنجی قطعی امضا، انقضا و صراف
+        // ایجاد رکورد معامله پس از اعتبارسنجی قطعی امضا، انقضا و صراف
         trade = (await createGoldTradeOrder(quote)) as any;
       } else {
         if (trade.sellerId !== user.discordId) {
-          res.status(400).json({ error: 'Quote seller mismatch' });
+          res.status(400).json({ error: 'CROSS_USER_QUOTE_REPLAY: Trade was created by another user' });
+          return;
+        }
+
+        const matchesPersisted =
+          trade.buyerId === quote.buyerId &&
+          trade.gameSlug === quote.gameSlug &&
+          trade.goldQuantity === quote.goldQuantity &&
+          trade.agreedValuationUsdCents === quote.agreedValuationUsdCents &&
+          trade.settlementMethod === quote.settlementMethod &&
+          Math.abs((trade.commissionPercentage ?? 0) - (quote.commissionPercentage || 0)) < 0.0001 &&
+          trade.feePayer === quote.feePayer &&
+          (trade.quotedPayableAmount || '') === (quote.quotedPayableAmount || '') &&
+          (trade.quotedPayableCurrency || '') === (quote.quotedPayableCurrency || '') &&
+          (trade.acceptedOfferId || null) === (quote.acceptedOfferId || null) &&
+          (trade.acceptedOfferVersion || null) === (quote.offerVersion || null) &&
+          trade.quoteHash === quote.quoteHash;
+
+        if (!matchesPersisted) {
+          res.status(400).json({ error: 'QUOTE_MISMATCH: Supplied quote terms do not match original persisted trade' });
+          return;
+        }
+
+        // حفظ وضعیت‌های پایانی و پیشرفته بدون تغییر و بدون ایجاد تعهد مضاعف (Safe Idempotency)
+        if (
+          trade.tradeStatus === GoldTradeStatus.SETTLED ||
+          trade.tradeStatus === GoldTradeStatus.CANCELLED ||
+          trade.tradeStatus === GoldTradeStatus.DISPUTED ||
+          trade.tradeStatus === GoldTradeStatus.GOLD_DELIVERED ||
+          trade.tradeStatus === GoldTradeStatus.READY_TO_SETTLE ||
+          trade.tradeStatus === GoldTradeStatus.FUNDS_RESERVED ||
+          trade.tradeStatus === GoldTradeStatus.ACCEPTED
+        ) {
+          res.status(200).json({ success: true, trade: serializeAdvertiserTrade(trade) });
           return;
         }
       }
 
-      // ۳. پذیرش و اجرای رزرو اتمیک وجه
+      // ۳. پذیرش و اجرای رزرو اتمیک وجه در صورت نیاز
       const accepted = await acceptGoldTrade(trade!.id, user.discordId);
 
       res.status(201).json({ success: true, trade: serializeAdvertiserTrade(accepted) });

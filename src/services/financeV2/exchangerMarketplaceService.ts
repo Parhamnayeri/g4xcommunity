@@ -590,12 +590,37 @@ export async function createGoldTradeOrder(quote: GoldTradeQuoteResult) {
     throw new Error('CANNOT_TRADE_WITH_SELF: Seller and buyer cannot be the same account');
   }
 
-  // ۵. جلوگیری از بازپخش و مبادله چندباره یک پیش‌فاکتور (Anti-Replay Verification)
+  // ۵. جلوگیری از بازپخش و مبادله چندباره یک پیش‌فاکتور (Anti-Replay & Safe Idempotent Retry)
   const existingTrade = await prisma.goldTrade.findUnique({
     where: { tradeRef: quote.tradeRef },
   });
   if (existingTrade) {
-    throw new Error('QUOTE_REPLAY_DETECTED: A gold trade with this quote reference already exists');
+    if (existingTrade.sellerId !== quote.sellerId) {
+      throw new Error('CROSS_USER_QUOTE_REPLAY: Gold trade was created by another seller');
+    }
+
+    const matchesPersisted =
+      existingTrade.buyerId === quote.buyerId &&
+      existingTrade.gameSlug === quote.gameSlug &&
+      (existingTrade.region || '') === (quote.region || '') &&
+      (existingTrade.realm || '') === (quote.realm || '') &&
+      (existingTrade.faction || '') === (quote.faction || '') &&
+      existingTrade.goldQuantity === quote.goldQuantity &&
+      existingTrade.agreedValuationUsdCents === quote.agreedValuationUsdCents &&
+      existingTrade.settlementMethod === quote.settlementMethod &&
+      Math.abs((existingTrade.commissionPercentage ?? 0) - (quote.commissionPercentage || 0)) < 0.0001 &&
+      existingTrade.feePayer === quote.feePayer &&
+      (existingTrade.quotedPayableAmount || '') === (quote.quotedPayableAmount || '') &&
+      (existingTrade.quotedPayableCurrency || '') === (quote.quotedPayableCurrency || '') &&
+      (existingTrade.acceptedOfferId || null) === (quote.acceptedOfferId || null) &&
+      (existingTrade.acceptedOfferVersion || null) === (quote.offerVersion || null) &&
+      existingTrade.quoteHash === quote.quoteHash;
+
+    if (!matchesPersisted) {
+      throw new Error('QUOTE_MISMATCH: Supplied quote terms do not match original persisted trade');
+    }
+
+    return existingTrade;
   }
 
   // ۶. بررسی صلاحیت و فعال بودن صراف خریدار
@@ -702,19 +727,23 @@ export async function acceptGoldTrade(tradeId: number, actorId: string) {
     throw new Error('QUOTE_TAMPERED: Gold trade quote fields do not match cryptographic hash');
   }
 
-  // بازیابی بدون تعهد مجدد در صورت فراخوانی مکرر (Idempotency)
+  // بازیابی بدون تعهد مجدد در صورت فراخوانی مکرر و حفظ وضعیت‌های معتبر (Safe Idempotency & Terminal State Preservation)
   if (
-    trade.settlementMethod === GoldTradeSettlementMethod.USD_WALLET &&
-    trade.tradeStatus === GoldTradeStatus.FUNDS_RESERVED &&
-    trade.walletReservationId
+    trade.tradeStatus === GoldTradeStatus.FUNDS_RESERVED ||
+    trade.tradeStatus === GoldTradeStatus.ACCEPTED ||
+    trade.tradeStatus === GoldTradeStatus.GOLD_DELIVERED ||
+    trade.tradeStatus === GoldTradeStatus.READY_TO_SETTLE ||
+    trade.tradeStatus === GoldTradeStatus.SETTLED
   ) {
     return trade;
   }
-  if (
-    trade.settlementMethod !== GoldTradeSettlementMethod.USD_WALLET &&
-    trade.tradeStatus === GoldTradeStatus.ACCEPTED
-  ) {
-    return trade;
+
+  if (trade.tradeStatus === GoldTradeStatus.CANCELLED) {
+    throw new Error('CANNOT_ACCEPT_CANCELLED_TRADE: Trade has been cancelled and cannot be accepted');
+  }
+
+  if (trade.tradeStatus === GoldTradeStatus.DISPUTED) {
+    throw new Error('CANNOT_ACCEPT_DISPUTED_TRADE: Trade is currently disputed and cannot be accepted');
   }
 
   if (trade.tradeStatus !== GoldTradeStatus.QUOTED && trade.tradeStatus !== GoldTradeStatus.DRAFT) {
@@ -1516,80 +1545,136 @@ export async function acceptP2pFundingRequest(
     throw new Error(`OFFER_VERSION_MISMATCH: Offer #${quote.offerId} version mismatch`);
   }
 
-  // ۷. جلوگیری از بازپخش پیش‌فاکتور (Anti-Replay)
-  const existingFunding = await prisma.advertiserFundingRequest.findFirst({
-    where: {
-      adminNotes: { contains: `[QuoteRef: ${quote.quoteRef}]` },
-    },
-  });
-  if (existingFunding) {
-    throw new Error('QUOTE_REPLAY_DETECTED: P2P funding quote has already been accepted');
-  }
+  // ۷. ثبت یا بازیابی درخواست شارژ به صورت اتمیک و یکتا در پایگاه داده (Durable Atomic Quote Consumption & Idempotency)
+  try {
+    return await prisma.$transaction(async (tx) => {
+      // ۱. بررسی یکتایی بر اساس ستون اختصاصی و ایندکس‌شده quoteRef
+      const existing = await tx.advertiserFundingRequest.findFirst({
+        where: { quoteRef: quote.quoteRef },
+      });
 
-  return await prisma.$transaction(async (tx) => {
-    // ۱. رزرو اتمیک و شرطی موجودی دلار صراف با updateMany
-    const walletRes = await tx.walletV2.updateMany({
-      where: {
-        userId: quote.exchangerId,
-        availableCents: { gte: quote.targetUsdCents },
-      },
-      data: {
-        availableCents: { decrement: quote.targetUsdCents },
-        reservedCents: { increment: quote.targetUsdCents },
-      },
+      if (existing) {
+        // الف. رد استفاده توسط کاربر دیگر (Cross-User Quote Replay Prevention)
+        if (existing.advertiserId !== quote.advertiserId) {
+          throw new Error('CROSS_USER_QUOTE_REPLAY: Quote was issued to another advertiser');
+        }
+
+        // ب. بررسی تطابق دقیق شرایط مالی و پارامترها (Anti-Conflict / Tamper Verification)
+        const termsMatch =
+          existing.targetUsdCents === quote.targetUsdCents &&
+          existing.externalCurrency === 'IRT' &&
+          existing.externalAmountUnits === quote.totalIrtPayable.toString() &&
+          Math.abs((existing.exchangeRate || 0) - quote.referenceRate) < 0.0001 &&
+          Math.abs((existing.currencyPurchaseFeeRate || 0) - quote.commissionPercentage) < 0.0001 &&
+          (existing.adminNotes || '').includes(`Exchanger ${quote.exchangerId}`) &&
+          (existing.adminNotes || '').includes(`Offer #${quote.offerId}`);
+
+        if (!termsMatch) {
+          throw new Error('QUOTE_CONFLICT: Quote terms do not match original request');
+        }
+
+        // ج. بررسی وضعیت‌های پایانی و پیش‌تر مصرف‌شده (Already Consumed Protection)
+        if (existing.status === 'CONFIRMED_CREDITED') {
+          throw new Error('QUOTE_ALREADY_CONSUMED: P2P funding quote has already been settled and credited');
+        }
+
+        if (existing.status === 'CANCELLED' || existing.status === 'REJECTED') {
+          throw new Error(`QUOTE_ALREADY_CONSUMED: P2P funding quote is in terminal status '${existing.status}'`);
+        }
+
+        // تکرار امن و بدون تغییر تعهدات مالی برای درخواست در حال پردازش (Safe Idempotency)
+        return existing;
+      }
+
+      // ۲. رزرو اتمیک و شرطی موجودی دلار صراف با updateMany
+      const walletRes = await tx.walletV2.updateMany({
+        where: {
+          userId: quote.exchangerId,
+          availableCents: { gte: quote.targetUsdCents },
+        },
+        data: {
+          availableCents: { decrement: quote.targetUsdCents },
+          reservedCents: { increment: quote.targetUsdCents },
+        },
+      });
+
+      if (walletRes.count !== 1) {
+        throw new Error(
+          `INSUFFICIENT_EXCHANGER_USD_BACKING: Exchanger has insufficient available USD backing to fulfill funding request`
+        );
+      }
+
+      const updatedWallet = await tx.walletV2.findUniqueOrThrow({
+        where: { userId: quote.exchangerId },
+      });
+      assertWalletInvariants(updatedWallet);
+
+      const fundingRef = `FUND_P2P_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
+
+      // ۳. ثبت رکورد درخواست شارژ با ارجاع صریح به پیش‌فاکتور یکتا و صراف
+      const fundingRequest = await tx.advertiserFundingRequest.create({
+        data: {
+          fundingRef,
+          quoteRef: quote.quoteRef,
+          advertiserId: quote.advertiserId,
+          fundingMethod: 'IRT_P2P',
+          status: 'AWAITING_PAYMENT',
+          targetUsdCents: quote.targetUsdCents,
+          externalCurrency: 'IRT',
+          externalAmountUnits: quote.totalIrtPayable.toString(),
+          exchangeRate: quote.referenceRate,
+          currencyPurchaseFeeRate: quote.commissionPercentage,
+          feeAmountUnits: quote.referenceRate ? (quote.totalIrtPayable - (quote.targetUsdCents / 100) * quote.referenceRate).toString() : null,
+          adminNotes: `P2P funding through Exchanger ${quote.exchangerId} (Offer #${quote.offerId}) [QuoteRef: ${quote.quoteRef}]`,
+        },
+      });
+
+      // ۴. ثبت دفتر کل رزرو
+      await tx.ledgerEntryV2.create({
+        data: {
+          entryRef: `LEDGER_P2P_RES_${fundingRef}`,
+          postingGroupId: `RES_P2P_${fundingRequest.id}`,
+          accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
+          userId: quote.exchangerId,
+          fundingRequestId: fundingRequest.id,
+          amountCents: quote.targetUsdCents,
+          entryType: LedgerV2EntryType.P2P_FUNDING_RESERVE,
+          direction: LedgerV2Direction.DEBIT,
+          balanceAfterAvailableCents: updatedWallet.availableCents,
+          balanceAfterReservedCents: updatedWallet.reservedCents,
+          idempotencyKey: `P2P_RES_${fundingRequest.id}`,
+          description: `Reserved ${quote.targetUsdCents} cents from Exchanger for P2P funding #${fundingRequest.id}`,
+          createdBy: actorId,
+        },
+      });
+
+      return fundingRequest;
     });
-
-    if (walletRes.count !== 1) {
-      throw new Error(
-        `INSUFFICIENT_EXCHANGER_USD_BACKING: Exchanger has insufficient available USD backing to fulfill funding request`
-      );
+  } catch (err: any) {
+    // در صورت وقوع مسابقه همزمانی در تراکنش موازی (P2002 Unique Constraint Race)
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      const existing = await prisma.advertiserFundingRequest.findFirst({
+        where: { quoteRef: quote.quoteRef },
+      });
+      if (existing) {
+        if (existing.advertiserId !== quote.advertiserId) {
+          throw new Error('CROSS_USER_QUOTE_REPLAY: Quote was issued to another advertiser');
+        }
+        const termsMatch =
+          existing.targetUsdCents === quote.targetUsdCents &&
+          existing.externalCurrency === 'IRT' &&
+          existing.externalAmountUnits === quote.totalIrtPayable.toString();
+        if (!termsMatch) {
+          throw new Error('QUOTE_CONFLICT: Quote terms do not match original request');
+        }
+        if (existing.status === 'CONFIRMED_CREDITED') {
+          throw new Error('QUOTE_ALREADY_CONSUMED: P2P funding quote has already been settled and credited');
+        }
+        return existing;
+      }
     }
-
-    const updatedWallet = await tx.walletV2.findUniqueOrThrow({
-      where: { userId: quote.exchangerId },
-    });
-    assertWalletInvariants(updatedWallet);
-
-    const fundingRef = `FUND_P2P_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-
-    // ۲. ثبت رکورد درخواست شارژ با ارجاع صریح به پیش‌فاکتور و صراف
-    const fundingRequest = await tx.advertiserFundingRequest.create({
-      data: {
-        fundingRef,
-        advertiserId: quote.advertiserId,
-        fundingMethod: 'IRT_P2P',
-        status: 'AWAITING_PAYMENT',
-        targetUsdCents: quote.targetUsdCents,
-        externalCurrency: 'IRT',
-        externalAmountUnits: quote.totalIrtPayable.toString(),
-        exchangeRate: quote.referenceRate,
-        currencyPurchaseFeeRate: quote.commissionPercentage,
-        feeAmountUnits: quote.referenceRate ? (quote.totalIrtPayable - (quote.targetUsdCents / 100) * quote.referenceRate).toString() : null,
-        adminNotes: `P2P funding through Exchanger ${quote.exchangerId} (Offer #${quote.offerId}) [QuoteRef: ${quote.quoteRef}]`,
-      },
-    });
-
-    // ۳. ثبت دفتر کل رزرو
-    await tx.ledgerEntryV2.create({
-      data: {
-        entryRef: `LEDGER_P2P_RES_${fundingRef}`,
-        postingGroupId: `RES_P2P_${fundingRequest.id}`,
-        accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
-        userId: quote.exchangerId,
-        fundingRequestId: fundingRequest.id,
-        amountCents: quote.targetUsdCents,
-        entryType: LedgerV2EntryType.P2P_FUNDING_RESERVE,
-        direction: LedgerV2Direction.DEBIT,
-        balanceAfterAvailableCents: updatedWallet.availableCents,
-        balanceAfterReservedCents: updatedWallet.reservedCents,
-        idempotencyKey: `P2P_RES_${fundingRequest.id}`,
-        description: `Reserved ${quote.targetUsdCents} cents from Exchanger for P2P funding #${fundingRequest.id}`,
-        createdBy: actorId,
-      },
-    });
-
-    return fundingRequest;
-  });
+    throw err;
+  }
 }
 
 /**

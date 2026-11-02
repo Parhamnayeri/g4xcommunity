@@ -47,6 +47,7 @@ import {
   GoldTradeSettlementMethod,
   GoldTradeStatus,
   GoldDeliveryStatus,
+  LedgerV2EntryType,
 } from '../services/financeV2/financeV2Types';
 import {
   serializePublicOffer,
@@ -80,6 +81,7 @@ async function runSecurityHardeningSuite() {
   const testExch2Id = `sec_exch2_${now}`;
   const testAttackerId = `sec_att_${now}`;
   const testSuspendedExchId = `sec_susp_exch_${now}`;
+  const testAdminId = `sec_admin_${now}`;
 
   const originalSecret = process.env.EXCHANGE_QUOTE_SIGNING_SECRET;
 
@@ -94,6 +96,7 @@ async function runSecurityHardeningSuite() {
         { discordId: testExch2Id, username: 'SecExchanger2', isActive: true },
         { discordId: testAttackerId, username: 'SecAttacker', isActive: true },
         { discordId: testSuspendedExchId, username: 'SecSuspendedExchanger', isActive: false },
+        { discordId: testAdminId, username: 'SecAdmin', isActive: true },
       ],
     });
 
@@ -104,6 +107,7 @@ async function runSecurityHardeningSuite() {
         { userId: testExch2Id, roleKey: 'exchanger' },
         { userId: testAttackerId, roleKey: 'advertiser' },
         { userId: testSuspendedExchId, roleKey: 'exchanger' },
+        { userId: testAdminId, roleKey: 'admin' },
       ],
     });
 
@@ -318,13 +322,40 @@ async function runSecurityHardeningSuite() {
     const firstOrder = await createGoldTradeOrder(replayQuote);
     assert(firstOrder.id > 0, '6.1 Initial trade order created successfully');
 
-    let replayBlocked = false;
+    // Equivalent safe retry returns the existing trade idempotently without duplicating records
+    const secondOrder = await createGoldTradeOrder(replayQuote);
+    assert(secondOrder.id === firstOrder.id, '6.2 Safe retry of exact matching tradeRef returns existing trade idempotently');
+
+    // Mismatched terms with existing tradeRef is strictly rejected
+    let mismatchedTermsBlocked = false;
     try {
-      await createGoldTradeOrder(replayQuote); // تلاش دوباره با همان tradeRef
+      await createGoldTradeOrder({
+        ...replayQuote,
+        goldQuantity: 300000,
+        quoteHash: computeGoldTradeQuoteHash({
+          tradeRef: replayQuote.tradeRef,
+          sellerId: replayQuote.sellerId,
+          buyerId: replayQuote.buyerId,
+          offerId: replayQuote.acceptedOfferId,
+          offerVersion: replayQuote.offerVersion,
+          feePayer: replayQuote.feePayer,
+          gameSlug: replayQuote.gameSlug,
+          region: replayQuote.region,
+          realm: replayQuote.realm,
+          faction: replayQuote.faction,
+          goldQuantity: 300000,
+          agreedValuationUsdCents: replayQuote.agreedValuationUsdCents,
+          settlementMethod: replayQuote.settlementMethod,
+          commissionPercentage: replayQuote.commissionPercentage,
+          quotedPayableAmount: replayQuote.quotedPayableAmount,
+          quotedPayableCurrency: replayQuote.quotedPayableCurrency,
+          expiresAt: new Date(replayQuote.quoteExpiresAt),
+        }),
+      });
     } catch (e: any) {
-      replayBlocked = e.message.includes('QUOTE_REPLAY_DETECTED');
+      mismatchedTermsBlocked = e.message.includes('QUOTE_MISMATCH');
     }
-    assert(replayBlocked, '6.2 Replay of the exact same quoteRef is blocked');
+    assert(mismatchedTermsBlocked, '6.3 Replay of existing tradeRef with mismatched terms is rejected');
 
     // -------------------------------------------------------------
     // TEST 7: Missing / Short Signing Secret Fail-Closed
@@ -621,8 +652,381 @@ async function runSecurityHardeningSuite() {
       '16.2 Advertiser wallet non-negative invariants hold'
     );
 
+    // -------------------------------------------------------------
+    // TEST 17: Concurrent Acceptance of the SAME P2P Quote (With Sufficient Balance)
+    // -------------------------------------------------------------
+    console.log('\n--- 17. Concurrent Acceptance of SAME P2P Quote ---');
+    // Ensure Exchanger has plenty of balance ($500)
+    await prisma.walletV2.update({
+      where: { userId: testExchId },
+      data: { availableCents: 50000, reservedCents: 0 },
+    });
+    const p2pQuoteConcurrent = await generateP2pFundingQuote({
+      advertiserId: testAdvId,
+      exchangerId: testExchId,
+      offerId: p2pOffer.id,
+      targetUsdCents: 5000, // $50.00
+    });
+
+    // Run two concurrent accept requests for the SAME quote
+    const [resP2p1, resP2p2] = await Promise.all([
+      acceptP2pFundingRequest(testAdvId, p2pQuoteConcurrent),
+      acceptP2pFundingRequest(testAdvId, p2pQuoteConcurrent),
+    ]);
+
+    assert(resP2p1.id === resP2p2.id, '17.1 Both concurrent accept calls resolve to the same funding request');
+    assert(resP2p1.quoteRef === p2pQuoteConcurrent.quoteRef, '17.2 Authoritative quoteRef persisted');
+
+    // Exactly one funding liability
+    const fundingCount = await prisma.advertiserFundingRequest.count({
+      where: { quoteRef: p2pQuoteConcurrent.quoteRef },
+    });
+    assert(fundingCount === 1, '17.3 Exactly one funding liability created in database for quote');
+
+    // Exactly one wallet reservation (only $50 reserved, not $100)
+    const exchAfterConcurrent = await prisma.walletV2.findUniqueOrThrow({ where: { userId: testExchId } });
+    assert(
+      exchAfterConcurrent.availableCents === 45000 && exchAfterConcurrent.reservedCents === 5000,
+      `17.4 Exactly one wallet reservation performed: available 45000, reserved 5000 (got avail=${exchAfterConcurrent.availableCents}, res=${exchAfterConcurrent.reservedCents})`
+    );
+
+    // Exactly one ledger reservation entry
+    const ledgerP2pResCount = await prisma.ledgerEntryV2.count({
+      where: { fundingRequestId: resP2p1.id, entryType: LedgerV2EntryType.P2P_FUNDING_RESERVE },
+    });
+    assert(ledgerP2pResCount === 1, '17.5 Exactly one ledger reservation entry recorded');
+
+    // -------------------------------------------------------------
+    // TEST 18: Two DIFFERENT Quotes Competing for Insufficient Balance
+    // -------------------------------------------------------------
+    console.log('\n--- 18. Competing Quotes for Insufficient Balance ---');
+    // Set exchanger balance to exactly $60 (6000 cents) available, 0 reserved
+    await prisma.walletV2.update({
+      where: { userId: testExchId },
+      data: { availableCents: 6000, reservedCents: 0 },
+    });
+    // Two different valid quotes for $50 each (total $100 needed, but only $60 available)
+    const quoteCompeteA = await generateP2pFundingQuote({
+      advertiserId: testAdvId,
+      exchangerId: testExchId,
+      offerId: p2pOffer.id,
+      targetUsdCents: 5000,
+    });
+    const quoteCompeteB = await generateP2pFundingQuote({
+      advertiserId: testAdvId,
+      exchangerId: testExchId,
+      offerId: p2pOffer.id,
+      targetUsdCents: 5000,
+    });
+
+    const competeResults = await Promise.allSettled([
+      acceptP2pFundingRequest(testAdvId, quoteCompeteA),
+      acceptP2pFundingRequest(testAdvId, quoteCompeteB),
+    ]);
+
+    const fulfilledCount = competeResults.filter((r) => r.status === 'fulfilled').length;
+    const rejectedCount = competeResults.filter((r) => r.status === 'rejected').length;
+    assert(fulfilledCount === 1, '18.1 Exactly one competing quote succeeds');
+    assert(rejectedCount === 1, '18.2 Exactly one competing quote fails due to insufficient balance');
+
+    const failedReason = (competeResults.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason?.message;
+    assert(
+      failedReason?.includes('INSUFFICIENT_EXCHANGER_USD_BACKING'),
+      '18.3 Competing loser received INSUFFICIENT_EXCHANGER_USD_BACKING'
+    );
+
+    const exchAfterCompete = await prisma.walletV2.findUniqueOrThrow({ where: { userId: testExchId } });
+    assert(
+      exchAfterCompete.availableCents === 1000 && exchAfterCompete.reservedCents === 5000,
+      '18.4 Wallet balances correctly reflect exactly one deduction (available=1000, reserved=5000)'
+    );
+
+    // -------------------------------------------------------------
+    // TEST 19: Repeated P2P Quote with Different Terms Rejected
+    // -------------------------------------------------------------
+    console.log('\n--- 19. Repeated Quote with Different Terms ---');
+    let tamperedTermsBlocked = false;
+    try {
+      await acceptP2pFundingRequest(testAdvId, {
+        ...p2pQuoteConcurrent,
+        targetUsdCents: 99999, // tampered amount
+      });
+    } catch (e: any) {
+      tamperedTermsBlocked = e.message.includes('QUOTE_CONFLICT') || e.message.includes('QUOTE_TAMPERED');
+    }
+    assert(tamperedTermsBlocked, '19.1 Repeated quote with modified target amount is strictly rejected');
+
+    let tamperedRateBlocked = false;
+    try {
+      await acceptP2pFundingRequest(testAdvId, {
+        ...p2pQuoteConcurrent,
+        referenceRate: 1000000, // tampered rate
+      });
+    } catch (e: any) {
+      tamperedRateBlocked = e.message.includes('QUOTE_CONFLICT') || e.message.includes('QUOTE_TAMPERED');
+    }
+    assert(tamperedRateBlocked, '19.2 Repeated quote with modified exchange rate is strictly rejected');
+
+    // -------------------------------------------------------------
+    // TEST 20: Cross-User P2P Quote Replay Rejected
+    // -------------------------------------------------------------
+    console.log('\n--- 20. Cross-User P2P Quote Replay ---');
+    let crossUserP2pBlocked = false;
+    try {
+      // testAttackerId attempts to replay testAdvId's quote
+      await acceptP2pFundingRequest(testAttackerId, {
+        ...p2pQuoteConcurrent,
+        advertiserId: testAttackerId,
+      });
+    } catch (e: any) {
+      crossUserP2pBlocked =
+        e.message.includes('CROSS_USER_QUOTE_REPLAY') ||
+        e.message.includes('QUOTE_TAMPERED') ||
+        e.message.includes('UNAUTHORIZED_ACTOR');
+    }
+    assert(crossUserP2pBlocked, '20.1 Different authenticated user replaying another user quote is rejected');
+
+    // -------------------------------------------------------------
+    // TEST 21: Quote Already Consumed (Settled) Replay Rejected
+    // -------------------------------------------------------------
+    console.log('\n--- 21. Quote Already Consumed Replay Rejected ---');
+    // Enable P2P settlement temporarily to settle resP2p1
+    process.env.FINANCE_V2_P2P_SETTLEMENT_ENABLED = 'true';
+    await settleP2pFunding(resP2p1.id, testAdminId, `EVID_P2P_${Date.now()}`);
+    process.env.FINANCE_V2_P2P_SETTLEMENT_ENABLED = 'false';
+
+    let consumedQuoteBlocked = false;
+    try {
+      await acceptP2pFundingRequest(testAdvId, p2pQuoteConcurrent);
+    } catch (e: any) {
+      consumedQuoteBlocked = e.message.includes('QUOTE_ALREADY_CONSUMED');
+    }
+    assert(consumedQuoteBlocked, '21.1 Quote already settled/consumed cannot be accepted again');
+
+    // -------------------------------------------------------------
+    // TEST 22: Duplicate Wallet Reservation & Ledger Invariants Prevented on Safe Retries
+    // -------------------------------------------------------------
+    console.log('\n--- 22. Duplicate Wallet Reservation & Ledger Invariant on Safe Retries ---');
+    // Top up exchanger with $200
+    await prisma.walletV2.update({
+      where: { userId: testExchId },
+      data: { availableCents: 20000, reservedCents: 0 },
+    });
+    const quoteInFlight = await generateP2pFundingQuote({
+      advertiserId: testAdvId,
+      exchangerId: testExchId,
+      offerId: p2pOffer.id,
+      targetUsdCents: 3000, // $30.00
+    });
+
+    const firstAccept = await acceptP2pFundingRequest(testAdvId, quoteInFlight);
+    const exchAfterFirst = await prisma.walletV2.findUniqueOrThrow({ where: { userId: testExchId } });
+    assert(exchAfterFirst.availableCents === 17000 && exchAfterFirst.reservedCents === 3000, '22.1 First accept reserves $30');
+
+    // Safe retry 1
+    const secondAccept = await acceptP2pFundingRequest(testAdvId, quoteInFlight);
+    assert(secondAccept.id === firstAccept.id, '22.2 Safe retry returns identical request');
+
+    // Safe retry 2
+    const thirdAccept = await acceptP2pFundingRequest(testAdvId, quoteInFlight);
+    assert(thirdAccept.id === firstAccept.id, '22.3 Repeated retry returns identical request');
+
+    const exchAfterRetries = await prisma.walletV2.findUniqueOrThrow({ where: { userId: testExchId } });
+    assert(
+      exchAfterRetries.availableCents === 17000 && exchAfterRetries.reservedCents === 3000,
+      '22.4 No duplicate wallet reservation: balances unchanged after multiple retries'
+    );
+
+    const ledgerCountForInFlight = await prisma.ledgerEntryV2.count({
+      where: { fundingRequestId: firstAccept.id, entryType: LedgerV2EntryType.P2P_FUNDING_RESERVE },
+    });
+    assert(ledgerCountForInFlight === 1, '22.5 Exactly 1 ledger reservation entry across all safe retries');
+
+    // -------------------------------------------------------------
+    // TEST 23: Gold tradeRef Reused with a Forged Quote Rejected
+    // -------------------------------------------------------------
+    console.log('\n--- 23. Gold tradeRef Reused with Forged Quote Rejected ---');
+    // Top up exchanger
+    await prisma.walletV2.update({
+      where: { userId: testExchId },
+      data: { availableCents: 30000, reservedCents: 0 },
+    });
+    const validGoldQuoteForReuse = await generateGoldTradeQuote({
+      sellerId: testAdvId,
+      buyerId: testExchId,
+      gameSlug: 'wow_midnight',
+      goldQuantity: 100000,
+      agreedValuationUsdCents: 1000,
+      settlementMethod: GoldTradeSettlementMethod.USD_WALLET,
+    });
+    const tradeInitial = await createGoldTradeOrder(validGoldQuoteForReuse);
+
+    let forgedReuseBlocked = false;
+    try {
+      await createGoldTradeOrder({
+        ...validGoldQuoteForReuse,
+        agreedValuationUsdCents: 99999, // tampered amount with valid tradeRef
+        quoteHash: '0000000000000000000000000000000000000000000000000000000000000000',
+      });
+    } catch (e: any) {
+      forgedReuseBlocked = e.message.includes('QUOTE_TAMPERED') || e.message.includes('QUOTE_MISMATCH');
+    }
+    assert(forgedReuseBlocked, '23.1 Existing tradeRef with forged quote hash is strictly rejected');
+
+    let termsMismatchBlocked = false;
+    try {
+      // Compute valid HMAC for modified terms but reusing old tradeRef
+      const tamperedHmac = computeGoldTradeQuoteHash({
+        tradeRef: validGoldQuoteForReuse.tradeRef,
+        sellerId: validGoldQuoteForReuse.sellerId,
+        buyerId: validGoldQuoteForReuse.buyerId,
+        offerId: validGoldQuoteForReuse.acceptedOfferId,
+        offerVersion: validGoldQuoteForReuse.offerVersion,
+        feePayer: validGoldQuoteForReuse.feePayer,
+        gameSlug: validGoldQuoteForReuse.gameSlug,
+        region: validGoldQuoteForReuse.region,
+        realm: validGoldQuoteForReuse.realm,
+        faction: validGoldQuoteForReuse.faction,
+        goldQuantity: 200000, // changed gold quantity!
+        agreedValuationUsdCents: 2000, // changed price!
+        settlementMethod: validGoldQuoteForReuse.settlementMethod,
+        commissionPercentage: validGoldQuoteForReuse.commissionPercentage,
+        quotedPayableAmount: validGoldQuoteForReuse.quotedPayableAmount,
+        quotedPayableCurrency: validGoldQuoteForReuse.quotedPayableCurrency,
+        expiresAt: new Date(validGoldQuoteForReuse.quoteExpiresAt),
+      });
+
+      await createGoldTradeOrder({
+        ...validGoldQuoteForReuse,
+        goldQuantity: 200000,
+        agreedValuationUsdCents: 2000,
+        quoteHash: tamperedHmac,
+      });
+    } catch (e: any) {
+      termsMismatchBlocked = e.message.includes('QUOTE_MISMATCH');
+    }
+    assert(termsMismatchBlocked, '23.2 Existing tradeRef with altered terms (even with matching HMAC) is rejected with QUOTE_MISMATCH');
+
+    // -------------------------------------------------------------
+    // TEST 24: Gold tradeRef Reused with Valid Matching Terms (Safe Idempotency)
+    // -------------------------------------------------------------
+    console.log('\n--- 24. Gold tradeRef Reused with Matching Terms ---');
+    const tradeRetried = await createGoldTradeOrder(validGoldQuoteForReuse);
+    assert(tradeRetried.id === tradeInitial.id, '24.1 Re-creating order with exact same valid quote returns existing trade');
+
+    const totalTradesForRef = await prisma.goldTrade.count({
+      where: { tradeRef: validGoldQuoteForReuse.tradeRef },
+    });
+    assert(totalTradesForRef === 1, '24.2 No duplicate GoldTrade record created');
+
+    // Accept it
+    const acceptedTrade = await acceptGoldTrade(tradeInitial.id, testAdvId);
+    assert(acceptedTrade.tradeStatus === GoldTradeStatus.FUNDS_RESERVED, '24.3 Accepted trade status is FUNDS_RESERVED');
+
+    // Re-accepting returns the existing trade without duplicate reservation
+    const exchBeforeReAccept = await prisma.walletV2.findUniqueOrThrow({ where: { userId: testExchId } });
+    const reAccepted = await acceptGoldTrade(tradeInitial.id, testAdvId);
+    const exchAfterReAccept = await prisma.walletV2.findUniqueOrThrow({ where: { userId: testExchId } });
+    assert(reAccepted.id === acceptedTrade.id, '24.4 Re-accept returns same trade');
+    assert(
+      exchBeforeReAccept.availableCents === exchAfterReAccept.availableCents &&
+      exchBeforeReAccept.reservedCents === exchAfterReAccept.reservedCents,
+      '24.5 Re-accept does not duplicate wallet reservation'
+    );
+
+    // -------------------------------------------------------------
+    // TEST 25: Missing Signing Secret Fail-Closed
+    // -------------------------------------------------------------
+    console.log('\n--- 25. Missing Signing Secret Fail-Closed ---');
+    delete process.env.EXCHANGE_QUOTE_SIGNING_SECRET;
+    let missingSecretBlockedP2p = false;
+    try {
+      await acceptP2pFundingRequest(testAdvId, quoteInFlight);
+    } catch (e: any) {
+      missingSecretBlockedP2p = e.message.includes('MISSING_EXCHANGE_QUOTE_SIGNING_SECRET');
+    }
+    process.env.EXCHANGE_QUOTE_SIGNING_SECRET = originalSecret;
+    assert(missingSecretBlockedP2p, '25.1 Missing signing secret strictly fails closed on acceptP2pFundingRequest');
+
+    // -------------------------------------------------------------
+    // TEST 26: Failed Transaction Rollback Leaves Zero Trace
+    // -------------------------------------------------------------
+    console.log('\n--- 26. Failed Transaction Rollback ---');
+    const exchBeforeFailed = await prisma.walletV2.findUniqueOrThrow({ where: { userId: testExchId } });
+    const ledgerCountBefore = await prisma.ledgerEntryV2.count({ where: { userId: testExchId } });
+    const fundingCountBefore = await prisma.advertiserFundingRequest.count();
+
+    // Create quote for more than exchanger's available balance to force rollback
+    const hugeQuote = await generateP2pFundingQuote({
+      advertiserId: testAdvId,
+      exchangerId: testExchId,
+      offerId: p2pOffer.id,
+      targetUsdCents: 9999999, // $99,999.99
+    });
+
+    let rollbackTriggered = false;
+    try {
+      await acceptP2pFundingRequest(testAdvId, hugeQuote);
+    } catch (e: any) {
+      rollbackTriggered = e.message.includes('INSUFFICIENT_EXCHANGER_USD_BACKING');
+    }
+    assert(rollbackTriggered, '26.1 Insufficient balance triggered expected error');
+
+    const exchAfterFailed = await prisma.walletV2.findUniqueOrThrow({ where: { userId: testExchId } });
+    const ledgerCountAfter = await prisma.ledgerEntryV2.count({ where: { userId: testExchId } });
+    const fundingCountAfter = await prisma.advertiserFundingRequest.count();
+
+    assert(
+      exchBeforeFailed.availableCents === exchAfterFailed.availableCents &&
+      exchBeforeFailed.reservedCents === exchAfterFailed.reservedCents,
+      '26.2 Exchanger wallet balances perfectly preserved on rollback'
+    );
+    assert(ledgerCountBefore === ledgerCountAfter, '26.3 Zero ledger entries created on rollback');
+    assert(fundingCountBefore === fundingCountAfter, '26.4 Zero funding liabilities created on rollback');
+
+    // -------------------------------------------------------------
+    // TEST 27: No Phantom Wallet Credits on Acceptance
+    // -------------------------------------------------------------
+    console.log('\n--- 27. No Phantom Wallet Credits ---');
+    const advWalletBeforeAccept = await prisma.walletV2.findUniqueOrThrow({ where: { userId: testAdvId } });
+    const freshP2pQuoteForCheck = await generateP2pFundingQuote({
+      advertiserId: testAdvId,
+      exchangerId: testExchId,
+      offerId: p2pOffer.id,
+      targetUsdCents: 2000,
+    });
+    await acceptP2pFundingRequest(testAdvId, freshP2pQuoteForCheck);
+    const advWalletAfterAccept = await prisma.walletV2.findUniqueOrThrow({ where: { userId: testAdvId } });
+    assert(
+      advWalletBeforeAccept.availableCents === advWalletAfterAccept.availableCents,
+      '27.1 P2P quote acceptance never creates phantom available balance for advertiser'
+    );
+
+    // -------------------------------------------------------------
+    // TEST 28: Database-Enforced quoteRef Uniqueness on AdvertiserFundingRequest
+    // -------------------------------------------------------------
+    console.log('\n--- 28. Database-Enforced quoteRef Uniqueness ---');
+    let dbUniqueConstraintThrown = false;
+    try {
+      await prisma.advertiserFundingRequest.create({
+        data: {
+          fundingRef: `FUND_TEST_DUP_REF_${Date.now()}`,
+          quoteRef: p2pQuoteConcurrent.quoteRef, // reuse existing unique quoteRef!
+          advertiserId: testAdvId,
+          fundingMethod: 'IRT_P2P',
+          status: 'AWAITING_PAYMENT',
+          targetUsdCents: 5000,
+          externalCurrency: 'IRT',
+          externalAmountUnits: '50000000',
+        },
+      });
+    } catch (e: any) {
+      dbUniqueConstraintThrown = e.message.includes('Unique constraint failed') || e.code === 'P2002';
+    }
+    assert(dbUniqueConstraintThrown, '28.1 Database partial unique index strictly prevents duplicate quoteRef insertion');
+
     console.log('\n============================================================');
-    console.log('   ALL 16 PHASE 6 SECURITY HARDENING TESTS PASSED!          ');
+    console.log('   ALL 28 PHASE 6 SECURITY HARDENING TESTS PASSED!          ');
     console.log('============================================================\n');
   } finally {
     // بازگردانی متغیرهای محیطی
@@ -632,7 +1036,7 @@ async function runSecurityHardeningSuite() {
     // پاکسازی داده‌های تست
     await prisma.ledgerEntryV2.deleteMany({
       where: {
-        userId: { in: [testAdvId, testExchId, testExch2Id, testAttackerId, testSuspendedExchId] },
+        userId: { in: [testAdvId, testExchId, testExch2Id, testAttackerId, testSuspendedExchId, testAdminId] },
       },
     });
     await prisma.goldTrade.deleteMany({
@@ -650,13 +1054,13 @@ async function runSecurityHardeningSuite() {
       where: { exchangerId: { in: [testExchId, testExch2Id] } },
     });
     await prisma.walletV2.deleteMany({
-      where: { userId: { in: [testAdvId, testExchId, testExch2Id, testAttackerId, testSuspendedExchId] } },
+      where: { userId: { in: [testAdvId, testExchId, testExch2Id, testAttackerId, testSuspendedExchId, testAdminId] } },
     });
     await prisma.userRole.deleteMany({
-      where: { userId: { in: [testAdvId, testExchId, testExch2Id, testAttackerId, testSuspendedExchId] } },
+      where: { userId: { in: [testAdvId, testExchId, testExch2Id, testAttackerId, testSuspendedExchId, testAdminId] } },
     });
     await prisma.user.deleteMany({
-      where: { discordId: { in: [testAdvId, testExchId, testExch2Id, testAttackerId, testSuspendedExchId] } },
+      where: { discordId: { in: [testAdvId, testExchId, testExch2Id, testAttackerId, testSuspendedExchId, testAdminId] } },
     });
     await prisma.$disconnect();
   }

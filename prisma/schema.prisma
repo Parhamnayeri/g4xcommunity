@@ -1179,6 +1179,7 @@ model LedgerEntryV2 {
 model AdvertiserFundingRequest {
   id                      Int       @id @default(autoincrement())
   fundingRef              String    @unique @map("funding_ref")
+  quoteRef                String?   @unique @map("quote_ref")
   advertiserId            String    @map("advertiser_id")
   fundingMethod           String    @map("funding_method") // USDT | IRT | GOLD_EXCHANGE
   status                  String    @default("PENDING_VERIFICATION") @map("status")
