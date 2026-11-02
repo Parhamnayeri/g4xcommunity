@@ -269,12 +269,27 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
 
                   <td style={{ padding: '0.65rem 0.75rem', fontSize: '0.75rem' }}>
                     {item.externalTxHash ? (
-                      <span style={{ fontFamily: 'monospace', color: 'var(--primary-purple)' }} title={item.rawTxHash || ''}>
-                        Tx: {item.externalTxHash}
-                      </span>
-                    ) : item.bankReceiptRef ? (
-                      <span style={{ fontFamily: 'monospace', color: 'var(--status-info)' }}>
-                        Ref: {item.bankReceiptRef}
+                      item.txExplorerUrl ? (
+                        <a
+                          href={item.txExplorerUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            fontFamily: 'monospace',
+                            color: 'var(--primary-purple)',
+                            textDecoration: 'underline',
+                          }}
+                        >
+                          Tx: {item.externalTxHash} ↗
+                        </a>
+                      ) : (
+                        <span style={{ fontFamily: 'monospace', color: 'var(--primary-purple)' }}>
+                          Tx: {item.externalTxHash}
+                        </span>
+                      )
+                    ) : item.bankSettled ? (
+                      <span style={{ fontFamily: 'monospace', color: 'var(--status-success)', fontWeight: 600 }}>
+                        ✓ Bank Settled
                       </span>
                     ) : (
                       <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Pending manual payout</span>

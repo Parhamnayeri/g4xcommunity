@@ -142,7 +142,7 @@ export interface WithdrawalHistoryItem {
   quotedCurrency: string;
   quoteRate: number | null;
   effectiveRate: number | null;
-  destinationAddress: string;
+  destinationAddress?: string;
   maskedDestinationAddress: string;
   destinationAccountHolder?: string | null;
   scheduledCycleDay?: string | null;
@@ -155,6 +155,9 @@ export interface WithdrawalHistoryItem {
     rawStatus: string;
   };
   externalTxHash?: string | null;
+  maskedTxHash?: string | null;
+  txExplorerUrl?: string | null;
+  bankSettled?: boolean;
   rawTxHash?: string | null;
   bankReceiptRef?: string | null;
   rejectionReason?: string | null;

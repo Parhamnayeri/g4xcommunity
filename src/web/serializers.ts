@@ -9,6 +9,8 @@ import {
   getRankBasisPoints,
   formatBasisPoints,
 } from '../services/advertiserRankService';
+import { mapWithdrawalStatus, SimplifiedStatusResult } from '../services/statusSimplifier';
+import { maskCryptoAddress, maskIban } from '../services/financeV2/iranianIbanValidator';
 
 export interface SerializedUser {
   discordId: string;
@@ -201,3 +203,127 @@ export function serializeOrderHistory(
     createdAt: order.createdAt,
   };
 }
+
+export interface SerializedUserWithdrawal {
+  id: number;
+  withdrawalRef: string;
+  payoutMethod: string;
+  requestedUsdCents: number;
+  requestedUsd: string;
+  fixedFeeUsdCents: number;
+  fixedFeeUsd: string;
+  netUsdCents: number;
+  netUsd: string;
+  quotedNetPayoutAmount: string;
+  quotedCurrency: string;
+  quoteRate: number | null;
+  effectiveRate: number | null;
+  rateDiscount?: number | null;
+  maskedDestinationAddress: string;
+  scheduledCycleDay?: string | null;
+  scheduledCycleDate?: Date | null;
+  schedulingStatus?: string;
+  status: string;
+  simplifiedStatus: SimplifiedStatusResult;
+  externalTxHash?: string | null;
+  maskedTxHash?: string | null;
+  txExplorerUrl?: string | null;
+  bankSettled?: boolean;
+  rejectionReason?: string | null;
+  cancelReason?: string | null;
+  createdAt: Date;
+  processedAt?: Date | null;
+  userConfirmedAt?: Date | null;
+}
+
+export interface SerializedAdminWithdrawal extends SerializedUserWithdrawal {
+  boosterId: string;
+  booster?: {
+    discordId: string;
+    username: string;
+    displayName: string | null;
+  };
+  destinationAddress: string;
+  destinationAccountHolder?: string | null;
+  rawTxHash?: string | null;
+  bankReceiptRef?: string | null;
+  processedBy?: string | null;
+  approvedBy?: string | null;
+  approvedAt?: Date | null;
+}
+
+/**
+ * سریالایزر تاریخچه و وضعیت تسویه برای کاربران عادی
+ * حداقل‌سازی داده‌ها: عدم افشای آدرس کامل، نام صاحب حساب، کد تراکنش خام یا کد پیگیری بانکی
+ */
+export function serializeUserWithdrawal(r: any): SerializedUserWithdrawal {
+  const isUsdt = r.payoutMethod === 'USDT_BEP20' || r.payoutMethod === 'USDT';
+  const maskedDest = isUsdt
+    ? maskCryptoAddress(r.destinationAddress || '')
+    : maskIban(r.destinationAddress || '');
+
+  const hasTx = !!r.externalTxHash;
+  const maskedTx = hasTx ? maskCryptoAddress(r.externalTxHash) : null;
+  const explorerUrl =
+    isUsdt && hasTx && r.status === 'PAID'
+      ? `https://bscscan.com/tx/${r.externalTxHash}`
+      : null;
+
+  return {
+    id: r.id,
+    withdrawalRef: r.withdrawalRef,
+    payoutMethod: r.payoutMethod,
+    requestedUsdCents: r.requestedUsdCents,
+    requestedUsd: (r.requestedUsdCents / 100).toFixed(2),
+    fixedFeeUsdCents: r.fixedFeeUsdCents,
+    fixedFeeUsd: (r.fixedFeeUsdCents / 100).toFixed(2),
+    netUsdCents: r.netUsdCents,
+    netUsd: (r.netUsdCents / 100).toFixed(2),
+    quotedNetPayoutAmount: r.quotedNetPayoutAmount,
+    quotedCurrency: r.quotedCurrency,
+    quoteRate: r.quoteRate ?? null,
+    effectiveRate: r.effectiveRate ?? null,
+    rateDiscount: r.rateDiscount ?? null,
+    maskedDestinationAddress: maskedDest,
+    scheduledCycleDay: r.scheduledCycleDay ?? null,
+    scheduledCycleDate: r.scheduledCycleDate ?? null,
+    schedulingStatus: r.schedulingStatus ?? 'PENDING_SCHEDULE',
+    status: r.status,
+    simplifiedStatus: mapWithdrawalStatus(r.status),
+    externalTxHash: maskedTx,
+    maskedTxHash: maskedTx,
+    txExplorerUrl: explorerUrl,
+    bankSettled: !!r.bankReceiptRef && r.status === 'PAID',
+    rejectionReason: r.rejectionReason ?? null,
+    cancelReason: r.cancelReason ?? null,
+    createdAt: r.createdAt,
+    processedAt: r.processedAt ?? null,
+    userConfirmedAt: r.userConfirmedAt ?? null,
+  };
+}
+
+/**
+ * سریالایزر ویژه پنل مالی ادمین با دسترسی کامل به مدارک تسویه جهت انطباق و تایید
+ */
+export function serializeAdminWithdrawal(r: any): SerializedAdminWithdrawal {
+  const base = serializeUserWithdrawal(r);
+  return {
+    ...base,
+    boosterId: r.boosterId,
+    booster: r.booster
+      ? {
+          discordId: r.booster.discordId,
+          username: r.booster.username,
+          displayName: r.booster.displayName,
+        }
+      : undefined,
+    destinationAddress: r.destinationAddress,
+    destinationAccountHolder: r.destinationAccountHolder ?? null,
+    rawTxHash: r.externalTxHash ?? null,
+    bankReceiptRef: r.bankReceiptRef ?? null,
+    processedBy: r.processedBy ?? null,
+    approvedBy: r.approvedBy ?? null,
+    approvedAt: r.approvedAt ?? null,
+  };
+}
+

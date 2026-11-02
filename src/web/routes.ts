@@ -70,6 +70,10 @@ import {
   adminRejectWithdrawal,
 } from '../services/financeV2/boosterWithdrawalService';
 import {
+  serializeUserWithdrawal,
+  serializeAdminWithdrawal,
+} from './serializers';
+import {
   recordProofSubmitted,
   recordStaffReview,
   recordAdminFinalApproval,
@@ -1401,37 +1405,14 @@ const handleWithdrawalQuote = async (req: Request, res: Response): Promise<void>
     }
 
     const requestRecord = await createWithdrawalRequestFromQuote(quoteResult);
+    const serializedQuote = serializeUserWithdrawal(requestRecord);
 
     res.json({
       success: true,
       quote: {
-        id: requestRecord.id,
-        withdrawalRef: requestRecord.withdrawalRef,
-        payoutMethod: requestRecord.payoutMethod,
-        requestedUsdCents: requestRecord.requestedUsdCents,
-        requestedUsd: (requestRecord.requestedUsdCents / 100).toFixed(2),
-        fixedFeeUsdCents: requestRecord.fixedFeeUsdCents,
-        fixedFeeUsd: (requestRecord.fixedFeeUsdCents / 100).toFixed(2),
-        netUsdCents: requestRecord.netUsdCents,
-        netUsd: (requestRecord.netUsdCents / 100).toFixed(2),
-        quoteRate: requestRecord.quoteRate,
-        effectiveRate: requestRecord.effectiveRate,
-        rateDiscount: requestRecord.rateDiscount,
-        quotedNetPayoutAmount: requestRecord.quotedNetPayoutAmount,
-        quotedCurrency: requestRecord.quotedCurrency,
-        destinationAddress: requestRecord.destinationAddress,
-        maskedDestinationAddress:
-          requestRecord.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20
-            ? maskCryptoAddress(requestRecord.destinationAddress)
-            : maskIban(requestRecord.destinationAddress),
-        destinationAccountHolder: requestRecord.destinationAccountHolder,
-        scheduledCycleDay: requestRecord.scheduledCycleDay,
-        scheduledCycleDate: requestRecord.scheduledCycleDate,
-        schedulingStatus: requestRecord.schedulingStatus,
+        ...serializedQuote,
         quoteExpiresAt: requestRecord.quoteExpiresAt,
         quoteHash: requestRecord.quoteHash,
-        status: requestRecord.status,
-        simplifiedStatus: mapWithdrawalStatus(requestRecord.status),
       },
     });
   } catch (err: any) {
@@ -1477,33 +1458,7 @@ const handleWithdrawalConfirm = async (req: Request, res: Response): Promise<voi
 
     res.json({
       success: true,
-      request: {
-        id: request.id,
-        withdrawalRef: request.withdrawalRef,
-        payoutMethod: request.payoutMethod,
-        requestedUsdCents: request.requestedUsdCents,
-        requestedUsd: (request.requestedUsdCents / 100).toFixed(2),
-        fixedFeeUsdCents: request.fixedFeeUsdCents,
-        fixedFeeUsd: (request.fixedFeeUsdCents / 100).toFixed(2),
-        netUsdCents: request.netUsdCents,
-        netUsd: (request.netUsdCents / 100).toFixed(2),
-        quotedNetPayoutAmount: request.quotedNetPayoutAmount,
-        quotedCurrency: request.quotedCurrency,
-        quoteRate: request.quoteRate,
-        effectiveRate: request.effectiveRate,
-        destinationAddress: request.destinationAddress,
-        maskedDestinationAddress:
-          request.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20
-            ? maskCryptoAddress(request.destinationAddress)
-            : maskIban(request.destinationAddress),
-        destinationAccountHolder: request.destinationAccountHolder,
-        scheduledCycleDay: request.scheduledCycleDay,
-        scheduledCycleDate: request.scheduledCycleDate,
-        status: request.status,
-        simplifiedStatus: mapWithdrawalStatus(request.status),
-        userConfirmedAt: request.userConfirmedAt,
-        createdAt: request.createdAt,
-      },
+      request: serializeUserWithdrawal(request),
       wallet: {
         availableCents: wallet.availableCents,
         availableUsd: (wallet.availableCents / 100).toFixed(2),
@@ -1539,13 +1494,7 @@ const handleWithdrawalCancel = async (req: Request, res: Response): Promise<void
     res.json({
       success: true,
       alreadyCancelled: !!alreadyCancelled,
-      request: {
-        id: request.id,
-        withdrawalRef: request.withdrawalRef,
-        status: request.status,
-        simplifiedStatus: mapWithdrawalStatus(request.status),
-        cancelReason: request.cancelReason,
-      },
+      request: serializeUserWithdrawal(request),
       wallet: wallet
         ? {
             availableCents: wallet.availableCents,
@@ -1592,39 +1541,7 @@ const handleWithdrawalHistory = async (req: Request, res: Response): Promise<voi
       prisma.boosterWithdrawalRequest.count({ where: whereClause }),
     ]);
 
-    const withdrawals = requestsRaw.map((r) => ({
-      id: r.id,
-      withdrawalRef: r.withdrawalRef,
-      payoutMethod: r.payoutMethod,
-      requestedUsdCents: r.requestedUsdCents,
-      requestedUsd: (r.requestedUsdCents / 100).toFixed(2),
-      fixedFeeUsdCents: r.fixedFeeUsdCents,
-      fixedFeeUsd: (r.fixedFeeUsdCents / 100).toFixed(2),
-      netUsdCents: r.netUsdCents,
-      netUsd: (r.netUsdCents / 100).toFixed(2),
-      quotedNetPayoutAmount: r.quotedNetPayoutAmount,
-      quotedCurrency: r.quotedCurrency,
-      quoteRate: r.quoteRate,
-      effectiveRate: r.effectiveRate,
-      destinationAddress: r.destinationAddress,
-      maskedDestinationAddress:
-        r.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20
-          ? maskCryptoAddress(r.destinationAddress)
-          : maskIban(r.destinationAddress),
-      destinationAccountHolder: r.destinationAccountHolder,
-      scheduledCycleDay: r.scheduledCycleDay,
-      scheduledCycleDate: r.scheduledCycleDate,
-      schedulingStatus: r.schedulingStatus,
-      status: r.status,
-      simplifiedStatus: mapWithdrawalStatus(r.status),
-      externalTxHash: r.externalTxHash ? maskCryptoAddress(r.externalTxHash) : null,
-      rawTxHash: r.externalTxHash,
-      bankReceiptRef: r.bankReceiptRef,
-      rejectionReason: r.rejectionReason,
-      cancelReason: r.cancelReason,
-      createdAt: r.createdAt,
-      processedAt: r.processedAt,
-    }));
+    const withdrawals = requestsRaw.map(serializeUserWithdrawal);
 
     res.json({
       success: true,
@@ -1657,10 +1574,7 @@ router.get('/withdrawals/my', requireAuth, async (req: Request, res: Response): 
 
     res.json({
       success: true,
-      withdrawals: requests.map((r) => ({
-        ...r,
-        simplifiedStatus: mapWithdrawalStatus(r.status),
-      })),
+      withdrawals: requests.map(serializeUserWithdrawal),
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to fetch withdrawals' });
@@ -1677,10 +1591,7 @@ router.get('/api/withdrawals/my', requireAuth, async (req: Request, res: Respons
 
     res.json({
       success: true,
-      withdrawals: requests.map((r) => ({
-        ...r,
-        simplifiedStatus: mapWithdrawalStatus(r.status),
-      })),
+      withdrawals: requests.map(serializeUserWithdrawal),
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to fetch withdrawals' });
@@ -1705,10 +1616,7 @@ router.get(
 
       res.json({
         success: true,
-        withdrawals: requests.map((r) => ({
-          ...r,
-          simplifiedStatus: mapWithdrawalStatus(r.status),
-        })),
+        withdrawals: requests.map(serializeAdminWithdrawal),
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -1725,41 +1633,42 @@ router.post(
     try {
       const { user } = req as AuthenticatedRequest;
       const id = Number(req.params.id);
-      const { decision, txHash, reason } = req.body;
+      const { decision, txHash, bankReceiptRef, reason } = req.body;
 
       if (decision === 'approve_paid') {
         const tx = txHash ? String(txHash).trim() : '';
-        if (!tx) {
-          res.status(400).json({ error: 'Verified blockchain TxHash or Bank Receipt reference is strictly required for manual payout disbursement' });
+        const receipt = bankReceiptRef ? String(bankReceiptRef).trim() : tx;
+        if (!tx && !receipt) {
+          res.status(400).json({
+            error:
+              'Verified blockchain TxHash or Bank Receipt reference is strictly required for manual payout disbursement',
+          });
           return;
         }
         const { request: updatedReq } = await adminExecuteManualPayout(id, user.discordId, {
-          externalTxHash: tx,
-          bankReceiptRef: tx,
-          notes: 'Executed via Admin Hub with verified disbursement evidence',
+          externalTxHash: tx || undefined,
+          bankReceiptRef: receipt || undefined,
+          bep20Evidence: req.body.bep20Evidence,
+          irtEvidence: req.body.irtEvidence,
+          notes: req.body.notes || 'Executed via Admin Hub with verified disbursement evidence',
         });
         res.json({
           success: true,
-          request: {
-            ...updatedReq,
-            simplifiedStatus: mapWithdrawalStatus(updatedReq.status),
-          },
+          request: serializeAdminWithdrawal(updatedReq),
         });
       } else if (decision === 'reject') {
         const rejReason = reason || 'Rejected by administration';
         const { request } = await adminRejectWithdrawal(id, user.discordId, rejReason);
         res.json({
           success: true,
-          request: {
-            ...request,
-            simplifiedStatus: mapWithdrawalStatus(request.status),
-          },
+          request: serializeAdminWithdrawal(request),
         });
       } else {
         res.status(400).json({ error: "Invalid decision. Must be 'approve_paid' or 'reject'." });
       }
     } catch (err: any) {
-      res.status(400).json({ error: err.message || 'Withdrawal review failed' });
+      const status = err.message?.includes('LIVE_PAYOUTS_DISABLED') ? 403 : 400;
+      res.status(status).json({ error: err.message || 'Withdrawal review failed' });
     }
   }
 );

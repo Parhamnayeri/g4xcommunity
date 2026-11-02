@@ -10,10 +10,26 @@ import {
   adminExecuteManualPayout,
   adminRejectWithdrawal,
   confirmAndSubmitWithdrawalRequest,
+  boosterCancelWithdrawal,
+  computeWithdrawalQuoteHash,
+  verifyWithdrawalQuoteHash,
+  generateUsdtWithdrawalQuote,
+  createWithdrawalRequestFromQuote,
 } from '../services/financeV2/boosterWithdrawalService';
-import { LedgerV2EntryType } from '../services/financeV2/financeV2Types';
+import {
+  BoosterWithdrawalMethod,
+  BoosterWithdrawalStatus,
+  LedgerV2EntryType,
+} from '../services/financeV2/financeV2Types';
 import { validateIranianIban, maskIban, maskCryptoAddress } from '../services/financeV2/iranianIbanValidator';
 import { validateBep20Address } from '../services/financeV2/bep20Validator';
+import {
+  validatePayoutEvidenceFormat,
+  assertNoDuplicatePayoutEvidence,
+  reconcileUsdtBep20Payout,
+  reconcileIrtBankPayout,
+  BSC_USDT_CONTRACT_MAINNET,
+} from '../services/financeV2/payoutVerificationService';
 
 async function createAuthenticatedAgent(userId: string) {
   const agent = request.agent(app);
@@ -332,6 +348,10 @@ async function runWithdrawPhase3Suite() {
     const usdtHistoryItem = historyResA.body.withdrawals.find((w: any) => w.payoutMethod === 'USDT_BEP20');
     const irtHistoryItem = historyResA.body.withdrawals.find((w: any) => w.payoutMethod === 'IRT_BANK');
     assert(usdtHistoryItem?.maskedDestinationAddress === '0x1234...5678', '47. Destination address masked in history list');
+    assert(usdtHistoryItem?.destinationAddress === undefined, '47a. Full unmasked destinationAddress absent from ordinary user history response');
+    assert(usdtHistoryItem?.destinationAccountHolder === undefined, '47b. DestinationAccountHolder absent from ordinary user history response');
+    assert(usdtHistoryItem?.rawTxHash === undefined, '47c. RawTxHash absent from ordinary user history response');
+    assert(usdtHistoryItem?.bankReceiptRef === undefined, '47d. BankReceiptRef absent from ordinary user history response');
     assert(usdtHistoryItem?.status === 'RESERVED', '48. Status correctly rendered in history list');
     assert(irtHistoryItem?.maskedDestinationAddress === 'IR20...3003', '48b. IRT Sheba masked in history list');
 
@@ -516,6 +536,125 @@ async function runWithdrawPhase3Suite() {
       }
     }
     assert(noForbiddenVars, '66. Zero forbidden/undeclared CSS variables in withdrawal components');
+
+    // ─── ۲۳. اعتبارسنجی قالب مدرک تسویه برون‌سیستمی (Evidence Format Rejection) ───
+    const invalidHexTx = validatePayoutEvidenceFormat(BoosterWithdrawalMethod.USDT_BEP20, {
+      externalTxHash: 'not-a-valid-0x-hex-string',
+    });
+    assert(invalidHexTx.isValid === false && Boolean(invalidHexTx.error?.includes('INVALID_BLOCKCHAIN_TX_HASH')), '67. Arbitrary non-hex string strictly rejected for BEP-20 payout');
+
+    const shortHexTx = validatePayoutEvidenceFormat(BoosterWithdrawalMethod.USDT_BEP20, {
+      externalTxHash: '0x1234',
+    });
+    assert(shortHexTx.isValid === false && Boolean(shortHexTx.error?.includes('INVALID_BLOCKCHAIN_TX_HASH')), '68. Short hex string strictly rejected for BEP-20 payout');
+
+    const valid66Hex = '0x' + 'a'.repeat(64);
+    const validHexTx = validatePayoutEvidenceFormat(BoosterWithdrawalMethod.USDT_BEP20, {
+      externalTxHash: valid66Hex,
+    });
+    assert(validHexTx.isValid === true && validHexTx.normalizedRef === valid66Hex.toLowerCase(), '69. Authoritative 66-character 0x hex hash format accepted');
+
+    const shortBankRef = validatePayoutEvidenceFormat(BoosterWithdrawalMethod.IRT_BANK, {
+      bankReceiptRef: '123',
+    });
+    assert(shortBankRef.isValid === false && Boolean(shortBankRef.error?.includes('INVALID_BANK_RECEIPT_LENGTH')), '70. Short bank reference strictly rejected');
+
+    // ─── ۲۴. ممانعت از ثبت مدارک تسویه تکراری (Duplicate Evidence Replay Prevention) ───
+    const dupTestRef = '0x' + 'd'.repeat(64);
+    const dummyPaidReq = await prisma.boosterWithdrawalRequest.create({
+      data: {
+        withdrawalRef: `WDR_DUP_TEST_${Date.now()}`,
+        boosterId: uTestA,
+        payoutMethod: BoosterWithdrawalMethod.USDT_BEP20,
+        status: BoosterWithdrawalStatus.PAID,
+        requestedUsdCents: 1000,
+        fixedFeeUsdCents: 40,
+        netUsdCents: 960,
+        quotedNetPayoutAmount: '9.60',
+        quotedCurrency: 'USDT',
+        destinationAddress: validBep20,
+        externalTxHash: dupTestRef,
+      },
+    });
+
+    let duplicateBlocked = false;
+    try {
+      await assertNoDuplicatePayoutEvidence(BoosterWithdrawalMethod.USDT_BEP20, dupTestRef, 999999);
+    } catch (err: any) {
+      if (err.message.includes('DUPLICATE_PAYOUT_EVIDENCE')) {
+        duplicateBlocked = true;
+      }
+    }
+    assert(duplicateBlocked, '71. Duplicate payout evidence across multiple withdrawal requests strictly prevented');
+    await prisma.boosterWithdrawalRequest.delete({ where: { id: dummyPaidReq.id } });
+
+    // ─── ۲۵. رد انطباق تراکنش تتر در صورت مغایرت آدرس مقصد یا مبلغ ─────────────
+    const mismatchRecipient = await reconcileUsdtBep20Payout(
+      { id: 101, destinationAddress: '0x1234567890abcdef1234567890abcdef12345678', quotedNetPayoutAmount: '49.60' },
+      valid66Hex,
+      {
+        network: 'BSC',
+        txHash: valid66Hex,
+        tokenContract: BSC_USDT_CONTRACT_MAINNET,
+        recipientAddress: '0x0000000000000000000000000000000000000001',
+        amountUnits: '49.60',
+        confirmed: true,
+        status: 'SUCCESS',
+      }
+    );
+    assert(mismatchRecipient.verified === false && Boolean(mismatchRecipient.reason?.includes('RECIPIENT_ADDRESS_MISMATCH')), '72. USDT payout rejected when on-chain recipient does not match destination');
+
+    const mismatchAmount = await reconcileUsdtBep20Payout(
+      { id: 102, destinationAddress: '0x1234567890abcdef1234567890abcdef12345678', quotedNetPayoutAmount: '49.60' },
+      valid66Hex,
+      {
+        network: 'BSC',
+        txHash: valid66Hex,
+        tokenContract: BSC_USDT_CONTRACT_MAINNET,
+        recipientAddress: '0x1234567890abcdef1234567890abcdef12345678',
+        amountUnits: '10.00',
+        confirmed: true,
+        status: 'SUCCESS',
+      }
+    );
+    assert(mismatchAmount.verified === false && Boolean(mismatchAmount.reason?.includes('PAYOUT_AMOUNT_MISMATCH')), '73. USDT payout rejected when on-chain amount does not match expected net payout');
+
+    // ─── ۲۶. آزمون همروندی تأیید پیش‌فاکتور (Concurrent Confirmation CAS Guard) ───
+    const raceQuote = await generateUsdtWithdrawalQuote({
+      boosterId: uTestA,
+      requestedUsdCents: 1000,
+      destinationAddress: validBep20,
+    });
+    const raceRecord = await createWithdrawalRequestFromQuote(raceQuote);
+
+    const [raceConf1, raceConf2] = await Promise.allSettled([
+      confirmAndSubmitWithdrawalRequest(raceRecord.id, uTestA),
+      confirmAndSubmitWithdrawalRequest(raceRecord.id, uTestA),
+    ]);
+
+    const oneSucceeded =
+      (raceConf1.status === 'fulfilled' && raceConf2.status === 'rejected') ||
+      (raceConf1.status === 'rejected' && raceConf2.status === 'fulfilled');
+    assert(oneSucceeded, '74. Concurrent quote confirmation: exactly one succeeds and duplicate is rejected via atomic CAS');
+
+    // ─── ۲۷. آزمون مسابقه لغو کاربر در برابر رد ادمین (Cancel vs Reject Race) ────
+    const cancelRejectQuote = await generateUsdtWithdrawalQuote({
+      boosterId: uTestA,
+      requestedUsdCents: 1000,
+      destinationAddress: validBep20,
+    });
+    const crRecord = await createWithdrawalRequestFromQuote(cancelRejectQuote);
+    await confirmAndSubmitWithdrawalRequest(crRecord.id, uTestA);
+
+    const [crCancel, crReject] = await Promise.allSettled([
+      boosterCancelWithdrawal(crRecord.id, uTestA, 'User cancel race'),
+      adminRejectWithdrawal(crRecord.id, uAdmin, 'Admin reject race'),
+    ]);
+
+    const crExactOne =
+      (crCancel.status === 'fulfilled' && crReject.status === 'rejected') ||
+      (crCancel.status === 'rejected' && crReject.status === 'fulfilled');
+    assert(crExactOne, '75. Concurrent cancel vs reject: atomic CAS ensures funds reversed exactly once with no double credit');
   } catch (err) {
     console.error('Unhandled suite error:', err);
     failed++;
