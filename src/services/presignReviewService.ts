@@ -34,7 +34,7 @@ import { Prisma } from '@prisma/client';
 
 // ─── HELPER: ROLE PARSING & FORMATTING ────────────────────────────────────────
 
-const KNOWN_EXECUTION_ROLES = ['tank', 'healer', 'dps'];
+const KNOWN_EXECUTION_ROLES = ['tank', 'healer', 'dps', 'booster', 'pilot'];
 
 /**
  * Parses comma-separated registered roles into a normalized array.
@@ -69,10 +69,10 @@ export function formatRolesDisplay(roles: string[]): string {
  */
 export function isMythicPlusOrder(order: any): boolean {
   if (order.service?.serviceKey === 'mythic_plus') return true;
-  if (order.gameSlug?.startsWith('wow') && order.orderType === 'group') return true;
+  if (typeof order.orderName === 'string' && order.orderName.toLowerCase().includes('mythic')) return true;
   if (
     order.requiredRoles &&
-    order.requiredRoles.some((r: any) => KNOWN_EXECUTION_ROLES.includes(r.roleName?.toLowerCase()))
+    order.requiredRoles.some((r: any) => ['tank', 'healer', 'dps'].includes(r.roleName?.toLowerCase()))
   ) {
     return true;
   }
@@ -168,14 +168,34 @@ export async function getUserEligibleRoles(
       }
     }
 
+    const pilotApproval = await client.userGameApproval.findFirst({
+      where: {
+        userId,
+        gameSlug: { in: [gameSlug, 'wow', 'wow_midnight'] },
+        approvalType: 'pilot',
+        status: 'approved',
+      },
+    });
+
     // If characters exist with designated roles/scores, return those roles
     if (eligible.size > 0) {
+      eligible.add('booster');
+      if (pilotApproval) eligible.add('pilot');
       return Array.from(eligible);
     }
   }
 
-  // Default fallback for approved boosters without character segregation: all 3 roles
-  return ['tank', 'healer', 'dps'];
+  const pilotApproval = await client.userGameApproval.findFirst({
+    where: {
+      userId,
+      gameSlug: { in: [gameSlug, 'wow', 'wow_midnight'] },
+      approvalType: 'pilot',
+      status: 'approved',
+    },
+  });
+
+  // Default fallback for approved boosters without character segregation: all roles + booster + pilot (if approved)
+  return ['tank', 'healer', 'dps', 'booster', ...(pilotApproval ? ['pilot'] : [])];
 }
 
 // ─── 2. MULTI-ROLE PRE-SIGN & TOGGLE ─────────────────────────────────────────
@@ -287,28 +307,8 @@ export async function toggleBoosterRolePresign(
     );
   }
 
-  // Check role capacity (excluding current user)
-  let maxCapacity = 1;
-  const reqRole = order.requiredRoles.find((r) => r.roleName.toLowerCase() === normRole);
-  if (reqRole) {
-    maxCapacity = reqRole.quantity;
-  } else if (normRole === 'dps') {
-    maxCapacity = isMythicPlusOrder(order) ? 2 : 3;
-  }
-
-  const otherPresigns = await client.orderPresign.findMany({
-    where: { orderId, status: 'registered', userId: { not: userId } },
-  });
-  const occupiedCount = otherPresigns.filter((p) =>
-    parsePresignRoles(p.registeredRole).includes(normRole)
-  ).length;
-
-  if (occupiedCount >= maxCapacity) {
-    throw new DomainError(
-      DomainErrorCode.ROLE_CAPACITY_EXCEEDED,
-      `Role capacity for **${normRole.toUpperCase()}** is currently full (${occupiedCount}/${maxCapacity}).`
-    );
-  }
+  // Pre-sign applicant pool allows multiple candidates for review
+  // (Final role capacity is strictly enforced during assignment)
 
   // Find existing applicant record
   const existing = await client.orderPresign.findFirst({
@@ -838,7 +838,7 @@ export function buildReviewDashboardEmbed(
   if (premadeCount > 0) {
     const premadeLines = premades.map((p) => {
       const membersText = p.members?.map((m: any) => `<@${m.userId}>`).join(', ') || '';
-      return `• **${p.teamName}** (${p.squadType?.toUpperCase() || 'SQUAD'}, ${p.members?.length || 0} members) — ${membersText}`;
+      return `• **${p.teamName}** (\`team:${p.id}\` • ${p.squadType?.toUpperCase() || 'SQUAD'}, ${p.members?.length || 0} members) — ${membersText}`;
     });
 
     embed.addFields({
@@ -848,6 +848,17 @@ export function buildReviewDashboardEmbed(
     });
   }
 
+  // Command Reference for Authorized Assignment (No Assign buttons)
+  embed.addFields({
+    name: '📋 Assignment Command Reference',
+    value:
+      `Execute in chat to finalize assignment:\n` +
+      `• **Assign individuals:** \`G4!assign ${order.id} @Booster1 @Booster2\`\n` +
+      `• **Assign a team:** \`G4!assign ${order.id} team:<id>\`\n` +
+      `• **Assign team + individuals:** \`G4!assign ${order.id} team:<id> @Booster3 @Booster4\``,
+    inline: false,
+  });
+
   embed.setFooter({
     text: `G4X Pre-sign Review • Order #${order.id} • Private Access Isolation Enforced`,
   });
@@ -856,7 +867,7 @@ export function buildReviewDashboardEmbed(
 }
 
 /**
- * Builds the creator-facing review and assignment action buttons.
+ * Builds the creator-facing review action buttons (No Assign buttons).
  */
 export function buildReviewDashboardComponents(
   orderId: number,
@@ -875,12 +886,6 @@ export function buildReviewDashboardComponents(
       .setLabel('View Premades')
       .setStyle(ButtonStyle.Secondary)
       .setEmoji('🛡️'),
-    new ButtonBuilder()
-      .setCustomId(`review_assign:${orderId}`)
-      .setLabel('Assign Squad')
-      .setStyle(ButtonStyle.Success)
-      .setEmoji('⚙️')
-      .setDisabled(isClosed),
     new ButtonBuilder()
       .setCustomId(`review_refresh:${orderId}`)
       .setLabel('Refresh')
@@ -1016,6 +1021,7 @@ export interface CandidateAssignmentPlan {
   userId: string;
   assignedRole: string;
   claimId?: number | null;
+  squadId?: number | null;
 }
 
 export interface FinalAssignmentInput {
@@ -1064,9 +1070,7 @@ export async function assignSelectedApplicants(
 
     if (input.assignments && input.assignments.length > 0) {
       effectiveCandidates.push(...input.assignments);
-    }
-
-    if (input.squadId) {
+    } else if (input.squadId) {
       const squad = await validatePremadeSquad(
         input.squadId,
         order.gameSlug,
@@ -1197,7 +1201,7 @@ export async function assignSelectedApplicants(
           assignedById: input.actorId,
           assignedRole: cand.assignedRole,
           claimId: cand.claimId ?? null,
-          squadId: input.squadId ?? null,
+          squadId: cand.squadId ?? input.squadId ?? null,
           status: 'assigned',
         },
       });
@@ -1262,8 +1266,8 @@ export async function assignSelectedApplicants(
       await getOrCreateOrderExecutionChannel(input.orderId, input.discordClient, {
         actorId: input.actorId,
       });
-    } catch (e) {
-      console.warn('[PresignReview] Error initializing execution channel:', e);
+    } catch (e: any) {
+      console.warn('[PresignReview] Error initializing execution channel:', e?.code, e?.meta, e?.message);
     }
   }
 

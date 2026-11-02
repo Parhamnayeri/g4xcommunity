@@ -23,7 +23,10 @@ import {
   handleKeyOwnerButton,
   handleOrderViewButton,
 } from '../services/orderDiscordService';
-import { handleReviewDashboardButton } from './presignReviewInteractions';
+import {
+  handleReviewDashboardButton,
+  handlePremadeButton,
+} from './presignReviewInteractions';
 
 export async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
   const [action, ...params] = interaction.customId.split(':');
@@ -70,14 +73,24 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
   switch (action) {
     case 'presign_tank':
     case 'presign_healer':
-    case 'presign_dps': {
-      const role = action.replace('presign_', '');
+    case 'presign_dps':
+    case 'presign_apply': {
+      const role = action === 'presign_apply' ? 'dps' : action.replace('presign_', '');
       const orderId = Number(params[0]);
       if (isNaN(orderId) || orderId <= 0) {
         await interaction.reply({ content: '❌ Invalid order ID parameter.', ephemeral: true });
         return;
       }
       await handlePresignButton(interaction, role, orderId);
+      break;
+    }
+    case 'presign_premade': {
+      const orderId = Number(params[0]);
+      if (isNaN(orderId) || orderId <= 0) {
+        await interaction.reply({ content: '❌ Invalid order ID parameter.', ephemeral: true });
+        return;
+      }
+      await handlePremadeButton(interaction, orderId);
       break;
     }
     case 'presign_withdraw': {

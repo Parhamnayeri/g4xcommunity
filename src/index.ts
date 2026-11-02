@@ -19,6 +19,7 @@ import { handleSetupCommand } from './commands/setup';
 import { handleOrderCommand } from './commands/order';
 import { handleProfileCommand } from './commands/profile';
 import { handleTeamCommand } from './commands/team';
+import { handleAssignCommand } from './commands/assign';
 import { handleButtonInteraction } from './interactions/buttons';
 import { handleModalSubmit } from './interactions/modals';
 import { handleRegistrationSelectMenu } from './interactions/registrationInteractions';
@@ -65,6 +66,8 @@ client.on('messageCreate', async (message) => {
       await handleProfileCommand(message, rawArgs);
     } else if (command === 'team') {
       await handleTeamCommand(message, rawArgs);
+    } else if (command === 'assign') {
+      await handleAssignCommand(message, rawArgs);
     }
   } catch (error) {
     console.error(`[Command] Error executing ${command}:`, error);
@@ -87,6 +90,9 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId.startsWith('ord_wiz:')) {
         const { handleOrderWizardSelectMenu } = await import('./interactions/orderWizardInteractions');
         await handleOrderWizardSelectMenu(interaction);
+      } else if (interaction.customId.startsWith('presign_team:')) {
+        const { handlePresignTeamSelectMenu } = await import('./interactions/presignReviewInteractions');
+        await handlePresignTeamSelectMenu(interaction);
       } else {
         await handleRegistrationSelectMenu(interaction);
       }

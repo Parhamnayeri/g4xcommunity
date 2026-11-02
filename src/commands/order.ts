@@ -31,6 +31,8 @@ import {
 } from '../services/orderLifecycleService';
 import { verifyOrderWithReceipt } from '../services/payment/paymentReconciliationService';
 
+import { handleAssignCommand } from './assign';
+
 export async function handleOrderCommand(message: Message, args: string[]): Promise<void> {
   const subCommand = args[0]?.toLowerCase();
 
@@ -73,10 +75,7 @@ export async function handleOrderCommand(message: Message, args: string[]): Prom
       break;
 
     case 'assign':
-      await message.reply({
-        content:
-          'ℹ️ **Order Assignment**: Booster assignment is managed via the Web Portal or automated squad selection to prevent double-booking. Chat assignment is currently disabled.',
-      });
+      await handleAssignCommand(message, args.slice(1));
       break;
 
     case 'verify-payment':

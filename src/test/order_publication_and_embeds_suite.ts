@@ -560,11 +560,12 @@ export async function runOrderPublicationAndEmbedsSuite() {
     const healerBtn = (rowOpen.components as any[]).find((c) => c.custom_id?.includes('presign_healer'));
     const dpsBtn = (rowOpen.components as any[]).find((c) => c.custom_id?.includes('presign_dps'));
     const keyBtn = (rowOpen.components as any[]).find((c) => c.custom_id?.includes('presign_key'));
+    const premadeBtn = (rowOpen.components as any[]).find((c) => c.custom_id?.includes('presign_premade'));
 
     assert(Boolean(tankBtn && !tankBtn.disabled), 'Test 7.1: Tank presign button available when slots open');
     assert(Boolean(healerBtn && !healerBtn.disabled), 'Test 7.2: Healer presign button available when slots open');
     assert(Boolean(dpsBtn && !dpsBtn.disabled), 'Test 7.3: DPS presign button available when slots open');
-    assert(Boolean(keyBtn && (rowOpen.components as any[]).length === 4), 'Test 7.4: Exactly 4 buttons (Tank, Healer, DPS, Key Owner) present in Mythic+ open_presign');
+    assert(Boolean(keyBtn && premadeBtn && (rowOpen.components as any[]).length === 5), 'Test 7.4: Exactly 5 buttons (Tank, Healer, DPS, Key Owner, Premade) present in Mythic+ open_presign');
 
     const nonPilotComps = buildOrderComponents(wmNonPilotOrder, []);
     const rowNonPilot = nonPilotComps[0].toJSON();

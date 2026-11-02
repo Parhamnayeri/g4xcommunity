@@ -380,7 +380,8 @@ async function runPresignReviewSuite() {
     // ─── TEST 10: Key Owner does not add a fifth slot ─────────────────────────
     const mythicComps = buildOrderComponents(mythicOrder, [tankPresignWithKey!, keyPresign]);
     const mythicRow = mythicComps[0].toJSON();
-    assert((mythicRow.components as any[]).length === 4, '10.1: Exactly four buttons shown on Mythic+ card (Tank, Healer, DPS, Key Owner)');
+    const premadeBtn = (mythicRow.components as any[]).find((c) => c.custom_id?.includes('presign_premade'));
+    assert((mythicRow.components as any[]).length === 5 && Boolean(premadeBtn), '10.1: Exactly five buttons shown on Mythic+ card (Tank, Healer, DPS, Key Owner, Premade)');
     const keyBtn = (mythicRow.components as any[]).find((c) => c.custom_id?.includes('presign_key'));
     assert(Boolean(keyBtn), '10.2: Key Owner button is distinct and present as capability declaration');
 

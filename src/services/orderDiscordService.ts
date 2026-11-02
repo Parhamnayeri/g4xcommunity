@@ -299,7 +299,7 @@ export function buildOrderComponents(
     const isMythic = isMythicPlusOrder(order);
 
     if (isMythic) {
-      // Exactly four actions for Mythic+ orders: Tank, Healer, DPS, Key Owner
+      // Exactly FIVE buttons for Mythic+ orders: Tank, Healer, DPS, Key Owner, Premade
       const tankCount = activePresigns.filter((p) =>
         parsePresignRoles(p.registeredRole).includes('tank')
       ).length;
@@ -343,87 +343,41 @@ export function buildOrderComponents(
           .setCustomId(`presign_key:${order.id}`)
           .setLabel(`Key Owner${keyCount > 0 ? ` (${keyCount})` : ''}`)
           .setStyle(ButtonStyle.Secondary)
-          .setEmoji('🔑')
+          .setEmoji('🔑'),
+        new ButtonBuilder()
+          .setCustomId(`presign_premade:${order.id}`)
+          .setLabel('Premade')
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji('🛡️')
       );
 
       return [row];
     }
 
-    // Determine applicable roles for non-Mythic orders
-    let hasTank = false;
-    let hasHealer = false;
-    let hasDps = false;
+    // Pilot and Non-Pilot orders: Show Pre-sign, Premade (if team permitted), and Withdraw.
+    // Do not show Mythic+ execution-role buttons (Tank, Healer, DPS).
+    const allowsPremade =
+      order.orderType === 'group' ||
+      (order.service?.serviceMode || '').toLowerCase() === 'group';
 
-    if (order.requiredRoles && order.requiredRoles.length > 0) {
-      for (const req of order.requiredRoles) {
-        const r = req.roleName.toLowerCase();
-        if (r === 'tank') hasTank = true;
-        if (r === 'healer') hasHealer = true;
-        if (r === 'dps') hasDps = true;
-      }
-    } else if (order.gameSlug === 'wow_midnight' || order.gameSlug === 'wow') {
-      hasTank = true;
-      hasHealer = true;
-      hasDps = true;
-    }
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`presign_dps:${order.id}`)
+        .setLabel(`Pre-sign (${activePresigns.length})`)
+        .setStyle(ButtonStyle.Primary)
+        .setEmoji('✋')
+    );
 
-    if (hasTank) {
-      const req = order.requiredRoles?.find((r: any) => r.roleName.toLowerCase() === 'tank');
-      const count = activePresigns.filter((p) => parsePresignRoles(p.registeredRole).includes('tank')).length;
-      const isFull = req ? count >= req.quantity : count >= 1;
-
+    if (allowsPremade) {
       row.addComponents(
         new ButtonBuilder()
-          .setCustomId(`presign_tank:${order.id}`)
-          .setLabel(`Tank (${count}/${req?.quantity ?? 1})`)
-          .setStyle(ButtonStyle.Primary)
-          .setEmoji('🛡️')
-          .setDisabled(isFull)
-      );
-    }
-
-    if (hasHealer) {
-      const req = order.requiredRoles?.find((r: any) => r.roleName.toLowerCase() === 'healer');
-      const count = activePresigns.filter((p) => parsePresignRoles(p.registeredRole).includes('healer')).length;
-      const isFull = req ? count >= req.quantity : count >= 1;
-
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`presign_healer:${order.id}`)
-          .setLabel(`Healer (${count}/${req?.quantity ?? 1})`)
-          .setStyle(ButtonStyle.Success)
-          .setEmoji('💚')
-          .setDisabled(isFull)
-      );
-    }
-
-    if (hasDps) {
-      const req = order.requiredRoles?.find((r: any) => r.roleName.toLowerCase() === 'dps');
-      const count = activePresigns.filter((p) => parsePresignRoles(p.registeredRole).includes('dps')).length;
-      const isFull = req ? count >= req.quantity : count >= 3;
-
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`presign_dps:${order.id}`)
-          .setLabel(`DPS (${count}/${req?.quantity ?? 3})`)
+          .setCustomId(`presign_premade:${order.id}`)
+          .setLabel('Premade')
           .setStyle(ButtonStyle.Secondary)
-          .setEmoji('⚔️')
-          .setDisabled(isFull)
+          .setEmoji('🛡️')
       );
     }
 
-    // Default Claim button if no specific roles
-    if (!hasTank && !hasHealer && !hasDps) {
-      row.addComponents(
-        new ButtonBuilder()
-          .setCustomId(`presign_dps:${order.id}`)
-          .setLabel(`Pre-sign (${activePresigns.length})`)
-          .setStyle(ButtonStyle.Primary)
-          .setEmoji('✋')
-      );
-    }
-
-    // Presign withdraw button
     row.addComponents(
       new ButtonBuilder()
         .setCustomId(`presign_withdraw:${order.id}`)

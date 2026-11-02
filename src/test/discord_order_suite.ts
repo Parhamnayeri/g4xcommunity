@@ -544,7 +544,7 @@ async function runDiscordOrderSuite() {
     await handleButtonInteraction(mockDps2Interaction);
     await handleButtonInteraction(mockDps3Interaction);
 
-    // Now attempt 4th DPS when capacity is strictly 3
+    // In Advanced Pre-sign applicant review system, multiple applicants can pre-sign into the pool.
     let overflowReply = '';
     const mockDps4Interaction: any = {
       user: { id: uBoosterDps4, username: 'DpsPro4', displayName: 'DPS Pro 4' },
@@ -561,8 +561,8 @@ async function runDiscordOrderSuite() {
     });
 
     assert(
-      activeDpsCount === 3 && overflowReply.includes('Slot Full'),
-      '14. Presign clicks cannot exceed capacity (max 3 DPS strictly enforced)'
+      activeDpsCount === 4 && overflowReply.includes('Pre-sign Confirmed'),
+      '14. Pre-sign pool allows multiple candidates for review'
     );
 
     // ─── TEST 15: Closed or cancelled orders cannot be claimed ────────────
@@ -687,7 +687,7 @@ async function runDiscordOrderSuite() {
 
     const discordShowsOpen = discordEmbed.data.description?.includes('Open for Pre-sign');
     const webShowsPending = webSimplifiedStatus.label === 'Pending';
-    const countsMatch = dbOrder?.presigns.length === 5; // 1 Tank, 1 Healer, 3 active DPS
+    const countsMatch = dbOrder?.presigns.length === 6; // 1 Tank, 1 Healer, 4 registered DPS applicants
 
     assert(
       discordShowsOpen && webShowsPending && countsMatch,
