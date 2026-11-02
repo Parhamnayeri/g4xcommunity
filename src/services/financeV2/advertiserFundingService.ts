@@ -22,6 +22,7 @@
  *        PENDING_BUSINESS_CONFIRMATION نگهداری می‌شود.
  */
 
+import { Prisma } from '@prisma/client';
 import prisma from '../../database/db';
 import { authorize } from '../authorizationService';
 import { Permission } from '../permissionTypes';
@@ -300,7 +301,11 @@ export async function adminVerifyAndCreditUsdtFunding(
 /**
  * ۴. ثبت درخواست شارژ مستقیم با تومان (Direct IRT)
  */
-export async function submitDirectIrtFunding(input: DirectIrtFundingInput) {
+export async function submitDirectIrtFunding(
+  input: DirectIrtFundingInput,
+  tx?: Prisma.TransactionClient
+) {
+  const client = tx || prisma;
   const {
     advertiserId,
     targetUsdCents,
@@ -314,7 +319,7 @@ export async function submitDirectIrtFunding(input: DirectIrtFundingInput) {
 
   // در صورت عدم ارسال نرخ، بررسی تنظیمات مصوب مدیریت در دیتابیس
   if (feeRate === undefined || feeRate === null) {
-    const config = await prisma.systemFinancialConfig.findUnique({
+    const config = await client.systemFinancialConfig.findUnique({
       where: { key: 'advertiser_irt_purchase_fee_rate' },
     });
     if (!config || !config.value) {
@@ -337,7 +342,7 @@ export async function submitDirectIrtFunding(input: DirectIrtFundingInput) {
   const trimmedEvidence = evidenceRef.trim();
 
   // جلوگیری از ثبت مدارک واریز تکراری تومانی (Duplicate deposit evidence rejection)
-  const existingEvidence = await prisma.advertiserFundingRequest.findFirst({
+  const existingEvidence = await client.advertiserFundingRequest.findFirst({
     where: {
       evidenceRef: trimmedEvidence,
       status: {
@@ -357,7 +362,7 @@ export async function submitDirectIrtFunding(input: DirectIrtFundingInput) {
 
   const fundingRef = `FUND_IRT_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
 
-  const request = await prisma.advertiserFundingRequest.create({
+  const request = await client.advertiserFundingRequest.create({
     data: {
       fundingRef,
       advertiserId,

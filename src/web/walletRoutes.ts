@@ -114,17 +114,24 @@ const handleViewReceipt = async (req: Request, res: Response): Promise<void> => 
     res.setHeader('Content-Type', mimeType);
     res.setHeader('Content-Disposition', 'inline');
     res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.sendFile(filePath);
   } catch (err: any) {
-    if (err.message && err.message.includes('UNAUTHORIZED_RECEIPT_ACCESS')) {
-      res.status(403).json({ error: 'FORBIDDEN', message: err.message });
+    const msg = err.message || '';
+    if (msg.includes('UNAUTHORIZED_RECEIPT_ACCESS') || msg.includes('PATH_TRAVERSAL_DETECTED') || msg.includes('INVALID_RECEIPT_METADATA')) {
+      res.status(403).json({ error: 'FORBIDDEN', message: 'Access denied: receipt evidence not authorized.' });
       return;
     }
-    if (err.message && err.message.includes('RECEIPT_NOT_FOUND')) {
-      res.status(404).json({ error: 'NOT_FOUND', message: err.message });
+    if (msg.includes('RECEIPT_NOT_FOUND')) {
+      res.status(404).json({ error: 'NOT_FOUND', message: 'Receipt not found.' });
       return;
     }
-    res.status(400).json({ error: err.message || 'Failed to fetch receipt' });
+    if (msg.includes('INVALID_FILE_KEY')) {
+      res.status(400).json({ error: 'INVALID_REQUEST', message: 'Invalid receipt identifier format.' });
+      return;
+    }
+    res.status(400).json({ error: 'BAD_REQUEST', message: err.message || 'Failed to fetch receipt.' });
   }
 };
 
@@ -143,6 +150,10 @@ const handleSubmitIrtDeposit = async (req: Request, res: Response): Promise<void
       receiptFileKey,
       paymentDate,
       adminNotes,
+      expectedExchangeRate,
+      expectedTotalIrt,
+      quoteExpiresAt,
+      quoteHash,
     } = req.body;
 
     const result = await submitIrtDeposit({
@@ -154,6 +165,10 @@ const handleSubmitIrtDeposit = async (req: Request, res: Response): Promise<void
       receiptFileKey,
       paymentDate,
       adminNotes,
+      expectedExchangeRate: expectedExchangeRate !== undefined ? Number(expectedExchangeRate) : undefined,
+      expectedTotalIrt: expectedTotalIrt !== undefined ? Number(expectedTotalIrt) : undefined,
+      quoteExpiresAt,
+      quoteHash,
     });
 
     res.status(201).json(result);

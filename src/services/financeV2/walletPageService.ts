@@ -14,16 +14,25 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import { Prisma } from '@prisma/client';
 import prisma from '../../database/db';
 import { getWalletV2Summary, assertLiveCreditsEnabled } from './financeV2WalletService';
 import { calculateIncomingIrtQuote, getOfficialReceivingBankDetails } from '../payment/irtPaymentService';
 import { getNowpaymentsConfig, OfficialBankDetails } from '../payment/paymentTypes';
-import { submitDirectIrtFunding, adminVerifyAndCreditIrtFunding } from './advertiserFundingService';
+import {
+  submitDirectIrtFunding,
+  adminVerifyAndCreditIrtFunding,
+  calculateIrtFundingQuote,
+} from './advertiserFundingService';
 import { getOrCreatePaymentRequestForFunding } from '../payment/paymentReconciliationService';
 import { AuthenticatedUser } from '../../web/middleware/auth';
 import { BoosterWithdrawalStatus } from './financeV2Types';
+import { authorize } from '../authorizationService';
+import { Permission } from '../permissionTypes';
 
 export const RECEIPTS_DIR = path.join(process.cwd(), 'data', 'receipts');
+export const RECEIPT_KEY_REGEX = /^receipt_\d+_[a-f0-9]{16}\.(png|jpg|jpeg|webp)$/i;
+export const ALLOWED_RECEIPT_MIME_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 
 // Ensure receipt directory exists on initial module load
 if (!fs.existsSync(RECEIPTS_DIR)) {
@@ -367,52 +376,226 @@ export async function saveReceiptEvidence(
 
 /**
  * 4. واکشی امن فایل رسید با بررسی دسترسی و تفکیک مالکیت (Access Control Guard)
+ * - عملکرد Fail-Closed در صورت فقدان یا خرابی متادیتا
+ * - اعتبارسنجی ساختار نام فایل، مسیر کانونیکال و جلوگیری از Path Traversal و Symlink
+ * - احراز هویت سرور-محور برای ناظران مالی (FINANCE_ADMIN_VIEW / FINANCE_ADJUST) و ممانعت از دسترسی عمومی استاف
+ * - عدم نشت اطلاعات مسیرهای سرور
  */
 export async function getReceiptEvidence(
   fileKey: string,
   user: AuthenticatedUser
 ): Promise<{ filePath: string; mimeType: string }> {
-  // ۱. اعتبارسنجی ساختار نام فایل جهت جلوگیری از Path Traversal
-  if (!fileKey || !/^[a-zA-Z0-9_\-\.]+$/.test(fileKey)) {
-    throw new Error('INVALID_FILE_KEY: Invalid receipt identifier.');
+  // ۱. اعتبارسنجی ساختار نام فایل جهت جلوگیری از Forgery و Path Traversal
+  if (!fileKey || !RECEIPT_KEY_REGEX.test(fileKey)) {
+    throw new Error('INVALID_FILE_KEY: Invalid receipt identifier format.');
   }
 
   const safePath = path.resolve(RECEIPTS_DIR, fileKey);
-  if (!safePath.startsWith(RECEIPTS_DIR)) {
-    throw new Error('PATH_TRAVERSAL_DETECTED: Access outside receipts directory is forbidden.');
-  }
+  const canonicalBase = fs.realpathSync(RECEIPTS_DIR);
 
   if (!fs.existsSync(safePath)) {
     throw new Error('RECEIPT_NOT_FOUND: The requested receipt was not found.');
   }
 
-  const metaPath = path.join(RECEIPTS_DIR, `${fileKey}.meta.json`);
-  let mimeType = 'image/png';
+  // اعتبارسنجی Canonical Path جهت مقابله قطعی با Symlink و Prefix Traversal
+  const canonicalPath = fs.realpathSync(safePath);
+  if (!canonicalPath.startsWith(canonicalBase + path.sep)) {
+    throw new Error('PATH_TRAVERSAL_DETECTED: Access outside receipts directory is forbidden.');
+  }
 
-  if (fs.existsSync(metaPath)) {
-    try {
-      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as ReceiptMetadata;
-      mimeType = meta.mimeType || mimeType;
+  // ۲. بررسی وجود و سلامت متادیتا (Fail-Closed)
+  const metaPath = path.resolve(RECEIPTS_DIR, `${fileKey}.meta.json`);
+  if (!fs.existsSync(metaPath)) {
+    throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata is missing.');
+  }
 
-      // بررسی مالکیت و مجوز مشاهده:
-      const userRoles = (user.userRoles || []).map((r: { roleKey: string }) => r.roleKey);
-      const isPrivileged = userRoles.includes('owner') ||
-        (Boolean(process.env.OWNER_DISCORD_ID) && process.env.OWNER_DISCORD_ID === user.discordId) ||
-        userRoles.some((r: string) => ['staff', 'manager', 'admin', 'owner'].includes(r));
-      const isOwner = meta.uploadedBy === user.discordId;
+  let meta: ReceiptMetadata;
+  try {
+    meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as ReceiptMetadata;
+  } catch {
+    throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata contains invalid JSON.');
+  }
 
-      if (!isPrivileged && !isOwner) {
-        throw new Error('UNAUTHORIZED_RECEIPT_ACCESS: You do not have permission to view this receipt evidence.');
-      }
-    } catch (err: any) {
-      if (err.message && err.message.includes('UNAUTHORIZED_RECEIPT_ACCESS')) {
-        throw err;
-      }
-      // If parsing fails, fall back to safe MIME by extension
+  if (!meta || typeof meta !== 'object' || !meta.uploadedBy || !meta.mimeType) {
+    throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata is incomplete or corrupted.');
+  }
+
+  const mimeLower = meta.mimeType.toLowerCase();
+  if (!ALLOWED_RECEIPT_MIME_TYPES.includes(mimeLower)) {
+    throw new Error(`INVALID_RECEIPT_METADATA: Disallowed receipt MIME type '${meta.mimeType}'.`);
+  }
+
+  // ۳. بررسی مالکیت و مجوز مشاهده سرور-محور
+  const isOwner = meta.uploadedBy === user.discordId;
+  let isAuthorizedReviewer = false;
+
+  if (!isOwner) {
+    const userRoleKeys = (user.userRoles || []).map((r: { roleKey: string }) => r.roleKey);
+    const isSystemOwner =
+      userRoleKeys.includes('owner') ||
+      (Boolean(process.env.OWNER_DISCORD_ID) && process.env.OWNER_DISCORD_ID === user.discordId);
+
+    if (isSystemOwner) {
+      isAuthorizedReviewer = true;
+    } else {
+      // استعلام دقیق اختیارات ممیزی مالی سرور (نه صرفاً برچسب‌های کلاینت)
+      const [viewAuth, adjustAuth] = await Promise.all([
+        authorize(user.discordId, Permission.FINANCE_ADMIN_VIEW),
+        authorize(user.discordId, Permission.FINANCE_ADJUST),
+      ]);
+      isAuthorizedReviewer = Boolean(viewAuth.allowed || adjustAuth.allowed);
     }
   }
 
-  return { filePath: safePath, mimeType };
+  if (!isOwner && !isAuthorizedReviewer) {
+    throw new Error('UNAUTHORIZED_RECEIPT_ACCESS: You do not have permission to view this receipt evidence.');
+  }
+
+  return { filePath: canonicalPath, mimeType: meta.mimeType };
+}
+
+/**
+ * اعتبارسنجی سند فیش جهت اتصال به درخواست واریز (Evidence Ownership & Binding Guard)
+ */
+export async function verifyReceiptForDeposit(
+  receiptFileKey: string,
+  userId: string,
+  tx?: Prisma.TransactionClient
+): Promise<ReceiptMetadata> {
+  if (!receiptFileKey || !RECEIPT_KEY_REGEX.test(receiptFileKey)) {
+    throw new Error('INVALID_RECEIPT_KEY: Receipt identifier format is invalid or forged.');
+  }
+
+  const safePath = path.resolve(RECEIPTS_DIR, receiptFileKey);
+  const canonicalBase = fs.realpathSync(RECEIPTS_DIR);
+
+  if (!fs.existsSync(safePath)) {
+    throw new Error('RECEIPT_NOT_FOUND: The referenced receipt file does not exist on disk.');
+  }
+
+  const canonicalPath = fs.realpathSync(safePath);
+  if (!canonicalPath.startsWith(canonicalBase + path.sep)) {
+    throw new Error('PATH_TRAVERSAL_DETECTED: Access outside receipts directory is forbidden.');
+  }
+
+  const metaPath = path.resolve(RECEIPTS_DIR, `${receiptFileKey}.meta.json`);
+  if (!fs.existsSync(metaPath)) {
+    throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata is missing.');
+  }
+
+  let meta: ReceiptMetadata;
+  try {
+    meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as ReceiptMetadata;
+  } catch {
+    throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata contains invalid JSON.');
+  }
+
+  if (!meta || typeof meta !== 'object' || !meta.uploadedBy || !meta.mimeType) {
+    throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata is incomplete or corrupted.');
+  }
+
+  if (!ALLOWED_RECEIPT_MIME_TYPES.includes(meta.mimeType.toLowerCase())) {
+    throw new Error(`DISALLOWED_FILE_TYPE: Receipt MIME type '${meta.mimeType}' is not approved.`);
+  }
+
+  // بررسی مالکیت فیش: کاربر ارسال‌کننده باید دقیقاً آپلودکننده فیش باشد
+  if (meta.uploadedBy !== userId) {
+    throw new Error('RECEIPT_OWNERSHIP_MISMATCH: Uploaded receipt belongs to another user.');
+  }
+
+  // جلوگیری از استفاده مجدد یک فیش در چند درخواست واریز نامرتبط
+  const client = tx || prisma;
+  const [existingFundingWithReceipt, existingAttemptWithReceipt] = await Promise.all([
+    client.advertiserFundingRequest.findFirst({
+      where: {
+        adminNotes: { contains: receiptFileKey },
+        status: { in: ['PENDING_ADMIN_VERIFICATION', 'CONFIRMED_CREDITED'] },
+      },
+    }),
+    client.paymentAttempt.findFirst({
+      where: {
+        receiptScreenshotUrl: { contains: receiptFileKey },
+        status: { in: ['pending', 'waiting', 'confirmed', 'finished', 'manual_review'] },
+      },
+    }),
+  ]);
+
+  if (existingFundingWithReceipt || existingAttemptWithReceipt) {
+    throw new Error(
+      `DUPLICATE_RECEIPT_REUSE: Receipt '${receiptFileKey}' has already been attached to another deposit request.`
+    );
+  }
+
+  return meta;
+}
+
+/**
+ * حذف ایمن فیش با تضمین ممیزی عدم اتصال به تراکنش مالی فعال (Audit Protected Cleanup)
+ */
+export async function deleteReceiptEvidence(fileKey: string, user: AuthenticatedUser): Promise<void> {
+  if (!fileKey || !RECEIPT_KEY_REGEX.test(fileKey)) {
+    throw new Error('INVALID_FILE_KEY: Invalid receipt identifier format.');
+  }
+
+  const safePath = path.resolve(RECEIPTS_DIR, fileKey);
+  const canonicalBase = fs.realpathSync(RECEIPTS_DIR);
+
+  if (!fs.existsSync(safePath)) {
+    throw new Error('RECEIPT_NOT_FOUND: The requested receipt was not found.');
+  }
+
+  const canonicalPath = fs.realpathSync(safePath);
+  if (!canonicalPath.startsWith(canonicalBase + path.sep)) {
+    throw new Error('PATH_TRAVERSAL_DETECTED: Access outside receipts directory is forbidden.');
+  }
+
+  const metaPath = path.resolve(RECEIPTS_DIR, `${fileKey}.meta.json`);
+  if (fs.existsSync(metaPath)) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as ReceiptMetadata;
+      const isOwner = meta.uploadedBy === user.discordId;
+      const userRoles = (user.userRoles || []).map((r: { roleKey: string }) => r.roleKey);
+      const isSystemOwner =
+        userRoles.includes('owner') ||
+        (Boolean(process.env.OWNER_DISCORD_ID) && process.env.OWNER_DISCORD_ID === user.discordId);
+
+      if (!isOwner && !isSystemOwner) {
+        const auth = await authorize(user.discordId, Permission.FINANCE_ADJUST);
+        if (!auth.allowed) {
+          throw new Error('UNAUTHORIZED_RECEIPT_ACCESS: Permission denied.');
+        }
+      }
+    } catch (err: any) {
+      if (err.message && err.message.includes('UNAUTHORIZED_RECEIPT_ACCESS')) throw err;
+    }
+  }
+
+  // تضمین ممیزی: فیش متصل به درخواست واریز فعال یا تاییدشده هرگز نباید حذف شود
+  const [linkedFunding, linkedAttempt] = await Promise.all([
+    prisma.advertiserFundingRequest.findFirst({
+      where: {
+        adminNotes: { contains: fileKey },
+        status: { in: ['PENDING_ADMIN_VERIFICATION', 'CONFIRMED_CREDITED'] },
+      },
+    }),
+    prisma.paymentAttempt.findFirst({
+      where: {
+        receiptScreenshotUrl: { contains: fileKey },
+        status: { in: ['pending', 'waiting', 'confirmed', 'finished', 'manual_review'] },
+      },
+    }),
+  ]);
+
+  if (linkedFunding || linkedAttempt) {
+    throw new Error(
+      `RECEIPT_IN_ACTIVE_USE: Cannot delete receipt '${fileKey}' because it is linked to an active deposit or payment request.`
+    );
+  }
+
+  fs.unlinkSync(canonicalPath);
+  if (fs.existsSync(metaPath)) {
+    fs.unlinkSync(metaPath);
+  }
 }
 
 export interface SubmitIrtDepositInput {
@@ -424,10 +607,14 @@ export interface SubmitIrtDepositInput {
   receiptFileKey?: string;
   paymentDate?: string;
   adminNotes?: string;
+  expectedExchangeRate?: number;
+  expectedTotalIrt?: number;
+  quoteExpiresAt?: string;
+  quoteHash?: string;
 }
 
 /**
- * 5. ثبت رسمی درخواست واریز تومانی (Manual IRT Deposit Request)
+ * 5. ثبت رسمی و اتمیک درخواست واریز تومانی (Atomic & Idempotent IRT Deposit Submission)
  */
 export async function submitIrtDeposit(input: SubmitIrtDepositInput) {
   const {
@@ -439,6 +626,10 @@ export async function submitIrtDeposit(input: SubmitIrtDepositInput) {
     receiptFileKey,
     paymentDate,
     adminNotes,
+    expectedExchangeRate,
+    expectedTotalIrt,
+    quoteExpiresAt,
+    quoteHash,
   } = input;
 
   if (!Number.isSafeInteger(targetUsdCents) || targetUsdCents <= 0) {
@@ -456,45 +647,26 @@ export async function submitIrtDeposit(input: SubmitIrtDepositInput) {
   const cleanEvidence = evidenceRef.trim();
   const cleanPayer = payerIdentifier.trim();
 
-  // ۱. بررسی تکراری نبودن شماره پیگیری واریز
-  const [duplicateFunding, duplicateAttempt, duplicateReceipt] = await Promise.all([
-    prisma.advertiserFundingRequest.findFirst({
-      where: {
-        evidenceRef: cleanEvidence,
-        status: { in: ['PENDING_ADMIN_VERIFICATION', 'CONFIRMED_CREDITED'] },
-      },
-    }),
-    prisma.paymentAttempt.findFirst({
-      where: {
-        trackingNumber: cleanEvidence,
-        status: { in: ['pending', 'waiting', 'confirmed', 'finished', 'manual_review'] },
-      },
-    }),
-    prisma.paymentReceipt.findFirst({
-      where: { providerReference: cleanEvidence },
-    }),
-  ]);
+  // ۱. اعتبارسنجی نرخ و پیش‌فاکتور موثق سرور (Server-side Rate Integrity)
+  const authoritativeQuote = await calculateIncomingIrtQuote(targetUsdCents);
 
-  if (duplicateFunding || duplicateAttempt || duplicateReceipt) {
-    throw new Error(
-      `DUPLICATE_DEPOSIT_EVIDENCE: Tracking reference '${cleanEvidence}' has already been submitted for a deposit or payment request.`
-    );
+  if (expectedExchangeRate !== undefined && Math.abs(expectedExchangeRate - authoritativeQuote.adminUsdIrtRate) > 0.001) {
+    throw new Error('STALE_OR_INVALID_RATE: The USD/IRT exchange rate has updated. Please refresh your quote.');
   }
 
-  // ۲. واکشی نرخ موثق و کارمزد مصوب مدیریت
-  const rateConfig = await prisma.systemFinancialConfig.findUnique({ where: { key: 'admin_usd_irt_rate' } });
-  if (!rateConfig || !rateConfig.value || isNaN(Number(rateConfig.value)) || Number(rateConfig.value) <= 0) {
-    throw new Error('MISSING_EXCHANGE_RATE: Authoritative USD/IRT exchange rate is not configured. Request blocked.');
+  if (expectedTotalIrt !== undefined && Math.abs(expectedTotalIrt - authoritativeQuote.totalIrtAmount) > 1) {
+    throw new Error('STALE_OR_INVALID_QUOTE: Total payable IRT does not match authoritative calculation. Please refresh your quote.');
   }
-  const adminUsdIrtRate = Number(rateConfig.value);
 
-  const feeConfig = await prisma.systemFinancialConfig.findUnique({ where: { key: 'incoming_irt_fee_rate' } });
-  if (!feeConfig || feeConfig.value === null || feeConfig.value === undefined) {
-    throw new Error('MISSING_INCOMING_IRT_FEE_POLICY: Missing approved incoming IRT payment fee policy.');
+  if (quoteExpiresAt !== undefined && new Date(quoteExpiresAt).getTime() < Date.now()) {
+    throw new Error('EXPIRED_QUOTE: The deposit quote has expired. Please refresh to obtain a valid quote.');
   }
-  const incomingIrtFeeRate = Number(feeConfig.value);
 
-  // ۳. تجمیع یادداشت‌ها و پیوند فیش
+  if (quoteHash !== undefined && quoteHash !== authoritativeQuote.quoteHash) {
+    throw new Error('INVALID_QUOTE_SIGNATURE: Deposit quote signature verification failed. Please refresh your quote.');
+  }
+
+  // ۲. تجمیع یادداشت‌ها و پیوند فیش
   let notesCombined = adminNotes?.trim() || '';
   if (paymentDate) {
     notesCombined = notesCombined ? `${notesCombined} | Date: ${paymentDate}` : `Payment Date: ${paymentDate}`;
@@ -506,23 +678,110 @@ export async function submitIrtDeposit(input: SubmitIrtDepositInput) {
     notesCombined = notesCombined ? `${notesCombined} | CardLast4: ${senderCardLast4}` : `CardLast4: ${senderCardLast4}`;
   }
 
-  // ۴. ثبت اتمیک درخواست شارژ
-  const result = await submitDirectIrtFunding({
-    advertiserId: userId,
-    targetUsdCents,
-    adminUsdIrtRate,
-    currencyPurchaseFeeRate: incomingIrtFeeRate,
-    evidenceRef: cleanEvidence,
-    payerIdentifier: cleanPayer,
-    adminNotes: notesCombined || undefined,
-  });
+  // ۳. ثبت اتمیک در قالب تراکنش واحد دیتابیس (All-or-Nothing Transaction)
+  return await prisma.$transaction(async (tx) => {
+    // الف. اعتبارسنجی فیش و مالکیت درون تراکنش قبل از ایجاد رکوردهای مالی
+    if (receiptFileKey) {
+      await verifyReceiptForDeposit(receiptFileKey, userId, tx);
+    }
 
-  // ۵. ایجاد پیوند به زیرساخت درخواست پرداخت مشترک جهت ممیزی متمرکز
-  try {
-    const paymentReq = await getOrCreatePaymentRequestForFunding(result.request.id, userId);
+    // ب. بررسی تراکنش‌های همزمان و پیگیری‌های تکراری
+    const [duplicateFunding, duplicateAttempt, duplicateReceipt] = await Promise.all([
+      tx.advertiserFundingRequest.findFirst({
+        where: {
+          evidenceRef: cleanEvidence,
+          status: { in: ['PENDING_ADMIN_VERIFICATION', 'CONFIRMED_CREDITED'] },
+        },
+      }),
+      tx.paymentAttempt.findFirst({
+        where: {
+          trackingNumber: cleanEvidence,
+          status: { in: ['pending', 'waiting', 'confirmed', 'finished', 'manual_review'] },
+        },
+      }),
+      tx.paymentReceipt.findFirst({
+        where: { providerReference: cleanEvidence },
+      }),
+    ]);
 
-    const attemptRef = `ATT_DEP_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    await prisma.paymentAttempt.create({
+    if (duplicateFunding) {
+      // بازیابی بی‌اثر (Idempotent Recovery) برای درخواست‌های ناقص گذشته
+      if (duplicateFunding.advertiserId === userId && duplicateFunding.status === 'PENDING_ADMIN_VERIFICATION') {
+        const existingPayReq = await tx.paymentRequest.findFirst({
+          where: { fundingRequestId: duplicateFunding.id },
+          include: { attempts: true },
+        });
+
+        if (!existingPayReq || existingPayReq.attempts.length === 0) {
+          const payReq = await getOrCreatePaymentRequestForFunding(duplicateFunding.id, userId, tx);
+          let attempt = existingPayReq?.attempts.find((a) => a.trackingNumber === cleanEvidence);
+          if (!attempt) {
+            const attemptRef = `ATT_DEP_${duplicateFunding.id}_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+            attempt = await tx.paymentAttempt.create({
+              data: {
+                attemptRef,
+                paymentRequestId: payReq.id,
+                method: 'CARD_TO_CARD_IRT',
+                provider: 'MANUAL_BANK',
+                status: 'pending',
+                trackingNumber: cleanEvidence,
+                paidAmountIrt: String(duplicateFunding.externalAmountUnits),
+                senderCardLast4: senderCardLast4 ? senderCardLast4.trim() : null,
+                receiptScreenshotUrl: receiptFileKey ? `/api/wallet/receipts/${receiptFileKey}` : null,
+                expectedAmount: String(duplicateFunding.externalAmountUnits),
+                expectedCurrency: 'IRT',
+                exchangeRate: Number(duplicateFunding.exchangeRate),
+                reviewReason: 'Awaiting admin bank statement verification for wallet deposit (idempotent recovery)',
+              },
+            });
+          }
+          const recoveredQuote = calculateIrtFundingQuote(
+            duplicateFunding.targetUsdCents,
+            Number(duplicateFunding.exchangeRate),
+            Number(duplicateFunding.currencyPurchaseFeeRate)
+          );
+          return {
+            success: true,
+            fundingRequest: duplicateFunding,
+            quote: recoveredQuote,
+            paymentRequest: payReq,
+            paymentAttempt: attempt,
+            message: 'Recovered incomplete deposit request with required payment tracking.',
+          };
+        }
+      }
+
+      throw new Error(
+        `DUPLICATE_DEPOSIT_EVIDENCE: Tracking reference '${cleanEvidence}' has already been submitted for deposit request #${duplicateFunding.id}.`
+      );
+    }
+
+    if (duplicateAttempt || duplicateReceipt) {
+      throw new Error(
+        `DUPLICATE_DEPOSIT_EVIDENCE: Tracking reference '${cleanEvidence}' has already been submitted for a payment attempt or receipt.`
+      );
+    }
+
+    // ج. ثبت درخواست شارژ ادورتایزر در دیتابیس
+    const result = await submitDirectIrtFunding(
+      {
+        advertiserId: userId,
+        targetUsdCents,
+        adminUsdIrtRate: authoritativeQuote.adminUsdIrtRate,
+        currencyPurchaseFeeRate: authoritativeQuote.incomingIrtFeeRate,
+        evidenceRef: cleanEvidence,
+        payerIdentifier: cleanPayer,
+        adminNotes: notesCombined || undefined,
+      },
+      tx
+    );
+
+    // د. ایجاد اتمیک PaymentRequest
+    const paymentReq = await getOrCreatePaymentRequestForFunding(result.request.id, userId, tx);
+
+    // هـ. ایجاد اتمیک PaymentAttempt متناظر با شناسه یکتا
+    const attemptRef = `ATT_DEP_${result.request.id}_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    const attempt = await tx.paymentAttempt.create({
       data: {
         attemptRef,
         paymentRequestId: paymentReq.id,
@@ -535,24 +794,46 @@ export async function submitIrtDeposit(input: SubmitIrtDepositInput) {
         receiptScreenshotUrl: receiptFileKey ? `/api/wallet/receipts/${receiptFileKey}` : null,
         expectedAmount: String(result.quote.totalIrtPayable),
         expectedCurrency: 'IRT',
-        exchangeRate: adminUsdIrtRate,
+        exchangeRate: authoritativeQuote.adminUsdIrtRate,
         reviewReason: 'Awaiting admin bank statement verification for wallet deposit',
       },
     });
-  } catch (err) {
-    console.warn('[WalletService] PaymentRequest linking fallback note:', err);
-  }
 
-  return {
-    success: true,
-    fundingRequest: result.request,
-    quote: result.quote,
-    message: 'Manual IRT deposit request submitted successfully. It is now awaiting independent administrative verification.',
-  };
+    return {
+      success: true,
+      fundingRequest: result.request,
+      quote: result.quote,
+      paymentRequest: paymentReq,
+      paymentAttempt: attempt,
+      message: 'Manual IRT deposit request submitted successfully. It is now awaiting independent administrative verification.',
+    };
+  });
 }
 
 /**
- * 6. دریافت تاریخچه واریزهای کاربر به صورت صفحه‌بندی‌شده
+ * ماسک‌گذاری اطلاعات هویتی و شماره کارتی پرداخت‌کننده در پاسخ‌های عمومی
+ */
+function maskPayerIdentifier(identifier: string | null): string {
+  if (!identifier) return '';
+  const trimmed = identifier.trim();
+
+  // ماسک‌گذاری شماره کارت‌های ۱۶ رقمی
+  const cardMatch = trimmed.match(/\b(\d{4})\d{8}(\d{4})\b/);
+  if (cardMatch) {
+    return trimmed.replace(/\b(\d{4})\d{8}(\d{4})\b/, '$1 **** **** $2');
+  }
+
+  if (/^\d{8,19}$/.test(trimmed)) {
+    return `**** **** **** ${trimmed.slice(-4)}`;
+  }
+
+  return trimmed;
+}
+
+/**
+ * 6. دریافت تاریخچه واریزهای کاربر به صورت صفحه‌بندی‌شده و حفظ حریم خصوصی مالی
+ * - تفکیک کامل داده‌های کاربر از یادداشت‌های مدیریتی (عدم افشای adminNotes)
+ * - ماسک‌گذاری شماره کارت‌های حساس
  */
 export async function getUserDepositHistory(userId: string, page = 1, limit = 10) {
   const safePage = Math.max(1, page);
@@ -579,7 +860,6 @@ export async function getUserDepositHistory(userId: string, page = 1, limit = 10
   ]);
 
   const deposits = requestsRaw.map((r) => {
-    // مانده شارژ شده فقط در صورتی گزارش می‌شود که سند حسابداری ثبت شده باشد
     const hasBackedLedgerCredit = r.status === 'CONFIRMED_CREDITED' && r.ledgerEntries.length > 0;
     const creditedAmountCents = hasBackedLedgerCredit ? r.targetUsdCents : 0;
 
@@ -608,8 +888,8 @@ export async function getUserDepositHistory(userId: string, page = 1, limit = 10
       status: r.status,
       reviewOutcome,
       evidenceRef: r.evidenceRef,
-      payerIdentifier: r.payerIdentifier,
-      adminNotes: r.adminNotes,
+      payerIdentifier: maskPayerIdentifier(r.payerIdentifier),
+      // یادداشت‌های داخلی مدیریت (adminNotes) و نام فایل‌های رسید عمداً جهت رعایت حریم خصوصی مالی حذف شدند
       verifiedAt: r.verifiedAt,
       creditedAt: r.creditedAt,
     };
@@ -623,6 +903,57 @@ export async function getUserDepositHistory(userId: string, page = 1, limit = 10
     limit: safeLimit,
     totalPages: Math.ceil(total / safeLimit) || 1,
   };
+}
+
+/**
+ * 6.1 بررسی و تطبیق درخواست‌های ناقص قبلی بدون شارژ خودکار والت (Reconciliation Guard)
+ */
+export async function reconcileIncompleteFundingRequests(actorId?: string) {
+  const whereClause: any = {
+    status: 'PENDING_ADMIN_VERIFICATION',
+  };
+  if (actorId) {
+    whereClause.advertiserId = actorId;
+  }
+
+  const pendingRequests = await prisma.advertiserFundingRequest.findMany({
+    where: whereClause,
+    include: {
+      paymentRequests: {
+        include: { attempts: true },
+      },
+    },
+  });
+
+  const reconciled: Array<{ fundingId: number; paymentRequestId: number; paymentAttemptId: number }> = [];
+
+  for (const req of pendingRequests) {
+    const hasCompleteTracking = req.paymentRequests.some((pr) => pr.attempts.length > 0);
+    if (!hasCompleteTracking) {
+      await prisma.$transaction(async (tx) => {
+        const pReq = await getOrCreatePaymentRequestForFunding(req.id, req.advertiserId, tx);
+        const attemptRef = `ATT_REC_${req.id}_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+        const attempt = await tx.paymentAttempt.create({
+          data: {
+            attemptRef,
+            paymentRequestId: pReq.id,
+            method: 'CARD_TO_CARD_IRT',
+            provider: 'MANUAL_BANK',
+            status: 'pending',
+            trackingNumber: req.evidenceRef || `EVID_${req.id}`,
+            paidAmountIrt: String(req.externalAmountUnits),
+            expectedAmount: String(req.externalAmountUnits),
+            expectedCurrency: req.externalCurrency || 'IRT',
+            exchangeRate: req.exchangeRate ? Number(req.exchangeRate) : null,
+            reviewReason: 'Reconciled missing payment tracking for legacy pending funding request',
+          },
+        });
+        reconciled.push({ fundingId: req.id, paymentRequestId: pReq.id, paymentAttemptId: attempt.id });
+      });
+    }
+  }
+
+  return { success: true, count: reconciled.length, reconciled };
 }
 
 /**

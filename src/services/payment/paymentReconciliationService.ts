@@ -79,8 +79,13 @@ export async function getOrCreatePaymentRequestForOrder(orderId: number, actorId
 /**
  * ۲. ایجاد یا واکشی درخواست پرداخت برای شارژ کیف‌پول ادورتایزر
  */
-export async function getOrCreatePaymentRequestForFunding(fundingRequestId: number, actorId: string) {
-  const funding = await prisma.advertiserFundingRequest.findUnique({
+export async function getOrCreatePaymentRequestForFunding(
+  fundingRequestId: number,
+  actorId: string,
+  tx?: Prisma.TransactionClient
+) {
+  const client = tx || prisma;
+  const funding = await client.advertiserFundingRequest.findUnique({
     where: { id: fundingRequestId },
   });
 
@@ -88,7 +93,7 @@ export async function getOrCreatePaymentRequestForFunding(fundingRequestId: numb
     throw new Error(`FUNDING_REQUEST_NOT_FOUND: Funding request #${fundingRequestId} does not exist`);
   }
 
-  let request = await prisma.paymentRequest.findFirst({
+  let request = await client.paymentRequest.findFirst({
     where: {
       fundingRequestId,
       status: { in: [PaymentRequestStatus.PENDING, PaymentRequestStatus.PROCESSING] },
@@ -99,7 +104,7 @@ export async function getOrCreatePaymentRequestForFunding(fundingRequestId: numb
   if (!request) {
     const requestRef = `PAY_REQ_FUND_${funding.id}_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-    request = await prisma.paymentRequest.create({
+    request = await client.paymentRequest.create({
       data: {
         requestRef,
         businessType: PaymentBusinessType.WALLET_FUNDING,

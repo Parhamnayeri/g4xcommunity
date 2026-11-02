@@ -22,6 +22,8 @@ import {
   RECEIPTS_DIR,
   saveReceiptEvidence,
   getReceiptEvidence,
+  verifyReceiptForDeposit,
+  deleteReceiptEvidence,
   getAuthoritativeIrtQuote,
   getWalletOverview,
   submitIrtDeposit,
@@ -342,10 +344,41 @@ async function runWalletPhase5Suite() {
     assert.strictEqual(unauthorizedViewRes.status, 403, '4.7 Unauthorized user must be blocked with 403 Forbidden');
     assert(unauthorizedViewRes.body.error === 'FORBIDDEN');
 
-    // 4.8 Privileged access: Staff and Admin can view user's receipt for verification
+    // 4.8 Privileged access: Admin, Manager, and Owner can view user's receipt for verification
+    const adminViewRes = await admClient.agent.get(`/api/wallet/receipts/${uploadedFileKey}`);
+    assert.strictEqual(adminViewRes.status, 200, '4.8 Admin can view receipt for verification');
+    assert.strictEqual(adminViewRes.header['cache-control'], 'private, no-cache, no-store, must-revalidate');
+
+    const mngViewRes = await mngClient.agent.get(`/api/wallet/receipts/${uploadedFileKey}`);
+    assert.strictEqual(mngViewRes.status, 200, '4.8 Manager can view receipt for verification');
+
+    const ownViewRes = await ownClient.agent.get(`/api/wallet/receipts/${uploadedFileKey}`);
+    assert.strictEqual(ownViewRes.status, 200, '4.8 Owner can view receipt for verification');
+
+    // 4.8b Generic staff access must be blocked by policy (no FINANCE_ADMIN_VIEW or FINANCE_ADJUST)
     const staffViewRes = await staffClient.agent.get(`/api/wallet/receipts/${uploadedFileKey}`);
-    assert.strictEqual(staffViewRes.status, 200, '4.8 Staff can view receipt for verification');
-    console.log('✅ TEST 4 PASSED: Secure non-public receipt upload and access isolation verified.\n');
+    assert.strictEqual(staffViewRes.status, 403, '4.8b Generic staff access must be blocked with 403');
+
+    // 4.9 Missing receipt metadata fails closed (403)
+    const orphanKey = `receipt_${Date.now()}_aabbccddeeff0011.png`;
+    fs.writeFileSync(path.join(RECEIPTS_DIR, orphanKey), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    const orphanRes = await advClient.agent.get(`/api/wallet/receipts/${orphanKey}`);
+    assert.strictEqual(orphanRes.status, 403, '4.9 Missing metadata fails closed with 403');
+    fs.unlinkSync(path.join(RECEIPTS_DIR, orphanKey));
+
+    // 4.10 Corrupted metadata JSON fails closed (403)
+    const corruptKey = `receipt_${Date.now()}_aabbccddeeff0022.png`;
+    fs.writeFileSync(path.join(RECEIPTS_DIR, corruptKey), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    fs.writeFileSync(path.join(RECEIPTS_DIR, `${corruptKey}.meta.json`), '{ bad_json: ');
+    const corruptMetaRes = await advClient.agent.get(`/api/wallet/receipts/${corruptKey}`);
+    assert.strictEqual(corruptMetaRes.status, 403, '4.10 Corrupted metadata JSON fails closed with 403');
+    fs.unlinkSync(path.join(RECEIPTS_DIR, corruptKey));
+    fs.unlinkSync(path.join(RECEIPTS_DIR, `${corruptKey}.meta.json`));
+
+    // 4.11 Forged or invalid receipt key format rejected with 400
+    const forgedKeyRes = await advClient.agent.get('/api/wallet/receipts/forged_receipt.png');
+    assert.strictEqual(forgedKeyRes.status, 400, '4.11 Forged receipt format rejected with 400');
+    console.log('✅ TEST 4 PASSED: Secure non-public receipt upload, metadata fail-closed and access isolation verified.\n');
 
     // ═════════════════════════════════════════════════════════════════════════
     // TEST 5: Manual IRT Deposit Request & Duplicate Evidence Prevention
@@ -361,11 +394,13 @@ async function runWalletPhase5Suite() {
       .send({
         targetUsdCents: 2000, // $20
         evidenceRef: trackingRef,
-        payerIdentifier: 'Mohammad Alavi',
+        payerIdentifier: 'Mohammad Alavi 6037991812344321',
         senderCardLast4: '4321',
         receiptFileKey: uploadedFileKey,
         paymentDate: '2026-11-02',
         adminNotes: 'Mobile banking transfer',
+        expectedExchangeRate: 95000,
+        expectedTotalIrt: 1928500, // 20 * 95000 * 1.015
       });
 
     assert.strictEqual(depositSubmitRes.status, 201, '5.1 IRT deposit submission created with 201');
@@ -373,6 +408,15 @@ async function runWalletPhase5Suite() {
     assert.strictEqual(depositSubmitRes.body.fundingRequest.status, 'PENDING_ADMIN_VERIFICATION');
 
     const fundingId = depositSubmitRes.body.fundingRequest.id;
+
+    // Verify atomic creation: PaymentRequest and PaymentAttempt must exist in database!
+    const linkedPaymentReq = await prisma.paymentRequest.findFirst({
+      where: { fundingRequestId: fundingId },
+      include: { attempts: true },
+    });
+    assert(linkedPaymentReq, '5.1 PaymentRequest must be created atomically');
+    assert.strictEqual(linkedPaymentReq.attempts.length, 1, '5.1 PaymentAttempt must be created atomically');
+    assert.strictEqual(linkedPaymentReq.attempts[0].trackingNumber, trackingRef);
 
     // 5.2 Crucial check: Submitting receipt evidence does NOT credit wallet!
     const balanceCheck = await advClient.agent.get('/api/wallet/overview');
@@ -394,15 +438,131 @@ async function runWalletPhase5Suite() {
     assert.strictEqual(duplicateSubmitRes.status, 400, '5.3 Duplicate tracking reference must be rejected with 400');
     assert(duplicateSubmitRes.body.error.includes('DUPLICATE_DEPOSIT_EVIDENCE'));
 
-    // 5.4 Unauthorized user cannot verify deposit
+    // 5.4 Foreign receipt key rejection: userVictim cannot submit userAdvertiser's uploaded receipt
+    const foreignReceiptSubmitRes = await vicClient.agent
+      .post('/api/wallet/deposits/irt')
+      .set('x-csrf-token', vicClient.csrfToken)
+      .send({
+        targetUsdCents: 1000,
+        evidenceRef: `TRACK_VIC_${Date.now()}`,
+        payerIdentifier: 'Victim User',
+        receiptFileKey: uploadedFileKey,
+      });
+    assert.strictEqual(foreignReceiptSubmitRes.status, 400, '5.4 Foreign receipt submission rejected with 400');
+    assert(foreignReceiptSubmitRes.body.error.includes('RECEIPT_OWNERSHIP_MISMATCH'));
+
+    // 5.5 Receipt reuse across different deposits rejected: userAdvertiser cannot attach same receipt twice
+    const reusedReceiptSubmitRes = await advClient.agent
+      .post('/api/wallet/deposits/irt')
+      .set('x-csrf-token', advClient.csrfToken)
+      .send({
+        targetUsdCents: 1000,
+        evidenceRef: `TRACK_REUSE_${Date.now()}`,
+        payerIdentifier: 'Mohammad Alavi',
+        receiptFileKey: uploadedFileKey,
+      });
+    assert.strictEqual(reusedReceiptSubmitRes.status, 400, '5.5 Receipt reuse across different deposits rejected');
+    assert(reusedReceiptSubmitRes.body.error.includes('DUPLICATE_RECEIPT_REUSE'));
+
+    // 5.6 Rate manipulation rejection: client cannot submit a stale or tampered exchange rate
+    const tamperedRateSubmitRes = await advClient.agent
+      .post('/api/wallet/deposits/irt')
+      .set('x-csrf-token', advClient.csrfToken)
+      .send({
+        targetUsdCents: 1000,
+        evidenceRef: `TRACK_RATE_${Date.now()}`,
+        payerIdentifier: 'Mohammad Alavi',
+        expectedExchangeRate: 50000, // Tampered rate! Authoritative is 95000
+      });
+    assert.strictEqual(tamperedRateSubmitRes.status, 400, '5.6 Tampered exchange rate rejected with 400');
+    assert(tamperedRateSubmitRes.body.error.includes('STALE_OR_INVALID_RATE'));
+
+    // 5.7 Expired quote rejection
+    const expiredQuoteSubmitRes = await advClient.agent
+      .post('/api/wallet/deposits/irt')
+      .set('x-csrf-token', advClient.csrfToken)
+      .send({
+        targetUsdCents: 1000,
+        evidenceRef: `TRACK_EXP_${Date.now()}`,
+        payerIdentifier: 'Mohammad Alavi',
+        quoteExpiresAt: '2020-01-01T00:00:00.000Z',
+      });
+    assert.strictEqual(expiredQuoteSubmitRes.status, 400, '5.7 Expired quote rejected with 400');
+    assert(expiredQuoteSubmitRes.body.error.includes('EXPIRED_QUOTE'));
+
+    // 5.8 Idempotent recovery for partial legacy request
+    const legacyEvidence = `LEGACY_PARTIAL_${Date.now()}`;
+    const legacyFunding = await prisma.advertiserFundingRequest.create({
+      data: {
+        fundingRef: `FUND_LEGACY_${Date.now()}`,
+        advertiserId: userAdvertiser,
+        fundingMethod: 'IRT',
+        status: 'PENDING_ADMIN_VERIFICATION',
+        targetUsdCents: 1500,
+        externalCurrency: 'IRT',
+        externalAmountUnits: '1446375',
+        exchangeRate: 95000,
+        currencyPurchaseFeeRate: 0.015,
+        feeAmountUnits: '21375',
+        evidenceRef: legacyEvidence,
+        payerIdentifier: 'Legacy Depositor',
+      },
+    });
+
+    // Retrying submission for the legacy partial funding recovers missing PaymentRequest/PaymentAttempt
+    const recoveryRes = await submitIrtDeposit({
+      userId: userAdvertiser,
+      targetUsdCents: 1500,
+      evidenceRef: legacyEvidence,
+      payerIdentifier: 'Legacy Depositor',
+    });
+    assert.strictEqual(recoveryRes.success, true);
+    assert.strictEqual(recoveryRes.fundingRequest.id, legacyFunding.id, '5.8 Must reuse existing funding record');
+    assert(recoveryRes.paymentRequest, '5.8 Must create recovered PaymentRequest');
+    assert(recoveryRes.paymentAttempt, '5.8 Must create recovered PaymentAttempt');
+
+    // 5.9 Concurrency safety: simultaneous submissions with same evidence
+    const concurrentEvidence = `CONCURRENT_DEP_${Date.now()}`;
+    const [c1, c2] = await Promise.allSettled([
+      submitIrtDeposit({
+        userId: userAdvertiser,
+        targetUsdCents: 1000,
+        evidenceRef: concurrentEvidence,
+        payerIdentifier: 'Concurrent Payer',
+      }),
+      submitIrtDeposit({
+        userId: userAdvertiser,
+        targetUsdCents: 1000,
+        evidenceRef: concurrentEvidence,
+        payerIdentifier: 'Concurrent Payer',
+      }),
+    ]);
+    const fulfilledCount = [c1, c2].filter((r) => r.status === 'fulfilled').length;
+    const rejectedCount = [c1, c2].filter((r) => r.status === 'rejected').length;
+    assert.strictEqual(fulfilledCount, 1, '5.9 Exactly one concurrent deposit submission succeeds');
+    assert.strictEqual(rejectedCount, 1, '5.9 Exactly one concurrent deposit submission is rejected');
+
+    // 5.10 Audit protection against deleting in-use receipt
+    await assert.rejects(
+      async () => {
+        await deleteReceiptEvidence(uploadedFileKey, {
+          discordId: userAdvertiser,
+          username: 'adv',
+          userRoles: [{ roleKey: 'advertiser' }],
+        } as any);
+      },
+      (err: any) => err.message.includes('RECEIPT_IN_ACTIVE_USE'),
+      '5.10 Cannot delete receipt that is linked to active deposit request'
+    );
+
+    // 5.11 Unauthorized user cannot verify deposit
     const unauthReviewRes = await vicClient.agent
       .post(`/api/wallet/admin/deposits/${fundingId}/review`)
       .set('x-csrf-token', vicClient.csrfToken)
       .send({ action: 'APPROVE', notes: 'Unauthorized attempt' });
-    assert.strictEqual(unauthReviewRes.status, 403, '5.4 Non-admin cannot review deposits');
+    assert.strictEqual(unauthReviewRes.status, 403, '5.11 Non-admin cannot review deposits');
 
-    // 5.5 Admin verification with FINANCE_V2_LIVE_CREDITS_ENABLED=false
-    // Feature gate must block live wallet crediting (fail-closed)
+    // 5.12 Admin verification with FINANCE_V2_LIVE_CREDITS_ENABLED=false
     process.env.FINANCE_V2_LIVE_CREDITS_ENABLED = 'false';
 
     const gateBlockedReview = await admClient.agent
@@ -413,12 +573,12 @@ async function runWalletPhase5Suite() {
     assert.strictEqual(gateBlockedReview.status, 400);
     assert(
       gateBlockedReview.body.error.includes('LIVE_CREDITS_DISABLED'),
-      '5.5 Admin approval while live credits disabled must fail with LIVE_CREDITS_DISABLED'
+      '5.12 Admin approval while live credits disabled must fail with LIVE_CREDITS_DISABLED'
     );
 
-    // Balance remains strictly protected at 5000 cents (no synthetic inflation)
+    // Balance remains strictly protected at 5000 cents
     const protectedBalance = await advClient.agent.get('/api/wallet/overview');
-    assert.strictEqual(protectedBalance.body.wallet.availableCents, 5000, '5.5 Balance uncredited and protected');
+    assert.strictEqual(protectedBalance.body.wallet.availableCents, 5000, '5.12 Balance uncredited and protected');
     console.log('✅ TEST 5 PASSED: Manual IRT deposit workflow, duplicate prevention, and feature gate verified.\n');
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -449,25 +609,35 @@ async function runWalletPhase5Suite() {
     assert(historyRes.body.deposits.length >= 1);
 
     const firstDeposit = historyRes.body.deposits[0];
-    assert.strictEqual(firstDeposit.fundingRef, depositSubmitRes.body.fundingRequest.fundingRef);
     assert.strictEqual(firstDeposit.status, 'PENDING_ADMIN_VERIFICATION');
     assert.strictEqual(firstDeposit.creditedAmountUsd, '$0.00', '7.1 Credited amount must report $0.00 while uncredited');
     assert.strictEqual(firstDeposit.hasBackedCredit, false);
 
+    // 7.2 Privacy check: verify payer card numbers are masked and internal adminNotes are NOT leaked!
+    assert(
+      firstDeposit.payerIdentifier.includes('****') || !/\b\d{16}\b/.test(firstDeposit.payerIdentifier),
+      '7.2 Sensitive card number must be masked in payerIdentifier'
+    );
+    assert.strictEqual(
+      (firstDeposit as any).adminNotes,
+      undefined,
+      '7.2 Internal admin notes must NEVER be exposed in public deposit history'
+    );
+
     // Verify userExchanger sees 0 deposits (isolation)
     const excHistory = await excClient.agent.get('/api/wallet/deposits?page=1&limit=10');
-    assert.strictEqual(excHistory.body.deposits.length, 0, '7.2 Exchanger sees only own deposit history (0 items)');
+    assert.strictEqual(excHistory.body.deposits.length, 0, '7.3 Exchanger sees only own deposit history (0 items)');
 
-    // 7.3 Ledger Activity
+    // 7.4 Ledger Activity
     const ledgerRes = await advClient.agent.get('/api/wallet/ledger?page=1&limit=10');
-    assert.strictEqual(ledgerRes.status, 200, '7.3 Ledger activity returns 200');
+    assert.strictEqual(ledgerRes.status, 200, '7.4 Ledger activity returns 200');
     assert.strictEqual(ledgerRes.body.success, true);
-    assert(ledgerRes.body.entries.length >= 1, '7.3 Entries contains the seeded credit');
+    assert(ledgerRes.body.entries.length >= 1, '7.4 Entries contains the seeded credit');
 
     const firstLedger = ledgerRes.body.entries[0];
     assert.strictEqual(firstLedger.direction, 'CREDIT');
     assert.strictEqual(firstLedger.amountUsd, '50.00');
-    console.log('✅ TEST 7 PASSED: Deposit history and ledger activity reporting verified.\n');
+    console.log('✅ TEST 7 PASSED: Deposit history, privacy masking, and ledger activity reporting verified.\n');
 
     console.log('═════════════════════════════════════════════════════════════════');
     console.log('🎉 ALL WEBSITE PHASE 5 TESTS COMPLETED SUCCESSFULLY (7/7 suites)');
