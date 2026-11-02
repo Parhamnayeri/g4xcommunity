@@ -735,6 +735,8 @@ export interface SeparatedOrderListItem {
   authorizedActions: string[];
   notes: string | null;
   externalOrderId: string | null;
+  orderName: string | null;
+  discordChannelId: string | null;
   createdAt: string;
 }
 
@@ -897,7 +899,17 @@ export async function getSeparatedOrdersList(
 
   // Common filters
   if (query.status && query.status !== 'all') {
-    andFilters.push({ status: query.status });
+    if (query.status === 'active') {
+      andFilters.push({
+        status: { in: ['draft', 'payment_pending', 'open_presign', 'presign_closed', 'assigned', 'in_progress', 'disputed'] },
+      });
+    } else if (query.status === 'history') {
+      andFilters.push({
+        status: { in: ['completed', 'cancelled'] },
+      });
+    } else {
+      andFilters.push({ status: query.status });
+    }
   }
 
   if (query.paymentStatus && query.paymentStatus !== 'all') {
@@ -1142,6 +1154,8 @@ export async function getSeparatedOrdersList(
       authorizedActions: actions,
       notes: o.notes,
       externalOrderId: o.externalOrderId,
+      orderName: o.orderName || null,
+      discordChannelId: o.executionChannelId || o.discordChannelId || null,
       createdAt: o.createdAt.toISOString(),
     };
   });

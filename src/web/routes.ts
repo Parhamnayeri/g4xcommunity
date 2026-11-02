@@ -2713,6 +2713,358 @@ router.get(
 );
 
 // ═════════════════════════════════════════════════════════════════════════════
+// ─── JOURNEY F.2: پورتال ادورتایزر (Advertiser Portal Overview & Management)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ۱. دریافت اطلاعات کلی پورتال، رنک و عملکردهای مالی ادورتایزر
+router.get(
+  '/advertiser/portal-overview',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const dbUser = await prisma.user.findUnique({
+        where: { discordId: user.discordId },
+        include: {
+          userRoles: true,
+          walletV2: true,
+        },
+      });
+
+      if (!dbUser) {
+        res.status(404).json({ error: 'User profile not found' });
+        return;
+      }
+
+      const roles = (dbUser.userRoles || []).map((r) => r.roleKey.toLowerCase());
+      const isAdvertiser = roles.includes('advertiser');
+      const isStaffOrAdmin = roles.some((r) => ['owner', 'manager', 'admin'].includes(r));
+
+      // بررسی درخواست ثبت‌نام در صورت تایید نشدن
+      const latestApp = await prisma.registrationApplication.findFirst({
+        where: { userId: user.discordId, category: 'advertiser' },
+        orderBy: { submittedAt: 'desc' },
+      });
+
+      // رنک تجاری ادورتایزر
+      const rank = await getAdvertiserRank(user.discordId);
+      const basisPoints = rank ? getRankBasisPoints(rank) : (isAdvertiser ? 1499 : null);
+      const commissionPercent = basisPoints !== null ? formatBasisPoints(basisPoints) : null;
+      const rankLabel = rank ? ADVERTISER_RANK_LABELS[rank] : (isAdvertiser ? 'Bronze (14.99%)' : 'Unassigned');
+
+      // لیست کامل سلسله‌مراتب رنک‌ها طبق مستندات و سیاست مصوب G4X
+      const rankHierarchy = [
+        {
+          rank: AdvertiserRank.BRONZE,
+          label: 'Bronze',
+          basisPoints: 1499,
+          percentage: '14.99%',
+          description: 'Standard tier for newly registered advertisers',
+          isCurrent: rank === AdvertiserRank.BRONZE || (!rank && isAdvertiser),
+        },
+        {
+          rank: AdvertiserRank.SILVER,
+          label: 'Silver',
+          basisPoints: 1299,
+          percentage: '12.99%',
+          description: 'Established commercial boosting volume',
+          isCurrent: rank === AdvertiserRank.SILVER,
+        },
+        {
+          rank: AdvertiserRank.GOLD,
+          label: 'Gold',
+          basisPoints: 1099,
+          percentage: '10.99%',
+          description: 'High-volume commercial agencies and syndicates',
+          isCurrent: rank === AdvertiserRank.GOLD,
+        },
+        {
+          rank: AdvertiserRank.DIAMOND,
+          label: 'Diamond',
+          basisPoints: 899,
+          percentage: '8.99%',
+          description: 'Enterprise commercial volume tier',
+          isCurrent: rank === AdvertiserRank.DIAMOND,
+        },
+        {
+          rank: AdvertiserRank.FOUNDING_ADVERTISER,
+          label: 'Founding Advertiser',
+          basisPoints: 899,
+          percentage: '8.99%',
+          description: 'Dedicated partner tier for founding community members',
+          isCurrent: rank === AdvertiserRank.FOUNDING_ADVERTISER,
+        },
+        {
+          rank: AdvertiserRank.OFFICIAL_PARTNERS,
+          label: 'Official Partners',
+          basisPoints: 699,
+          percentage: '6.99%',
+          description: 'Exclusive premier platform syndicates',
+          isCurrent: rank === AdvertiserRank.OFFICIAL_PARTNERS,
+        },
+      ];
+
+      // والت و موجودی‌های مالی
+      const walletV2 = dbUser.walletV2;
+      const availableCents = walletV2?.availableCents ?? 0;
+      const reservedCents = walletV2?.reservedCents ?? 0;
+      const pendingEarningsCents = walletV2?.pendingEarningsCents ?? 0;
+      const paidCents = walletV2?.paidCents ?? 0;
+
+      // آمار و شمارنده‌های واقعی سفارشات ادورتایزر
+      const activeStatuses = ['draft', 'payment_pending', 'open_presign', 'presign_closed', 'assigned', 'in_progress', 'disputed'];
+      const ownershipWhere = isStaffOrAdmin && !isAdvertiser
+        ? { OR: [{ creatorType: 'advertiser' }, { advertiserId: { not: null } }] }
+        : { OR: [{ advertiserId: user.discordId }, { creatorId: user.discordId }] };
+
+      const [totalCreated, activeCount, completedCount, cancelledCount, volumeAgg] = await Promise.all([
+        prisma.order.count({ where: ownershipWhere }),
+        prisma.order.count({ where: { AND: [ownershipWhere, { status: { in: activeStatuses } }] } }),
+        prisma.order.count({ where: { AND: [ownershipWhere, { status: 'completed' }] } }),
+        prisma.order.count({ where: { AND: [ownershipWhere, { status: 'cancelled' }] } }),
+        prisma.order.aggregate({
+          where: { AND: [ownershipWhere, { status: 'completed' }] },
+          _sum: { grossAmountMinor: true, platformFeeMinor: true },
+        }),
+      ]);
+
+      const totalGrossCompletedCents = volumeAgg._sum.grossAmountMinor || 0;
+      const totalFeePaidCents = volumeAgg._sum.platformFeeMinor || 0;
+
+      // لینک‌های موثق دیسکورد
+      const discordGuildId = process.env.DISCORD_GUILD_ID || null;
+      const ordersChannelId = process.env.CHANNEL_ORDERS || null;
+      const becomeAdvChannelId = process.env.CHANNEL_BECOME_ADVERTISER || null;
+      const orderEntryUrl = discordGuildId && ordersChannelId
+        ? `https://discord.com/channels/${discordGuildId}/${ordersChannelId}`
+        : null;
+
+      res.json({
+        success: true,
+        profile: {
+          discordId: dbUser.discordId,
+          username: dbUser.username,
+          displayName: dbUser.displayName || dbUser.username,
+          roles,
+          isApprovedAdvertiser: isAdvertiser || isStaffOrAdmin,
+          isStaffOversight: isStaffOrAdmin && !isAdvertiser,
+          advertiserRank: rank || (isAdvertiser ? AdvertiserRank.BRONZE : null),
+          rankLabel,
+          applicationStatus: latestApp?.status || (isAdvertiser ? 'approved' : 'none'),
+          applicationDate: latestApp?.submittedAt || null,
+        },
+        rank: {
+          currentRank: rank || (isAdvertiser ? AdvertiserRank.BRONZE : null),
+          rankLabel,
+          basisPoints: basisPoints || 1499,
+          commissionPercent: commissionPercent || '14.99%',
+          rankHierarchy,
+        },
+        wallet: {
+          availableCents,
+          availableUsd: (availableCents / 100).toFixed(2),
+          reservedCents,
+          reservedUsd: (reservedCents / 100).toFixed(2),
+          pendingEarningsCents,
+          pendingEarningsUsd: (pendingEarningsCents / 100).toFixed(2),
+          paidCents,
+          paidUsd: (paidCents / 100).toFixed(2),
+          canPlaceOrders: availableCents > 0,
+        },
+        performance: {
+          totalOrdersCreated: totalCreated,
+          activeOrdersCount: activeCount,
+          completedOrdersCount: completedCount,
+          cancelledOrdersCount: cancelledCount,
+          totalGrossVolumeUsd: (totalGrossCompletedCents / 100).toFixed(2),
+          totalPlatformFeesPaidUsd: (totalFeePaidCents / 100).toFixed(2),
+        },
+        discordIntegration: {
+          guildId: discordGuildId,
+          ordersChannelId,
+          becomeAdvChannelId,
+          orderEntryUrl,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch advertiser overview' });
+    }
+  }
+);
+
+// ۲. ویرایش محدود یادداشت سفارش توسط ادورتایزر صاحب سفارش
+router.patch(
+  '/advertiser/orders/:id/notes',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      if (isNaN(orderId) || orderId <= 0) {
+        res.status(400).json({ error: 'Invalid order ID' });
+        return;
+      }
+
+      const { notes } = req.body;
+      const trimmedNotes = notes !== undefined && notes !== null ? String(notes).trim() : '';
+
+      if (trimmedNotes.length > 500) {
+        res.status(400).json({ error: 'Order notes cannot exceed 500 characters' });
+        return;
+      }
+
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+      });
+
+      if (!order) {
+        res.status(404).json({ error: `Order #${orderId} not found` });
+        return;
+      }
+
+      const userRoles = (user.userRoles?.map((r) => r.roleKey) || []).map((r) => r.toLowerCase());
+      const isStaffOrAdmin = userRoles.some((r) => ['owner', 'manager', 'admin'].includes(r));
+      const isOwner = order.advertiserId === user.discordId || order.creatorId === user.discordId;
+
+      if (!isOwner && !isStaffOrAdmin) {
+        res.status(403).json({ error: 'PERMISSION_DENIED: You are not authorized to edit notes on this order' });
+        return;
+      }
+
+      if (['completed', 'cancelled'].includes(order.status)) {
+        res.status(400).json({ error: 'ORDER_IMMUTABLE: Notes cannot be edited on completed or cancelled orders' });
+        return;
+      }
+
+      const previousNotes = order.notes;
+      const updated = await prisma.order.update({
+        where: { id: orderId },
+        data: { notes: trimmedNotes || null },
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          actorId: user.discordId,
+          action: 'ORDER_NOTES_UPDATED',
+          entityType: 'Order',
+          entityId: String(orderId),
+          previousValues: JSON.stringify({ notes: previousNotes }),
+          newValues: JSON.stringify({ notes: updated.notes }),
+          reason: 'Advertiser updated order notes via Advertiser Portal',
+          isSuccess: true,
+        },
+      });
+
+      res.json({
+        success: true,
+        orderId: updated.id,
+        notes: updated.notes,
+        message: 'Order notes updated successfully',
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to update order notes' });
+    }
+  }
+);
+
+// ۳. ثبت درخواست لغو سفارش توسط ادورتایزر
+router.post(
+  '/advertiser/orders/:id/cancel-request',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      if (isNaN(orderId) || orderId <= 0) {
+        res.status(400).json({ error: 'Invalid order ID' });
+        return;
+      }
+
+      const { reason = 'Cancelled by advertiser' } = req.body;
+      const trimmedReason = String(reason).trim();
+      if (trimmedReason.length < 5) {
+        res.status(400).json({ error: 'A cancellation reason (minimum 5 characters) is required' });
+        return;
+      }
+
+      const order = await prisma.order.findUnique({
+        where: { id: orderId },
+        include: {
+          assignments: { where: { status: 'assigned' } },
+          disputes: { where: { status: { in: ['open', 'under_review'] } } },
+        },
+      });
+
+      if (!order) {
+        res.status(404).json({ error: `Order #${orderId} not found` });
+        return;
+      }
+
+      const userRoles = (user.userRoles?.map((r) => r.roleKey) || []).map((r) => r.toLowerCase());
+      const isStaffOrAdmin = userRoles.some((r) => ['owner', 'manager', 'admin'].includes(r));
+      const isOwner = order.advertiserId === user.discordId || order.creatorId === user.discordId;
+
+      if (!isOwner && !isStaffOrAdmin) {
+        res.status(403).json({ error: 'PERMISSION_DENIED: You are not authorized to cancel this order' });
+        return;
+      }
+
+      if (order.status === 'cancelled') {
+        res.status(400).json({ error: 'ALREADY_CANCELLED: Order is already cancelled' });
+        return;
+      }
+
+      if (order.status === 'completed') {
+        res.status(400).json({ error: 'ORDER_COMPLETED: Completed orders cannot be cancelled' });
+        return;
+      }
+
+      // ۱. اگر سفارش هنوز تعهد مالی فعال یا بوستر منتسب ندارد (مانند draft, payment_pending یا open_presign بدون انتساب)
+      if (['draft', 'payment_pending', 'open_presign'].includes(order.status) && order.assignments.length === 0) {
+        const discordClient = getGlobalDiscordClient();
+        const cancelResult = await cancelOrderWithLifecycle(orderId, user.discordId, trimmedReason, discordClient);
+        res.json({
+          success: true,
+          status: 'cancelled',
+          message: 'Order cancelled immediately as no boosters were assigned and work has not commenced.',
+          order: cancelResult.order,
+        });
+        return;
+      }
+
+      // ۲. در صورتی که سفارش دارای بوسترهای منتسب، در حال اجرا، یا تعهد مالی فعال باشد
+      // ادورتایزر نمی‌تواند تعهدات مالی فعال را راساً لغو کند و درخواست باید از طریق چرخه بازبینی مدیریت عبور کند
+      if (order.disputes && order.disputes.length > 0) {
+        res.status(400).json({
+          error: `DUPLICATE_CANCELLATION_REQUEST: A review request or dispute (#${order.disputes[0].id}) is already open for this order.`,
+        });
+        return;
+      }
+
+      const discordClient = getGlobalDiscordClient();
+      const disputeResult = await openOrderDispute({
+        orderId,
+        actorId: user.discordId,
+        disputeType: 'other',
+        description: `Advertiser Cancellation Request: ${trimmedReason}`,
+        discordClient,
+      });
+
+      res.json({
+        success: true,
+        status: 'pending_review',
+        disputeId: disputeResult.dispute.id,
+        message: 'Cancellation request submitted for management review. Because active boosters or financial commitments exist, staff will review and settle the order.',
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to submit cancellation request' });
+    }
+  }
+);
+
+// ═════════════════════════════════════════════════════════════════════════════
 // ─── JOURNEY G: اختلافات سفارش و شواهد اتمام ران (Disputes & Proof Review)
 // ═════════════════════════════════════════════════════════════════════════════
 

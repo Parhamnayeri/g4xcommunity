@@ -955,6 +955,17 @@ export async function getAuthorizedChannelAccess(
 
   const activeChannel = order.orderChannels[0];
   if (!activeChannel) {
+    const fallbackChannelId = order.executionChannelId || order.discordChannelId;
+    if (fallbackChannelId) {
+      const guildId = process.env.DISCORD_GUILD_ID || '1200000000000000000';
+      return {
+        authorized: true,
+        hasChannel: true,
+        channelId: fallbackChannelId,
+        channelUrl: `https://discord.com/channels/${guildId}/${fallbackChannelId}`,
+        channelName: `order-${order.id}`,
+      };
+    }
     return {
       authorized: true,
       hasChannel: false,

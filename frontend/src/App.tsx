@@ -8,6 +8,7 @@ import { RulesPage } from './pages/RulesPage';
 import { PrivacyPage } from './pages/PrivacyPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { WithdrawPage } from './pages/WithdrawPage';
+import { AdvertiserPage } from './pages/AdvertiserPage';
 import { LegacyTransitionPage } from './pages/LegacyTransitionPage';
 
 export const App: React.FC = () => {
@@ -59,17 +60,7 @@ export const App: React.FC = () => {
                 />
               }
             />
-            <Route
-              path="/advertiser"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Advertiser Workspace"
-                  category="Authenticated"
-                  description="Track submitted customer orders, advertiser rank tier, and commission earnings."
-                  legacyTab="advertiser"
-                />
-              }
-            />
+            <Route path="/advertiser" element={<AdvertiserPage />} />
             <Route
               path="/exchange"
               element={
