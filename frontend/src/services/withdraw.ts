@@ -46,6 +46,16 @@ export async function confirmWithdrawalRequest(
   });
 }
 
+export async function cancelWithdrawalRequest(
+  requestId: number,
+  reason?: string
+): Promise<{ success: boolean; request: any; wallet: any; error?: string }> {
+  return await apiRequest('/api/withdrawals/cancel', {
+    method: 'POST',
+    body: JSON.stringify({ requestId, reason }),
+  });
+}
+
 export async function fetchWithdrawalHistory(params: {
   page?: number;
   limit?: number;
@@ -60,3 +70,4 @@ export async function fetchWithdrawalHistory(params: {
 
   return await apiRequest<WithdrawalHistoryResponse>(`/api/withdrawals/history?${query.toString()}`);
 }
+

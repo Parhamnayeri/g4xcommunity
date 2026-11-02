@@ -26,7 +26,7 @@ export const WithdrawalOverviewCards: React.FC<WithdrawalOverviewCardsProps> = (
         }}
       >
         <div>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-main)', margin: 0 }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
             Authoritative Withdrawal Balances
           </h2>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>
@@ -75,7 +75,7 @@ export const WithdrawalOverviewCards: React.FC<WithdrawalOverviewCardsProps> = (
         </Card>
 
         {/* 2. Amount Eligible to Request */}
-        <Card highlight="none" style={{ padding: '1.25rem', borderColor: 'rgba(99, 102, 241, 0.4)' }}>
+        <Card highlight="none" style={{ padding: '1.25rem', borderColor: 'rgba(56, 189, 248, 0.4)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
             <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
               Eligible to Request
@@ -84,7 +84,7 @@ export const WithdrawalOverviewCards: React.FC<WithdrawalOverviewCardsProps> = (
               Gross
             </span>
           </div>
-          <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#93c5fd', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
+          <div style={{ fontSize: '1.85rem', fontWeight: 900, color: 'var(--status-info)', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
             ${wallet.eligibleWithdrawalUsd}
           </div>
           <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', lineHeight: 1.3, margin: 0 }}>
@@ -102,7 +102,7 @@ export const WithdrawalOverviewCards: React.FC<WithdrawalOverviewCardsProps> = (
               Locked
             </span>
           </div>
-          <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#c4b5fd', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
+          <div style={{ fontSize: '1.85rem', fontWeight: 900, color: 'var(--primary-purple)', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
             ${wallet.reservedUsd}
           </div>
           <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', lineHeight: 1.3, margin: 0 }}>
@@ -116,11 +116,11 @@ export const WithdrawalOverviewCards: React.FC<WithdrawalOverviewCardsProps> = (
             <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
               Pending Requests
             </span>
-            <span style={{ backgroundColor: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.3)', padding: '0.15rem 0.45rem', borderRadius: 'var(--radius-xs)', fontSize: '0.65rem', fontWeight: 700 }}>
+            <span className="badge badge-amber" style={{ fontSize: '0.65rem' }}>
               In-Flight
             </span>
           </div>
-          <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#fde68a', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
+          <div style={{ fontSize: '1.85rem', fontWeight: 900, color: 'var(--status-warning)', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
             ${wallet.pendingWithdrawalRequestsUsd}
           </div>
           <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', lineHeight: 1.3, margin: 0 }}>
@@ -138,7 +138,7 @@ export const WithdrawalOverviewCards: React.FC<WithdrawalOverviewCardsProps> = (
               Audit
             </span>
           </div>
-          <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#e2e8f0', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
+          <div style={{ fontSize: '1.85rem', fontWeight: 900, color: 'var(--text-primary)', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
             ${wallet.confirmedEarningsUsd}
           </div>
           <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', lineHeight: 1.3, margin: 0 }}>
@@ -156,7 +156,7 @@ export const WithdrawalOverviewCards: React.FC<WithdrawalOverviewCardsProps> = (
               Historical
             </span>
           </div>
-          <div style={{ fontSize: '1.85rem', fontWeight: 900, color: '#4ade80', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
+          <div style={{ fontSize: '1.85rem', fontWeight: 900, color: 'var(--status-success)', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
             ${wallet.totalPaidUsd}
           </div>
           <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', lineHeight: 1.3, margin: 0 }}>

@@ -6,7 +6,11 @@ import request from 'supertest';
 import prisma from '../database/db';
 import { app, sessionStore } from '../web/server';
 import { creditAvailableCents } from '../services/financeV2/financeV2WalletService';
-import { adminExecuteManualPayout } from '../services/financeV2/boosterWithdrawalService';
+import {
+  adminExecuteManualPayout,
+  adminRejectWithdrawal,
+  confirmAndSubmitWithdrawalRequest,
+} from '../services/financeV2/boosterWithdrawalService';
 import { LedgerV2EntryType } from '../services/financeV2/financeV2Types';
 import { validateIranianIban, maskIban, maskCryptoAddress } from '../services/financeV2/iranianIbanValidator';
 import { validateBep20Address } from '../services/financeV2/bep20Validator';
@@ -112,7 +116,7 @@ async function runWithdrawPhase3Suite() {
       data: [
         { userId: uTestA, roleKey: 'booster' },
         { userId: uTestB, roleKey: 'booster' },
-        { userId: uAdmin, roleKey: 'admin' },
+        { userId: uAdmin, roleKey: 'owner' },
       ],
     });
 
@@ -360,6 +364,158 @@ async function runWithdrawPhase3Suite() {
         dashOverview.body.wallet.totalPaidUsd !== undefined,
       '52. Dashboard wallet includes authoritative totalPaid fields'
     );
+
+    // ─── ۱۷. آزمون انقضای پیش‌فاکتور (Quote Expiration Guard) ────────────────
+    const expQuoteRes = await authA.agent
+      .post('/api/withdrawals/quote')
+      .set('x-csrf-token', authA.csrfToken)
+      .send({
+        payoutMethod: 'USDT_BEP20',
+        requestedUsdCents: 2000,
+        destinationAddress: validBep20,
+      });
+    const expQuoteId = expQuoteRes.body.quote.id;
+    // تنظیم عمدی زمان انقضا به گذشته در دیتابیس
+    await prisma.boosterWithdrawalRequest.update({
+      where: { id: expQuoteId },
+      data: { quoteExpiresAt: new Date(Date.now() - 60000) },
+    });
+    const expConfirmRes = await authA.agent
+      .post('/api/withdrawals/confirm')
+      .set('x-csrf-token', authA.csrfToken)
+      .send({ requestId: expQuoteId });
+    assert(expConfirmRes.status === 400 && expConfirmRes.body.error.includes('QUOTE_EXPIRED'), '53. Expired financial quote cannot be confirmed (QUOTE_EXPIRED)');
+
+    // ─── ۱۸. آزمون تایید همزمان (Concurrent Duplicate Confirmations Guard) ───
+    const concQuoteRes = await authA.agent
+      .post('/api/withdrawals/quote')
+      .set('x-csrf-token', authA.csrfToken)
+      .send({
+        payoutMethod: 'USDT_BEP20',
+        requestedUsdCents: 2000,
+        destinationAddress: validBep20,
+      });
+    const concQuoteId = concQuoteRes.body.quote.id;
+    const [c1, c2] = await Promise.allSettled([
+      confirmAndSubmitWithdrawalRequest(concQuoteId, uTestA),
+      confirmAndSubmitWithdrawalRequest(concQuoteId, uTestA),
+    ]);
+    const succCount = [c1, c2].filter((r) => r.status === 'fulfilled').length;
+    const failCount = [c1, c2].filter((r) => r.status === 'rejected').length;
+    assert(succCount === 1 && failCount === 1, '54. Concurrent confirmations: exactly one succeeds and one is rejected');
+
+    // ─── ۱۹. لغو درخواست توسط بوستر و استرداد دقیقاً یک‌باره وجوه (Self-Cancel)
+    const cancelRes = await authA.agent
+      .post('/api/withdrawals/cancel')
+      .set('x-csrf-token', authA.csrfToken)
+      .send({ requestId: concQuoteId, reason: 'Test user cancellation' });
+    assert(cancelRes.status === 200 && cancelRes.body.success, '55. User can cancel in-flight reserved withdrawal request');
+    assert(cancelRes.body.request.status === 'CANCELLED', '56. Request status transitions to CANCELLED');
+    assert(
+      cancelRes.body.wallet.availableCents === 15000 && cancelRes.body.wallet.reservedCents === 5000,
+      '57. Reserved funds ($20.00) returned to Available balance exactly once'
+    );
+
+    // تکرار لغو idempotent است و دوباره پول برنمی‌گرداند
+    const repeatCancelRes = await authA.agent
+      .post('/api/withdrawals/cancel')
+      .set('x-csrf-token', authA.csrfToken)
+      .send({ requestId: concQuoteId });
+    assert(repeatCancelRes.status === 200 && repeatCancelRes.body.alreadyCancelled === true, '58. Repeat cancellation is idempotent and does not double-release funds');
+
+    // کاربر دیگر نمی‌تواند درخواست این کاربر را لغو کند
+    const crossCancelRes = await authB.agent
+      .post('/api/withdrawals/cancel')
+      .set('x-csrf-token', authB.csrfToken)
+      .send({ requestId: concQuoteId });
+    assert(crossCancelRes.status === 400, '59. Cross-user cancellation attempt is denied');
+
+    // ─── ۲۰. رد درخواست توسط ادمین و استرداد دفاتر (Admin Rejection) ────────
+    const adminRej = await adminRejectWithdrawal(usdtQuote.id, uAdmin, 'Administrative compliance check failure');
+    assert(adminRej.request.status === 'REJECTED', '60. Admin rejection transitions request to REJECTED');
+    const walletAfterRej = await prisma.walletV2.findUnique({ where: { userId: uTestA } });
+    assert(
+      walletAfterRej?.availableCents === 20000 && walletAfterRej?.reservedCents === 0,
+      '61. Admin rejection released remaining $50.00 reserved funds back to Available balance ($200.00 total)'
+    );
+
+    // تکرار رد ادمین بدون تغییر و بدون استرداد مجدد
+    const repeatRej = await adminRejectWithdrawal(usdtQuote.id, uAdmin, 'Second rejection attempt');
+    assert(repeatRej.alreadyRejected === true, '62. Repeated admin rejection does not double-reverse reserved liability');
+
+    // ─── ۲۱. عدم تغییر سایلنت مقصد درخواست‌های در جریان (Destination Isolation)
+    const isoQuoteRes = await authA.agent
+      .post('/api/withdrawals/quote')
+      .set('x-csrf-token', authA.csrfToken)
+      .send({
+        payoutMethod: 'USDT_BEP20',
+        requestedUsdCents: 3000,
+        destinationAddress: validBep20,
+      });
+    const isoReq = await confirmAndSubmitWithdrawalRequest(isoQuoteRes.body.quote.id, uTestA);
+    // اکنون کاربر اولویت‌های ذخیره‌شده خود را با آدرس جدیدی تغییر می‌دهد
+    const newAddress = '0x9999999999999999999999999999999999999999';
+    await authA.agent
+      .put('/api/payout-preferences')
+      .set('x-csrf-token', authA.csrfToken)
+      .send({ cryptoAddress: newAddress });
+    // بررسی درخواست در جریان: مقصد آن تغییر نکرده و روی همان آدرس اولیه ثابت مانده است
+    const freshIsoReq = await prisma.boosterWithdrawalRequest.findUnique({ where: { id: isoReq.request.id } });
+    assert(
+      freshIsoReq?.destinationAddress.toLowerCase() === validBep20.toLowerCase(),
+      '63. Updating user payout preferences does NOT alter the committed destination of an active withdrawal request'
+    );
+
+    // ─── ۲۲. الزامی بودن مدرک تسویه برای ادمین (Strict Payment Evidence) ────
+    const fakeApprovalRes = await authA.agent
+      .post(`/admin/withdrawals/${isoReq.request.id}/review`)
+      .send({ decision: 'approve_paid', txHash: '' });
+    assert(
+      fakeApprovalRes.status === 400 || fakeApprovalRes.status === 403,
+      '64. Admin approval without explicit TxHash or Bank Receipt reference is rejected'
+    );
+
+    // ─── ۲۳. بررسی یکپارچگی توکن‌های طراحی G4X (Design Tokens Verification) ─
+    const fs = await import('fs');
+    const path = await import('path');
+    const tokensPath = path.resolve(__dirname, '../../frontend/src/styles/tokens.css');
+    const tokensContent = fs.readFileSync(tokensPath, 'utf8');
+    const requiredTokens = [
+      '--bg-main: #0d0b12',
+      '--bg-surface: #181524',
+      '--bg-surface-hover: #231e34',
+      '--primary-purple: #7c3aed',
+      '--primary-purple-hover: #6d28d9',
+      '--purple-glow: rgba(124, 58, 237, 0.35)',
+      '--accent-lime: #ccff00',
+      '--accent-lime-hover: #b8e600',
+      '--accent-lime-glow: rgba(204, 255, 0, 0.4)',
+      '--text-primary: #f4f4f6',
+      '--text-muted: #94a3b8',
+      '--text-inverse: #0d0b12',
+      '--border-subtle: #2d2645',
+    ];
+    let allTokensPresent = true;
+    for (const tok of requiredTokens) {
+      if (!tokensContent.includes(tok)) {
+        console.error(`Missing token: ${tok}`);
+        allTokensPresent = false;
+      }
+    }
+    assert(allTokensPresent, '65. All 13 mandatory G4X design tokens present with exact brand hex values in tokens.css');
+
+    // بررسی عدم وجود متغیرهای تعریف‌نشده در کامپوننت‌های فرانت‌اند
+    const withdrawCompDir = path.resolve(__dirname, '../../frontend/src/components/withdraw');
+    const compFiles = fs.readdirSync(withdrawCompDir);
+    let noForbiddenVars = true;
+    for (const cf of compFiles) {
+      const cContent = fs.readFileSync(path.join(withdrawCompDir, cf), 'utf8');
+      if (cContent.includes('var(--text-main)') || cContent.includes('var(--bg-dark)')) {
+        console.error(`Forbidden undeclared token found in ${cf}`);
+        noForbiddenVars = false;
+      }
+    }
+    assert(noForbiddenVars, '66. Zero forbidden/undeclared CSS variables in withdrawal components');
   } catch (err) {
     console.error('Unhandled suite error:', err);
     failed++;

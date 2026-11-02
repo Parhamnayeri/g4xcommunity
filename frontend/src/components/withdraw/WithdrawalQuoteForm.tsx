@@ -150,23 +150,23 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
   return (
     <Card highlight="none" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
       <div style={{ marginBottom: '1.25rem' }}>
-        <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-main)', margin: '0 0 0.25rem 0' }}>
+        <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 0.25rem 0' }}>
           Request Manual Withdrawal
         </h3>
         <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>
-          Generate a binding quote and lock funds for administrative disbursement.
+          Generate a binding quote (valid 15 minutes) and lock funds for administrative disbursement.
         </p>
       </div>
 
       {confirmSuccess && (
         <div
           style={{
-            backgroundColor: 'rgba(34, 197, 94, 0.15)',
-            border: '1px solid rgba(34, 197, 94, 0.35)',
+            backgroundColor: 'rgba(16, 185, 129, 0.15)',
+            border: '1px solid rgba(16, 185, 129, 0.35)',
             borderRadius: 'var(--radius-sm)',
             padding: '1rem',
             marginBottom: '1.25rem',
-            color: '#4ade80',
+            color: 'var(--status-success)',
             fontSize: '0.86rem',
             lineHeight: 1.4,
           }}
@@ -183,7 +183,7 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
             borderRadius: 'var(--radius-sm)',
             padding: '0.85rem 1rem',
             marginBottom: '1.25rem',
-            color: '#f87171',
+            color: 'var(--status-danger)',
             fontSize: '0.85rem',
           }}
         >
@@ -201,7 +201,7 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
             setQuoteError(null);
           }}
           style={{
-            backgroundColor: method === 'USDT_BEP20' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(15, 12, 28, 0.5)',
+            backgroundColor: method === 'USDT_BEP20' ? 'rgba(204, 255, 0, 0.12)' : 'rgba(15, 12, 28, 0.5)',
             border: `1px solid ${method === 'USDT_BEP20' ? 'var(--accent-lime)' : 'var(--border-subtle)'}`,
             borderRadius: 'var(--radius-sm)',
             padding: '0.85rem',
@@ -211,7 +211,7 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
-            <span style={{ fontWeight: 800, fontSize: '0.9rem', color: method === 'USDT_BEP20' ? 'var(--accent-lime)' : 'var(--text-main)' }}>
+            <span style={{ fontWeight: 800, fontSize: '0.9rem', color: method === 'USDT_BEP20' ? 'var(--accent-lime)' : 'var(--text-primary)' }}>
               💎 USDT (BSC BEP-20)
             </span>
             <span className="badge badge-lime" style={{ fontSize: '0.65rem' }}>
@@ -231,8 +231,8 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
             setQuoteError(null);
           }}
           style={{
-            backgroundColor: method === 'IRT_BANK' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(15, 12, 28, 0.5)',
-            border: `1px solid ${method === 'IRT_BANK' ? '#818cf8' : 'var(--border-subtle)'}`,
+            backgroundColor: method === 'IRT_BANK' ? 'rgba(124, 58, 237, 0.15)' : 'rgba(15, 12, 28, 0.5)',
+            border: `1px solid ${method === 'IRT_BANK' ? 'var(--primary-purple)' : 'var(--border-subtle)'}`,
             borderRadius: 'var(--radius-sm)',
             padding: '0.85rem',
             textAlign: 'left',
@@ -241,7 +241,7 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
-            <span style={{ fontWeight: 800, fontSize: '0.9rem', color: method === 'IRT_BANK' ? '#93c5fd' : 'var(--text-main)' }}>
+            <span style={{ fontWeight: 800, fontSize: '0.9rem', color: method === 'IRT_BANK' ? 'var(--status-info)' : 'var(--text-primary)' }}>
               🏦 Iranian Bank (IRT)
             </span>
             <span className="badge badge-muted" style={{ fontSize: '0.65rem' }}>
@@ -258,7 +258,7 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
         {/* Amount Input */}
         <div style={{ marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-            <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-main)' }}>
+            <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)' }}>
               Withdrawal Amount (USD)
             </label>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
@@ -289,7 +289,7 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
                 padding: '0.7rem 0.85rem 0.7rem 2rem',
                 fontSize: '1.1rem',
                 fontWeight: 700,
-                color: 'var(--text-main)',
+                color: 'var(--text-primary)',
               }}
             />
           </div>
@@ -318,7 +318,7 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
         {/* Destination Picker */}
         <div style={{ marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-            <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-main)' }}>
+            <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)' }}>
               {method === 'USDT_BEP20' ? 'USDT BEP-20 Wallet Address' : 'Iranian IBAN / Sheba'}
             </label>
 
@@ -349,7 +349,7 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
                 border: '1px solid var(--border-subtle)',
                 borderRadius: 'var(--radius-sm)',
                 padding: '0.6rem 0.85rem',
-                color: 'var(--text-main)',
+                color: 'var(--text-primary)',
                 fontSize: '0.85rem',
                 marginBottom: '0.5rem',
               }}
@@ -366,7 +366,7 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
             placeholder={
               method === 'USDT_BEP20'
                 ? '0x1234567890abcdef1234567890abcdef12345678 (BNB Smart Chain only)'
-                : 'IR020170000000109968843003'
+                : 'IR200170000000109968843003'
             }
             style={{
               width: '100%',
@@ -374,7 +374,7 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
               border: '1px solid var(--border-subtle)',
               borderRadius: 'var(--radius-sm)',
               padding: '0.6rem 0.85rem',
-              color: method === 'USDT_BEP20' ? '#c4b5fd' : '#93c5fd',
+              color: method === 'USDT_BEP20' ? 'var(--primary-purple)' : 'var(--status-info)',
               fontFamily: 'monospace',
               fontSize: '0.85rem',
             }}
@@ -399,8 +399,8 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
         <div
           style={{
             marginTop: '1.5rem',
-            backgroundColor: 'rgba(24, 20, 42, 0.8)',
-            border: '1px solid var(--primary)',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--primary-purple)',
             borderRadius: 'var(--radius-sm)',
             padding: '1.25rem',
           }}
@@ -408,9 +408,9 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem' }}>
             <div>
               <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                Itemized Binding Quote
+                Itemized Binding Quote (15-min validity)
               </span>
-              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-main)', fontFamily: 'monospace' }}>
+              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
                 {activeQuote.withdrawalRef}
               </div>
             </div>
@@ -423,38 +423,38 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem', fontSize: '0.86rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: 'var(--text-muted)' }}>Gross Requested USD:</span>
-              <span style={{ fontWeight: 700, color: 'var(--text-main)' }}>${activeQuote.requestedUsd}</span>
+              <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>${activeQuote.requestedUsd}</span>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: 'var(--text-muted)' }}>Fixed Service Fee:</span>
-              <span style={{ fontWeight: 700, color: '#f59e0b' }}>-${activeQuote.fixedFeeUsd}</span>
+              <span style={{ fontWeight: 700, color: 'var(--status-warning)' }}>-${activeQuote.fixedFeeUsd}</span>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: 'var(--text-muted)' }}>Net Subtotal USD:</span>
-              <span style={{ fontWeight: 700, color: 'var(--text-main)' }}>${activeQuote.netUsd}</span>
+              <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>${activeQuote.netUsd}</span>
             </div>
 
             {activeQuote.payoutMethod === 'IRT_BANK' && activeQuote.quoteRate && (
               <>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
                   <span style={{ color: 'var(--text-muted)' }}>Admin USD/IRT Rate:</span>
-                  <span style={{ color: 'var(--text-main)' }}>{activeQuote.quoteRate.toLocaleString()} Toman</span>
+                  <span style={{ color: 'var(--text-primary)' }}>{activeQuote.quoteRate.toLocaleString()} Toman</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
                   <span style={{ color: 'var(--text-muted)' }}>Withdrawal Adjustment:</span>
-                  <span style={{ color: '#ef4444' }}>-{activeQuote.rateDiscount?.toLocaleString()} Toman / USD</span>
+                  <span style={{ color: 'var(--status-danger)' }}>-{activeQuote.rateDiscount?.toLocaleString()} Toman / USD</span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
                   <span style={{ color: 'var(--text-muted)' }}>Effective IRT Rate:</span>
-                  <span style={{ fontWeight: 700, color: '#93c5fd' }}>{activeQuote.effectiveRate?.toLocaleString()} Toman</span>
+                  <span style={{ fontWeight: 700, color: 'var(--status-info)' }}>{activeQuote.effectiveRate?.toLocaleString()} Toman</span>
                 </div>
               </>
             )}
 
             <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-subtle)', paddingTop: '0.5rem' }}>
-              <span style={{ fontWeight: 800, color: 'var(--text-main)' }}>Expected Net Payout:</span>
+              <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Expected Net Payout:</span>
               <span style={{ fontWeight: 900, fontSize: '1.15rem', color: 'var(--accent-lime)' }}>
                 {activeQuote.payoutMethod === 'IRT_BANK'
                   ? `${Number(activeQuote.quotedNetPayoutAmount).toLocaleString()} Toman`
@@ -463,14 +463,14 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem' }}>
-              <span style={{ color: 'var(--text-muted)' }}>Destination:</span>
-              <span style={{ fontFamily: 'monospace', color: '#c4b5fd' }}>{activeQuote.maskedDestinationAddress}</span>
+              <span style={{ color: 'var(--text-muted)' }}>Committed Destination:</span>
+              <span style={{ fontFamily: 'monospace', color: 'var(--primary-purple)' }}>{activeQuote.maskedDestinationAddress}</span>
             </div>
 
             {activeQuote.scheduledCycleDay && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Disbursement Cycle:</span>
-                <span style={{ color: 'var(--text-main)', fontWeight: 700 }}>{activeQuote.scheduledCycleDay} Batch</span>
+                <span style={{ color: 'var(--text-primary)', fontWeight: 700 }}>{activeQuote.scheduledCycleDay} Batch</span>
               </div>
             )}
           </div>
@@ -478,13 +478,13 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
           {/* Safety Notice regarding feature gate */}
           <div
             style={{
-              backgroundColor: 'rgba(234, 179, 8, 0.1)',
-              border: '1px solid rgba(234, 179, 8, 0.25)',
+              backgroundColor: 'rgba(245, 158, 11, 0.1)',
+              border: '1px solid rgba(245, 158, 11, 0.25)',
               borderRadius: 'var(--radius-xs)',
               padding: '0.65rem 0.8rem',
               marginBottom: '1rem',
               fontSize: '0.75rem',
-              color: '#fef08a',
+              color: 'var(--status-warning)',
               lineHeight: 1.35,
             }}
           >

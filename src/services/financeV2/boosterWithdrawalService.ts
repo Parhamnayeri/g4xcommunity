@@ -833,6 +833,14 @@ export async function boosterCancelWithdrawal(
       throw new Error('PERMISSION_DENIED: Cannot cancel another user\'s withdrawal');
     }
 
+    if (request.status === BoosterWithdrawalStatus.CANCELLED) {
+      return { request, wallet: null, alreadyCancelled: true };
+    }
+
+    if (request.status === BoosterWithdrawalStatus.REJECTED) {
+      throw new Error('CANNOT_CANCEL_REJECTED: Cannot cancel a withdrawal that was already rejected');
+    }
+
     if (request.status === BoosterWithdrawalStatus.PAID) {
       throw new Error('CANNOT_CANCEL_PAID: Paid withdrawals cannot be cancelled');
     }
@@ -842,7 +850,7 @@ export async function boosterCancelWithdrawal(
     }
 
     let updatedWallet = null;
-    if (request.status === BoosterWithdrawalStatus.RESERVED) {
+    if (request.status === BoosterWithdrawalStatus.RESERVED || request.status === BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW) {
       const rev = await reverseReservedCents(
         boosterId,
         request.requestedUsdCents,
@@ -865,6 +873,17 @@ export async function boosterCancelWithdrawal(
       },
     });
 
-    return { request: updatedRequest, wallet: updatedWallet };
+    await tx.auditLog.create({
+      data: {
+        actorId: boosterId,
+        action: 'BOOSTER_WITHDRAWAL_CANCELLED',
+        entityType: 'BoosterWithdrawalRequest',
+        entityId: String(requestId),
+        reason: cancelReason,
+      },
+    });
+
+    return { request: updatedRequest, wallet: updatedWallet, alreadyCancelled: false };
   });
 }
+

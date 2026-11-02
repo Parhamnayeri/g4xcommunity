@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Card } from '../ui/Card';
 import { WithdrawalHistoryItem } from '../../types/withdraw';
-import { fetchWithdrawalHistory } from '../../services/withdraw';
+import { fetchWithdrawalHistory, cancelWithdrawalRequest } from '../../services/withdraw';
 
 interface WithdrawalHistoryTableProps {
   lastUpdated?: number;
+  onBalanceSync?: () => void;
 }
 
-export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ lastUpdated }) => {
+export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ lastUpdated, onBalanceSync }) => {
   const [withdrawals, setWithdrawals] = useState<WithdrawalHistoryItem[]>([]);
   const [page, setPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
@@ -15,7 +16,9 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [methodFilter, setMethodFilter] = useState<string>('ALL');
   const [loading, setLoading] = useState<boolean>(true);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   const loadData = async (targetPage: number) => {
     setLoading(true);
@@ -46,6 +49,32 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
   useEffect(() => {
     loadData(1);
   }, [statusFilter, methodFilter, lastUpdated]);
+
+  const handleCancelRequest = async (item: WithdrawalHistoryItem) => {
+    const confirmCancel = window.confirm(
+      `Cancel withdrawal #${item.id} (${item.withdrawalRef})? The reserved amount of $${item.requestedUsd} will be released back to your available balance.`
+    );
+    if (!confirmCancel) return;
+
+    setCancellingId(item.id);
+    setError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await cancelWithdrawalRequest(item.id, 'Cancelled by user from portal');
+      if (res.success) {
+        setActionSuccess(`Withdrawal #${item.id} was successfully cancelled. Reserved funds returned to Available balance.`);
+        loadData(page);
+        if (onBalanceSync) onBalanceSync();
+      } else {
+        setError(res.error || 'Failed to cancel withdrawal request.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Unable to cancel withdrawal request.');
+    } finally {
+      setCancellingId(null);
+    }
+  };
 
   const formatDate = (iso: string) => {
     try {
@@ -92,11 +121,11 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
         }}
       >
         <div>
-          <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-main)', margin: '0 0 0.25rem 0' }}>
+          <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)', margin: '0 0 0.25rem 0' }}>
             Withdrawal Requests &amp; Payment History
           </h3>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
-            Historical record of your submitted payouts, fees and payment receipts.
+            Historical record of your submitted payouts, fees, cancellation and payment receipts.
           </p>
         </div>
 
@@ -113,7 +142,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
               border: '1px solid var(--border-subtle)',
               borderRadius: 'var(--radius-xs)',
               padding: '0.4rem 0.65rem',
-              color: 'var(--text-main)',
+              color: 'var(--text-primary)',
               fontSize: '0.78rem',
             }}
           >
@@ -133,7 +162,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
               border: '1px solid var(--border-subtle)',
               borderRadius: 'var(--radius-xs)',
               padding: '0.4rem 0.65rem',
-              color: 'var(--text-main)',
+              color: 'var(--text-primary)',
               fontSize: '0.78rem',
             }}
           >
@@ -148,8 +177,14 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
         </div>
       </div>
 
+      {actionSuccess && (
+        <div style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 'var(--radius-sm)', padding: '0.75rem 1rem', marginBottom: '1rem', color: 'var(--status-success)', fontSize: '0.82rem' }}>
+          ✓ {actionSuccess}
+        </div>
+      )}
+
       {error && (
-        <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 'var(--radius-sm)', padding: '0.75rem 1rem', marginBottom: '1rem', color: '#f87171', fontSize: '0.82rem' }}>
+        <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 'var(--radius-sm)', padding: '0.75rem 1rem', marginBottom: '1rem', color: 'var(--status-danger)', fontSize: '0.82rem' }}>
           ⚠ {error}
         </div>
       )}
@@ -185,6 +220,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
                 <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'right' }}>Net Payout</th>
                 <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'center' }}>Status</th>
                 <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700 }}>Payment Receipt</th>
+                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'center' }}>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -196,7 +232,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
                     transition: 'background-color 0.15s ease',
                   }}
                 >
-                  <td style={{ padding: '0.65rem 0.75rem', fontFamily: 'monospace', fontWeight: 700, color: 'var(--text-main)' }}>
+                  <td style={{ padding: '0.65rem 0.75rem', fontFamily: 'monospace', fontWeight: 700, color: 'var(--text-primary)' }}>
                     #{item.id} <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>({item.withdrawalRef})</span>
                   </td>
 
@@ -205,7 +241,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
                   </td>
 
                   <td style={{ padding: '0.65rem 0.75rem' }}>
-                    <div style={{ fontWeight: 700, color: item.payoutMethod === 'USDT_BEP20' ? 'var(--accent-lime)' : '#93c5fd' }}>
+                    <div style={{ fontWeight: 700, color: item.payoutMethod === 'USDT_BEP20' ? 'var(--accent-lime)' : 'var(--status-info)' }}>
                       {item.payoutMethod === 'USDT_BEP20' ? 'USDT (BEP-20)' : 'Iranian Bank (IRT)'}
                     </div>
                     <div style={{ fontFamily: 'monospace', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
@@ -213,11 +249,11 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
                     </div>
                   </td>
 
-                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right', fontWeight: 700, color: 'var(--text-main)' }}>
+                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)' }}>
                     ${item.requestedUsd}
                   </td>
 
-                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right', color: '#f59e0b' }}>
+                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right', color: 'var(--status-warning)' }}>
                     -${item.fixedFeeUsd}
                   </td>
 
@@ -233,15 +269,32 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
 
                   <td style={{ padding: '0.65rem 0.75rem', fontSize: '0.75rem' }}>
                     {item.externalTxHash ? (
-                      <span style={{ fontFamily: 'monospace', color: '#a78bfa' }} title={item.rawTxHash || ''}>
+                      <span style={{ fontFamily: 'monospace', color: 'var(--primary-purple)' }} title={item.rawTxHash || ''}>
                         Tx: {item.externalTxHash}
                       </span>
                     ) : item.bankReceiptRef ? (
-                      <span style={{ fontFamily: 'monospace', color: '#93c5fd' }}>
+                      <span style={{ fontFamily: 'monospace', color: 'var(--status-info)' }}>
                         Ref: {item.bankReceiptRef}
                       </span>
                     ) : (
                       <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Pending manual payout</span>
+                    )}
+                  </td>
+
+                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'center' }}>
+                    {(item.status === 'RESERVED' || item.status === 'QUOTED') ? (
+                      <button
+                        type="button"
+                        onClick={() => handleCancelRequest(item)}
+                        disabled={cancellingId === item.id}
+                        className="btn btn-outline btn-sm"
+                        style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', color: 'var(--status-danger)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+                        title="Cancel this withdrawal request and release locked funds"
+                      >
+                        {cancellingId === item.id ? 'Cancelling...' : 'Cancel'}
+                      </button>
+                    ) : (
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>—</span>
                     )}
                   </td>
                 </tr>
@@ -294,3 +347,4 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
     </Card>
   );
 };
+

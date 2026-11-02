@@ -67,6 +67,44 @@
   transform: translateY(0);
 }
 
+/* Primary Purple Button Alias */
+.btn-primary {
+  background-color: var(--primary-purple);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 4px 14px var(--purple-glow);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--primary-purple-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(124, 58, 237, 0.5);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* Success Button (Lime/Green Accent) */
+.btn-success {
+  background-color: var(--accent-lime);
+  color: var(--text-inverse);
+  font-weight: 700;
+  box-shadow: 0 0 15px var(--accent-lime-glow);
+  border: 1px solid transparent;
+}
+
+.btn-success:hover:not(:disabled) {
+  background-color: var(--accent-lime-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 0 22px rgba(204, 255, 0, 0.6);
+}
+
+.btn-success:active:not(:disabled) {
+  transform: translateY(0);
+}
+
 /* Outline Button */
 .btn-outline {
   background-color: transparent;
@@ -132,6 +170,30 @@
   background-color: rgba(124, 58, 237, 0.15);
   color: #c4b5fd;
   border: 1px solid rgba(124, 58, 237, 0.3);
+}
+
+.badge-green {
+  background-color: rgba(16, 185, 129, 0.15);
+  color: var(--status-success);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.badge-blue {
+  background-color: rgba(56, 189, 248, 0.15);
+  color: var(--status-info);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+.badge-amber {
+  background-color: rgba(245, 158, 11, 0.15);
+  color: var(--status-warning);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.badge-danger {
+  background-color: rgba(239, 68, 68, 0.15);
+  color: var(--status-danger);
+  border: 1px solid rgba(239, 68, 68, 0.3);
 }
 
 .badge-muted {

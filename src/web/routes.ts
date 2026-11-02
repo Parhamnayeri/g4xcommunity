@@ -65,6 +65,7 @@ import {
   generateIrtWithdrawalQuote,
   createWithdrawalRequestFromQuote,
   confirmAndSubmitWithdrawalRequest,
+  boosterCancelWithdrawal,
   adminExecuteManualPayout,
   adminRejectWithdrawal,
 } from '../services/financeV2/boosterWithdrawalService';
@@ -1518,6 +1519,50 @@ const handleWithdrawalConfirm = async (req: Request, res: Response): Promise<voi
 router.post('/withdrawals/confirm', requireAuth, requireCsrf, handleWithdrawalConfirm);
 router.post('/api/withdrawals/confirm', requireAuth, requireCsrf, handleWithdrawalConfirm);
 
+// ─── لغو درخواست تسویه توسط بوستر و استرداد وجوه رزرو (Cancel Withdrawal) ──
+const handleWithdrawalCancel = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const { requestId, reason } = req.body;
+
+    if (!requestId || typeof requestId !== 'number') {
+      res.status(400).json({ error: 'Valid numeric requestId required' });
+      return;
+    }
+
+    const { request, wallet, alreadyCancelled } = await boosterCancelWithdrawal(
+      requestId,
+      user.discordId,
+      reason ? String(reason).trim() : 'Cancelled by user'
+    );
+
+    res.json({
+      success: true,
+      alreadyCancelled: !!alreadyCancelled,
+      request: {
+        id: request.id,
+        withdrawalRef: request.withdrawalRef,
+        status: request.status,
+        simplifiedStatus: mapWithdrawalStatus(request.status),
+        cancelReason: request.cancelReason,
+      },
+      wallet: wallet
+        ? {
+            availableCents: wallet.availableCents,
+            availableUsd: (wallet.availableCents / 100).toFixed(2),
+            reservedCents: wallet.reservedCents,
+            reservedUsd: (wallet.reservedCents / 100).toFixed(2),
+          }
+        : null,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to cancel withdrawal request' });
+  }
+};
+
+router.post('/withdrawals/cancel', requireAuth, requireCsrf, handleWithdrawalCancel);
+router.post('/api/withdrawals/cancel', requireAuth, requireCsrf, handleWithdrawalCancel);
+
 // ─── تاریخچه درخواست‌های تسویه کاربر جاری (Withdrawal History with Pagination)
 const handleWithdrawalHistory = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -1683,11 +1728,15 @@ router.post(
       const { decision, txHash, reason } = req.body;
 
       if (decision === 'approve_paid') {
-        const tx = txHash || `SIMULATED_MANUAL_TX_${Date.now()}`;
+        const tx = txHash ? String(txHash).trim() : '';
+        if (!tx) {
+          res.status(400).json({ error: 'Verified blockchain TxHash or Bank Receipt reference is strictly required for manual payout disbursement' });
+          return;
+        }
         const { request: updatedReq } = await adminExecuteManualPayout(id, user.discordId, {
           externalTxHash: tx,
           bankReceiptRef: tx,
-          notes: 'Executed via Admin Hub',
+          notes: 'Executed via Admin Hub with verified disbursement evidence',
         });
         res.json({
           success: true,

@@ -103,7 +103,7 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
     <Card highlight="purple" style={{ padding: '1.5rem', marginBottom: '1.5rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <div>
-          <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-main)', margin: 0 }}>
+          <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>
             Saved Payout Destinations
           </h3>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
@@ -125,13 +125,13 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
       </div>
 
       {successMsg && (
-        <div style={{ backgroundColor: 'rgba(34, 197, 94, 0.15)', border: '1px solid rgba(34, 197, 94, 0.3)', borderRadius: 'var(--radius-sm)', padding: '0.65rem 0.9rem', marginBottom: '1rem', color: '#4ade80', fontSize: '0.82rem' }}>
+        <div style={{ backgroundColor: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 'var(--radius-sm)', padding: '0.65rem 0.9rem', marginBottom: '1rem', color: 'var(--status-success)', fontSize: '0.82rem' }}>
           ✓ {successMsg}
         </div>
       )}
 
       {error && (
-        <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 'var(--radius-sm)', padding: '0.65rem 0.9rem', marginBottom: '1rem', color: '#f87171', fontSize: '0.82rem' }}>
+        <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', borderRadius: 'var(--radius-sm)', padding: '0.65rem 0.9rem', marginBottom: '1rem', color: 'var(--status-danger)', fontSize: '0.82rem' }}>
           ⚠ {error}
         </div>
       )}
@@ -149,7 +149,7 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 🏦 Iranian Bank (Sheba)
               </span>
               <span className="badge badge-muted" style={{ fontSize: '0.65rem' }}>
@@ -159,14 +159,14 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
 
             <div style={{ marginBottom: '0.5rem' }}>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>Account Holder</span>
-              <span style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-main)' }}>
+              <span style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)' }}>
                 {initialPreference?.bankAccountHolder || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Not configured</span>}
               </span>
             </div>
 
             <div>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>IBAN / Sheba Number</span>
-              <span style={{ fontSize: '0.92rem', fontFamily: 'monospace', fontWeight: 700, color: '#93c5fd' }}>
+              <span style={{ fontSize: '0.92rem', fontFamily: 'monospace', fontWeight: 700, color: 'var(--status-info)' }}>
                 {initialPreference?.maskedBankIban || (
                   <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontFamily: 'inherit' }}>None saved</span>
                 )}
@@ -184,7 +184,7 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.6rem' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
                 💎 USDT (BEP-20)
               </span>
               <span className="badge badge-lime" style={{ fontSize: '0.65rem' }}>
@@ -201,7 +201,7 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
 
             <div>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>Wallet Address</span>
-              <span style={{ fontSize: '0.92rem', fontFamily: 'monospace', fontWeight: 700, color: '#a78bfa' }}>
+              <span style={{ fontSize: '0.92rem', fontFamily: 'monospace', fontWeight: 700, color: 'var(--primary-purple)' }}>
                 {initialPreference?.maskedCryptoAddress || (
                   <span style={{ color: 'var(--text-muted)', fontStyle: 'italic', fontFamily: 'inherit' }}>None saved</span>
                 )}
@@ -215,7 +215,7 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem', marginBottom: '1.25rem' }}>
             {/* Bank Form */}
             <div style={{ backgroundColor: 'rgba(15, 12, 28, 0.6)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '1rem' }}>
-              <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '0.75rem' }}>
+              <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
                 Iranian Bank Transfer (IRT)
               </h4>
 
@@ -234,7 +234,7 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
                     border: '1px solid var(--border-subtle)',
                     borderRadius: 'var(--radius-xs)',
                     padding: '0.55rem 0.75rem',
-                    color: 'var(--text-main)',
+                    color: 'var(--text-primary)',
                     fontSize: '0.85rem',
                   }}
                 />
@@ -248,21 +248,21 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
                   type="text"
                   value={bankIban}
                   onChange={(e) => setBankIban(e.target.value.toUpperCase().replace(/\s+/g, ''))}
-                  placeholder="IR020170000000109968843003"
+                  placeholder="IR200170000000109968843003"
                   maxLength={26}
                   style={{
                     width: '100%',
                     backgroundColor: 'rgba(10, 8, 20, 0.8)',
-                    border: `1px solid ${ibanStatus ? (ibanStatus.valid ? '#22c55e' : '#ef4444') : 'var(--border-subtle)'}`,
+                    border: `1px solid ${ibanStatus ? (ibanStatus.valid ? 'var(--status-success)' : 'var(--status-danger)') : 'var(--border-subtle)'}`,
                     borderRadius: 'var(--radius-xs)',
                     padding: '0.55rem 0.75rem',
-                    color: '#93c5fd',
+                    color: 'var(--status-info)',
                     fontFamily: 'monospace',
                     fontSize: '0.85rem',
                   }}
                 />
                 {ibanStatus && (
-                  <span style={{ fontSize: '0.72rem', color: ibanStatus.valid ? '#4ade80' : '#f87171', display: 'block', marginTop: '0.25rem' }}>
+                  <span style={{ fontSize: '0.72rem', color: ibanStatus.valid ? 'var(--status-success)' : 'var(--status-danger)', display: 'block', marginTop: '0.25rem' }}>
                     {ibanStatus.valid ? '✓ ' : '✕ '} {ibanStatus.message}
                   </span>
                 )}
@@ -271,7 +271,7 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
 
             {/* Crypto Form */}
             <div style={{ backgroundColor: 'rgba(15, 12, 28, 0.6)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '1rem' }}>
-              <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: '0.75rem' }}>
+              <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
                 Cryptocurrency USDT (BEP-20)
               </h4>
 
@@ -279,7 +279,7 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
                 <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.3rem' }}>
                   Designated Network
                 </label>
-                <div style={{ backgroundColor: 'rgba(34, 197, 94, 0.08)', border: '1px solid rgba(34, 197, 94, 0.25)', borderRadius: 'var(--radius-xs)', padding: '0.55rem 0.75rem', fontSize: '0.82rem', fontWeight: 700, color: 'var(--accent-lime)' }}>
+                <div style={{ backgroundColor: 'rgba(204, 255, 0, 0.08)', border: '1px solid rgba(204, 255, 0, 0.25)', borderRadius: 'var(--radius-xs)', padding: '0.55rem 0.75rem', fontSize: '0.82rem', fontWeight: 700, color: 'var(--accent-lime)' }}>
                   BNB Smart Chain (BSC BEP-20)
                 </div>
               </div>
@@ -297,16 +297,16 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
                   style={{
                     width: '100%',
                     backgroundColor: 'rgba(10, 8, 20, 0.8)',
-                    border: `1px solid ${cryptoStatus ? (cryptoStatus.valid ? '#22c55e' : '#ef4444') : 'var(--border-subtle)'}`,
+                    border: `1px solid ${cryptoStatus ? (cryptoStatus.valid ? 'var(--status-success)' : 'var(--status-danger)') : 'var(--border-subtle)'}`,
                     borderRadius: 'var(--radius-xs)',
                     padding: '0.55rem 0.75rem',
-                    color: '#c4b5fd',
+                    color: 'var(--primary-purple)',
                     fontFamily: 'monospace',
                     fontSize: '0.85rem',
                   }}
                 />
                 {cryptoStatus && (
-                  <span style={{ fontSize: '0.72rem', color: cryptoStatus.valid ? '#4ade80' : '#f87171', display: 'block', marginTop: '0.25rem' }}>
+                  <span style={{ fontSize: '0.72rem', color: cryptoStatus.valid ? 'var(--status-success)' : 'var(--status-danger)', display: 'block', marginTop: '0.25rem' }}>
                     {cryptoStatus.valid ? '✓ ' : '✕ '} {cryptoStatus.message}
                   </span>
                 )}

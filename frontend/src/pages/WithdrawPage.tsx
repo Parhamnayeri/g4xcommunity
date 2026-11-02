@@ -56,7 +56,7 @@ export const WithdrawPage: React.FC = () => {
   };
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-dark)', padding: '2rem 1.5rem 4rem' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-main)', padding: '2rem 1.5rem 4rem' }}>
       <div style={{ maxWidth: '1200px', margin: '0 auto' }}>
         {/* Navigation Breadcrumb & Header */}
         <div style={{ marginBottom: '2rem' }}>
@@ -70,7 +70,7 @@ export const WithdrawPage: React.FC = () => {
 
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
             <div>
-              <h1 style={{ fontSize: '2rem', fontWeight: 900, color: 'var(--text-main)', letterSpacing: '-0.02em', margin: '0 0 0.35rem 0' }}>
+              <h1 style={{ fontSize: '2rem', fontWeight: 900, color: 'var(--text-primary)', letterSpacing: '-0.02em', margin: '0 0 0.35rem 0' }}>
                 Withdrawals &amp; Payout Preferences
               </h1>
               <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', margin: 0 }}>
@@ -108,10 +108,10 @@ export const WithdrawPage: React.FC = () => {
             }}
           >
             <div>
-              <strong style={{ color: '#f87171', display: 'block', marginBottom: '0.25rem' }}>
+              <strong style={{ color: 'var(--status-danger)', display: 'block', marginBottom: '0.25rem' }}>
                 Financial Gateway Notice
               </strong>
-              <span style={{ color: 'var(--text-main)', fontSize: '0.88rem' }}>{error}</span>
+              <span style={{ color: 'var(--text-primary)', fontSize: '0.88rem' }}>{error}</span>
             </div>
             <button onClick={() => loadOverview()} className="btn btn-outline btn-sm">
               Retry Connection
@@ -125,7 +125,7 @@ export const WithdrawPage: React.FC = () => {
             <div
               style={{
                 height: '140px',
-                backgroundColor: 'rgba(24, 20, 42, 0.5)',
+                backgroundColor: 'var(--bg-surface)',
                 borderRadius: 'var(--radius-md)',
                 animation: 'pulse 1.5s infinite ease-in-out',
               }}
@@ -133,7 +133,7 @@ export const WithdrawPage: React.FC = () => {
             <div
               style={{
                 height: '350px',
-                backgroundColor: 'rgba(24, 20, 42, 0.5)',
+                backgroundColor: 'var(--bg-surface)',
                 borderRadius: 'var(--radius-md)',
                 animation: 'pulse 1.5s infinite ease-in-out',
               }}
@@ -180,7 +180,10 @@ export const WithdrawPage: React.FC = () => {
             </div>
 
             {/* 3. Paginated Withdrawal History & Audit Receipts */}
-            <WithdrawalHistoryTable lastUpdated={lastUpdated} />
+            <WithdrawalHistoryTable
+              lastUpdated={lastUpdated}
+              onBalanceSync={() => loadOverview(true)}
+            />
           </>
         )}
       </div>
