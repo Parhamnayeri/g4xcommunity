@@ -35,6 +35,7 @@ import {
   generateP2pFundingQuote,
   acceptP2pFundingRequest,
   settleP2pFunding,
+  assertApprovedExchanger,
 } from '../services/financeV2/exchangerMarketplaceService';
 import {
   ExchangerOfferStatus,
@@ -44,6 +45,203 @@ import { mapGoldTradeStatus, mapApplicationStatus } from '../services/statusSimp
 import { getWalletV2Summary } from '../services/financeV2/financeV2WalletService';
 
 export const marketplaceRouter = Router();
+
+// ─── توابع سریال‌سازی امن (Allowlist Serializers) ──────────────────────────────
+
+export function serializePublicOffer(offer: any) {
+  if (!offer) return null;
+  return {
+    id: offer.id,
+    offerRef: offer.offerRef,
+    exchangerId: offer.exchangerId,
+    serviceType: offer.serviceType,
+    settlementCurrency: offer.settlementCurrency,
+    commissionPercentage: offer.commissionPercentage,
+    feeCalculationBasis: offer.feeCalculationBasis,
+    feePayer: offer.feePayer,
+    referenceFxPolicy: offer.referenceFxPolicy,
+    minAmount: offer.minAmount,
+    maxAmount: offer.maxAmount,
+    terms: offer.terms,
+    status: offer.status,
+    offerVersion: offer.offerVersion,
+    createdAt: offer.createdAt,
+    updatedAt: offer.updatedAt,
+    exchanger: offer.exchanger
+      ? {
+          discordId: offer.exchanger.discordId,
+          username: offer.exchanger.username,
+          displayName: offer.exchanger.displayName,
+          avatar: offer.exchanger.avatar,
+        }
+      : undefined,
+  };
+}
+
+export function serializeAdvertiserTrade(trade: any) {
+  if (!trade) return null;
+  return {
+    id: trade.id,
+    tradeRef: trade.tradeRef,
+    sellerId: trade.sellerId,
+    buyerId: trade.buyerId,
+    gameSlug: trade.gameSlug,
+    region: trade.region,
+    realm: trade.realm,
+    faction: trade.faction,
+    goldQuantity: trade.goldQuantity,
+    goldUnit: trade.goldUnit,
+    agreedValuationUsdCents: trade.agreedValuationUsdCents,
+    settlementMethod: trade.settlementMethod,
+    commissionPercentage: trade.commissionPercentage,
+    feePayer: trade.feePayer,
+    referenceFxRate: trade.referenceFxRate,
+    quotedPayableAmount: trade.quotedPayableAmount,
+    quotedPayableCurrency: trade.quotedPayableCurrency,
+    goldDeliveryStatus: trade.goldDeliveryStatus,
+    paymentStatus: trade.paymentStatus,
+    tradeStatus: trade.tradeStatus,
+    simplifiedStatus: mapGoldTradeStatus(trade.tradeStatus),
+    deliveryEvidenceRef: trade.deliveryEvidenceRef,
+    externalPaymentRef: trade.externalPaymentRef,
+    quoteExpiresAt: trade.quoteExpiresAt,
+    createdAt: trade.createdAt,
+    updatedAt: trade.updatedAt,
+    settledAt: trade.settledAt,
+    cancelledAt: trade.cancelledAt,
+    cancellationReason: trade.cancellationReason,
+    buyer: trade.buyer
+      ? {
+          discordId: trade.buyer.discordId,
+          username: trade.buyer.username,
+          displayName: trade.buyer.displayName,
+        }
+      : undefined,
+    seller: trade.seller
+      ? {
+          discordId: trade.seller.discordId,
+          username: trade.seller.username,
+          displayName: trade.seller.displayName,
+        }
+      : undefined,
+  };
+}
+
+export function serializeExchangerTrade(trade: any) {
+  if (!trade) return null;
+  return {
+    id: trade.id,
+    tradeRef: trade.tradeRef,
+    sellerId: trade.sellerId,
+    buyerId: trade.buyerId,
+    gameSlug: trade.gameSlug,
+    region: trade.region,
+    realm: trade.realm,
+    faction: trade.faction,
+    goldQuantity: trade.goldQuantity,
+    goldUnit: trade.goldUnit,
+    agreedValuationUsdCents: trade.agreedValuationUsdCents,
+    settlementMethod: trade.settlementMethod,
+    commissionPercentage: trade.commissionPercentage,
+    feePayer: trade.feePayer,
+    referenceFxRate: trade.referenceFxRate,
+    quotedPayableAmount: trade.quotedPayableAmount,
+    quotedPayableCurrency: trade.quotedPayableCurrency,
+    goldDeliveryStatus: trade.goldDeliveryStatus,
+    paymentStatus: trade.paymentStatus,
+    tradeStatus: trade.tradeStatus,
+    simplifiedStatus: mapGoldTradeStatus(trade.tradeStatus),
+    deliveryEvidenceRef: trade.deliveryEvidenceRef,
+    externalPaymentRef: trade.externalPaymentRef,
+    createdAt: trade.createdAt,
+    updatedAt: trade.updatedAt,
+    settledAt: trade.settledAt,
+    cancelledAt: trade.cancelledAt,
+    cancellationReason: trade.cancellationReason,
+    seller: trade.seller
+      ? {
+          discordId: trade.seller.discordId,
+          username: trade.seller.username,
+          displayName: trade.seller.displayName,
+        }
+      : undefined,
+  };
+}
+
+export function serializeAdminTrade(trade: any) {
+  if (!trade) return null;
+  return {
+    id: trade.id,
+    tradeRef: trade.tradeRef,
+    sellerId: trade.sellerId,
+    buyerId: trade.buyerId,
+    gameSlug: trade.gameSlug,
+    region: trade.region,
+    realm: trade.realm,
+    faction: trade.faction,
+    goldQuantity: trade.goldQuantity,
+    goldUnit: trade.goldUnit,
+    agreedValuationUsdCents: trade.agreedValuationUsdCents,
+    settlementMethod: trade.settlementMethod,
+    commissionPercentage: trade.commissionPercentage,
+    feePayer: trade.feePayer,
+    referenceFxRate: trade.referenceFxRate,
+    quotedPayableAmount: trade.quotedPayableAmount,
+    quotedPayableCurrency: trade.quotedPayableCurrency,
+    acceptedOfferId: trade.acceptedOfferId,
+    acceptedOfferVersion: trade.acceptedOfferVersion,
+    goldDeliveryStatus: trade.goldDeliveryStatus,
+    paymentStatus: trade.paymentStatus,
+    tradeStatus: trade.tradeStatus,
+    simplifiedStatus: mapGoldTradeStatus(trade.tradeStatus),
+    deliveryEvidenceRef: trade.deliveryEvidenceRef,
+    externalPaymentRef: trade.externalPaymentRef,
+    actualSettlementRef: trade.actualSettlementRef,
+    settledAt: trade.settledAt,
+    settledBy: trade.settledBy,
+    cancelledAt: trade.cancelledAt,
+    cancelledBy: trade.cancelledBy,
+    cancellationReason: trade.cancellationReason,
+    disputeReason: trade.disputeReason,
+    disputedAt: trade.disputedAt,
+    disputedBy: trade.disputedBy,
+    quoteExpiresAt: trade.quoteExpiresAt,
+    createdAt: trade.createdAt,
+    updatedAt: trade.updatedAt,
+    seller: trade.seller
+      ? {
+          discordId: trade.seller.discordId,
+          username: trade.seller.username,
+          displayName: trade.seller.displayName,
+        }
+      : undefined,
+    buyer: trade.buyer
+      ? {
+          discordId: trade.buyer.discordId,
+          username: trade.buyer.username,
+          displayName: trade.buyer.displayName,
+        }
+      : undefined,
+  };
+}
+
+/**
+ * گارد اعتبارسنجی زنده صراف در پایگاه داده (Live DB Exchanger Verification)
+ * جلوگیری از دسترسی صرافان تعلیق‌شده حتی در صورت وجود رول در سشن استیل
+ */
+async function requireApprovedExchanger(req: Request, res: Response, next: () => void): Promise<void> {
+  const { user } = req as AuthenticatedRequest;
+  if (!user) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    await assertApprovedExchanger(user.discordId);
+    next();
+  } catch (err: any) {
+    res.status(403).json({ error: err.message || 'Exchanger profile is not approved or is suspended' });
+  }
+}
 
 // ─── ۱. روت‌های عمومی/کاربری لیست پیشنهادهای فعال ────────────────────────────
 marketplaceRouter.get('/offers', async (req: Request, res: Response): Promise<void> => {
@@ -67,7 +265,7 @@ marketplaceRouter.get('/offers', async (req: Request, res: Response): Promise<vo
 
       res.json({
         success: true,
-        offers: paginatedOffers,
+        offers: paginatedOffers.map(serializePublicOffer),
         pagination: {
           page: pageNum,
           limit: limitNum,
@@ -80,7 +278,7 @@ marketplaceRouter.get('/offers', async (req: Request, res: Response): Promise<vo
 
     res.json({
       success: true,
-      offers: sortedOffers,
+      offers: sortedOffers.map(serializePublicOffer),
       pagination: {
         page: 1,
         limit: sortedOffers.length,
@@ -108,7 +306,7 @@ marketplaceRouter.get('/offers/:id', async (req: Request, res: Response): Promis
       res.status(404).json({ error: 'Offer not found' });
       return;
     }
-    res.json({ success: true, offer });
+    res.json({ success: true, offer: serializePublicOffer(offer) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -172,6 +370,7 @@ marketplaceRouter.get(
   '/exchanger/overview',
   requireAuth,
   requireRole('exchanger', 'owner'),
+  requireApprovedExchanger,
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { user } = req as AuthenticatedRequest;
@@ -244,6 +443,7 @@ marketplaceRouter.get(
   '/exchanger/offers',
   requireAuth,
   requireRole('exchanger', 'owner'),
+  requireApprovedExchanger,
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { user } = req as AuthenticatedRequest;
@@ -251,7 +451,7 @@ marketplaceRouter.get(
         where: { exchangerId: user.discordId },
         orderBy: { createdAt: 'desc' },
       });
-      res.json({ success: true, offers });
+      res.json({ success: true, offers: offers.map(serializePublicOffer) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -262,6 +462,7 @@ marketplaceRouter.post(
   '/exchanger/offers',
   requireAuth,
   requireRole('exchanger', 'owner'),
+  requireApprovedExchanger,
   requireCsrf,
   async (req: Request, res: Response): Promise<void> => {
     try {
@@ -289,7 +490,7 @@ marketplaceRouter.post(
         terms,
       });
 
-      res.status(201).json({ success: true, offer });
+      res.status(201).json({ success: true, offer: serializePublicOffer(offer) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -300,6 +501,7 @@ marketplaceRouter.patch(
   '/exchanger/offers/:id',
   requireAuth,
   requireRole('exchanger', 'owner'),
+  requireApprovedExchanger,
   requireCsrf,
   async (req: Request, res: Response): Promise<void> => {
     try {
@@ -315,7 +517,7 @@ marketplaceRouter.patch(
         status,
       });
 
-      res.json({ success: true, offer: updated });
+      res.json({ success: true, offer: serializePublicOffer(updated) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -326,6 +528,7 @@ marketplaceRouter.get(
   '/exchanger/trades',
   requireAuth,
   requireRole('exchanger', 'owner'),
+  requireApprovedExchanger,
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { user } = req as AuthenticatedRequest;
@@ -357,10 +560,7 @@ marketplaceRouter.get(
 
       res.json({
         success: true,
-        trades: trades.map((t) => ({
-          ...t,
-          simplifiedStatus: mapGoldTradeStatus(t.tradeStatus),
-        })),
+        trades: trades.map(serializeExchangerTrade),
         pagination: {
           page: pageNum,
           limit: limitNum,
@@ -378,6 +578,7 @@ marketplaceRouter.post(
   '/exchanger/trades/:id/payment',
   requireAuth,
   requireRole('exchanger', 'owner'),
+  requireApprovedExchanger,
   requireCsrf,
   async (req: Request, res: Response): Promise<void> => {
     try {
@@ -393,7 +594,7 @@ marketplaceRouter.post(
         amount
       );
 
-      res.json({ success: true, trade });
+      res.json({ success: true, trade: serializeExchangerTrade(trade) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -404,6 +605,7 @@ marketplaceRouter.post(
   '/exchanger/trades/:id/verify-gold',
   requireAuth,
   requireRole('exchanger', 'owner'),
+  requireApprovedExchanger,
   requireCsrf,
   async (req: Request, res: Response): Promise<void> => {
     try {
@@ -411,7 +613,7 @@ marketplaceRouter.post(
       const id = Number(req.params.id);
 
       const trade = await verifyGoldDelivery(id, user.discordId);
-      res.json({ success: true, trade });
+      res.json({ success: true, trade: serializeExchangerTrade(trade) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -471,12 +673,29 @@ marketplaceRouter.post(
         return;
       }
 
-      // ایجاد رکورد معامله در دیتابیس
-      const trade = await createGoldTradeOrder(quote);
-      // پذیرش و اجرای رزرو وجه در صورت نیاز
-      const accepted = await acceptGoldTrade(trade.id, user.discordId);
+      // ۱. بررسی بازیابی در صورت تلاش مجدد برای جلوگیری از تکرار تعهد (Idempotency Recovery)
+      let trade = await prisma.goldTrade.findUnique({
+        where: { tradeRef: quote.tradeRef },
+        include: {
+          buyer: { select: { discordId: true, username: true, displayName: true } },
+          seller: { select: { discordId: true, username: true, displayName: true } },
+        },
+      });
 
-      res.status(201).json({ success: true, trade: accepted });
+      if (!trade) {
+        // ۲. ایجاد رکورد معامله پس از اعتبارسنجی قطعی امضا، انقضا و صراف
+        trade = (await createGoldTradeOrder(quote)) as any;
+      } else {
+        if (trade.sellerId !== user.discordId) {
+          res.status(400).json({ error: 'Quote seller mismatch' });
+          return;
+        }
+      }
+
+      // ۳. پذیرش و اجرای رزرو اتمیک وجه
+      const accepted = await acceptGoldTrade(trade!.id, user.discordId);
+
+      res.status(201).json({ success: true, trade: serializeAdvertiserTrade(accepted) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -517,10 +736,7 @@ marketplaceRouter.get(
 
       res.json({
         success: true,
-        trades: trades.map((t) => ({
-          ...t,
-          simplifiedStatus: mapGoldTradeStatus(t.tradeStatus),
-        })),
+        trades: trades.map(serializeAdvertiserTrade),
         pagination: {
           page: pageNum,
           limit: limitNum,
@@ -545,7 +761,7 @@ marketplaceRouter.post(
       const { deliveryEvidenceRef } = req.body;
 
       const trade = await reportGoldDelivery(id, user.discordId, deliveryEvidenceRef);
-      res.json({ success: true, trade });
+      res.json({ success: true, trade: serializeAdvertiserTrade(trade) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -562,7 +778,7 @@ marketplaceRouter.post(
       const id = Number(req.params.id);
 
       const trade = await confirmExternalPaymentReceipt(id, user.discordId);
-      res.json({ success: true, trade });
+      res.json({ success: true, trade: serializeAdvertiserTrade(trade) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -580,7 +796,7 @@ marketplaceRouter.post(
       const { reason } = req.body;
 
       const trade = await disputeGoldTrade(id, user.discordId, reason || 'Disputed by advertiser');
-      res.json({ success: true, trade });
+      res.json({ success: true, trade: serializeAdvertiserTrade(trade) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -598,7 +814,7 @@ marketplaceRouter.post(
       const { reason } = req.body;
 
       const trade = await cancelGoldTrade(id, user.discordId, reason || 'Cancelled by trade participant');
-      res.json({ success: true, trade });
+      res.json({ success: true, trade: serializeAdvertiserTrade(trade) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -637,7 +853,7 @@ marketplaceRouter.post(
       const { quote } = req.body;
 
       if (!quote || quote.advertiserId !== user.discordId) {
-        res.status(400).json({ error: 'Quote mismatch' });
+        res.status(400).json({ error: 'Quote mismatch or invalid advertiser' });
         return;
       }
 
@@ -664,7 +880,7 @@ marketplaceRouter.get(
         orderBy: { createdAt: 'desc' },
         take: 100,
       });
-      res.json({ success: true, trades });
+      res.json({ success: true, trades: trades.map(serializeAdminTrade) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -682,7 +898,7 @@ marketplaceRouter.post(
       const id = Number(req.params.id);
 
       const trade = await settleDirectGoldTrade(id, user.discordId);
-      res.json({ success: true, trade });
+      res.json({ success: true, trade: serializeAdminTrade(trade) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -700,7 +916,7 @@ marketplaceRouter.post(
       const id = Number(req.params.id);
 
       const trade = await settlePrepaidWalletGoldTrade(id, user.discordId);
-      res.json({ success: true, trade });
+      res.json({ success: true, trade: serializeAdminTrade(trade) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -719,7 +935,7 @@ marketplaceRouter.post(
       const { reason } = req.body;
 
       const trade = await cancelGoldTrade(id, user.discordId, reason);
-      res.json({ success: true, trade });
+      res.json({ success: true, trade: serializeAdminTrade(trade) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -743,7 +959,7 @@ marketplaceRouter.post(
         status as ExchangerOfferStatus,
         reason
       );
-      res.json({ success: true, offer });
+      res.json({ success: true, offer: serializePublicOffer(offer) });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

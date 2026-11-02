@@ -291,9 +291,10 @@ async function runFinanceV2_2TestSuite() {
       agreedValuationUsdCents: 8000,
       settlementMethod: GoldTradeSettlementMethod.IRT_DIRECT,
     });
-    const tradeExpired = await createGoldTradeOrder({
-      ...expiredQuote,
-      quoteExpiresAt: new Date(Date.now() - 5000), // Expired 5 seconds ago
+    const tradeExpired = await createGoldTradeOrder(expiredQuote);
+    await prisma.goldTrade.update({
+      where: { id: tradeExpired.id },
+      data: { quoteExpiresAt: new Date(Date.now() - 5000) },
     });
 
     let expiredAcceptBlocked = false;
