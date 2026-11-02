@@ -6,6 +6,7 @@ import { DashboardLayout } from './components/layout/DashboardLayout';
 import { LandingPage } from './pages/LandingPage';
 import { RulesPage } from './pages/RulesPage';
 import { PrivacyPage } from './pages/PrivacyPage';
+import { DashboardPage } from './pages/DashboardPage';
 import { LegacyTransitionPage } from './pages/LegacyTransitionPage';
 
 export const App: React.FC = () => {
@@ -22,17 +23,7 @@ export const App: React.FC = () => {
 
           {/* Authenticated Routes with Member Dashboard Layout */}
           <Route element={<DashboardLayout />}>
-            <Route
-              path="/dashboard"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Overview & Active Orders"
-                  category="Authenticated"
-                  description="View live orders, assigned runs, active claims, and recent earnings."
-                  legacyTab="overview"
-                />
-              }
-            />
+            <Route path="/dashboard" element={<DashboardPage />} />
             <Route
               path="/wallet"
               element={

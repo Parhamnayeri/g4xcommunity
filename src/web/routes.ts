@@ -46,7 +46,7 @@ import {
   disbandTeam,
 } from '../services/teamService';
 import { DomainError, DomainErrorCode } from '../services/domainErrors';
-import { getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
+import { getOrCreateWalletV2, getWalletV2Summary } from '../services/financeV2/financeV2WalletService';
 import { marketplaceRouter } from './marketplaceRoutes';
 import { paymentRouter } from './paymentRoutes';
 import { getGlobalDiscordClient } from '../services/orderDiscordService';
@@ -452,6 +452,340 @@ router.get('/wallet/v2', requireAuth, async (req: Request, res: Response): Promi
     refundedCents: walletV2.refundedCents,
     totalUsd: ((walletV2.availableCents + walletV2.reservedCents) / 100).toFixed(2),
   });
+});
+
+// ─── داشبورد کاربری React (Phase 2 Authenticated Dashboard Overview) ──────────
+router.get('/dashboard/overview', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+
+    // ۱. خلاصه والت معتبر نسل دوم
+    const walletSummary = await getWalletV2Summary(user.discordId);
+
+    // ۲. اطلاعات پروفایل، نقش‌ها، درخواست عضویت و تاییدیه‌ها
+    const [latestApp, approvals, userWithRoles] = await Promise.all([
+      prisma.registrationApplication.findFirst({
+        where: { userId: user.discordId },
+        orderBy: { submittedAt: 'desc' },
+      }),
+      prisma.userGameApproval.findMany({
+        where: { userId: user.discordId, status: 'approved' },
+        include: { game: { select: { displayName: true } } },
+      }),
+      prisma.user.findUnique({
+        where: { discordId: user.discordId },
+        include: { userRoles: true },
+      }),
+    ]);
+
+    const roles = (userWithRoles?.userRoles || []).map((r) => r.roleKey);
+
+    // ۳. سفارش‌های فعال مجاز برای کاربر جاری
+    const activeStatuses = ['open_presign', 'presign_closed', 'assigned', 'in_progress', 'disputed'];
+    const activeOrdersRaw = await prisma.order.findMany({
+      where: {
+        AND: [
+          {
+            OR: [
+              { assignments: { some: { userId: user.discordId } } },
+              { customerId: user.discordId },
+              { advertiserId: user.discordId },
+              { creatorId: user.discordId },
+            ],
+          },
+          { status: { in: activeStatuses } },
+        ],
+      },
+      include: {
+        game: { select: { slug: true, displayName: true } },
+        service: { select: { serviceKey: true, displayName: true, serviceMode: true } },
+        assignments: {
+          where: { userId: user.discordId },
+          select: { assignedRole: true, status: true, assignedAt: true },
+        },
+        runs: {
+          select: { runNumber: true, status: true, completedAt: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    const activeOrders = await Promise.all(
+      activeOrdersRaw.map(async (o) => {
+        const isBooster = o.assignments.length > 0;
+        const isCustomer = o.customerId === user.discordId;
+        const isAdvertiser = o.advertiserId === user.discordId;
+        const userRelation = isBooster ? 'booster' : isCustomer ? 'customer' : isAdvertiser ? 'advertiser' : 'creator';
+
+        let channelUrl: string | null = null;
+        if (o.executionChannelId) {
+          try {
+            const channelAccess = await getAuthorizedChannelAccess(o.id, user.discordId);
+            if (channelAccess.authorized && channelAccess.hasChannel && channelAccess.channelUrl) {
+              channelUrl = channelAccess.channelUrl;
+            }
+          } catch {
+            // عدم افشای خطا یا لینک در صورت عدم دسترسی
+          }
+        }
+
+        return {
+          id: o.id,
+          orderRef: o.orderRef,
+          gameSlug: o.game.slug,
+          gameDisplayName: o.game.displayName,
+          serviceDisplayName: o.service.displayName,
+          orderMode: o.orderMode,
+          status: o.status,
+          userRelation,
+          assignmentRole: o.assignments[0]?.assignedRole || null,
+          assignmentStatus: o.assignments[0]?.status || null,
+          payoutCents: isBooster ? o.boosterPoolMinor : o.grossAmountMinor,
+          payoutUsd: ((isBooster ? o.boosterPoolMinor : o.grossAmountMinor) / 100).toFixed(2),
+          channelUrl,
+          runsCount: o.runs.length,
+          completedRunsCount: o.runs.filter((r: { status: string }) => r.status === 'completed' || r.status === 'verified').length,
+          createdAt: o.createdAt,
+        };
+      })
+    );
+
+    // ۴. شمارنده‌های کلی
+    const [activeOrdersCount, completedOrdersCount, totalTxCount] = await Promise.all([
+      prisma.order.count({
+        where: {
+          AND: [
+            {
+              OR: [
+                { assignments: { some: { userId: user.discordId } } },
+                { customerId: user.discordId },
+                { advertiserId: user.discordId },
+                { creatorId: user.discordId },
+              ],
+            },
+            { status: { in: activeStatuses } },
+          ],
+        },
+      }),
+      prisma.order.count({
+        where: {
+          AND: [
+            {
+              OR: [
+                { assignments: { some: { userId: user.discordId } } },
+                { customerId: user.discordId },
+                { advertiserId: user.discordId },
+                { creatorId: user.discordId },
+              ],
+            },
+            { status: 'completed' },
+          ],
+        },
+      }),
+      prisma.ledgerEntryV2.count({
+        where: { userId: user.discordId },
+      }),
+    ]);
+
+    // حداقل کارمزد برداشت تتر در شبکه BSC برابر با ۴۰ سنت است
+    const eligibleWithdrawalCents = Math.max(0, walletSummary.availableCents - 40);
+
+    res.json({
+      success: true,
+      profile: {
+        discordId: user.discordId,
+        username: user.username,
+        displayName: user.displayName,
+        roles,
+        advertiserRank: user.advertiserRank,
+        registrationStatus: latestApp?.status || 'none',
+        registrationCategory: latestApp?.category || null,
+        approvedGames: approvals.map((a) => ({
+          gameSlug: a.gameSlug,
+          gameName: a.game.displayName,
+          approvalType: a.approvalType,
+        })),
+        createdAt: user.createdAt,
+      },
+      wallet: {
+        availableCents: walletSummary.availableCents,
+        availableUsd: (walletSummary.availableCents / 100).toFixed(2),
+        reservedCents: walletSummary.reservedCents,
+        reservedUsd: (walletSummary.reservedCents / 100).toFixed(2),
+        pendingEarningsCents: walletSummary.pendingEarningsCents,
+        pendingEarningsUsd: (walletSummary.pendingEarningsCents / 100).toFixed(2),
+        confirmedEarningsCents: walletSummary.confirmedEarningsCents,
+        confirmedEarningsUsd: (walletSummary.confirmedEarningsCents / 100).toFixed(2),
+        paidCents: walletSummary.paidCents,
+        paidUsd: (walletSummary.paidCents / 100).toFixed(2),
+        refundedCents: walletSummary.refundedCents,
+        refundedUsd: (walletSummary.refundedCents / 100).toFixed(2),
+        totalHeldCents: walletSummary.totalHeldCents,
+        totalHeldUsd: (walletSummary.totalHeldCents / 100).toFixed(2),
+        lifetimeEarnedCents: walletSummary.lifetimeEarnedCents,
+        lifetimeEarnedUsd: (walletSummary.lifetimeEarnedCents / 100).toFixed(2),
+        eligibleWithdrawalCents,
+        eligibleWithdrawalUsd: (eligibleWithdrawalCents / 100).toFixed(2),
+      },
+      activeOrders,
+      counts: {
+        activeOrdersCount,
+        completedOrdersCount,
+        totalTransactionsCount: totalTxCount,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Dashboard API] Failed to fetch overview:', err);
+    res.status(500).json({ error: 'Failed to retrieve dashboard overview' });
+  }
+});
+
+// ─── تاریخچه سفارش‌های کاربر جاری با صفحه‌بندی و فیلتر ─────────────────────
+router.get('/dashboard/orders/history', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const page = Math.max(1, Number(req.query.page ?? 1));
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 10)));
+    const offset = (page - 1) * limit;
+
+    const statusFilter = req.query.status ? String(req.query.status) : undefined;
+    const gameSlugFilter = req.query.gameSlug ? String(req.query.gameSlug) : undefined;
+
+    const whereStatuses = statusFilter && ['completed', 'cancelled'].includes(statusFilter)
+      ? [statusFilter]
+      : ['completed', 'cancelled'];
+
+    const whereClause: any = {
+      AND: [
+        {
+          OR: [
+            { assignments: { some: { userId: user.discordId } } },
+            { customerId: user.discordId },
+            { advertiserId: user.discordId },
+            { creatorId: user.discordId },
+          ],
+        },
+        { status: { in: whereStatuses } },
+      ],
+    };
+
+    if (gameSlugFilter && gameSlugFilter !== 'all') {
+      whereClause.AND.push({ gameSlug: gameSlugFilter });
+    }
+
+    const [ordersRaw, total] = await Promise.all([
+      prisma.order.findMany({
+        where: whereClause,
+        include: {
+          game: { select: { slug: true, displayName: true } },
+          service: { select: { serviceKey: true, displayName: true } },
+          assignments: {
+            where: { userId: user.discordId },
+            select: { assignedRole: true, status: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+      }),
+      prisma.order.count({ where: whereClause }),
+    ]);
+
+    const orders = ordersRaw.map((o) => {
+      const isBooster = o.assignments.length > 0;
+      const isCustomer = o.customerId === user.discordId;
+      const isAdvertiser = o.advertiserId === user.discordId;
+      const userRelation = isBooster ? 'booster' : isCustomer ? 'customer' : isAdvertiser ? 'advertiser' : 'creator';
+
+      return {
+        id: o.id,
+        orderRef: o.orderRef,
+        gameSlug: o.game.slug,
+        gameDisplayName: o.game.displayName,
+        serviceDisplayName: o.service.displayName,
+        orderMode: o.orderMode,
+        status: o.status,
+        userRelation,
+        amountCents: isBooster ? o.boosterPoolMinor : o.grossAmountMinor,
+        amountUsd: ((isBooster ? o.boosterPoolMinor : o.grossAmountMinor) / 100).toFixed(2),
+        currency: o.currency,
+        completedAt: o.completedAt,
+        createdAt: o.createdAt,
+      };
+    });
+
+    res.json({
+      success: true,
+      orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Dashboard API] Failed to fetch order history:', err);
+    res.status(500).json({ error: 'Failed to retrieve order history' });
+  }
+});
+
+// ─── تاریخچه تراکنش‌های والت دلاری کاربر جاری (LedgerEntryV2 Activity) ──────
+router.get('/dashboard/transactions', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const page = Math.max(1, Number(req.query.page ?? 1));
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 10)));
+    const offset = (page - 1) * limit;
+
+    const [entriesRaw, total] = await Promise.all([
+      prisma.ledgerEntryV2.findMany({
+        where: { userId: user.discordId },
+        include: {
+          order: { select: { orderRef: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+      }),
+      prisma.ledgerEntryV2.count({
+        where: { userId: user.discordId },
+      }),
+    ]);
+
+    const transactions = entriesRaw.map((e) => ({
+      id: e.id,
+      entryRef: e.entryRef,
+      entryType: e.entryType,
+      direction: e.direction,
+      amountCents: e.amountCents,
+      amountUsd: (e.amountCents / 100).toFixed(2),
+      balanceAfterAvailableCents: e.balanceAfterAvailableCents,
+      balanceAfterAvailableUsd:
+        e.balanceAfterAvailableCents !== null ? (e.balanceAfterAvailableCents / 100).toFixed(2) : null,
+      balanceAfterReservedCents: e.balanceAfterReservedCents,
+      balanceAfterReservedUsd:
+        e.balanceAfterReservedCents !== null ? (e.balanceAfterReservedCents / 100).toFixed(2) : null,
+      description: e.description,
+      orderRef: e.order?.orderRef || null,
+      createdAt: e.createdAt,
+    }));
+
+    res.json({
+      success: true,
+      transactions,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Dashboard API] Failed to fetch transactions:', err);
+    res.status(500).json({ error: 'Failed to retrieve financial transactions' });
+  }
 });
 
 // ─── کاراکترهای WoW کاربر جاری ───────────────────────────────────────────────
