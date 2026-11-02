@@ -40,6 +40,7 @@ import {
   acceptP2pFundingRequest,
   settleP2pFunding,
   assertApprovedExchanger,
+  validateExistingP2pFundingRequest,
 } from '../services/financeV2/exchangerMarketplaceService';
 import {
   ExchangerOfferStatus,
@@ -1025,8 +1026,134 @@ async function runSecurityHardeningSuite() {
     }
     assert(dbUniqueConstraintThrown, '28.1 Database partial unique index strictly prevents duplicate quoteRef insertion');
 
+    // -------------------------------------------------------------
+    // TEST 29: CANCELLED and REJECTED P2P Requests Strictly Rejected on Retry
+    // -------------------------------------------------------------
+    console.log('\n--- 29. CANCELLED and REJECTED P2P Requests Strictly Rejected ---');
+    const quoteForTerminal = await generateP2pFundingQuote({
+      advertiserId: testAdvId,
+      exchangerId: testExchId,
+      offerId: p2pOffer.id,
+      targetUsdCents: 1500, // $15.00
+    });
+    const terminalReq = await acceptP2pFundingRequest(testAdvId, quoteForTerminal);
+    assert(terminalReq.status === 'AWAITING_PAYMENT', '29.1 Initial accept status is AWAITING_PAYMENT');
+
+    // Safe retry while in-flight works
+    const inFlightRetry = await acceptP2pFundingRequest(testAdvId, quoteForTerminal);
+    assert(inFlightRetry.id === terminalReq.id, '29.2 In-flight retry safely returns identical request');
+
+    // Mark as CANCELLED
+    await prisma.advertiserFundingRequest.update({
+      where: { id: terminalReq.id },
+      data: { status: 'CANCELLED' },
+    });
+
+    let cancelledRetryBlocked = false;
+    try {
+      await acceptP2pFundingRequest(testAdvId, quoteForTerminal);
+    } catch (e: any) {
+      cancelledRetryBlocked = e.message.includes('QUOTE_ALREADY_CONSUMED') && e.message.includes('CANCELLED');
+    }
+    assert(cancelledRetryBlocked, '29.3 Replay of CANCELLED funding request is strictly rejected with QUOTE_ALREADY_CONSUMED');
+
+    // Mark as REJECTED
+    await prisma.advertiserFundingRequest.update({
+      where: { id: terminalReq.id },
+      data: { status: 'REJECTED' },
+    });
+
+    let rejectedRetryBlocked = false;
+    try {
+      await acceptP2pFundingRequest(testAdvId, quoteForTerminal);
+    } catch (e: any) {
+      rejectedRetryBlocked = e.message.includes('QUOTE_ALREADY_CONSUMED') && e.message.includes('REJECTED');
+    }
+    assert(rejectedRetryBlocked, '29.4 Replay of REJECTED funding request is strictly rejected with QUOTE_ALREADY_CONSUMED');
+
+    // -------------------------------------------------------------
+    // TEST 30: Changed Rate, Commission or Exchanger Strictly Rejected
+    // -------------------------------------------------------------
+    console.log('\n--- 30. Changed Rate, Commission or Exchanger Strictly Rejected ---');
+    const quoteForConflict = await generateP2pFundingQuote({
+      advertiserId: testAdvId,
+      exchangerId: testExchId,
+      offerId: p2pOffer.id,
+      targetUsdCents: 1800,
+    });
+    const conflictReq = await acceptP2pFundingRequest(testAdvId, quoteForConflict);
+    assert(conflictReq.id > 0, '30.1 Base request accepted');
+
+    // Attempt retry with altered rate (simulating HMAC match with different internal term)
+    let rateConflictBlocked = false;
+    try {
+      validateExistingP2pFundingRequest(conflictReq, {
+        ...quoteForConflict,
+        referenceRate: quoteForConflict.referenceRate + 1000,
+      });
+    } catch (e: any) {
+      rateConflictBlocked = e.message.includes('QUOTE_CONFLICT');
+    }
+    assert(rateConflictBlocked, '30.2 Altered exchange rate on existing quoteRef strictly throws QUOTE_CONFLICT');
+
+    // Attempt retry with altered commission
+    let commConflictBlocked = false;
+    try {
+      validateExistingP2pFundingRequest(conflictReq, {
+        ...quoteForConflict,
+        commissionPercentage: 0.99,
+      });
+    } catch (e: any) {
+      commConflictBlocked = e.message.includes('QUOTE_CONFLICT');
+    }
+    assert(commConflictBlocked, '30.3 Altered commission rate on existing quoteRef strictly throws QUOTE_CONFLICT');
+
+    // Attempt retry with altered Exchanger
+    let exchConflictBlocked = false;
+    try {
+      validateExistingP2pFundingRequest(conflictReq, {
+        ...quoteForConflict,
+        exchangerId: testExch2Id,
+      });
+    } catch (e: any) {
+      exchConflictBlocked = e.message.includes('QUOTE_CONFLICT');
+    }
+    assert(exchConflictBlocked, '30.4 Altered Exchanger on existing quoteRef strictly throws QUOTE_CONFLICT');
+
+    // -------------------------------------------------------------
+    // TEST 31: Unified validateExistingP2pFundingRequest Behavior
+    // -------------------------------------------------------------
+    console.log('\n--- 31. Unified validateExistingP2pFundingRequest Shared Validation ---');
+    // Matching terms returns existing record
+    const validatedOk = validateExistingP2pFundingRequest(conflictReq, quoteForConflict);
+    assert(validatedOk.id === conflictReq.id, '31.1 Matching quote terms return existing request safely');
+
+    // Cross-user mismatch throws CROSS_USER_QUOTE_REPLAY
+    let crossUserValidationBlocked = false;
+    try {
+      validateExistingP2pFundingRequest(conflictReq, {
+        ...quoteForConflict,
+        advertiserId: testAttackerId,
+      });
+    } catch (e: any) {
+      crossUserValidationBlocked = e.message.includes('CROSS_USER_QUOTE_REPLAY');
+    }
+    assert(crossUserValidationBlocked, '31.2 Cross-user replay in shared validator throws CROSS_USER_QUOTE_REPLAY');
+
+    // Already settled record throws QUOTE_ALREADY_CONSUMED
+    let settledValidationBlocked = false;
+    try {
+      validateExistingP2pFundingRequest(
+        { ...conflictReq, status: 'CONFIRMED_CREDITED' },
+        quoteForConflict
+      );
+    } catch (e: any) {
+      settledValidationBlocked = e.message.includes('QUOTE_ALREADY_CONSUMED');
+    }
+    assert(settledValidationBlocked, '31.3 Settled request in shared validator throws QUOTE_ALREADY_CONSUMED');
+
     console.log('\n============================================================');
-    console.log('   ALL 28 PHASE 6 SECURITY HARDENING TESTS PASSED!          ');
+    console.log('   ALL 31 PHASE 6 SECURITY HARDENING TESTS PASSED!          ');
     console.log('============================================================\n');
   } finally {
     // بازگردانی متغیرهای محیطی

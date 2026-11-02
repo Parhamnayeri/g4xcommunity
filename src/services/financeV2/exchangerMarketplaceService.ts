@@ -16,7 +16,7 @@
 
 import crypto from 'crypto';
 import prisma from '../../database/db';
-import { Prisma } from '@prisma/client';
+import { Prisma, AdvertiserFundingRequest } from '@prisma/client';
 import {
   ExchangerOfferServiceType,
   ExchangerOfferStatus,
@@ -1461,6 +1461,74 @@ export async function generateP2pFundingQuote(params: {
 }
 
 /**
+ * اعتبارسنجی مشترک و یکپارچه برای پیش‌فاکتور شارژ P2P در رکوردهای موجود
+ * تضمین پردازش دقیقاً یک‌باره و اعمال اعتبارسنجی یکسان در هر دو شاخه عادی و بازیابی P2002
+ */
+export function validateExistingP2pFundingRequest(
+  existing: AdvertiserFundingRequest,
+  quote: {
+    quoteRef?: string;
+    advertiserId: string;
+    exchangerId: string;
+    offerId: number;
+    offerVersion?: number;
+    targetUsdCents: number;
+    totalIrtPayable: number;
+    referenceRate: number;
+    commissionPercentage: number;
+  }
+): AdvertiserFundingRequest {
+  // ۱. بررسی یکتایی ارجاع پیش‌فاکتور (Quote Reference)
+  if (quote.quoteRef && existing.quoteRef && existing.quoteRef !== quote.quoteRef) {
+    throw new Error('QUOTE_CONFLICT: Quote reference does not match existing record');
+  }
+
+  // ۲. بررسی هویت تبلیغ‌دهنده (منع اکید بازپخش توسط کاربر دیگر)
+  if (existing.advertiserId !== quote.advertiserId) {
+    throw new Error('CROSS_USER_QUOTE_REPLAY: Quote was issued to another advertiser');
+  }
+
+  // ۳. بررسی متد و ارز
+  if (existing.fundingMethod !== 'IRT_P2P' || existing.externalCurrency !== 'IRT') {
+    throw new Error('QUOTE_CONFLICT: Funding method or currency does not match original request');
+  }
+
+  // ۴. بررسی شرایط اقتصادی، نرخ‌ها و مبالغ
+  const amountsMatch =
+    existing.targetUsdCents === quote.targetUsdCents &&
+    existing.externalAmountUnits === quote.totalIrtPayable.toString();
+
+  const ratesMatch =
+    Math.abs((existing.exchangeRate ?? 0) - quote.referenceRate) < 0.0001 &&
+    Math.abs((existing.currencyPurchaseFeeRate ?? 0) - quote.commissionPercentage) < 0.0001;
+
+  // ۵. بررسی صراف و آفر مرتبط
+  const adminNotes = existing.adminNotes || '';
+  const exchangerMatch = adminNotes.includes(`Exchanger ${quote.exchangerId}`);
+  const offerMatch = adminNotes.includes(`Offer #${quote.offerId}`);
+
+  if (!amountsMatch || !ratesMatch || !exchangerMatch || !offerMatch) {
+    throw new Error('QUOTE_CONFLICT: Quote terms do not match original request');
+  }
+
+  // ۶. اعتبارسنجی وضعیت: رد اکید وضعیت‌های ترمینال و تسویه‌شده (Terminal / Consumed States)
+  if (existing.status === 'CONFIRMED_CREDITED') {
+    throw new Error('QUOTE_ALREADY_CONSUMED: P2P funding quote has already been settled and credited');
+  }
+
+  if (existing.status === 'CANCELLED' || existing.status === 'REJECTED') {
+    throw new Error(`QUOTE_ALREADY_CONSUMED: P2P funding quote is in terminal status '${existing.status}'`);
+  }
+
+  const SAFE_RECOVERY_STATUSES = ['AWAITING_PAYMENT', 'PENDING_PAYMENT_SUBMISSION', 'PENDING_ADMIN_VERIFICATION'];
+  if (!SAFE_RECOVERY_STATUSES.includes(existing.status)) {
+    throw new Error(`QUOTE_ALREADY_CONSUMED: P2P funding quote is in non-recoverable status '${existing.status}'`);
+  }
+
+  return existing;
+}
+
+/**
  * پذیرش درخواست شارژ P2P و رزرو موجودی دلار از کیف‌پول صراف
  * اصل حیاتی: واریز تومان به صراف مجوز خلق دلار اعتباری نیست؛ صراف باید موجودی واقعی داشته و رزرو گردد!
  */
@@ -1554,36 +1622,7 @@ export async function acceptP2pFundingRequest(
       });
 
       if (existing) {
-        // الف. رد استفاده توسط کاربر دیگر (Cross-User Quote Replay Prevention)
-        if (existing.advertiserId !== quote.advertiserId) {
-          throw new Error('CROSS_USER_QUOTE_REPLAY: Quote was issued to another advertiser');
-        }
-
-        // ب. بررسی تطابق دقیق شرایط مالی و پارامترها (Anti-Conflict / Tamper Verification)
-        const termsMatch =
-          existing.targetUsdCents === quote.targetUsdCents &&
-          existing.externalCurrency === 'IRT' &&
-          existing.externalAmountUnits === quote.totalIrtPayable.toString() &&
-          Math.abs((existing.exchangeRate || 0) - quote.referenceRate) < 0.0001 &&
-          Math.abs((existing.currencyPurchaseFeeRate || 0) - quote.commissionPercentage) < 0.0001 &&
-          (existing.adminNotes || '').includes(`Exchanger ${quote.exchangerId}`) &&
-          (existing.adminNotes || '').includes(`Offer #${quote.offerId}`);
-
-        if (!termsMatch) {
-          throw new Error('QUOTE_CONFLICT: Quote terms do not match original request');
-        }
-
-        // ج. بررسی وضعیت‌های پایانی و پیش‌تر مصرف‌شده (Already Consumed Protection)
-        if (existing.status === 'CONFIRMED_CREDITED') {
-          throw new Error('QUOTE_ALREADY_CONSUMED: P2P funding quote has already been settled and credited');
-        }
-
-        if (existing.status === 'CANCELLED' || existing.status === 'REJECTED') {
-          throw new Error(`QUOTE_ALREADY_CONSUMED: P2P funding quote is in terminal status '${existing.status}'`);
-        }
-
-        // تکرار امن و بدون تغییر تعهدات مالی برای درخواست در حال پردازش (Safe Idempotency)
-        return existing;
+        return validateExistingP2pFundingRequest(existing, quote);
       }
 
       // ۲. رزرو اتمیک و شرطی موجودی دلار صراف با updateMany
@@ -1657,20 +1696,7 @@ export async function acceptP2pFundingRequest(
         where: { quoteRef: quote.quoteRef },
       });
       if (existing) {
-        if (existing.advertiserId !== quote.advertiserId) {
-          throw new Error('CROSS_USER_QUOTE_REPLAY: Quote was issued to another advertiser');
-        }
-        const termsMatch =
-          existing.targetUsdCents === quote.targetUsdCents &&
-          existing.externalCurrency === 'IRT' &&
-          existing.externalAmountUnits === quote.totalIrtPayable.toString();
-        if (!termsMatch) {
-          throw new Error('QUOTE_CONFLICT: Quote terms do not match original request');
-        }
-        if (existing.status === 'CONFIRMED_CREDITED') {
-          throw new Error('QUOTE_ALREADY_CONSUMED: P2P funding quote has already been settled and credited');
-        }
-        return existing;
+        return validateExistingP2pFundingRequest(existing, quote);
       }
     }
     throw err;
