@@ -603,7 +603,7 @@ async function runFinanceV2_2TestSuite() {
     // ─────────────────────────────────────────────────────────────────────────
     process.env.FINANCE_V2_P2P_SETTLEMENT_ENABLED = 'true';
     const advBeforeP2pSettle = await prisma.walletV2.findUnique({ where: { userId: advertiserId } });
-    const settledP2p = await settleP2pFunding(p2pRequest.id, adminId, 'SHEBA_PAID_RECEIPT_123');
+    const settledP2p = await settleP2pFunding(p2pRequest.id, adminId, `SHEBA_PAID_RECEIPT_${Date.now()}_P2P`);
     const advAfterP2pSettle = await prisma.walletV2.findUnique({ where: { userId: advertiserId } });
     const exchAfterP2pSettle = await prisma.walletV2.findUnique({ where: { userId: exchanger1Id } });
 

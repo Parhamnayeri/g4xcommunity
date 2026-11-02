@@ -59,7 +59,8 @@
     "test:assign:command": "ts-node src/test/premade_presign_and_command_assignment_suite.ts",
     "test:parity": "ts-node src/test/cross_entrypoint_order_parity_suite.ts",
     "test:wallet": "ts-node src/test/wallet_phase5_suite.ts",
-    "test:migration": "ts-node src/test/migration_evidence_preservation_suite.ts"
+    "test:migration": "ts-node src/test/migration_evidence_preservation_suite.ts",
+    "test:phase6": "ts-node src/test/phase6_exchange_marketplace_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"

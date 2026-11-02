@@ -40,19 +40,54 @@ import {
   ExchangerOfferStatus,
   GoldTradeSettlementMethod,
 } from '../services/financeV2/financeV2Types';
-import { mapGoldTradeStatus } from '../services/statusSimplifier';
+import { mapGoldTradeStatus, mapApplicationStatus } from '../services/statusSimplifier';
+import { getWalletV2Summary } from '../services/financeV2/financeV2WalletService';
 
 export const marketplaceRouter = Router();
 
 // ─── ۱. روت‌های عمومی/کاربری لیست پیشنهادهای فعال ────────────────────────────
 marketplaceRouter.get('/offers', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { serviceType, currency } = req.query;
-    const offers = await getActiveExchangerOffers(
+    const { serviceType, currency, page, limit, sortOrder } = req.query;
+    const allOffers = await getActiveExchangerOffers(
       typeof serviceType === 'string' ? serviceType : undefined,
       typeof currency === 'string' ? currency : undefined
     );
-    res.json({ success: true, offers });
+
+    const isDesc = sortOrder === 'desc';
+    const sortedOffers = [...allOffers].sort((a, b) =>
+      isDesc ? b.commissionPercentage - a.commissionPercentage : a.commissionPercentage - b.commissionPercentage
+    );
+
+    if (page || limit) {
+      const pageNum = Math.max(1, parseInt(String(page || 1), 10) || 1);
+      const limitNum = Math.min(50, Math.max(1, parseInt(String(limit || 20), 10) || 20));
+      const skip = (pageNum - 1) * limitNum;
+      const paginatedOffers = sortedOffers.slice(skip, skip + limitNum);
+
+      res.json({
+        success: true,
+        offers: paginatedOffers,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total: sortedOffers.length,
+          totalPages: Math.ceil(sortedOffers.length / limitNum) || 1,
+        },
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      offers: sortedOffers,
+      pagination: {
+        page: 1,
+        limit: sortedOffers.length,
+        total: sortedOffers.length,
+        totalPages: 1,
+      },
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to fetch offers' });
   }
@@ -80,6 +115,131 @@ marketplaceRouter.get('/offers/:id', async (req: Request, res: Response): Promis
 });
 
 // ─── ۲. روت‌های اختصاصی صراف (Exchanger Routes) ─────────────────────────────
+marketplaceRouter.get(
+  '/exchanger/status',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const userRoles = (user.userRoles || []).map((r: { roleKey: string }) => r.roleKey);
+      const isOwner =
+        userRoles.includes('owner') ||
+        (Boolean(process.env.OWNER_DISCORD_ID) && process.env.OWNER_DISCORD_ID === user.discordId);
+      const isExchanger = userRoles.includes('exchanger');
+
+      if (isExchanger || isOwner) {
+        res.json({
+          success: true,
+          isApproved: true,
+          role: isOwner ? 'owner' : 'exchanger',
+          application: null,
+        });
+        return;
+      }
+
+      // بررسی درخواست ثبت‌نام صراف در صورت عدم تایید هنوز
+      const activeApp = await prisma.registrationApplication.findFirst({
+        where: {
+          userId: user.discordId,
+          category: 'exchanger',
+        },
+        orderBy: { submittedAt: 'desc' },
+      });
+
+      res.json({
+        success: true,
+        isApproved: false,
+        role: null,
+        application: activeApp
+          ? {
+              id: activeApp.id,
+              category: activeApp.category,
+              status: activeApp.status,
+              simplifiedStatus: mapApplicationStatus(activeApp.status),
+              submittedAt: activeApp.submittedAt,
+              rejectionReason: activeApp.rejectionReason,
+              reviewNotes: activeApp.reviewNotes,
+            }
+          : null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to check exchanger status' });
+    }
+  }
+);
+
+marketplaceRouter.get(
+  '/exchanger/overview',
+  requireAuth,
+  requireRole('exchanger', 'owner'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const [walletSummary, activeOffersCount, allTrades] = await Promise.all([
+        getWalletV2Summary(user.discordId),
+        prisma.exchangerFeeOffer.count({
+          where: { exchangerId: user.discordId, status: ExchangerOfferStatus.ACTIVE },
+        }),
+        prisma.goldTrade.findMany({
+          where: { buyerId: user.discordId },
+          select: {
+            tradeStatus: true,
+            goldDeliveryStatus: true,
+            paymentStatus: true,
+            agreedValuationUsdCents: true,
+          },
+        }),
+      ]);
+
+      const totalTradesCount = allTrades.length;
+      const pendingDeliveryCount = allTrades.filter(
+        (t) => t.goldDeliveryStatus === 'PENDING' && t.tradeStatus !== 'CANCELLED' && t.tradeStatus !== 'REJECTED'
+      ).length;
+      const pendingPaymentCount = allTrades.filter(
+        (t) =>
+          (t.paymentStatus === 'PENDING' || t.paymentStatus === 'SUBMITTED') &&
+          t.tradeStatus !== 'CANCELLED' &&
+          t.tradeStatus !== 'REJECTED' &&
+          t.tradeStatus !== 'SETTLED'
+      ).length;
+      const settledTrades = allTrades.filter((t) => t.tradeStatus === 'SETTLED');
+      const settledTradesCount = settledTrades.length;
+      const settledVolumeUsdCents = settledTrades.reduce((sum, t) => sum + (t.agreedValuationUsdCents || 0), 0);
+
+      const p2pSettlementEnabled = process.env.FINANCE_V2_P2P_SETTLEMENT_ENABLED === 'true';
+
+      res.json({
+        success: true,
+        profile: {
+          discordId: user.discordId,
+          username: user.username,
+          displayName: user.displayName || user.username,
+        },
+        wallet: {
+          availableCents: walletSummary.availableCents,
+          availableUsd: (walletSummary.availableCents / 100).toFixed(2),
+          reservedCents: walletSummary.reservedCents,
+          reservedUsd: (walletSummary.reservedCents / 100).toFixed(2),
+        },
+        metrics: {
+          activeOffersCount,
+          totalTradesCount,
+          pendingDeliveryCount,
+          pendingPaymentCount,
+          settledTradesCount,
+          settledVolumeUsdCents,
+          settledVolumeUsd: (settledVolumeUsdCents / 100).toFixed(2),
+        },
+        featureGates: {
+          p2pSettlementEnabled,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch exchanger overview' });
+    }
+  }
+);
+
 marketplaceRouter.get(
   '/exchanger/offers',
   requireAuth,
@@ -169,19 +329,44 @@ marketplaceRouter.get(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { user } = req as AuthenticatedRequest;
+      const { status, settlementMethod, page, limit, sortOrder } = req.query;
+
+      const whereClause: any = { buyerId: user.discordId };
+      if (typeof status === 'string' && status.trim()) {
+        whereClause.tradeStatus = status.trim();
+      }
+      if (typeof settlementMethod === 'string' && settlementMethod.trim()) {
+        whereClause.settlementMethod = settlementMethod.trim();
+      }
+
+      const total = await prisma.goldTrade.count({ where: whereClause });
+      const pageNum = Math.max(1, parseInt(String(page || 1), 10) || 1);
+      const limitNum = Math.min(100, Math.max(1, parseInt(String(limit || 50), 10) || 50));
+      const skip = (pageNum - 1) * limitNum;
+      const isAsc = sortOrder === 'asc';
+
       const trades = await prisma.goldTrade.findMany({
-        where: { buyerId: user.discordId },
+        where: whereClause,
         include: {
           seller: { select: { discordId: true, username: true, displayName: true } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: isAsc ? 'asc' : 'desc' },
+        skip,
+        take: limitNum,
       });
+
       res.json({
         success: true,
         trades: trades.map((t) => ({
           ...t,
           simplifiedStatus: mapGoldTradeStatus(t.tradeStatus),
         })),
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages: Math.ceil(total / limitNum) || 1,
+        },
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -304,19 +489,44 @@ marketplaceRouter.get(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { user } = req as AuthenticatedRequest;
+      const { status, settlementMethod, page, limit, sortOrder } = req.query;
+
+      const whereClause: any = { sellerId: user.discordId };
+      if (typeof status === 'string' && status.trim()) {
+        whereClause.tradeStatus = status.trim();
+      }
+      if (typeof settlementMethod === 'string' && settlementMethod.trim()) {
+        whereClause.settlementMethod = settlementMethod.trim();
+      }
+
+      const total = await prisma.goldTrade.count({ where: whereClause });
+      const pageNum = Math.max(1, parseInt(String(page || 1), 10) || 1);
+      const limitNum = Math.min(100, Math.max(1, parseInt(String(limit || 50), 10) || 50));
+      const skip = (pageNum - 1) * limitNum;
+      const isAsc = sortOrder === 'asc';
+
       const trades = await prisma.goldTrade.findMany({
-        where: { sellerId: user.discordId },
+        where: whereClause,
         include: {
           buyer: { select: { discordId: true, username: true, displayName: true } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: isAsc ? 'asc' : 'desc' },
+        skip,
+        take: limitNum,
       });
+
       res.json({
         success: true,
         trades: trades.map((t) => ({
           ...t,
           simplifiedStatus: mapGoldTradeStatus(t.tradeStatus),
         })),
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages: Math.ceil(total / limitNum) || 1,
+        },
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -370,6 +580,24 @@ marketplaceRouter.post(
       const { reason } = req.body;
 
       const trade = await disputeGoldTrade(id, user.discordId, reason || 'Disputed by advertiser');
+      res.json({ success: true, trade });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  }
+);
+
+marketplaceRouter.post(
+  '/trades/:id/cancel',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const id = Number(req.params.id);
+      const { reason } = req.body;
+
+      const trade = await cancelGoldTrade(id, user.discordId, reason || 'Cancelled by trade participant');
       res.json({ success: true, trade });
     } catch (err: any) {
       res.status(400).json({ error: err.message });

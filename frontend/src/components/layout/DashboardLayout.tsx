@@ -118,6 +118,30 @@ export const DashboardLayout: React.FC = () => {
             Wallet
           </Link>
           <Link
+            to="/exchange"
+            style={{
+              padding: '0.4rem 0.8rem',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              color: location.pathname === '/exchange' ? 'var(--accent-lime)' : 'var(--text-muted)',
+              borderBottom: location.pathname === '/exchange' ? '2px solid var(--accent-lime)' : 'none',
+            }}
+          >
+            Exchange
+          </Link>
+          <Link
+            to="/exchanger"
+            style={{
+              padding: '0.4rem 0.8rem',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              color: location.pathname === '/exchanger' ? 'var(--accent-lime)' : 'var(--text-muted)',
+              borderBottom: location.pathname === '/exchanger' ? '2px solid var(--accent-lime)' : 'none',
+            }}
+          >
+            Exchanger Portal
+          </Link>
+          <Link
             to="/profile"
             style={{
               padding: '0.4rem 0.8rem',

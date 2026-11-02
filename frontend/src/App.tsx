@@ -10,6 +10,8 @@ import { DashboardPage } from './pages/DashboardPage';
 import { WithdrawPage } from './pages/WithdrawPage';
 import { AdvertiserPage } from './pages/AdvertiserPage';
 import { WalletPage } from './pages/WalletPage';
+import { ExchangePage } from './pages/ExchangePage';
+import { ExchangerPage } from './pages/ExchangerPage';
 import { LegacyTransitionPage } from './pages/LegacyTransitionPage';
 
 export const App: React.FC = () => {
@@ -52,28 +54,8 @@ export const App: React.FC = () => {
               }
             />
             <Route path="/advertiser" element={<AdvertiserPage />} />
-            <Route
-              path="/exchange"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Gold & Currency Exchange"
-                  category="Authenticated"
-                  description="Browse P2P gold orders, submit exchange offers, and trade securely in escrow."
-                  legacyTab="gold"
-                />
-              }
-            />
-            <Route
-              path="/exchanger"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Certified Exchanger Dashboard"
-                  category="Authenticated"
-                  description="Manage liquidity reserves, realm exchange rates, and verified trade payouts."
-                  legacyTab="exchanger"
-                />
-              }
-            />
+            <Route path="/exchange" element={<ExchangePage />} />
+            <Route path="/exchanger" element={<ExchangerPage />} />
 
             {/* Operations Routes */}
             <Route
