@@ -21,6 +21,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [loadingGames, setLoadingGames] = useState(true);
   const [selectedGameSlug, setSelectedGameSlug] = useState('');
   const [selectedServiceId, setSelectedServiceId] = useState<number | ''>('');
+  const [orderMode, setOrderMode] = useState<'non_pilot' | 'pilot'>('non_pilot');
+  const [runsCount, setRunsCount] = useState<number>(1);
+  const [keyLevel, setKeyLevel] = useState('');
+  const [vpnLocation, setVpnLocation] = useState('');
+  const [customerInfo, setCustomerInfo] = useState('');
   const [grossAmountUsd, setGrossAmountUsd] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -32,9 +37,16 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         const res = await fetchPublicGames();
         setGames(res.games || []);
         if (res.games && res.games.length > 0) {
-          setSelectedGameSlug(res.games[0].slug);
-          if (res.games[0].services && res.games[0].services.length > 0) {
-            setSelectedServiceId(res.games[0].services[0].id);
+          const firstGame = res.games[0];
+          setSelectedGameSlug(firstGame.slug);
+          if (firstGame.services && firstGame.services.length > 0) {
+            const firstSvc = firstGame.services[0];
+            setSelectedServiceId(firstSvc.id);
+            if (firstSvc.serviceMode === 'pilot') {
+              setOrderMode('pilot');
+            } else {
+              setOrderMode('non_pilot');
+            }
           }
         }
       } catch (err: any) {
@@ -48,16 +60,43 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
   const selectedGame = games.find((g) => g.slug === selectedGameSlug);
   const availableServices = selectedGame?.services || [];
+  const selectedService = availableServices.find((s) => s.id === Number(selectedServiceId));
 
   const handleGameChange = (slug: string) => {
     setSelectedGameSlug(slug);
     const game = games.find((g) => g.slug === slug);
     if (game && game.services && game.services.length > 0) {
-      setSelectedServiceId(game.services[0].id);
+      const firstSvc = game.services[0];
+      setSelectedServiceId(firstSvc.id);
+      if (firstSvc.serviceMode === 'pilot') {
+        setOrderMode('pilot');
+      } else {
+        setOrderMode('non_pilot');
+      }
     } else {
       setSelectedServiceId('');
     }
   };
+
+  const handleServiceChange = (serviceId: number) => {
+    setSelectedServiceId(serviceId);
+    const svc = availableServices.find((s) => s.id === serviceId);
+    if (svc) {
+      if (svc.serviceMode === 'pilot') {
+        setOrderMode('pilot');
+      } else if (svc.serviceMode === 'non_pilot') {
+        setOrderMode('non_pilot');
+      }
+    }
+  };
+
+  const isMythicPlus = Boolean(
+    selectedService &&
+      (selectedService.serviceKey === 'mythic_plus' ||
+        selectedService.displayName.toLowerCase().includes('mythic'))
+  );
+
+  const allowsModeSelection = selectedService?.serviceMode === 'both';
 
   // Real-time calculation based on authoritative rank basis points
   const parsedGross = parseFloat(grossAmountUsd) || 0;
@@ -80,12 +119,20 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setError('Please select a service.');
       return;
     }
-    if (parsedGross <= 0 || grossCents < 100) {
-      setError('Minimum order amount is $1.00 USD.');
+    if (isMythicPlus && !keyLevel.trim()) {
+      setError('Target dungeon and key level is required for Mythic+ orders (e.g. "+10 Ara-Kara").');
       return;
     }
-    if (!hasSufficientBalance) {
-      setError(`Insufficient spendable wallet funds. You have $${wallet.availableUsd} available but order requires $${parsedGross.toFixed(2)}.`);
+    if (orderMode === 'pilot' && !vpnLocation.trim()) {
+      setError('Required VPN location is strictly required for Pilot orders.');
+      return;
+    }
+    if (runsCount < 1) {
+      setError('Number of runs must be at least 1.');
+      return;
+    }
+    if (parsedGross <= 0 || grossCents < 100) {
+      setError('Minimum order amount is $1.00 USD.');
       return;
     }
 
@@ -97,7 +144,11 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         gameSlug: selectedGameSlug,
         serviceId: Number(selectedServiceId),
         grossAmountUsd: parsedGross.toFixed(2),
-        orderType: 'group',
+        orderMode,
+        runsCount,
+        keyLevel: isMythicPlus ? keyLevel.trim() : undefined,
+        vpnLocation: orderMode === 'pilot' ? vpnLocation.trim() : undefined,
+        customerInfo: customerInfo.trim() || undefined,
         notes: notes.trim() || undefined,
       });
 
@@ -129,7 +180,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           border: '1px solid rgba(124, 58, 237, 0.4)',
           borderRadius: '16px',
           width: '100%',
-          maxWidth: '560px',
+          maxWidth: '580px',
           maxHeight: '90vh',
           overflowY: 'auto',
           padding: '1.75rem',
@@ -235,7 +286,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               </label>
               <select
                 value={selectedServiceId}
-                onChange={(e) => setSelectedServiceId(Number(e.target.value))}
+                onChange={(e) => handleServiceChange(Number(e.target.value))}
                 style={{
                   width: '100%',
                   backgroundColor: 'rgba(13, 11, 18, 0.8)',
@@ -253,6 +304,213 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Execution Mode (Pilot vs Non-Pilot) */}
+            {allowsModeSelection && (
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted, #9490a6)',
+                    marginBottom: '0.35rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Execution Mode:
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setOrderMode('non_pilot')}
+                    style={{
+                      padding: '0.5rem',
+                      borderRadius: '8px',
+                      border: orderMode === 'non_pilot' ? '1px solid var(--accent-lime, #ccff00)' : '1px solid rgba(124, 58, 237, 0.3)',
+                      backgroundColor: orderMode === 'non_pilot' ? 'rgba(204, 255, 0, 0.1)' : 'rgba(13, 11, 18, 0.6)',
+                      color: orderMode === 'non_pilot' ? 'var(--accent-lime, #ccff00)' : 'var(--text-muted, #9490a6)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    Non-Pilot (Self-Play)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setOrderMode('pilot')}
+                    style={{
+                      padding: '0.5rem',
+                      borderRadius: '8px',
+                      border: orderMode === 'pilot' ? '1px solid var(--primary-purple, #7c3aed)' : '1px solid rgba(124, 58, 237, 0.3)',
+                      backgroundColor: orderMode === 'pilot' ? 'rgba(124, 58, 237, 0.2)' : 'rgba(13, 11, 18, 0.6)',
+                      color: orderMode === 'pilot' ? '#c4b5fd' : 'var(--text-muted, #9490a6)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    Pilot (Account-Play)
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Mythic+ Key Level & Role Composition Notice */}
+            {isMythicPlus && (
+              <div
+                style={{
+                  backgroundColor: 'rgba(124, 58, 237, 0.12)',
+                  border: '1px solid rgba(124, 58, 237, 0.3)',
+                  borderRadius: '10px',
+                  padding: '0.85rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.6rem',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-lime, #ccff00)' }}>
+                    WoW Midnight Mythic+ Composition
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: '#c4b5fd' }}>
+                    4 Boosters (1 Tank • 1 Healer • 2 DPS)
+                  </span>
+                </div>
+
+                <div>
+                  <label
+                    style={{
+                      display: 'block',
+                      fontSize: '0.75rem',
+                      color: 'var(--text-muted, #9490a6)',
+                      marginBottom: '0.25rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Target Dungeon & Key Level (required):
+                  </label>
+                  <input
+                    type="text"
+                    value={keyLevel}
+                    onChange={(e) => setKeyLevel(e.target.value)}
+                    placeholder="+10 Ara-Kara or +12 City of Threads"
+                    required
+                    style={{
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                      border: '1px solid rgba(124, 58, 237, 0.4)',
+                      borderRadius: '6px',
+                      padding: '0.5rem 0.65rem',
+                      color: 'var(--text-primary, #f4f4f6)',
+                      fontSize: '0.85rem',
+                      outline: 'none',
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Pilot VPN Location Field */}
+            {orderMode === 'pilot' && (
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted, #9490a6)',
+                    marginBottom: '0.35rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Required Booster VPN Location (required):
+                </label>
+                <input
+                  type="text"
+                  value={vpnLocation}
+                  onChange={(e) => setVpnLocation(e.target.value)}
+                  placeholder="e.g. US - Chicago or Germany - Frankfurt"
+                  required
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                    border: '1px solid rgba(124, 58, 237, 0.3)',
+                    borderRadius: '8px',
+                    padding: '0.65rem 0.75rem',
+                    color: 'var(--text-primary, #f4f4f6)',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Runs Count & Customer Info */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '0.75rem' }}>
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted, #9490a6)',
+                    marginBottom: '0.35rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Runs:
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={runsCount}
+                  onChange={(e) => setRunsCount(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                    border: '1px solid rgba(124, 58, 237, 0.3)',
+                    borderRadius: '8px',
+                    padding: '0.65rem 0.75rem',
+                    color: 'var(--text-primary, #f4f4f6)',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted, #9490a6)',
+                    marginBottom: '0.35rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Customer / Character:
+                </label>
+                <input
+                  type="text"
+                  value={customerInfo}
+                  onChange={(e) => setCustomerInfo(e.target.value)}
+                  placeholder="Character name & realm"
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                    border: '1px solid rgba(124, 58, 237, 0.3)',
+                    borderRadius: '8px',
+                    padding: '0.65rem 0.75rem',
+                    color: 'var(--text-primary, #f4f4f6)',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                  }}
+                />
+              </div>
             </div>
 
             {/* Gross USD Amount */}
@@ -342,6 +600,22 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     ${boosterPoolUsd}
                   </span>
                 </div>
+
+                <div
+                  style={{
+                    marginTop: '0.3rem',
+                    padding: '0.4rem 0.6rem',
+                    borderRadius: '6px',
+                    fontSize: '0.75rem',
+                    backgroundColor: hasSufficientBalance ? 'rgba(204, 255, 0, 0.1)' : 'rgba(234, 179, 8, 0.1)',
+                    color: hasSufficientBalance ? 'var(--accent-lime, #ccff00)' : '#facc15',
+                    border: hasSufficientBalance ? '1px solid rgba(204, 255, 0, 0.25)' : '1px solid rgba(234, 179, 8, 0.25)',
+                  }}
+                >
+                  {hasSufficientBalance
+                    ? `✓ Available funds ($${wallet.availableUsd}) cover order. Funds will be atomically reserved in WalletV2.`
+                    : `⚠️ Available balance ($${wallet.availableUsd}) is less than order cost. Order will be created in payment_pending status until funded.`}
+                </div>
               </div>
             )}
 
@@ -356,13 +630,13 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   fontWeight: 600,
                 }}
               >
-                Order Notes / Specific Requirements (optional):
+                Order Notes / Additional Instructions (optional):
               </label>
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 placeholder="Specific key level, character name, or scheduling instructions..."
-                rows={3}
+                rows={2}
                 maxLength={400}
                 style={{
                   width: '100%',
@@ -426,20 +700,20 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
               <button
                 type="submit"
-                disabled={submitting || !hasSufficientBalance}
+                disabled={submitting}
                 style={{
-                  backgroundColor: hasSufficientBalance ? 'var(--primary-purple, #7c3aed)' : 'rgba(124, 58, 237, 0.3)',
+                  backgroundColor: 'var(--primary-purple, #7c3aed)',
                   border: 'none',
                   borderRadius: '8px',
                   padding: '0.6rem 1.5rem',
                   color: '#ffffff',
                   fontWeight: 700,
-                  cursor: submitting || !hasSufficientBalance ? 'not-allowed' : 'pointer',
+                  cursor: submitting ? 'not-allowed' : 'pointer',
                   fontSize: '0.9rem',
-                  boxShadow: hasSufficientBalance ? '0 4px 14px rgba(124, 58, 237, 0.4)' : 'none',
+                  boxShadow: '0 4px 14px rgba(124, 58, 237, 0.4)',
                 }}
               >
-                {submitting ? 'Placing Order...' : 'Place & Fund Boost Order'}
+                {submitting ? 'Placing Order...' : hasSufficientBalance ? 'Place & Fund Boost Order' : 'Place Order (Payment Pending)'}
               </button>
             </div>
           </form>

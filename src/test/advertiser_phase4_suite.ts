@@ -434,6 +434,154 @@ async function runAdvertiserPhase4Suite() {
       '46. History list correctly includes completed and cancelled orders'
     );
 
+    // ─── ۱۵. همزمانی و جلوگیری از دابل‌اسپند والت (Concurrent Wallet Double-Spend Prevention) ─
+    // کاربر uAdvB را شارژ می‌کنیم به میزان ۵۰ دلار (۵۰۰۰ سنت)
+    await creditAvailableCents(uAdvB, 5000, LedgerV2EntryType.AVAILABLE_RELEASE, { description: 'Initial balance for concurrency race test' });
+
+    // ارسال همزمان دو سفارش ۵۰ دلاری با بالانس ۵۰ دلار
+    const [resRace1, resRace2] = await Promise.all([
+      agentAdvB.agent
+        .post('/api/orders/create')
+        .set('x-csrf-token', agentAdvB.csrfToken)
+        .send({
+          gameSlug: testGame.slug,
+          serviceId: testService.id,
+          grossAmountUsd: '50.00',
+          orderType: 'group',
+          notes: 'Race order 1',
+        }),
+      agentAdvB.agent
+        .post('/api/orders/create')
+        .set('x-csrf-token', agentAdvB.csrfToken)
+        .send({
+          gameSlug: testGame.slug,
+          serviceId: testService.id,
+          grossAmountUsd: '50.00',
+          orderType: 'group',
+          notes: 'Race order 2',
+        }),
+    ]);
+
+    assert(resRace1.status === 200 && resRace2.status === 200, '47. Both concurrent requests handled safely (200 OK)');
+    const raceOrder1 = resRace1.body.order;
+    const raceOrder2 = resRace2.body.order;
+
+    // دقیقا یکی باید تایید و فاند شده باشد و دیگری payment_pending بماند (جلوگیری قطعی از خرج مضاعف)
+    const fundedCount = [raceOrder1.paymentStatus, raceOrder2.paymentStatus].filter((s) => s === 'verified').length;
+    const pendingCount = [raceOrder1.paymentStatus, raceOrder2.paymentStatus].filter((s) => s === 'pending').length;
+    assert(fundedCount === 1, '48. Exactly ONE concurrent order acquired the 50.00 reservation (atomic CAS)');
+    assert(pendingCount === 1, '49. Second concurrent order preserved safe payment_pending status without double spend');
+
+    const walletBPostRace = await prisma.walletV2.findUnique({ where: { userId: uAdvB } });
+    assert(walletBPostRace?.availableCents === 0, '50. WalletV2 available balance atomically reduced to 0 (no negative balance)');
+    assert(walletBPostRace?.reservedCents === 5000, '51. Exactly 5000 cents reserved in WalletV2');
+
+    // ─── ۱۶. تکرارناپذیری ایجاد سفارش (Idempotent Order Creation) ─────────────
+    const uniqueIdempKey = `IDEMP_KEY_${Date.now()}`;
+    const idempRes1 = await agentAdvA.agent
+      .post('/api/orders/create')
+      .set('x-csrf-token', agentAdvA.csrfToken)
+      .send({
+        gameSlug: testGame.slug,
+        serviceId: testService.id,
+        grossAmountUsd: '10.00',
+        idempotencyKey: uniqueIdempKey,
+        notes: 'Idempotency order test',
+      });
+    const idempRes2 = await agentAdvA.agent
+      .post('/api/orders/create')
+      .set('x-csrf-token', agentAdvA.csrfToken)
+      .send({
+        gameSlug: testGame.slug,
+        serviceId: testService.id,
+        grossAmountUsd: '10.00',
+        idempotencyKey: uniqueIdempKey,
+        notes: 'Idempotency duplicate retry',
+      });
+
+    assert(idempRes1.status === 200 && idempRes2.status === 200, '52. Duplicate order submission returns 200');
+    assert(idempRes1.body.order.id === idempRes2.body.order.id, '53. Idempotent retry returns existing order without creating duplicate');
+
+    // ─── ۱۷. همزمانی لغو سفارش و جلوگیری از ریفاند مضاعف (Cancellation Idempotency) ───
+    const [cancelAttempt1, cancelAttempt2] = await Promise.all([
+      agentAdvA.agent
+        .post(`/api/advertiser/orders/${idempRes1.body.order.id}/cancel-request`)
+        .set('x-csrf-token', agentAdvA.csrfToken)
+        .send({ reason: 'Concurrent cancel attempt 1' }),
+      agentAdvA.agent
+        .post(`/api/advertiser/orders/${idempRes1.body.order.id}/cancel-request`)
+        .set('x-csrf-token', agentAdvA.csrfToken)
+        .send({ reason: 'Concurrent cancel attempt 2' }),
+    ]);
+
+    assert(cancelAttempt1.status === 200 || cancelAttempt2.status === 200, '54. Concurrent cancellation processed cleanly');
+    const releaseEntries = await prisma.ledgerEntryV2.findMany({
+      where: {
+        userId: uAdvA,
+        entryType: 'ORDER_RELEASE',
+        orderId: idempRes1.body.order.id,
+      },
+    });
+    assert(releaseEntries.length <= 1, '55. Concurrency safety: At most exactly ONE ORDER_RELEASE ledger entry generated');
+
+    // ─── ۱۸. تفکیک سفارشات G4X ایجادشده توسط ادورتایزر (Origin Boundaries) ──────
+    // ایجاد یک سفارش مارکت‌پلیس G4X (G2G) با creatorId برابر uAdvA
+    const g4xMarketplaceOrder = await prisma.order.create({
+      data: {
+        orderRef: `ORD_G4X_MKT_${Date.now()}`,
+        gameSlug: testGame.slug,
+        serviceId: testService.id,
+        creatorId: uAdvA,
+        creatorType: 'g4x',
+        advertiserId: null,
+        sourceWebsite: 'g2g',
+        externalOrderId: `G2G-${Date.now()}`,
+        orderType: 'group',
+        grossAmountMinor: 4000,
+        boosterPoolMinor: 3400,
+        currency: 'USD',
+        status: 'open_presign',
+        notes: 'Internal G4X order sourced from G2G',
+      },
+    });
+
+    // ادورتایزر A نباید این سفارش را در پورتال ادورتایزر ببیند
+    const advListCheck = await agentAdvA.agent.get('/api/orders/dashboard-list?tab=advertiser&status=active');
+    assert(
+      !advListCheck.body.orders.some((o: any) => o.id === g4xMarketplaceOrder.id),
+      '56. G4X marketplace order excluded from advertiser portal even if creatorId matches'
+    );
+
+    // تلاش برای ویرایش یادداشت سفارش مارکت‌پلیس از طریق روت ادورتایزر باید ۴۰۳ برگرداند
+    const illegalNotes = await agentAdvA.agent
+      .patch(`/api/advertiser/orders/${g4xMarketplaceOrder.id}/notes`)
+      .set('x-csrf-token', agentAdvA.csrfToken)
+      .send({ notes: 'Illegal attempt to alter marketplace order' });
+    assert(illegalNotes.status === 403, '57. Advertiser cannot edit notes on G4X marketplace order (NON_ADVERTISER_ORDER: 403)');
+
+    // تلاش برای لغو سفارش مارکت‌پلیس از طریق روت ادورتایزر باید ۴۰۳ برگرداند
+    const illegalCancel = await agentAdvA.agent
+      .post(`/api/advertiser/orders/${g4xMarketplaceOrder.id}/cancel-request`)
+      .set('x-csrf-token', agentAdvA.csrfToken)
+      .send({ reason: 'Illegal cancel attempt' });
+    assert(illegalCancel.status === 403, '58. Advertiser cannot cancel G4X marketplace order (NON_ADVERTISER_ORDER: 403)');
+
+    // ─── ۱۹. ترکیب نقش‌های Mythic+ و تعداد ران‌ها (Mythic+ 4-Booster Composition) ──
+    const mythicRequirements = await prisma.orderRequiredRole.findMany({
+      where: { orderId: orderUnassigned.id },
+    });
+    const tankReq = mythicRequirements.find((r) => r.roleName === 'tank');
+    const healReq = mythicRequirements.find((r) => r.roleName === 'healer');
+    const dpsReq = mythicRequirements.find((r) => r.roleName === 'dps');
+
+    assert(
+      tankReq?.quantity === 1 && healReq?.quantity === 1 && dpsReq?.quantity === 2,
+      '59. WoW Midnight Mythic+ sets required composition: 1 Tank, 1 Healer, 2 DPS (4 Boosters)'
+    );
+
+    // تمیزکاری سفارش مارکت‌پلیس
+    await prisma.order.delete({ where: { id: g4xMarketplaceOrder.id } });
+
     console.log('\n======================================================');
     console.log(`PHASE 4 ADVERTISER SUITE RESULTS: ${passed} PASSED | ${failed} FAILED`);
     console.log('======================================================\n');
@@ -445,45 +593,97 @@ async function runAdvertiserPhase4Suite() {
     console.error('Fatal error during Phase 4 suite:', err);
     process.exit(1);
   } finally {
-    // تمیزکاری دیتابیس تستی
+    // تمیزکاری دیتابیس تستی با رعایت کلیدهای خارجی
     try {
+      const allUserIds = [uAdvA, uAdvB, uPending, uRegular, uStaff, uBooster];
+      const allCreatedOrders = await prisma.order.findMany({
+        where: {
+          OR: [
+            { creatorId: { in: allUserIds } },
+            { advertiserId: { in: allUserIds } },
+            { paymentVerifiedBy: { in: allUserIds } },
+          ],
+        },
+        select: { id: true },
+      });
+      const orderIds = allCreatedOrders.map((o) => o.id);
+
       await prisma.auditLog.deleteMany({
-        where: { actorId: { in: [uAdvA, uAdvB, uPending, uRegular, uStaff, uBooster] } },
+        where: { actorId: { in: allUserIds } },
+      });
+      await prisma.orderKeyRequirement.deleteMany({
+        where: { orderId: { in: orderIds } },
+      });
+      await prisma.orderRequiredRole.deleteMany({
+        where: { orderId: { in: orderIds } },
+      });
+      await prisma.orderRun.deleteMany({
+        where: { orderId: { in: orderIds } },
       });
       await prisma.escrowHold.deleteMany({
-        where: { orderId: { in: [orderUnassigned?.id, orderAssigned?.id, orderCompleted?.id].filter(Boolean) } },
+        where: { orderId: { in: orderIds } },
       });
       await prisma.orderDispute.deleteMany({
-        where: { orderId: { in: [orderUnassigned?.id, orderAssigned?.id, orderCompleted?.id].filter(Boolean) } },
+        where: { orderId: { in: orderIds } },
       });
       await prisma.orderAssignment.deleteMany({
-        where: { orderId: { in: [orderUnassigned?.id, orderAssigned?.id, orderCompleted?.id].filter(Boolean) } },
+        where: {
+          OR: [
+            { orderId: { in: orderIds } },
+            { userId: { in: allUserIds } },
+            { assignedById: { in: allUserIds } },
+          ],
+        },
       });
       await prisma.orderFinancialSnapshot.deleteMany({
-        where: { orderId: { in: [orderUnassigned?.id, orderAssigned?.id, orderCompleted?.id].filter(Boolean) } },
+        where: { orderId: { in: orderIds } },
       });
       await prisma.ledgerEntryV2.deleteMany({
-        where: { userId: { in: [uAdvA, uAdvB, uPending, uRegular, uStaff, uBooster] } },
+        where: {
+          OR: [
+            { userId: { in: allUserIds } },
+            { createdBy: { in: allUserIds } },
+          ],
+        },
       });
       await prisma.orderChannel.deleteMany({
-        where: { orderId: { in: [orderUnassigned?.id, orderAssigned?.id, orderCompleted?.id].filter(Boolean) } },
+        where: { orderId: { in: orderIds } },
       });
       await prisma.order.deleteMany({
-        where: { id: { in: [orderUnassigned?.id, orderAssigned?.id, orderCompleted?.id].filter(Boolean) } },
+        where: { id: { in: orderIds } },
       });
       await prisma.walletV2.deleteMany({
-        where: { userId: { in: [uAdvA, uAdvB, uPending, uRegular, uStaff, uBooster] } },
+        where: { userId: { in: allUserIds } },
       });
       await prisma.registrationApplication.deleteMany({
-        where: { userId: { in: [uAdvA, uAdvB, uPending, uRegular, uStaff, uBooster] } },
+        where: {
+          OR: [
+            { userId: { in: allUserIds } },
+            { reviewedById: { in: allUserIds } },
+          ],
+        },
       });
       await prisma.userRole.deleteMany({
-        where: { userId: { in: [uAdvA, uAdvB, uPending, uRegular, uStaff, uBooster] } },
+        where: {
+          OR: [
+            { userId: { in: allUserIds } },
+            { grantedBy: { in: allUserIds } },
+          ],
+        },
       });
       await prisma.user.deleteMany({
-        where: { discordId: { in: [uAdvA, uAdvB, uPending, uRegular, uStaff, uBooster] } },
+        where: { discordId: { in: allUserIds } },
       });
       if (testService) {
+        await prisma.orderRun.deleteMany({ where: { order: { serviceId: testService.id } } });
+        await prisma.orderKeyRequirement.deleteMany({ where: { order: { serviceId: testService.id } } });
+        await prisma.orderRequiredRole.deleteMany({ where: { order: { serviceId: testService.id } } });
+        await prisma.orderFinancialSnapshot.deleteMany({ where: { order: { serviceId: testService.id } } });
+        await prisma.orderAssignment.deleteMany({ where: { order: { serviceId: testService.id } } });
+        await prisma.orderDispute.deleteMany({ where: { order: { serviceId: testService.id } } });
+        await prisma.orderChannel.deleteMany({ where: { order: { serviceId: testService.id } } });
+        await prisma.order.deleteMany({ where: { serviceId: testService.id } });
+        await prisma.serviceSetting.deleteMany({ where: { serviceId: testService.id } });
         await prisma.gameService.deleteMany({ where: { id: testService.id } });
       }
       if (testGame) {

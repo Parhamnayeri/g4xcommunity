@@ -164,3 +164,16 @@ export interface PublicGamesResponse {
     };
   };
 }
+
+export interface CreateOrderRequest {
+  gameSlug: string;
+  serviceId: number;
+  grossAmountUsd: string | number;
+  orderMode?: 'pilot' | 'non_pilot';
+  runsCount?: number;
+  keyLevel?: string;
+  vpnLocation?: string;
+  customerInfo?: string;
+  notes?: string;
+  idempotencyKey?: string;
+}

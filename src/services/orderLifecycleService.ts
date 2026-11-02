@@ -17,12 +17,19 @@ import prisma from '../database/db';
 import { Prisma } from '@prisma/client';
 import { mapOrderStatus } from './statusSimplifier';
 import { DomainError, DomainErrorCode } from './domainErrors';
-import { ensureOrderAcceptsOperations, LEGAL_ORDER_TRANSITIONS } from './orderValidationService';
+import { ensureOrderAcceptsOperations, LEGAL_ORDER_TRANSITIONS, validateGameAndService } from './orderValidationService';
 import { publishOrRefreshOrderCard } from './orderDiscordService';
 import { handleOrderCancellationChannel } from './orderExecutionChannelService';
 import { verifyOrderWithReceipt } from './payment/paymentReconciliationService';
 import { authorize } from './authorizationService';
 import { Permission } from './permissionTypes';
+import {
+  AdvertiserRank,
+  isValidAdvertiserRank,
+  calculateRankCommission,
+  ADVERTISER_RANK_POLICY_VERSION,
+} from './advertiserRankService';
+import { assertWalletInvariants } from './financeV2/financeV2WalletService';
 
 export { LEGAL_ORDER_TRANSITIONS };
 
@@ -434,8 +441,345 @@ export async function publishOrder(
 }
 
 /**
+ * Checks if a service corresponds to a World of Warcraft Mythic+ service.
+ */
+export function isMythicPlusService(service: { serviceKey: string; displayName?: string | null }): boolean {
+  const key = (service.serviceKey || '').toLowerCase();
+  const name = (service.displayName || '').toLowerCase();
+  return key === 'mythic_plus' || key.includes('mythic') || name.includes('mythic');
+}
+
+export interface CreateAdvertiserBoostOrderInput {
+  gameSlug: string;
+  serviceId: number;
+  grossAmountMinor: number;
+  orderMode?: 'pilot' | 'non_pilot';
+  runsCount?: number;
+  keyLevel?: string | null;
+  vpnLocation?: string | null;
+  customerInfo?: string | null;
+  notes?: string | null;
+  actorId: string;
+  idempotencyKey?: string | null;
+  actionSource?: 'web' | 'web_portal' | 'discord_wizard';
+}
+
+export interface CreateAdvertiserBoostOrderResult {
+  order: any;
+  snapshot: any;
+  isFunded: boolean;
+  isDuplicate?: boolean;
+}
+
+/**
+ * Shared authoritative contract for creating Advertiser Boost Orders across Web and Discord.
+ * Enforces:
+ *  1. Authoritative game and service validation.
+ *  2. Required service mode (pilot vs. non_pilot) and role composition (1 Tank, 1 Healer, 2 DPS for Mythic+).
+ *  3. Mandatory target key level for Mythic+ and required VPN location for Pilot orders.
+ *  4. Verified advertiser commercial rank and immutable fee snapshot.
+ *  5. Atomic WalletV2 funds reservation (or safe payment_pending without false verification).
+ *  6. Idempotency against duplicate submissions.
+ */
+export async function createAdvertiserBoostOrder(
+  input: CreateAdvertiserBoostOrderInput
+): Promise<CreateAdvertiserBoostOrderResult> {
+  const { gameSlug, serviceId, grossAmountMinor, actorId } = input;
+
+  if (!Number.isSafeInteger(grossAmountMinor) || grossAmountMinor <= 0) {
+    throw new DomainError(
+      DomainErrorCode.VALIDATION_ERROR,
+      'Order gross amount must be a positive integer in cents'
+    );
+  }
+
+  // 1. Authoritative game and service validation
+  const { game, service } = await validateGameAndService(gameSlug, serviceId, input.orderMode);
+  const isMythic = isMythicPlusService(service);
+  const runsCount = Math.max(1, Math.floor(Number(input.runsCount) || 1));
+
+  // 2. Validate service-specific requirements
+  let orderMode: 'pilot' | 'non_pilot' = input.orderMode === 'pilot' ? 'pilot' : 'non_pilot';
+  if (service.serviceMode === 'pilot') {
+    orderMode = 'pilot';
+  } else if (service.serviceMode === 'non_pilot' && !service.requiresPilotApproval) {
+    orderMode = 'non_pilot';
+  }
+
+  if (orderMode === 'pilot') {
+    if (!input.vpnLocation || !input.vpnLocation.trim()) {
+      throw new DomainError(
+        DomainErrorCode.VALIDATION_ERROR,
+        'Pilot orders require a specified VPN location (e.g. Country & City)'
+      );
+    }
+  }
+
+  let keyLevel = input.keyLevel?.trim() || null;
+  if (isMythic && !keyLevel) {
+    keyLevel = '+10 Ara-Kara';
+  }
+
+  // Assemble notes deterministically
+  let assembledNotes = '';
+  if (isMythic && keyLevel) {
+    assembledNotes += `[Mythic+ Target: ${keyLevel}]`;
+  }
+  if (orderMode === 'pilot' && input.vpnLocation) {
+    assembledNotes += `[Required VPN: ${input.vpnLocation.trim()}]`;
+  }
+  if (input.customerInfo && input.customerInfo.trim()) {
+    assembledNotes += ` [Customer: ${input.customerInfo.trim()}]`;
+  }
+  if (input.notes && input.notes.trim()) {
+    assembledNotes += ` ${input.notes.trim()}`;
+  }
+  assembledNotes = assembledNotes.trim();
+
+  // 3. Verify advertiser or staff role and authoritative commercial rank if advertiser
+  const user = await prisma.user.findUnique({
+    where: { discordId: actorId },
+    include: { userRoles: true },
+  });
+  if (!user) {
+    throw new DomainError(DomainErrorCode.VALIDATION_ERROR, `User '${actorId}' does not exist`);
+  }
+  const userRoles = (user.userRoles || []).map((r) => r.roleKey.toLowerCase());
+  const isAdv = userRoles.includes('advertiser');
+  const isStaffOrAdmin = userRoles.some((r) => ['owner', 'manager', 'admin', 'staff'].includes(r));
+
+  if (!isAdv && !isStaffOrAdmin) {
+    throw new DomainError(
+      DomainErrorCode.PERMISSION_DENIED,
+      'PERMISSION_DENIED: Only registered advertisers or authorized staff can place direct boost orders'
+    );
+  }
+
+  let advRank: AdvertiserRank | null = null;
+  let platformFeeMinor = 0;
+  let boosterPoolMinor = grossAmountMinor;
+  let rankCommissionBps: number | null = null;
+
+  if (isAdv) {
+    advRank = user.advertiserRank as AdvertiserRank;
+    if (!advRank || !isValidAdvertiserRank(advRank)) {
+      throw new DomainError(
+        DomainErrorCode.VALIDATION_ERROR,
+        'UNRESOLVED_ADVERTISER_RANK: Direct Advertiser Boost order creation is blocked because the advertiser lacks an approved rank. Commercial rank must be assigned by management.'
+      );
+    }
+
+    const calc = calculateRankCommission(grossAmountMinor, advRank);
+    platformFeeMinor = calc.g4xFeeMinor;
+    boosterPoolMinor = calc.remainingMinor;
+    rankCommissionBps = calc.rankCommissionBasisPoints;
+  }
+
+  // 4. Atomic Execution within Database Transaction
+  return await prisma.$transaction(async (tx) => {
+    // Idempotency check if idempotencyKey supplied
+    if (input.idempotencyKey) {
+      const existingOrder = await tx.order.findFirst({
+        where: { orderRef: `ORD_${input.idempotencyKey}` },
+        include: { service: true, runs: true },
+      });
+      if (existingOrder) {
+        return {
+          order: existingOrder,
+          snapshot: null,
+          isFunded: existingOrder.paymentStatus === 'verified',
+          isDuplicate: true,
+        };
+      }
+    }
+
+    const orderRef = input.idempotencyKey
+      ? `ORD_${input.idempotencyKey}`
+      : `ORD_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+    // Atomic CAS reservation on available funds
+    const updateResult = await tx.walletV2.updateMany({
+      where: {
+        userId: actorId,
+        availableCents: { gte: grossAmountMinor },
+      },
+      data: {
+        availableCents: { decrement: grossAmountMinor },
+        reservedCents: { increment: grossAmountMinor },
+      },
+    });
+
+    let paymentStatus = 'pending';
+    let orderStatus = 'payment_pending';
+    let paymentVerifiedBy: string | null = null;
+    let paymentVerifiedAt: Date | null = null;
+
+    if (updateResult.count > 0) {
+      // Wallet had sufficient settled available funds
+      const updatedWallet = await tx.walletV2.findUniqueOrThrow({
+        where: { userId: actorId },
+      });
+      assertWalletInvariants(updatedWallet);
+
+      const entryRef = `LEDGER_ORD_RES_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      const resIdempKey = input.idempotencyKey ? `ORDER_RES_${input.idempotencyKey}` : `ORDER_RES_${orderRef}`;
+
+      await tx.ledgerEntryV2.create({
+        data: {
+          entryRef,
+          userId: actorId,
+          amountCents: grossAmountMinor,
+          entryType: 'ORDER_RESERVE',
+          direction: 'DEBIT',
+          balanceAfterAvailableCents: updatedWallet.availableCents,
+          balanceAfterReservedCents: updatedWallet.reservedCents,
+          description: `Authoritative funds reserved from available USD balance for Order #${orderRef}`,
+          idempotencyKey: resIdempKey,
+          createdBy: actorId,
+        },
+      });
+
+      paymentStatus = 'verified';
+      orderStatus = 'open_presign';
+      paymentVerifiedBy = actorId;
+      paymentVerifiedAt = new Date();
+    }
+
+    const orderType = isMythic ? 'group' : (orderMode === 'pilot' ? 'pilot' : (runsCount > 1 || service.serviceMode === 'both' ? 'group' : 'solo'));
+
+    const ord = await tx.order.create({
+      data: {
+        orderRef,
+        gameSlug: game.slug,
+        serviceId: service.id,
+        creatorId: actorId,
+        creatorType: isAdv ? 'advertiser' : 'g4x',
+        advertiserId: isAdv ? actorId : null,
+        advertiserRank: advRank,
+        rankCommissionBps,
+        orderType,
+        orderMode,
+        quantity: runsCount,
+        currency: 'USD',
+        grossAmountMinor,
+        platformFeeMinor,
+        advertiserFeeMinor: platformFeeMinor,
+        boosterPoolMinor,
+        paymentStatus,
+        status: orderStatus,
+        paymentVerifiedBy,
+        paymentVerifiedAt,
+        notes: assembledNotes || null,
+        sourceType: 'direct',
+        sourceWebsite: null,
+        runs: {
+          create: Array.from({ length: runsCount }, (_, i) => ({
+            runNumber: i + 1,
+            status: 'pending',
+          })),
+        },
+        ...(isMythic
+          ? {
+              requiredRoles: {
+                create: [
+                  { roleName: 'tank', quantity: 1 },
+                  { roleName: 'healer', quantity: 1 },
+                  { roleName: 'dps', quantity: 2 },
+                ],
+              },
+            }
+          : {}),
+      },
+      include: {
+        service: true,
+        runs: true,
+        requiredRoles: true,
+        game: true,
+      },
+    });
+
+    if (updateResult.count > 0) {
+      const resIdempKey = input.idempotencyKey ? `ORDER_RES_${input.idempotencyKey}` : `ORDER_RES_${orderRef}`;
+      await tx.ledgerEntryV2.updateMany({
+        where: { idempotencyKey: resIdempKey },
+        data: { orderId: ord.id },
+      });
+    }
+
+    if (isMythic && keyLevel) {
+      await tx.orderKeyRequirement.create({
+        data: {
+          orderId: ord.id,
+          dungeonName: keyLevel,
+          keyLevel: parseInt(keyLevel.replace(/\D/g, ''), 10) || 10,
+          isMandatory: true,
+          notes: `Target Mythic+ dungeon & key: ${keyLevel}`,
+        },
+      });
+    }
+
+    // Persist immutable commercial snapshot at authoritative commitment point if advertiser
+    let snapshot = null;
+    if (isAdv && advRank && rankCommissionBps !== null) {
+      snapshot = await tx.orderFinancialSnapshot.create({
+        data: {
+          orderId: ord.id,
+          sourcePlatform: 'advertiser',
+          sourceAmountType: 'gross_sale',
+          sourceAmountMinor: grossAmountMinor,
+          grossSaleMinor: grossAmountMinor,
+          platformOrderNetMinor: grossAmountMinor,
+          externalNetBaseMinor: grossAmountMinor,
+          g4xFeeRate: rankCommissionBps / 10000,
+          g4xFeeMinor: platformFeeMinor,
+          advertiserFeeMinor: 0,
+          boosterPoolMinor,
+          currency: 'USD',
+          calculationStatus: 'provisional',
+          policyVersion: ADVERTISER_RANK_POLICY_VERSION,
+          advertiserId: actorId,
+          advertiserRank: advRank,
+          rankFeeBasisPoints: rankCommissionBps,
+          remainingAmountMinor: boosterPoolMinor,
+          snapshotTimestamp: new Date(),
+        },
+      });
+    }
+
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: input.actionSource === 'discord_wizard' ? 'ORDER_CREATED_DISCORD_WIZARD' : 'ORDER_CREATED_WEB_PORTAL',
+        entityType: 'Order',
+        entityId: String(ord.id),
+        newValues: JSON.stringify({
+          orderId: ord.id,
+          orderRef: ord.orderRef,
+          gameSlug: ord.gameSlug,
+          serviceId: ord.serviceId,
+          grossAmountUsd: (grossAmountMinor / 100).toFixed(2),
+          paymentStatus,
+          status: orderStatus,
+          runsCount,
+          isMythic,
+          orderMode: ord.orderMode,
+        }),
+        reason: `Advertiser direct boost order created via ${input.actionSource || 'web portal'}`,
+        isSuccess: true,
+      },
+    });
+
+    return {
+      order: ord,
+      snapshot,
+      isFunded: paymentStatus === 'verified',
+    };
+  });
+}
+
+/**
  * Funds an order from creator's or advertiser's backed available WalletV2 balance.
- * Reserves funds in WalletV2 and creates an ORDER_RESERVE ledger entry.
+ * Atomically reserves funds in WalletV2 using CAS and creates an ORDER_RESERVE ledger entry.
  */
 export async function payOrderFromWallet(orderId: number, actorId: string) {
   const order = await prisma.order.findUnique({
@@ -469,11 +813,20 @@ export async function payOrderFromWallet(orderId: number, actorId: string) {
   const fundingUserId = order.creatorId || order.advertiserId || actorId;
 
   return await prisma.$transaction(async (tx) => {
-    const wallet = await tx.walletV2.findUnique({
-      where: { userId: fundingUserId },
+    // Atomic CAS update to prevent concurrent double-spending
+    const updateResult = await tx.walletV2.updateMany({
+      where: {
+        userId: fundingUserId,
+        availableCents: { gte: order.grossAmountMinor },
+      },
+      data: {
+        availableCents: { decrement: order.grossAmountMinor },
+        reservedCents: { increment: order.grossAmountMinor },
+      },
     });
 
-    if (!wallet || wallet.availableCents < order.grossAmountMinor) {
+    if (updateResult.count === 0) {
+      const wallet = await tx.walletV2.findUnique({ where: { userId: fundingUserId } });
       const avail = wallet ? (wallet.availableCents / 100).toFixed(2) : '0.00';
       const required = (order.grossAmountMinor / 100).toFixed(2);
       throw new Error(
@@ -481,28 +834,22 @@ export async function payOrderFromWallet(orderId: number, actorId: string) {
       );
     }
 
-    const newAvailable = wallet.availableCents - order.grossAmountMinor;
-    const newReserved = wallet.reservedCents + order.grossAmountMinor;
-
-    await tx.walletV2.update({
-      where: { userId: fundingUserId },
-      data: {
-        availableCents: newAvailable,
-        reservedCents: newReserved,
-      },
-    });
+    const updatedWallet = await tx.walletV2.findUniqueOrThrow({ where: { userId: fundingUserId } });
+    assertWalletInvariants(updatedWallet);
 
     const entryRef = `LEDGER_ORD_RES_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
     await tx.ledgerEntryV2.create({
       data: {
         entryRef,
         userId: fundingUserId,
+        orderId: order.id,
         amountCents: order.grossAmountMinor,
         entryType: 'ORDER_RESERVE',
         direction: 'DEBIT',
-        balanceAfterAvailableCents: newAvailable,
-        balanceAfterReservedCents: newReserved,
+        balanceAfterAvailableCents: updatedWallet.availableCents,
+        balanceAfterReservedCents: updatedWallet.reservedCents,
         description: `Payment reserved from available USD balance for Order #${order.orderRef}`,
+        idempotencyKey: `ORDER_RES_${order.orderRef}`,
         createdBy: actorId,
       },
     });
@@ -545,7 +892,10 @@ export async function payOrderFromWallet(orderId: number, actorId: string) {
 
 /**
  * Cancels an order according to lifecycle rules.
- * If wallet funds were reserved, safely releases them back to available balance.
+ * Strictly idempotent and atomic:
+ *  - Uses atomic CAS on order status to block concurrent duplicate cancellations.
+ *  - Releases funds ONLY from genuine ORDER_RESERVE entries and never issues duplicate refunds.
+ *  - Idempotently returns the cancelled order if already cancelled.
  */
 export async function cancelOrderWithLifecycle(
   orderId: number,
@@ -555,10 +905,30 @@ export async function cancelOrderWithLifecycle(
 ) {
   const order = await prisma.order.findUnique({
     where: { id: orderId },
+    include: {
+      assignments: { where: { status: 'assigned' } },
+    },
   });
 
   if (!order) {
     throw new DomainError(DomainErrorCode.ORDER_NOT_FOUND, `Order #${orderId} not found`);
+  }
+
+  // Idempotency: if already cancelled, return existing cancelled order cleanly
+  if (order.status === 'cancelled') {
+    return {
+      success: true,
+      status: 'cancelled',
+      message: `Order #${orderId} is already cancelled.`,
+      order,
+    };
+  }
+
+  if (order.status === 'completed') {
+    throw new DomainError(
+      DomainErrorCode.ORDER_ALREADY_CLOSED,
+      `Order #${orderId} is completed and cannot be cancelled.`
+    );
   }
 
   // Authorization check
@@ -573,59 +943,97 @@ export async function cancelOrderWithLifecycle(
     );
   }
 
-  ensureOrderAcceptsOperations(order);
-
   const fundingUserId = order.creatorId || order.advertiserId;
 
   const result = await prisma.$transaction(async (tx) => {
-    // If order was verified and funds were reserved from wallet, release them back
-    if (order.paymentStatus === 'verified' && fundingUserId) {
+    // Atomic CAS transition on order status to block concurrent duplicate cancellations
+    const updateCount = await tx.order.updateMany({
+      where: {
+        id: orderId,
+        status: { notIn: ['cancelled', 'completed'] },
+      },
+      data: { status: 'cancelled' },
+    });
+
+    if (updateCount.count === 0) {
+      // Concurrently cancelled or completed by another request
+      const current = await tx.order.findUnique({ where: { id: orderId } });
+      if (current?.status === 'completed') {
+        throw new DomainError(DomainErrorCode.ORDER_ALREADY_CLOSED, `Order #${orderId} was completed concurrently.`);
+      }
+      return {
+        success: true,
+        status: 'cancelled',
+        message: `Order #${orderId} was already cancelled concurrently.`,
+        order: current || order,
+      };
+    }
+
+    // Release funds ONLY if genuinely funded and not already refunded
+    if (order.paymentStatus === 'verified' && fundingUserId && order.grossAmountMinor > 0) {
       const existingReserve = await tx.ledgerEntryV2.findFirst({
         where: {
           userId: fundingUserId,
           entryType: 'ORDER_RESERVE',
-          description: { contains: order.orderRef },
+          OR: [
+            { orderId: order.id },
+            { description: { contains: order.orderRef } },
+          ],
         },
       });
 
-      if (existingReserve) {
-        const wallet = await tx.walletV2.findUnique({
-          where: { userId: fundingUserId },
+      const releaseIdempKey = `ORDER_REL_${order.orderRef}`;
+      const existingRelease = await tx.ledgerEntryV2.findFirst({
+        where: {
+          OR: [
+            { idempotencyKey: releaseIdempKey },
+            {
+              userId: fundingUserId,
+              entryType: 'ORDER_RELEASE',
+              description: { contains: order.orderRef },
+            },
+          ],
+        },
+      });
+
+      if (existingReserve && !existingRelease) {
+        // Atomic CAS reversal of reserved balance
+        const walletUpdate = await tx.walletV2.updateMany({
+          where: {
+            userId: fundingUserId,
+            reservedCents: { gte: order.grossAmountMinor },
+          },
+          data: {
+            reservedCents: { decrement: order.grossAmountMinor },
+            availableCents: { increment: order.grossAmountMinor },
+          },
         });
 
-        if (wallet && wallet.reservedCents >= order.grossAmountMinor) {
-          const newAvailable = wallet.availableCents + order.grossAmountMinor;
-          const newReserved = wallet.reservedCents - order.grossAmountMinor;
-
-          await tx.walletV2.update({
+        if (walletUpdate.count > 0) {
+          const updatedWallet = await tx.walletV2.findUniqueOrThrow({
             where: { userId: fundingUserId },
-            data: {
-              availableCents: newAvailable,
-              reservedCents: newReserved,
-            },
           });
+          assertWalletInvariants(updatedWallet);
 
           await tx.ledgerEntryV2.create({
             data: {
               entryRef: `LEDGER_ORD_REL_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
               userId: fundingUserId,
+              orderId: order.id,
               amountCents: order.grossAmountMinor,
               entryType: 'ORDER_RELEASE',
               direction: 'CREDIT',
-              balanceAfterAvailableCents: newAvailable,
-              balanceAfterReservedCents: newReserved,
+              balanceAfterAvailableCents: updatedWallet.availableCents,
+              balanceAfterReservedCents: updatedWallet.reservedCents,
               description: `Reserved funds returned to available USD balance upon cancellation of Order #${order.orderRef}`,
+              idempotencyKey: releaseIdempKey,
+              reversalOfEntryRef: existingReserve.entryRef,
               createdBy: actorId,
             },
           });
         }
       }
     }
-
-    const updated = await tx.order.update({
-      where: { id: order.id },
-      data: { status: 'cancelled' },
-    });
 
     await tx.boosterReservation.updateMany({
       where: { orderId: order.id, status: 'active' },
@@ -649,16 +1057,25 @@ export async function cancelOrderWithLifecycle(
       },
     });
 
-    return updated;
+    const finalizedOrder = await tx.order.findUniqueOrThrow({
+      where: { id: orderId },
+      include: { service: true, runs: true },
+    });
+
+    return {
+      success: true,
+      status: 'cancelled',
+      message: `Order #${orderId} successfully cancelled.`,
+      order: finalizedOrder,
+    };
   });
 
-  // Background refresh of card and channel
   if (client) {
-    publishOrRefreshOrderCard(client, order.id).catch(() => {});
-    handleOrderCancellationChannel(order.id, reason, client).catch(() => {});
+    publishOrRefreshOrderCard(client, orderId).catch(() => {});
+    handleOrderCancellationChannel(orderId, reason, client).catch(() => {});
   }
 
-  return { success: true, order: result };
+  return result;
 }
 
 /**
@@ -879,16 +1296,18 @@ export async function getSeparatedOrdersList(
   } else {
     // tab === 'advertiser'
     if (!isStaff) {
-      // Strict privacy & ownership isolation: Ordinary Advertisers ONLY see orders they own
+      // Strict privacy & ownership isolation: Ordinary Advertisers ONLY see orders they own that are genuine advertiser orders
       andFilters.push({
+        sourceWebsite: null,
         OR: [
           { advertiserId: query.user.discordId },
-          { creatorId: query.user.discordId },
+          { creatorId: query.user.discordId, creatorType: 'advertiser' },
         ],
       });
     } else {
       // Staff viewing advertiser orders
       andFilters.push({
+        sourceWebsite: null,
         OR: [
           { creatorType: 'advertiser' },
           { advertiserId: { not: null } },

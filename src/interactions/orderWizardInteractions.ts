@@ -1010,22 +1010,21 @@ export async function handleOrderWizardModalSubmit(
         paymentVerifiedBy = actorId;
         paymentVerifiedAt = new Date();
       } else {
-        // Advertiser Order Flow: Requires backed WalletV2 funds or stays in payment_pending
-        const wallet = await tx.walletV2.findUnique({ where: { userId: actorId } });
-        const hasSufficientFunds = Boolean(wallet && wallet.availableCents >= grossCents);
+        // Advertiser Order Flow: Authoritative atomic CAS reservation on available funds
+        const updateResult = await tx.walletV2.updateMany({
+          where: {
+            userId: actorId,
+            availableCents: { gte: grossCents },
+          },
+          data: {
+            availableCents: { decrement: grossCents },
+            reservedCents: { increment: grossCents },
+          },
+        });
 
-        if (hasSufficientFunds && wallet) {
-          const newAvailable = wallet.availableCents - grossCents;
-          const newReserved = wallet.reservedCents + grossCents;
-
-          await tx.walletV2.update({
-            where: { userId: actorId },
-            data: {
-              availableCents: newAvailable,
-              reservedCents: newReserved,
-            },
-          });
-
+        if (updateResult.count > 0) {
+          const updatedWallet = await tx.walletV2.findUniqueOrThrow({ where: { userId: actorId } });
+          const resIdempKey = `ORDER_RES_${orderRef}`;
           await tx.ledgerEntryV2.create({
             data: {
               entryRef: `LEDGER_ORD_RES_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
@@ -1033,9 +1032,10 @@ export async function handleOrderWizardModalSubmit(
               amountCents: grossCents,
               entryType: 'ORDER_RESERVE',
               direction: 'DEBIT',
-              balanceAfterAvailableCents: newAvailable,
-              balanceAfterReservedCents: newReserved,
+              balanceAfterAvailableCents: updatedWallet.availableCents,
+              balanceAfterReservedCents: updatedWallet.reservedCents,
               description: `Authoritative funds reserved from available balance for Order #${orderRef}`,
+              idempotencyKey: resIdempKey,
               createdBy: actorId,
             },
           });

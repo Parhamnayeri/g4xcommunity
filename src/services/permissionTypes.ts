@@ -238,6 +238,7 @@ export interface AuthorizationContext {
     id: number;
     advertiserId?: string | null;
     creatorId?: string | null;
+    creatorType?: string | null;
     gameSlug: string;
     serviceId: number;
     orderMode?: string;

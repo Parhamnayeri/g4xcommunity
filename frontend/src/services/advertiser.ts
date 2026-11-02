@@ -4,6 +4,7 @@ import {
   AdvertiserOrdersResponse,
   PublicGamesResponse,
   AdvertiserOrder,
+  CreateOrderRequest,
 } from '../types/advertiser';
 
 export async function fetchAdvertiserOverview(): Promise<AdvertiserOverviewResponse> {
@@ -71,14 +72,10 @@ export async function fetchPublicGames(): Promise<PublicGamesResponse> {
   return await apiRequest<PublicGamesResponse>('/api/public/games');
 }
 
-export async function createAdvertiserOrder(orderData: {
-  gameSlug: string;
-  serviceId: number;
-  grossAmountUsd: string | number;
-  orderType?: string;
-  notes?: string;
-}): Promise<{ success: boolean; order: AdvertiserOrder }> {
-  return await apiRequest<{ success: boolean; order: AdvertiserOrder }>('/api/orders/create', {
+export async function createAdvertiserOrder(
+  orderData: CreateOrderRequest
+): Promise<{ success: boolean; order: AdvertiserOrder; isFunded?: boolean }> {
+  return await apiRequest<{ success: boolean; order: AdvertiserOrder; isFunded?: boolean }>('/api/orders/create', {
     method: 'POST',
     body: JSON.stringify(orderData),
   });

@@ -58,6 +58,8 @@ import {
   cancelOrderWithLifecycle,
   getOrderAuditHistory,
   getSeparatedOrdersList,
+  createAdvertiserBoostOrder,
+  classifyOrderOrigin,
 } from '../services/orderLifecycleService';
 import { verifyOrderWithReceipt } from '../services/payment/paymentReconciliationService';
 import {
@@ -1815,138 +1817,33 @@ router.post(
         return;
       }
 
-      const isAdv = user.userRoles?.some((ur) => ur.roleKey === 'advertiser');
-      let advRank: AdvertiserRank | null = null;
-      let platformFeeMinor = 0;
-      let boosterPoolMinor = grossCents;
-      let rankCommissionBps: number | null = null;
+      // Direct Boost Order flow using authoritative, transaction-safe WalletV2 atomic funding
+      const runsCount = Math.max(1, parseInt(String(req.body.runsCount || 1), 10) || 1);
+      const orderMode = req.body.orderMode === 'pilot' ? 'pilot' : 'non_pilot';
 
-      if (isAdv) {
-        advRank = await getAdvertiserRank(user.discordId);
-        if (!advRank || !isValidAdvertiserRank(advRank)) {
-          res.status(400).json({
-            error:
-              'UNRESOLVED_ADVERTISER_RANK: Direct Advertiser Boost order creation is blocked because the advertiser lacks an approved rank. Commercial rank must be assigned by management.',
-          });
-          return;
-        }
-        const calc = calculateRankCommission(grossCents, advRank);
-        platformFeeMinor = calc.g4xFeeMinor;
-        boosterPoolMinor = calc.remainingMinor;
-        rankCommissionBps = calc.rankCommissionBasisPoints;
-      }
-
-      const orderRef = `ORD_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-      const order = await prisma.$transaction(async (tx) => {
-        // Authoritative wallet check for payment reservation
-        const wallet = await tx.walletV2.findUnique({
-          where: { userId: user.discordId },
-        });
-
-        const hasSufficientWalletFunds = Boolean(wallet && wallet.availableCents >= grossCents);
-        let paymentStatus = 'pending';
-        let orderStatus = 'payment_pending';
-        let paymentVerifiedBy: string | null = null;
-        let paymentVerifiedAt: Date | null = null;
-
-        if (hasSufficientWalletFunds && wallet) {
-          const newAvailable = wallet.availableCents - grossCents;
-          const newReserved = wallet.reservedCents + grossCents;
-
-          await tx.walletV2.update({
-            where: { userId: user.discordId },
-            data: {
-              availableCents: newAvailable,
-              reservedCents: newReserved,
-            },
-          });
-
-          await tx.ledgerEntryV2.create({
-            data: {
-              entryRef: `LEDGER_ORD_RES_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`,
-              userId: user.discordId,
-              amountCents: grossCents,
-              entryType: 'ORDER_RESERVE',
-              direction: 'DEBIT',
-              balanceAfterAvailableCents: newAvailable,
-              balanceAfterReservedCents: newReserved,
-              description: `Authoritative funds reserved from available USD balance for Order #${orderRef}`,
-              createdBy: user.discordId,
-            },
-          });
-
-          paymentStatus = 'verified';
-          orderStatus = 'open_presign';
-          paymentVerifiedBy = user.discordId;
-          paymentVerifiedAt = new Date();
-        }
-
-        const ord = await tx.order.create({
-          data: {
-            orderRef,
-            gameSlug,
-            serviceId: Number(serviceId),
-            creatorId: user.discordId,
-            creatorType: isAdv ? 'advertiser' : 'g4x',
-            advertiserId: isAdv ? user.discordId : null,
-            advertiserRank: advRank,
-            rankCommissionBps,
-            orderType: orderType || 'group',
-            orderMode: 'non_pilot',
-            currency: 'USD',
-            grossAmountMinor: grossCents,
-            platformFeeMinor,
-            advertiserFeeMinor: 0,
-            boosterPoolMinor,
-            paymentStatus,
-            status: orderStatus,
-            paymentVerifiedBy,
-            paymentVerifiedAt,
-            notes: notes || null,
-            runs: {
-              create: [{ runNumber: 1, status: 'pending' }],
-            },
-          },
-          include: { service: true, runs: true },
-        });
-
-        // Persist commercial snapshot at authoritative commitment point
-        if (isAdv && advRank && rankCommissionBps !== null) {
-          await tx.orderFinancialSnapshot.create({
-            data: {
-              orderId: ord.id,
-              sourcePlatform: 'advertiser',
-              sourceAmountType: 'gross_sale',
-              sourceAmountMinor: grossCents,
-              grossSaleMinor: grossCents,
-              platformOrderNetMinor: grossCents,
-              externalNetBaseMinor: grossCents,
-              g4xFeeRate: rankCommissionBps / 10000,
-              g4xFeeMinor: platformFeeMinor,
-              advertiserFeeMinor: 0,
-              boosterPoolMinor,
-              currency: 'USD',
-              calculationStatus: 'provisional',
-              policyVersion: ADVERTISER_RANK_POLICY_VERSION,
-              advertiserId: user.discordId,
-              advertiserRank: advRank,
-              rankFeeBasisPoints: rankCommissionBps,
-              remainingAmountMinor: boosterPoolMinor,
-              snapshotTimestamp: new Date(),
-            },
-          });
-        }
-
-        return ord;
+      const createResult = await createAdvertiserBoostOrder({
+        actorId: user.discordId,
+        gameSlug,
+        serviceId: Number(serviceId),
+        grossAmountMinor: grossCents,
+        orderMode,
+        runsCount,
+        keyLevel: req.body.keyLevel,
+        vpnLocation: req.body.vpnLocation,
+        customerInfo: req.body.customerInfo,
+        notes: req.body.notes,
+        idempotencyKey: req.body.idempotencyKey,
+        actionSource: 'web_portal',
       });
 
       res.json({
         success: true,
         order: {
-          ...order,
-          simplifiedStatus: mapOrderStatus(order.status),
+          ...createResult.order,
+          simplifiedStatus: mapOrderStatus(createResult.order.status),
         },
+        snapshot: createResult.snapshot,
+        isFunded: createResult.isFunded,
       });
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Failed to create order' });
@@ -2814,8 +2711,8 @@ router.get(
       // آمار و شمارنده‌های واقعی سفارشات ادورتایزر
       const activeStatuses = ['draft', 'payment_pending', 'open_presign', 'presign_closed', 'assigned', 'in_progress', 'disputed'];
       const ownershipWhere = isStaffOrAdmin && !isAdvertiser
-        ? { OR: [{ creatorType: 'advertiser' }, { advertiserId: { not: null } }] }
-        : { OR: [{ advertiserId: user.discordId }, { creatorId: user.discordId }] };
+        ? { sourceWebsite: null, OR: [{ creatorType: 'advertiser' }, { advertiserId: { not: null } }] }
+        : { sourceWebsite: null, OR: [{ advertiserId: user.discordId }, { creatorId: user.discordId, creatorType: 'advertiser' }] };
 
       const [totalCreated, activeCount, completedCount, cancelledCount, volumeAgg] = await Promise.all([
         prisma.order.count({ where: ownershipWhere }),
@@ -2923,12 +2820,23 @@ router.patch(
         return;
       }
 
-      const userRoles = (user.userRoles?.map((r) => r.roleKey) || []).map((r) => r.toLowerCase());
-      const isStaffOrAdmin = userRoles.some((r) => ['owner', 'manager', 'admin'].includes(r));
-      const isOwner = order.advertiserId === user.discordId || order.creatorId === user.discordId;
+      const origin = classifyOrderOrigin(order);
+      if (origin !== 'advertiser') {
+        res.status(403).json({
+          error: 'NON_ADVERTISER_ORDER: Only Advertiser-originated orders can be managed via the Advertiser Portal',
+        });
+        return;
+      }
 
-      if (!isOwner && !isStaffOrAdmin) {
-        res.status(403).json({ error: 'PERMISSION_DENIED: You are not authorized to edit notes on this order' });
+      const auth = await authorize(user.discordId, Permission.ORDER_VIEW_PRIVATE, {
+        orderId,
+        order,
+      });
+
+      if (!auth.allowed) {
+        res.status(403).json({
+          error: `PERMISSION_DENIED: ${auth.reason || 'You are not authorized to edit notes on this order'}`,
+        });
         return;
       }
 
@@ -3002,12 +2910,23 @@ router.post(
         return;
       }
 
-      const userRoles = (user.userRoles?.map((r) => r.roleKey) || []).map((r) => r.toLowerCase());
-      const isStaffOrAdmin = userRoles.some((r) => ['owner', 'manager', 'admin'].includes(r));
-      const isOwner = order.advertiserId === user.discordId || order.creatorId === user.discordId;
+      const origin = classifyOrderOrigin(order);
+      if (origin !== 'advertiser') {
+        res.status(403).json({
+          error: 'NON_ADVERTISER_ORDER: Only Advertiser-originated orders can be managed via the Advertiser Portal',
+        });
+        return;
+      }
 
-      if (!isOwner && !isStaffOrAdmin) {
-        res.status(403).json({ error: 'PERMISSION_DENIED: You are not authorized to cancel this order' });
+      const auth = await authorize(user.discordId, Permission.ORDER_CANCEL, {
+        orderId,
+        order,
+      });
+
+      if (!auth.allowed) {
+        res.status(403).json({
+          error: `PERMISSION_DENIED: ${auth.reason || 'You are not authorized to cancel this order'}`,
+        });
         return;
       }
 

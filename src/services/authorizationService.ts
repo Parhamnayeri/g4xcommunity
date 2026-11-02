@@ -153,9 +153,25 @@ export async function authorize(
           };
         }
 
+        // Genuine Advertiser-originated enforcement: must NOT have external marketplace sourceWebsite and must have advertiser identity
+        const isAdvertiserOriginated =
+          !order.sourceWebsite &&
+          (Boolean(order.advertiserId) || order.creatorType === 'advertiser');
+
+        if (!isAdvertiserOriginated) {
+          await logAuthorizationAudit(client, actorId, permission, false, 'NON_ADVERTISER_ORDER_SCOPE', context);
+          return {
+            allowed: false,
+            reason: 'NON_ADVERTISER_ORDER_SCOPE: Advertisers cannot manage non-advertiser marketplace or internal orders',
+            actorId,
+            permission,
+            context,
+          };
+        }
+
         const isOwnerOfOrder =
           (order.advertiserId && order.advertiserId === actorId) ||
-          (order.creatorId && order.creatorId === actorId);
+          (order.creatorId && order.creatorId === actorId && order.creatorType === 'advertiser');
 
         if (!isOwnerOfOrder) {
           await logAuthorizationAudit(client, actorId, permission, false, 'UNAUTHORIZED_ORDER_SCOPE', context);
