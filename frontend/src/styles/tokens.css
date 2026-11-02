@@ -1,0 +1,50 @@
+/**
+ * G4X Design System — Design Tokens (Source of Truth)
+ * Mandatory brand color palette and system variables
+ */
+
+:root {
+  /* Mandatory Core Palette */
+  --bg-main: #0d0b12;
+  --bg-surface: #181524;
+  --bg-surface-hover: #231e34;
+  --primary-purple: #7c3aed;
+  --primary-purple-hover: #6d28d9;
+  --purple-glow: rgba(124, 58, 237, 0.35);
+  --accent-lime: #ccff00;
+  --accent-lime-hover: #b8e600;
+  --accent-lime-glow: rgba(204, 255, 0, 0.4);
+  --text-primary: #f4f4f6;
+  --text-muted: #94a3b8;
+  --text-inverse: #0d0b12;
+  --border-subtle: #2d2645;
+
+  /* Status Colors (Harmonious with Dark/Purple aesthetic) */
+  --status-success: #10b981;
+  --status-warning: #f59e0b;
+  --status-danger: #ef4444;
+  --status-info: #38bdf8;
+
+  /* Typography */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-display: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Border Radii */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* Shadows & Glows */
+  --shadow-subtle: 0 4px 20px rgba(0, 0, 0, 0.35);
+  --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.5);
+  --shadow-purple-sm: 0 0 15px var(--purple-glow);
+  --shadow-lime-cta: 0 0 15px var(--accent-lime-glow);
+
+  /* Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.2s ease-in-out;
+  --transition-smooth: 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}

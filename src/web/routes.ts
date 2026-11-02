@@ -189,6 +189,53 @@ router.use('/marketplace', marketplaceRouter);
 // ─── روت‌های پرداخت، وب‌هوک و اعتبارسنجی وصول وجوه ─────────────────────────
 router.use('/', paymentRouter);
 
+// ─── کاتالوگ عمومی بازی‌ها و سرویس‌های فعال پلتفرم G4X ─────────────────────
+router.get('/public/games', async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const activeGames = await prisma.game.findMany({
+      where: { isActive: true },
+      include: {
+        services: {
+          where: { isActive: true },
+          orderBy: { sortOrder: 'asc' },
+        },
+      },
+      orderBy: { sortOrder: 'asc' },
+    });
+
+    const bookingDestination =
+      process.env.BOOKING_URL ||
+      (process.env.DISCORD_GUILD_ID && process.env.CHANNEL_ORDERS
+        ? `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}/${process.env.CHANNEL_ORDERS}`
+        : '/legacy');
+
+    const discordInviteUrl =
+      process.env.DISCORD_INVITE_URL ||
+      (process.env.DISCORD_GUILD_ID
+        ? `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}`
+        : '/auth/discord');
+
+    res.json({
+      success: true,
+      games: activeGames,
+      config: {
+        discordGuildId: process.env.DISCORD_GUILD_ID,
+        discordInviteUrl,
+        bookingDestination,
+        channels: {
+          orders: process.env.CHANNEL_ORDERS,
+          becomeBooster: process.env.CHANNEL_BECOME_BOOSTER,
+          becomeAdvertiser: process.env.CHANNEL_BECOME_ADVERTISER,
+          becomeExchanger: process.env.CHANNEL_BECOME_EXCHANGER,
+        },
+      },
+    });
+  } catch (err: any) {
+    console.error('[Public API] Error fetching games catalog:', err);
+    res.status(500).json({ error: 'Failed to retrieve active games catalog' });
+  }
+});
+
 // ─── ثابت‌های OAuth2 ────────────────────────────────────────────────────────
 const DISCORD_API = 'https://discord.com/api/v10';
 

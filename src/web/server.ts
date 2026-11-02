@@ -60,8 +60,21 @@ app.use(
 // مقداردهی اولیه توکن CSRF برای نشست‌های جدید
 app.use(ensureCsrfToken);
 
+import fs from 'fs';
+
+// سرو فایل‌های استاتیک کامپایل‌شده فرانت‌اند React (در صورت بیلد شدن)
+const frontendDist = path.join(process.cwd(), 'frontend', 'dist');
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+}
+
 // سرو فایل‌های استاتیک داشبورد
 app.use(express.static(path.join(process.cwd(), 'public')));
+
+// دسترسی به پنل قدیمی و دست‌نخورده برای حفظ کامل قابلیت‌های داشبورد، امور مالی و ادمین در فاز ۱
+app.get(['/legacy', '/legacy/*'], (_req, res) => {
+  res.sendFile(path.join(process.cwd(), 'public', 'legacy.html'));
+});
 
 // ─── روت‌های API و احراز هویت ──────────────────────────────────────────────
 // روت‌های اصلی API
@@ -69,9 +82,21 @@ app.use('/api', router);
 // روت‌های احراز هویت بدون پیشوند /api (جهت انطباق با DISCORD_REDIRECT_URI=/auth/callback)
 app.use('/', router);
 
-// ─── SPA fallback — تمام مسیرهای دیگر به index.html هدایت می‌شوند ─────────────
-app.get('*', (_req, res) => {
-  res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+// ─── SPA fallback — تمام مسیرهای دیگر به index.html فرانت‌اند هدایت می‌شوند ───
+app.get('*', (req, res, next) => {
+  // اگر روت متعلق به API، احراز هویت یا دروازه مالک بود و یافت نشد، نباید فایل HTML پس دهد
+  if (
+    req.path.startsWith('/api/') ||
+    req.path.startsWith('/auth/') ||
+    req.path.toLowerCase().startsWith('/ownergate')
+  ) {
+    return next();
+  }
+  const frontendIndex = path.join(process.cwd(), 'frontend', 'dist', 'index.html');
+  if (fs.existsSync(frontendIndex)) {
+    return res.sendFile(frontendIndex);
+  }
+  return res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
 });
 
 // ─── مدیریت خطاهای Express ────────────────────────────────────────────────
