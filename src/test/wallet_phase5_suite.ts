@@ -426,17 +426,48 @@ async function runWalletPhase5Suite() {
       '5.2 Wallet available balance must NOT increase merely because receipt was submitted (still 5000 cents)'
     );
 
-    // 5.3 Duplicate evidence reference rejection
+    // 5.3 Conflicting amount on retry rejection
     const duplicateSubmitRes = await advClient.agent
+      .post('/api/wallet/deposits/irt')
+      .set('x-csrf-token', advClient.csrfToken)
+      .send({
+        targetUsdCents: 3000,
+        evidenceRef: trackingRef,
+        payerIdentifier: 'Mohammad Alavi',
+      });
+    assert.strictEqual(duplicateSubmitRes.status, 400, '5.3 Conflicting amount on retry must be rejected with 400');
+    assert(duplicateSubmitRes.body.error.includes('CONFLICTING_DEPOSIT_RETRY'));
+
+    // 5.3b Same-user identical request retry (Idempotent Recovery without new liability)
+    const identicalRetryRes = await advClient.agent
       .post('/api/wallet/deposits/irt')
       .set('x-csrf-token', advClient.csrfToken)
       .send({
         targetUsdCents: 2000,
         evidenceRef: trackingRef,
-        payerIdentifier: 'Mohammad Alavi',
+        payerIdentifier: 'Mohammad Alavi 6037991812344321',
+        receiptFileKey: uploadedFileKey,
+        senderCardLast4: '4321',
+        paymentDate: '2026-11-02',
+        expectedExchangeRate: 95000,
+        expectedTotalIrt: 1928500,
       });
-    assert.strictEqual(duplicateSubmitRes.status, 400, '5.3 Duplicate tracking reference must be rejected with 400');
-    assert(duplicateSubmitRes.body.error.includes('DUPLICATE_DEPOSIT_EVIDENCE'));
+    assert.strictEqual(identicalRetryRes.status, 201, '5.3b Same-user identical retry must succeed');
+    assert.strictEqual(identicalRetryRes.body.success, true);
+    assert.strictEqual(identicalRetryRes.body.fundingRequest.id, fundingId, '5.3b Must return existing funding request');
+    assert.strictEqual(identicalRetryRes.body.paymentRequest.id, linkedPaymentReq!.id, '5.3b Must return existing paymentRequest');
+
+    // 5.3c Different user duplicate tracking reference rejection
+    const diffUserSubmitRes = await vicClient.agent
+      .post('/api/wallet/deposits/irt')
+      .set('x-csrf-token', vicClient.csrfToken)
+      .send({
+        targetUsdCents: 2000,
+        evidenceRef: trackingRef,
+        payerIdentifier: 'Victim User',
+      });
+    assert.strictEqual(diffUserSubmitRes.status, 400, '5.3c Different user duplicate tracking reference rejected');
+    assert(diffUserSubmitRes.body.error.includes('DUPLICATE_DEPOSIT_EVIDENCE'));
 
     // 5.4 Foreign receipt key rejection: userVictim cannot submit userAdvertiser's uploaded receipt
     const foreignReceiptSubmitRes = await vicClient.agent
@@ -463,6 +494,66 @@ async function runWalletPhase5Suite() {
       });
     assert.strictEqual(reusedReceiptSubmitRes.status, 400, '5.5 Receipt reuse across different deposits rejected');
     assert(reusedReceiptSubmitRes.body.error.includes('DUPLICATE_RECEIPT_REUSE'));
+
+    // 5.5b Retrying previously credited deposit rejected
+    const creditedEvidence = `TRACK_CRED_${Date.now()}`;
+    await prisma.advertiserFundingRequest.create({
+      data: {
+        fundingRef: `FUND_CRED_${Date.now()}`,
+        advertiserId: userAdvertiser,
+        fundingMethod: 'IRT',
+        status: 'CONFIRMED_CREDITED',
+        targetUsdCents: 1000,
+        externalCurrency: 'IRT',
+        externalAmountUnits: '964250',
+        exchangeRate: 95000,
+        currencyPurchaseFeeRate: 0.015,
+        feeAmountUnits: '14250',
+        evidenceRef: creditedEvidence,
+        payerIdentifier: 'Credited Depositor',
+      },
+    });
+
+    const retryCreditedRes = await advClient.agent
+      .post('/api/wallet/deposits/irt')
+      .set('x-csrf-token', advClient.csrfToken)
+      .send({
+        targetUsdCents: 1000,
+        evidenceRef: creditedEvidence,
+        payerIdentifier: 'Credited Depositor',
+      });
+    assert.strictEqual(retryCreditedRes.status, 400, '5.5b Retrying previously credited deposit rejected');
+    assert(retryCreditedRes.body.error.includes('already approved and credited'));
+
+    // 5.5c Retrying previously rejected deposit rejected
+    const rejectedEvidence = `TRACK_REJ_${Date.now()}`;
+    await prisma.advertiserFundingRequest.create({
+      data: {
+        fundingRef: `FUND_REJ_${Date.now()}`,
+        advertiserId: userAdvertiser,
+        fundingMethod: 'IRT',
+        status: 'REJECTED',
+        targetUsdCents: 1000,
+        externalCurrency: 'IRT',
+        externalAmountUnits: '964250',
+        exchangeRate: 95000,
+        currencyPurchaseFeeRate: 0.015,
+        feeAmountUnits: '14250',
+        evidenceRef: rejectedEvidence,
+        payerIdentifier: 'Rejected Depositor',
+      },
+    });
+
+    const retryRejectedRes = await advClient.agent
+      .post('/api/wallet/deposits/irt')
+      .set('x-csrf-token', advClient.csrfToken)
+      .send({
+        targetUsdCents: 1000,
+        evidenceRef: rejectedEvidence,
+        payerIdentifier: 'Rejected Depositor',
+      });
+    assert.strictEqual(retryRejectedRes.status, 400, '5.5c Retrying previously rejected deposit rejected');
+    assert(retryRejectedRes.body.error.includes('DEPOSIT_PREVIOUSLY_REJECTED'));
 
     // 5.6 Rate manipulation rejection: client cannot submit a stale or tampered exchange rate
     const tamperedRateSubmitRes = await advClient.agent
@@ -528,19 +619,34 @@ async function runWalletPhase5Suite() {
         userId: userAdvertiser,
         targetUsdCents: 1000,
         evidenceRef: concurrentEvidence,
-        payerIdentifier: 'Concurrent Payer',
+        payerIdentifier: 'Concurrent Payer 1',
       }),
       submitIrtDeposit({
-        userId: userAdvertiser,
+        userId: userVictim,
         targetUsdCents: 1000,
         evidenceRef: concurrentEvidence,
-        payerIdentifier: 'Concurrent Payer',
+        payerIdentifier: 'Concurrent Payer 2',
       }),
     ]);
     const fulfilledCount = [c1, c2].filter((r) => r.status === 'fulfilled').length;
     const rejectedCount = [c1, c2].filter((r) => r.status === 'rejected').length;
     assert.strictEqual(fulfilledCount, 1, '5.9 Exactly one concurrent deposit submission succeeds');
     assert.strictEqual(rejectedCount, 1, '5.9 Exactly one concurrent deposit submission is rejected');
+
+    // 5.9b Missing receipt metadata fail-closed
+    const dummyKey = `receipt_${Date.now()}_0123456789abcdef.png`;
+    const dummyFilePath = path.join(RECEIPTS_DIR, dummyKey);
+    fs.writeFileSync(dummyFilePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    await assert.rejects(
+      async () => {
+        await verifyReceiptForDeposit(dummyKey, userAdvertiser);
+      },
+      (err: any) => err.message.includes('INVALID_RECEIPT_METADATA'),
+      '5.9b Missing receipt metadata must fail closed'
+    );
+    if (fs.existsSync(dummyFilePath)) {
+      fs.unlinkSync(dummyFilePath);
+    }
 
     // 5.10 Audit protection against deleting in-use receipt
     await assert.rejects(

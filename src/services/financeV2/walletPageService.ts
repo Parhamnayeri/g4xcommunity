@@ -409,15 +409,24 @@ export async function getReceiptEvidence(
     throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata is missing.');
   }
 
+  const canonicalMetaPath = fs.realpathSync(metaPath);
+  if (!canonicalMetaPath.startsWith(canonicalBase + path.sep)) {
+    throw new Error('PATH_TRAVERSAL_DETECTED: Metadata access outside receipts directory is forbidden.');
+  }
+
   let meta: ReceiptMetadata;
   try {
-    meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as ReceiptMetadata;
+    meta = JSON.parse(fs.readFileSync(canonicalMetaPath, 'utf8')) as ReceiptMetadata;
   } catch {
     throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata contains invalid JSON.');
   }
 
   if (!meta || typeof meta !== 'object' || !meta.uploadedBy || !meta.mimeType) {
     throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata is incomplete or corrupted.');
+  }
+
+  if (meta.fileKey && meta.fileKey !== fileKey) {
+    throw new Error('INVALID_RECEIPT_METADATA: Metadata file key mismatch.');
   }
 
   const mimeLower = meta.mimeType.toLowerCase();
@@ -460,7 +469,8 @@ export async function getReceiptEvidence(
 export async function verifyReceiptForDeposit(
   receiptFileKey: string,
   userId: string,
-  tx?: Prisma.TransactionClient
+  tx?: Prisma.TransactionClient,
+  excludeFundingRequestId?: number
 ): Promise<ReceiptMetadata> {
   if (!receiptFileKey || !RECEIPT_KEY_REGEX.test(receiptFileKey)) {
     throw new Error('INVALID_RECEIPT_KEY: Receipt identifier format is invalid or forged.');
@@ -483,15 +493,24 @@ export async function verifyReceiptForDeposit(
     throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata is missing.');
   }
 
+  const canonicalMetaPath = fs.realpathSync(metaPath);
+  if (!canonicalMetaPath.startsWith(canonicalBase + path.sep)) {
+    throw new Error('PATH_TRAVERSAL_DETECTED: Metadata access outside receipts directory is forbidden.');
+  }
+
   let meta: ReceiptMetadata;
   try {
-    meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as ReceiptMetadata;
+    meta = JSON.parse(fs.readFileSync(canonicalMetaPath, 'utf8')) as ReceiptMetadata;
   } catch {
     throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata contains invalid JSON.');
   }
 
   if (!meta || typeof meta !== 'object' || !meta.uploadedBy || !meta.mimeType) {
     throw new Error('INVALID_RECEIPT_METADATA: Receipt metadata is incomplete or corrupted.');
+  }
+
+  if (meta.fileKey && meta.fileKey !== receiptFileKey) {
+    throw new Error('INVALID_RECEIPT_METADATA: Metadata file key mismatch.');
   }
 
   if (!ALLOWED_RECEIPT_MIME_TYPES.includes(meta.mimeType.toLowerCase())) {
@@ -508,6 +527,7 @@ export async function verifyReceiptForDeposit(
   const [existingFundingWithReceipt, existingAttemptWithReceipt] = await Promise.all([
     client.advertiserFundingRequest.findFirst({
       where: {
+        ...(excludeFundingRequestId ? { id: { not: excludeFundingRequestId } } : {}),
         adminNotes: { contains: receiptFileKey },
         status: { in: ['PENDING_ADMIN_VERIFICATION', 'CONFIRMED_CREDITED'] },
       },
@@ -516,6 +536,13 @@ export async function verifyReceiptForDeposit(
       where: {
         receiptScreenshotUrl: { contains: receiptFileKey },
         status: { in: ['pending', 'waiting', 'confirmed', 'finished', 'manual_review'] },
+        ...(excludeFundingRequestId
+          ? {
+              paymentRequest: {
+                fundingRequestId: { not: excludeFundingRequestId },
+              },
+            }
+          : {}),
       },
     }),
   ]);
@@ -550,9 +577,14 @@ export async function deleteReceiptEvidence(fileKey: string, user: Authenticated
   }
 
   const metaPath = path.resolve(RECEIPTS_DIR, `${fileKey}.meta.json`);
+  let canonicalMetaPath: string | null = null;
   if (fs.existsSync(metaPath)) {
+    canonicalMetaPath = fs.realpathSync(metaPath);
+    if (!canonicalMetaPath.startsWith(canonicalBase + path.sep)) {
+      throw new Error('PATH_TRAVERSAL_DETECTED: Metadata access outside receipts directory is forbidden.');
+    }
     try {
-      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) as ReceiptMetadata;
+      const meta = JSON.parse(fs.readFileSync(canonicalMetaPath, 'utf8')) as ReceiptMetadata;
       const isOwner = meta.uploadedBy === user.discordId;
       const userRoles = (user.userRoles || []).map((r: { roleKey: string }) => r.roleKey);
       const isSystemOwner =
@@ -593,9 +625,18 @@ export async function deleteReceiptEvidence(fileKey: string, user: Authenticated
   }
 
   fs.unlinkSync(canonicalPath);
-  if (fs.existsSync(metaPath)) {
-    fs.unlinkSync(metaPath);
+  if (canonicalMetaPath && fs.existsSync(canonicalMetaPath)) {
+    fs.unlinkSync(canonicalMetaPath);
   }
+}
+
+/**
+ * استخراج شناسه فیش ثبت‌شده از یادداشت‌های واریز
+ */
+function extractReceiptKeyFromNotes(notes: string | null | undefined): string | null {
+  if (!notes) return null;
+  const match = notes.match(/(?:^|\|\s*)Receipt:\s*([^\s|]+)/i);
+  return match ? match[1].trim() : null;
 }
 
 export interface SubmitIrtDepositInput {
@@ -679,135 +720,211 @@ export async function submitIrtDeposit(input: SubmitIrtDepositInput) {
   }
 
   // ۳. ثبت اتمیک در قالب تراکنش واحد دیتابیس (All-or-Nothing Transaction)
-  return await prisma.$transaction(async (tx) => {
-    // الف. اعتبارسنجی فیش و مالکیت درون تراکنش قبل از ایجاد رکوردهای مالی
-    if (receiptFileKey) {
-      await verifyReceiptForDeposit(receiptFileKey, userId, tx);
-    }
+  try {
+    return await prisma.$transaction(async (tx) => {
+      // الف. بررسی پیگیری‌های تکراری و بازیابی عاری از اثر (Idempotent Recovery vs Anti-Reuse)
+      const [duplicateFunding, duplicateAttempt, duplicateReceipt] = await Promise.all([
+        tx.advertiserFundingRequest.findFirst({
+          where: { evidenceRef: cleanEvidence },
+          orderBy: { id: 'desc' },
+        }),
+        tx.paymentAttempt.findFirst({
+          where: {
+            trackingNumber: cleanEvidence,
+            status: { in: ['pending', 'waiting', 'confirmed', 'finished', 'manual_review'] },
+          },
+          include: { paymentRequest: true },
+        }),
+        tx.paymentReceipt.findFirst({
+          where: { providerReference: cleanEvidence },
+        }),
+      ]);
 
-    // ب. بررسی تراکنش‌های همزمان و پیگیری‌های تکراری
-    const [duplicateFunding, duplicateAttempt, duplicateReceipt] = await Promise.all([
-      tx.advertiserFundingRequest.findFirst({
-        where: {
-          evidenceRef: cleanEvidence,
-          status: { in: ['PENDING_ADMIN_VERIFICATION', 'CONFIRMED_CREDITED'] },
-        },
-      }),
-      tx.paymentAttempt.findFirst({
-        where: {
-          trackingNumber: cleanEvidence,
-          status: { in: ['pending', 'waiting', 'confirmed', 'finished', 'manual_review'] },
-        },
-      }),
-      tx.paymentReceipt.findFirst({
-        where: { providerReference: cleanEvidence },
-      }),
-    ]);
+      if (duplicateFunding) {
+        // ۱. در صورتی که درخواست قبلاً تایید و شارژ شده باشد:
+        if (duplicateFunding.status === 'CONFIRMED_CREDITED') {
+          throw new Error(
+            `DUPLICATE_DEPOSIT_EVIDENCE: Deposit request #${duplicateFunding.id} was already approved and credited.`
+          );
+        }
 
-    if (duplicateFunding) {
-      // بازیابی بی‌اثر (Idempotent Recovery) برای درخواست‌های ناقص گذشته
-      if (duplicateFunding.advertiserId === userId && duplicateFunding.status === 'PENDING_ADMIN_VERIFICATION') {
+        // ۲. در صورتی که درخواست قبلاً توسط مدیریت رد شده باشد:
+        if (duplicateFunding.status === 'REJECTED') {
+          throw new Error(
+            `DEPOSIT_PREVIOUSLY_REJECTED: Previous deposit request #${duplicateFunding.id} with tracking reference '${cleanEvidence}' was rejected by administrator.`
+          );
+        }
+
+        // ۳. در صورتی که کد پیگیری توسط کاربر دیگری قبلاً ثبت شده باشد:
+        if (duplicateFunding.advertiserId !== userId) {
+          throw new Error(
+            `DUPLICATE_DEPOSIT_EVIDENCE: Tracking reference '${cleanEvidence}' has already been submitted by another user.`
+          );
+        }
+
+        // ۴. در صورتی که درخواست در وضعیتی غیر از انتظار تایید ادمین باشد:
+        if (duplicateFunding.status !== 'PENDING_ADMIN_VERIFICATION') {
+          throw new Error(
+            `DUPLICATE_DEPOSIT_EVIDENCE: Deposit request #${duplicateFunding.id} is in status '${duplicateFunding.status}' and cannot be retried.`
+          );
+        }
+
+        // ۵. در صورتی که درخواست مربوط به همین کاربر و در انتظار تایید باشد -> بررسی انطباق مشخصات تغییرناپذیر
+        if (duplicateFunding.fundingMethod !== 'IRT') {
+          throw new Error(
+            `CONFLICTING_DEPOSIT_RETRY: Funding method mismatch on retry of deposit request #${duplicateFunding.id}.`
+          );
+        }
+
+        if (duplicateFunding.targetUsdCents !== targetUsdCents) {
+          throw new Error(
+            `CONFLICTING_DEPOSIT_RETRY: Cannot alter target amount of existing pending deposit request #${duplicateFunding.id} (${duplicateFunding.targetUsdCents} != ${targetUsdCents}).`
+          );
+        }
+
+        const boundReceiptKey = extractReceiptKeyFromNotes(duplicateFunding.adminNotes);
+        if (boundReceiptKey && receiptFileKey && boundReceiptKey !== receiptFileKey) {
+          throw new Error(
+            `CONFLICTING_DEPOSIT_RETRY: Cannot change receipt binding on retry of pending deposit request #${duplicateFunding.id}.`
+          );
+        }
+
+        const effectiveReceiptKey = receiptFileKey || boundReceiptKey;
+        if (effectiveReceiptKey) {
+          await verifyReceiptForDeposit(effectiveReceiptKey, userId, tx, duplicateFunding.id);
+        }
+
+        if (duplicateReceipt) {
+          throw new Error(
+            `DUPLICATE_DEPOSIT_EVIDENCE: Tracking reference '${cleanEvidence}' has already been submitted for a payment receipt.`
+          );
+        }
+
+        if (duplicateAttempt && duplicateAttempt.paymentRequest?.fundingRequestId !== duplicateFunding.id) {
+          throw new Error(
+            `DUPLICATE_DEPOSIT_EVIDENCE: Tracking reference '${cleanEvidence}' has already been submitted for a different payment attempt.`
+          );
+        }
+
+        // بازیابی بی‌اثر (Idempotent Recovery) بدون ایجاد تعهد مالی مجدد
         const existingPayReq = await tx.paymentRequest.findFirst({
           where: { fundingRequestId: duplicateFunding.id },
           include: { attempts: true },
         });
 
-        if (!existingPayReq || existingPayReq.attempts.length === 0) {
-          const payReq = await getOrCreatePaymentRequestForFunding(duplicateFunding.id, userId, tx);
-          let attempt = existingPayReq?.attempts.find((a) => a.trackingNumber === cleanEvidence);
-          if (!attempt) {
-            const attemptRef = `ATT_DEP_${duplicateFunding.id}_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-            attempt = await tx.paymentAttempt.create({
-              data: {
-                attemptRef,
-                paymentRequestId: payReq.id,
-                method: 'CARD_TO_CARD_IRT',
-                provider: 'MANUAL_BANK',
-                status: 'pending',
-                trackingNumber: cleanEvidence,
-                paidAmountIrt: String(duplicateFunding.externalAmountUnits),
-                senderCardLast4: senderCardLast4 ? senderCardLast4.trim() : null,
-                receiptScreenshotUrl: receiptFileKey ? `/api/wallet/receipts/${receiptFileKey}` : null,
-                expectedAmount: String(duplicateFunding.externalAmountUnits),
-                expectedCurrency: 'IRT',
-                exchangeRate: Number(duplicateFunding.exchangeRate),
-                reviewReason: 'Awaiting admin bank statement verification for wallet deposit (idempotent recovery)',
-              },
-            });
-          }
-          const recoveredQuote = calculateIrtFundingQuote(
-            duplicateFunding.targetUsdCents,
-            Number(duplicateFunding.exchangeRate),
-            Number(duplicateFunding.currencyPurchaseFeeRate)
-          );
-          return {
-            success: true,
-            fundingRequest: duplicateFunding,
-            quote: recoveredQuote,
-            paymentRequest: payReq,
-            paymentAttempt: attempt,
-            message: 'Recovered incomplete deposit request with required payment tracking.',
-          };
+        let payReq = existingPayReq;
+        let isRecovery = false;
+
+        if (!payReq) {
+          payReq = await getOrCreatePaymentRequestForFunding(duplicateFunding.id, userId, tx);
+          isRecovery = true;
         }
+
+        let attempt = payReq.attempts?.find((a) => a.trackingNumber === cleanEvidence) || payReq.attempts?.[0];
+        if (!attempt) {
+          const attemptRef = `ATT_DEP_${duplicateFunding.id}_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+          attempt = await tx.paymentAttempt.create({
+            data: {
+              attemptRef,
+              paymentRequestId: payReq.id,
+              method: 'CARD_TO_CARD_IRT',
+              provider: 'MANUAL_BANK',
+              status: 'pending',
+              trackingNumber: cleanEvidence,
+              paidAmountIrt: String(duplicateFunding.externalAmountUnits),
+              senderCardLast4: senderCardLast4 ? senderCardLast4.trim() : null,
+              receiptScreenshotUrl: effectiveReceiptKey ? `/api/wallet/receipts/${effectiveReceiptKey}` : null,
+              expectedAmount: String(duplicateFunding.externalAmountUnits),
+              expectedCurrency: 'IRT',
+              exchangeRate: Number(duplicateFunding.exchangeRate),
+              reviewReason: 'Awaiting admin bank statement verification for wallet deposit (idempotent recovery)',
+            },
+          });
+          isRecovery = true;
+        }
+
+        const recoveredQuote = calculateIrtFundingQuote(
+          duplicateFunding.targetUsdCents,
+          Number(duplicateFunding.exchangeRate),
+          Number(duplicateFunding.currencyPurchaseFeeRate)
+        );
+
+        return {
+          success: true,
+          fundingRequest: duplicateFunding,
+          quote: recoveredQuote,
+          paymentRequest: payReq,
+          paymentAttempt: attempt,
+          message: isRecovery
+            ? 'Recovered incomplete deposit request with required payment tracking.'
+            : 'Idempotent deposit recovery: returned existing pending deposit request.',
+        };
       }
 
-      throw new Error(
-        `DUPLICATE_DEPOSIT_EVIDENCE: Tracking reference '${cleanEvidence}' has already been submitted for deposit request #${duplicateFunding.id}.`
+      // ب. در صورتی که هیچ درخواست قبلی با این شناسه پیگیری وجود نداشت:
+      if (duplicateAttempt || duplicateReceipt) {
+        throw new Error(
+          `DUPLICATE_DEPOSIT_EVIDENCE: Tracking reference '${cleanEvidence}' has already been submitted for a payment attempt or receipt.`
+        );
+      }
+
+      // ج. اعتبارسنجی فیش جدید قبل از ایجاد تعهد مالی
+      if (receiptFileKey) {
+        await verifyReceiptForDeposit(receiptFileKey, userId, tx);
+      }
+
+      // د. ثبت درخواست شارژ ادورتایزر در دیتابیس
+      const result = await submitDirectIrtFunding(
+        {
+          advertiserId: userId,
+          targetUsdCents,
+          adminUsdIrtRate: authoritativeQuote.adminUsdIrtRate,
+          currencyPurchaseFeeRate: authoritativeQuote.incomingIrtFeeRate,
+          evidenceRef: cleanEvidence,
+          payerIdentifier: cleanPayer,
+          adminNotes: notesCombined || undefined,
+        },
+        tx
       );
-    }
 
-    if (duplicateAttempt || duplicateReceipt) {
-      throw new Error(
-        `DUPLICATE_DEPOSIT_EVIDENCE: Tracking reference '${cleanEvidence}' has already been submitted for a payment attempt or receipt.`
-      );
-    }
+      // هـ. ایجاد اتمیک PaymentRequest
+      const paymentReq = await getOrCreatePaymentRequestForFunding(result.request.id, userId, tx);
 
-    // ج. ثبت درخواست شارژ ادورتایزر در دیتابیس
-    const result = await submitDirectIrtFunding(
-      {
-        advertiserId: userId,
-        targetUsdCents,
-        adminUsdIrtRate: authoritativeQuote.adminUsdIrtRate,
-        currencyPurchaseFeeRate: authoritativeQuote.incomingIrtFeeRate,
-        evidenceRef: cleanEvidence,
-        payerIdentifier: cleanPayer,
-        adminNotes: notesCombined || undefined,
-      },
-      tx
-    );
+      // و. ایجاد اتمیک PaymentAttempt متناظر با شناسه یکتا
+      const attemptRef = `ATT_DEP_${result.request.id}_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+      const attempt = await tx.paymentAttempt.create({
+        data: {
+          attemptRef,
+          paymentRequestId: paymentReq.id,
+          method: 'CARD_TO_CARD_IRT',
+          provider: 'MANUAL_BANK',
+          status: 'pending',
+          trackingNumber: cleanEvidence,
+          paidAmountIrt: String(result.quote.totalIrtPayable),
+          senderCardLast4: senderCardLast4 ? senderCardLast4.trim() : null,
+          receiptScreenshotUrl: receiptFileKey ? `/api/wallet/receipts/${receiptFileKey}` : null,
+          expectedAmount: String(result.quote.totalIrtPayable),
+          expectedCurrency: 'IRT',
+          exchangeRate: authoritativeQuote.adminUsdIrtRate,
+          reviewReason: 'Awaiting admin bank statement verification for wallet deposit',
+        },
+      });
 
-    // د. ایجاد اتمیک PaymentRequest
-    const paymentReq = await getOrCreatePaymentRequestForFunding(result.request.id, userId, tx);
-
-    // هـ. ایجاد اتمیک PaymentAttempt متناظر با شناسه یکتا
-    const attemptRef = `ATT_DEP_${result.request.id}_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-    const attempt = await tx.paymentAttempt.create({
-      data: {
-        attemptRef,
-        paymentRequestId: paymentReq.id,
-        method: 'CARD_TO_CARD_IRT',
-        provider: 'MANUAL_BANK',
-        status: 'pending',
-        trackingNumber: cleanEvidence,
-        paidAmountIrt: String(result.quote.totalIrtPayable),
-        senderCardLast4: senderCardLast4 ? senderCardLast4.trim() : null,
-        receiptScreenshotUrl: receiptFileKey ? `/api/wallet/receipts/${receiptFileKey}` : null,
-        expectedAmount: String(result.quote.totalIrtPayable),
-        expectedCurrency: 'IRT',
-        exchangeRate: authoritativeQuote.adminUsdIrtRate,
-        reviewReason: 'Awaiting admin bank statement verification for wallet deposit',
-      },
+      return {
+        success: true,
+        fundingRequest: result.request,
+        quote: result.quote,
+        paymentRequest: paymentReq,
+        paymentAttempt: attempt,
+        message: 'Manual IRT deposit request submitted successfully. It is now awaiting independent administrative verification.',
+      };
     });
-
-    return {
-      success: true,
-      fundingRequest: result.request,
-      quote: result.quote,
-      paymentRequest: paymentReq,
-      paymentAttempt: attempt,
-      message: 'Manual IRT deposit request submitted successfully. It is now awaiting independent administrative verification.',
-    };
-  });
+  } catch (err: any) {
+    if (err?.code === 'P2002' || (typeof err?.message === 'string' && /unique constraint failed/i.test(err.message))) {
+      throw new Error(`DUPLICATE_DEPOSIT_EVIDENCE: Tracking reference '${cleanEvidence}' has already been submitted.`);
+    }
+    throw err;
+  }
 }
 
 /**
