@@ -154,7 +154,7 @@ async function runDashboardPhase2Suite() {
     assert(w.reservedCents === 1500 && w.reservedUsd === '15.00', '13. Reserved USD matches exact authoritative reservedCents ($15.00)');
     assert(w.pendingEarningsCents === 2000 && w.pendingEarningsUsd === '20.00', '14. Pending Earnings matches exact pending cents ($20.00)');
     assert(w.confirmedEarningsCents === 10000 && w.confirmedEarningsUsd === '100.00', '15. Confirmed Earnings matches exact confirmed cents ($100.00)');
-    assert(w.eligibleWithdrawalCents === 3460 && w.eligibleWithdrawalUsd === '34.60', '16. Eligible withdrawal calculated correctly ($35.00 - $0.40 fee = $34.60)');
+    assert(w.eligibleWithdrawalCents === 3500 && w.eligibleWithdrawalUsd === '35.00', '16. Eligible withdrawal represents gross liquid funds before method fees ($35.00)');
     assert(w.availableCents + w.reservedCents !== w.availableCents, '17. Available cash is strictly not conflated with reserved liability');
 
     // ─── ۶. ایجاد سفارش‌های فعال و عدم افشای متقابل (Order Ownership & Separation) ─

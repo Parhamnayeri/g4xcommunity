@@ -7,6 +7,7 @@ import { LandingPage } from './pages/LandingPage';
 import { RulesPage } from './pages/RulesPage';
 import { PrivacyPage } from './pages/PrivacyPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { WithdrawPage } from './pages/WithdrawPage';
 import { LegacyTransitionPage } from './pages/LegacyTransitionPage';
 
 export const App: React.FC = () => {
@@ -35,17 +36,7 @@ export const App: React.FC = () => {
                 />
               }
             />
-            <Route
-              path="/withdraw"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Booster Payout & Withdrawals"
-                  category="Authenticated"
-                  description="Submit and track manual withdrawal requests via USDT (BSC BEP-20) or Iranian Banking (IRT)."
-                  legacyTab="withdraw"
-                />
-              }
-            />
+            <Route path="/withdraw" element={<WithdrawPage />} />
             <Route
               path="/profile"
               element={

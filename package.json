@@ -15,6 +15,7 @@
     "db:seed": "ts-node src/database/seed.ts",
     "db:studio": "prisma studio",
     "test:dashboard": "ts-node src/test/dashboard_phase2_suite.ts",
+    "test:withdraw": "ts-node src/test/withdraw_phase3_suite.ts",
     "test:security": "ts-node src/test/security_auth_suite.ts",
     "test:escrow": "ts-node src/test/escrow_safety_suite.ts",
     "test:integrity": "ts-node src/test/wallet_ledger_integrity_suite.ts",

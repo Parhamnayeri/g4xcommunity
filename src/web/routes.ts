@@ -174,6 +174,9 @@ import {
   deleteUserSafely,
   getUserAuditLogs,
 } from '../services/adminUserService';
+import { validateIranianIban, maskIban, maskCryptoAddress } from '../services/financeV2/iranianIbanValidator';
+import { validateBep20Address } from '../services/financeV2/bep20Validator';
+import { FINANCE_V2_CONSTANTS, BoosterWithdrawalMethod, BoosterWithdrawalStatus } from '../services/financeV2/financeV2Types';
 
 import { ownerGateRouter } from './ownerGate';
 
@@ -588,8 +591,9 @@ router.get('/dashboard/overview', requireAuth, async (req: Request, res: Respons
       }),
     ]);
 
-    // حداقل کارمزد برداشت تتر در شبکه BSC برابر با ۴۰ سنت است
-    const eligibleWithdrawalCents = Math.max(0, walletSummary.availableCents - 40);
+    // مبلغ ناخالص واجد شرایط جهت درخواست پیش از کارمزد متناسب با روش انتخابی
+    // کارمزد روش تتر ۴۰ سنت و کارمزد حواله تومانی ۱.۳۰ دلار است که حین درخواست کسر می‌گردد
+    const eligibleWithdrawalCents = walletSummary.availableCents;
 
     res.json({
       success: true,
@@ -619,6 +623,8 @@ router.get('/dashboard/overview', requireAuth, async (req: Request, res: Respons
         confirmedEarningsUsd: (walletSummary.confirmedEarningsCents / 100).toFixed(2),
         paidCents: walletSummary.paidCents,
         paidUsd: (walletSummary.paidCents / 100).toFixed(2),
+        totalPaidCents: walletSummary.paidCents,
+        totalPaidUsd: (walletSummary.paidCents / 100).toFixed(2),
         refundedCents: walletSummary.refundedCents,
         refundedUsd: (walletSummary.refundedCents / 100).toFixed(2),
         totalHeldCents: walletSummary.totalHeldCents,
@@ -1138,6 +1144,463 @@ router.post(
 // ─── JOURNEY E: بوستر — درخواست و پیش‌نمایش تسویه/برداشت (Booster Withdrawals)
 // ═════════════════════════════════════════════════════════════════════════════
 
+// ─── خلاصه وضعیت مالی و تسویه حساب بوستر (Withdrawal Overview) ───────────
+const handleWithdrawalsOverview = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+
+    const [walletSummary, activeWithdrawalsRaw, adminRateConfig, cutoffConfig, pref] = await Promise.all([
+      getWalletV2Summary(user.discordId),
+      prisma.boosterWithdrawalRequest.findMany({
+        where: {
+          boosterId: user.discordId,
+          status: {
+            in: [
+              BoosterWithdrawalStatus.QUOTED,
+              BoosterWithdrawalStatus.USER_CONFIRMED,
+              BoosterWithdrawalStatus.REQUESTED,
+              BoosterWithdrawalStatus.RESERVED,
+              BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
+              BoosterWithdrawalStatus.PROCESSING,
+            ],
+          },
+        },
+        select: { requestedUsdCents: true },
+      }),
+      prisma.systemFinancialConfig.findUnique({ where: { key: 'admin_usd_irt_rate' } }),
+      prisma.systemFinancialConfig.findUnique({ where: { key: 'irt_payout_tuesday_cutoff_hour' } }),
+      prisma.userPayoutPreference.findUnique({ where: { userId: user.discordId } }),
+    ]);
+
+    const pendingWithdrawalRequestsCents = activeWithdrawalsRaw.reduce(
+      (sum, r) => sum + r.requestedUsdCents,
+      0
+    );
+
+    const adminUsdIrtRate = adminRateConfig?.value ? Number(adminRateConfig.value) : null;
+    const irtRateDiscount = FINANCE_V2_CONSTANTS.BOOSTER_IRT_RATE_DISCOUNT_PER_USD; // 3000
+    const effectiveIrtRate = adminUsdIrtRate !== null && adminUsdIrtRate > irtRateDiscount
+      ? adminUsdIrtRate - irtRateDiscount
+      : null;
+    const irtTuesdayCutoffHour = cutoffConfig?.value ? Number(cutoffConfig.value) : null;
+    const livePayoutsEnabled = process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED === 'true';
+
+    res.json({
+      success: true,
+      wallet: {
+        availableCents: walletSummary.availableCents,
+        availableUsd: (walletSummary.availableCents / 100).toFixed(2),
+        reservedCents: walletSummary.reservedCents,
+        reservedUsd: (walletSummary.reservedCents / 100).toFixed(2),
+        pendingEarningsCents: walletSummary.pendingEarningsCents,
+        pendingEarningsUsd: (walletSummary.pendingEarningsCents / 100).toFixed(2),
+        confirmedEarningsCents: walletSummary.confirmedEarningsCents,
+        confirmedEarningsUsd: (walletSummary.confirmedEarningsCents / 100).toFixed(2),
+        totalPaidCents: walletSummary.paidCents,
+        totalPaidUsd: (walletSummary.paidCents / 100).toFixed(2),
+        pendingWithdrawalRequestsCents,
+        pendingWithdrawalRequestsUsd: (pendingWithdrawalRequestsCents / 100).toFixed(2),
+        eligibleWithdrawalCents: walletSummary.availableCents,
+        eligibleWithdrawalUsd: (walletSummary.availableCents / 100).toFixed(2),
+      },
+      policy: {
+        usdtBep20FeeCents: FINANCE_V2_CONSTANTS.BOOSTER_USDT_WITHDRAWAL_FEE_CENTS, // 40
+        usdtBep20FeeUsd: '0.40',
+        irtBankFeeCents: FINANCE_V2_CONSTANTS.BOOSTER_IRT_WITHDRAWAL_FEE_CENTS, // 130
+        irtBankFeeUsd: '1.30',
+        adminUsdIrtRate,
+        irtRateDiscount,
+        effectiveIrtRate,
+        irtTuesdayCutoffHour,
+        livePayoutsEnabled,
+        scheduleSummary: 'Wednesday and Saturday manual batch disbursements. Tuesday morning cutoff applies for IRT.',
+      },
+      payoutPreference: pref
+        ? {
+            bankAccountHolder: pref.bankAccountHolder,
+            bankIban: pref.bankIban,
+            maskedBankIban: pref.bankIban ? maskIban(pref.bankIban) : null,
+            cryptoAddress: pref.cryptoAddress,
+            maskedCryptoAddress: pref.cryptoAddress ? maskCryptoAddress(pref.cryptoAddress) : null,
+            cryptoNetwork: pref.cryptoNetwork || 'BNB_SMART_CHAIN_BEP20',
+            updatedAt: pref.updatedAt,
+          }
+        : null,
+    });
+  } catch (err: any) {
+    console.error('[Withdrawal API] Overview retrieval error:', err);
+    res.status(500).json({ error: 'Failed to retrieve withdrawal overview' });
+  }
+};
+
+router.get('/withdrawals/overview', requireAuth, handleWithdrawalsOverview);
+router.get('/api/withdrawals/overview', requireAuth, handleWithdrawalsOverview);
+
+// ─── دریافت اطلاعات مقصد تسویه ذخیره‌شده (Get Saved Payout Preferences) ──────
+const handleGetPayoutPreferences = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const pref = await prisma.userPayoutPreference.findUnique({
+      where: { userId: user.discordId },
+    });
+
+    res.json({
+      success: true,
+      preference: pref
+        ? {
+            bankAccountHolder: pref.bankAccountHolder,
+            bankIban: pref.bankIban,
+            maskedBankIban: pref.bankIban ? maskIban(pref.bankIban) : null,
+            cryptoAddress: pref.cryptoAddress,
+            maskedCryptoAddress: pref.cryptoAddress ? maskCryptoAddress(pref.cryptoAddress) : null,
+            cryptoNetwork: pref.cryptoNetwork || 'BNB_SMART_CHAIN_BEP20',
+            updatedAt: pref.updatedAt,
+          }
+        : null,
+    });
+  } catch (err: any) {
+    console.error('[PayoutPreference API] Get error:', err);
+    res.status(500).json({ error: 'Failed to fetch payout preferences' });
+  }
+};
+
+router.get('/payout-preferences', requireAuth, handleGetPayoutPreferences);
+router.get('/api/payout-preferences', requireAuth, handleGetPayoutPreferences);
+
+// ─── به‌روزرسانی مقاصد تسویه حساب کاربری (Update Saved Payout Preferences) ──
+const handleUpdatePayoutPreferences = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const { bankAccountHolder, bankIban, cryptoAddress, cryptoNetwork } = req.body;
+
+    let normalizedBankHolder: string | null = null;
+    let normalizedIban: string | null = null;
+    let normalizedCrypto: string | null = null;
+    const network = cryptoNetwork ? String(cryptoNetwork).trim() : 'BNB_SMART_CHAIN_BEP20';
+
+    // اعتبارسنجی نام صاحب حساب
+    if (bankAccountHolder !== undefined && bankAccountHolder !== null && String(bankAccountHolder).trim() !== '') {
+      const trimmedHolder = String(bankAccountHolder).trim();
+      if (trimmedHolder.length < 3 || trimmedHolder.length > 100) {
+        res.status(400).json({ error: 'Account holder name must be between 3 and 100 characters' });
+        return;
+      }
+      normalizedBankHolder = trimmedHolder;
+    }
+
+    // اعتبارسنجی شماره شبای بانکی در صورت ارسال
+    if (bankIban !== undefined && bankIban !== null && String(bankIban).trim() !== '') {
+      const ibanValidation = validateIranianIban(String(bankIban));
+      if (!ibanValidation.isValid) {
+        res.status(400).json({ error: ibanValidation.error || 'Invalid Iranian IBAN (Sheba)' });
+        return;
+      }
+      normalizedIban = ibanValidation.normalizedIban;
+    }
+
+    // اعتبارسنجی آدرس کریپتو BEP-20 در صورت ارسال
+    if (cryptoAddress !== undefined && cryptoAddress !== null && String(cryptoAddress).trim() !== '') {
+      try {
+        const bep20Validation = validateBep20Address(String(cryptoAddress).trim());
+        if (!bep20Validation.isValid) {
+          res.status(400).json({ error: bep20Validation.error || 'Invalid USDT BEP-20 address' });
+          return;
+        }
+        normalizedCrypto = bep20Validation.checksumAddress || bep20Validation.normalizedAddress;
+      } catch (err: any) {
+        res.status(400).json({ error: err.message || 'Invalid USDT BEP-20 address' });
+        return;
+      }
+    }
+
+    const updated = await prisma.userPayoutPreference.upsert({
+      where: { userId: user.discordId },
+      create: {
+        userId: user.discordId,
+        bankAccountHolder: normalizedBankHolder,
+        bankIban: normalizedIban,
+        cryptoAddress: normalizedCrypto,
+        cryptoNetwork: network,
+      },
+      update: {
+        bankAccountHolder: normalizedBankHolder,
+        bankIban: normalizedIban,
+        cryptoAddress: normalizedCrypto,
+        cryptoNetwork: network,
+      },
+    });
+
+    // ثبت ممیزی امن بدون افشای شماره شبا یا آدرس کامل در لاگ عمومی
+    await prisma.auditLog.create({
+      data: {
+        actorId: user.discordId,
+        action: 'USER_PAYOUT_PREFERENCE_UPDATE',
+        entityType: 'UserPayoutPreference',
+        entityId: user.discordId,
+        newValues: JSON.stringify({
+          bankAccountHolder: normalizedBankHolder,
+          maskedBankIban: normalizedIban ? maskIban(normalizedIban) : null,
+          maskedCryptoAddress: normalizedCrypto ? maskCryptoAddress(normalizedCrypto) : null,
+          cryptoNetwork: network,
+        }),
+      },
+    });
+
+    res.json({
+      success: true,
+      preference: {
+        bankAccountHolder: updated.bankAccountHolder,
+        bankIban: updated.bankIban,
+        maskedBankIban: updated.bankIban ? maskIban(updated.bankIban) : null,
+        cryptoAddress: updated.cryptoAddress,
+        maskedCryptoAddress: updated.cryptoAddress ? maskCryptoAddress(updated.cryptoAddress) : null,
+        cryptoNetwork: updated.cryptoNetwork,
+        updatedAt: updated.updatedAt,
+      },
+    });
+  } catch (err: any) {
+    console.error('[PayoutPreference API] Update error:', err);
+    res.status(500).json({ error: 'Failed to update payout preferences' });
+  }
+};
+
+router.put('/payout-preferences', requireAuth, requireCsrf, handleUpdatePayoutPreferences);
+router.put('/api/payout-preferences', requireAuth, requireCsrf, handleUpdatePayoutPreferences);
+
+// ─── صدور پیش‌فاکتور رسمی برداشت (Generate Withdrawal Quote) ───────────────
+const handleWithdrawalQuote = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const { payoutMethod, requestedUsdCents, destinationAddress, destinationAccountHolder } = req.body;
+
+    if (!payoutMethod || !requestedUsdCents || !destinationAddress) {
+      res.status(400).json({ error: 'payoutMethod, requestedUsdCents, and destinationAddress are required' });
+      return;
+    }
+
+    const normMethod = String(payoutMethod).toUpperCase().trim();
+    let quoteResult;
+
+    if (normMethod === 'USDT' || normMethod === 'USDT_BEP20') {
+      quoteResult = await generateUsdtWithdrawalQuote({
+        boosterId: user.discordId,
+        requestedUsdCents: Number(requestedUsdCents),
+        destinationAddress: String(destinationAddress).trim(),
+      });
+    } else if (normMethod === 'IRT' || normMethod === 'IRT_BANK') {
+      quoteResult = await generateIrtWithdrawalQuote({
+        boosterId: user.discordId,
+        requestedUsdCents: Number(requestedUsdCents),
+        destinationAddress: String(destinationAddress).trim(),
+        destinationAccountHolder: destinationAccountHolder ? String(destinationAccountHolder).trim() : undefined,
+      });
+    } else {
+      res.status(400).json({ error: "Unsupported payoutMethod. Use 'USDT_BEP20' or 'IRT_BANK'." });
+      return;
+    }
+
+    const requestRecord = await createWithdrawalRequestFromQuote(quoteResult);
+
+    res.json({
+      success: true,
+      quote: {
+        id: requestRecord.id,
+        withdrawalRef: requestRecord.withdrawalRef,
+        payoutMethod: requestRecord.payoutMethod,
+        requestedUsdCents: requestRecord.requestedUsdCents,
+        requestedUsd: (requestRecord.requestedUsdCents / 100).toFixed(2),
+        fixedFeeUsdCents: requestRecord.fixedFeeUsdCents,
+        fixedFeeUsd: (requestRecord.fixedFeeUsdCents / 100).toFixed(2),
+        netUsdCents: requestRecord.netUsdCents,
+        netUsd: (requestRecord.netUsdCents / 100).toFixed(2),
+        quoteRate: requestRecord.quoteRate,
+        effectiveRate: requestRecord.effectiveRate,
+        rateDiscount: requestRecord.rateDiscount,
+        quotedNetPayoutAmount: requestRecord.quotedNetPayoutAmount,
+        quotedCurrency: requestRecord.quotedCurrency,
+        destinationAddress: requestRecord.destinationAddress,
+        maskedDestinationAddress:
+          requestRecord.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20
+            ? maskCryptoAddress(requestRecord.destinationAddress)
+            : maskIban(requestRecord.destinationAddress),
+        destinationAccountHolder: requestRecord.destinationAccountHolder,
+        scheduledCycleDay: requestRecord.scheduledCycleDay,
+        scheduledCycleDate: requestRecord.scheduledCycleDate,
+        schedulingStatus: requestRecord.schedulingStatus,
+        quoteExpiresAt: requestRecord.quoteExpiresAt,
+        quoteHash: requestRecord.quoteHash,
+        status: requestRecord.status,
+        simplifiedStatus: mapWithdrawalStatus(requestRecord.status),
+      },
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to generate withdrawal quote' });
+  }
+};
+
+router.post('/withdrawals/quote', requireAuth, requireCsrf, handleWithdrawalQuote);
+router.post('/api/withdrawals/quote', requireAuth, requireCsrf, handleWithdrawalQuote);
+
+// ─── تایید پیش‌فاکتور و قفل موجودی در درخواست تسویه (Confirm Withdrawal) ────
+const handleWithdrawalConfirm = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const { requestId } = req.body;
+
+    if (!requestId || typeof requestId !== 'number') {
+      res.status(400).json({ error: 'Valid numeric requestId required' });
+      return;
+    }
+
+    const { request, wallet } = await confirmAndSubmitWithdrawalRequest(requestId, user.discordId);
+
+    // ثبت ممیزی قطعی ایجاد درخواست
+    await prisma.auditLog.create({
+      data: {
+        actorId: user.discordId,
+        action: 'WITHDRAWAL_REQUEST_CONFIRMED',
+        entityType: 'BoosterWithdrawalRequest',
+        entityId: String(request.id),
+        newValues: JSON.stringify({
+          withdrawalRef: request.withdrawalRef,
+          payoutMethod: request.payoutMethod,
+          requestedUsdCents: request.requestedUsdCents,
+          fixedFeeUsdCents: request.fixedFeeUsdCents,
+          netUsdCents: request.netUsdCents,
+          quotedNetPayoutAmount: request.quotedNetPayoutAmount,
+          quotedCurrency: request.quotedCurrency,
+          scheduledCycleDay: request.scheduledCycleDay,
+        }),
+      },
+    });
+
+    res.json({
+      success: true,
+      request: {
+        id: request.id,
+        withdrawalRef: request.withdrawalRef,
+        payoutMethod: request.payoutMethod,
+        requestedUsdCents: request.requestedUsdCents,
+        requestedUsd: (request.requestedUsdCents / 100).toFixed(2),
+        fixedFeeUsdCents: request.fixedFeeUsdCents,
+        fixedFeeUsd: (request.fixedFeeUsdCents / 100).toFixed(2),
+        netUsdCents: request.netUsdCents,
+        netUsd: (request.netUsdCents / 100).toFixed(2),
+        quotedNetPayoutAmount: request.quotedNetPayoutAmount,
+        quotedCurrency: request.quotedCurrency,
+        quoteRate: request.quoteRate,
+        effectiveRate: request.effectiveRate,
+        destinationAddress: request.destinationAddress,
+        maskedDestinationAddress:
+          request.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20
+            ? maskCryptoAddress(request.destinationAddress)
+            : maskIban(request.destinationAddress),
+        destinationAccountHolder: request.destinationAccountHolder,
+        scheduledCycleDay: request.scheduledCycleDay,
+        scheduledCycleDate: request.scheduledCycleDate,
+        status: request.status,
+        simplifiedStatus: mapWithdrawalStatus(request.status),
+        userConfirmedAt: request.userConfirmedAt,
+        createdAt: request.createdAt,
+      },
+      wallet: {
+        availableCents: wallet.availableCents,
+        availableUsd: (wallet.availableCents / 100).toFixed(2),
+        reservedCents: wallet.reservedCents,
+        reservedUsd: (wallet.reservedCents / 100).toFixed(2),
+      },
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to confirm withdrawal' });
+  }
+};
+
+router.post('/withdrawals/confirm', requireAuth, requireCsrf, handleWithdrawalConfirm);
+router.post('/api/withdrawals/confirm', requireAuth, requireCsrf, handleWithdrawalConfirm);
+
+// ─── تاریخچه درخواست‌های تسویه کاربر جاری (Withdrawal History with Pagination)
+const handleWithdrawalHistory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const page = Math.max(1, Number(req.query.page ?? 1));
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit ?? 10)));
+    const offset = (page - 1) * limit;
+
+    const statusFilter = req.query.status ? String(req.query.status).toUpperCase() : undefined;
+    const methodFilter = req.query.payoutMethod ? String(req.query.payoutMethod).toUpperCase() : undefined;
+
+    const whereClause: any = { boosterId: user.discordId };
+    if (statusFilter && statusFilter !== 'ALL') {
+      whereClause.status = statusFilter;
+    }
+    if (methodFilter && methodFilter !== 'ALL') {
+      whereClause.payoutMethod = methodFilter;
+    }
+
+    const [requestsRaw, total] = await Promise.all([
+      prisma.boosterWithdrawalRequest.findMany({
+        where: whereClause,
+        orderBy: { createdAt: 'desc' },
+        skip: offset,
+        take: limit,
+      }),
+      prisma.boosterWithdrawalRequest.count({ where: whereClause }),
+    ]);
+
+    const withdrawals = requestsRaw.map((r) => ({
+      id: r.id,
+      withdrawalRef: r.withdrawalRef,
+      payoutMethod: r.payoutMethod,
+      requestedUsdCents: r.requestedUsdCents,
+      requestedUsd: (r.requestedUsdCents / 100).toFixed(2),
+      fixedFeeUsdCents: r.fixedFeeUsdCents,
+      fixedFeeUsd: (r.fixedFeeUsdCents / 100).toFixed(2),
+      netUsdCents: r.netUsdCents,
+      netUsd: (r.netUsdCents / 100).toFixed(2),
+      quotedNetPayoutAmount: r.quotedNetPayoutAmount,
+      quotedCurrency: r.quotedCurrency,
+      quoteRate: r.quoteRate,
+      effectiveRate: r.effectiveRate,
+      destinationAddress: r.destinationAddress,
+      maskedDestinationAddress:
+        r.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20
+          ? maskCryptoAddress(r.destinationAddress)
+          : maskIban(r.destinationAddress),
+      destinationAccountHolder: r.destinationAccountHolder,
+      scheduledCycleDay: r.scheduledCycleDay,
+      scheduledCycleDate: r.scheduledCycleDate,
+      schedulingStatus: r.schedulingStatus,
+      status: r.status,
+      simplifiedStatus: mapWithdrawalStatus(r.status),
+      externalTxHash: r.externalTxHash ? maskCryptoAddress(r.externalTxHash) : null,
+      rawTxHash: r.externalTxHash,
+      bankReceiptRef: r.bankReceiptRef,
+      rejectionReason: r.rejectionReason,
+      cancelReason: r.cancelReason,
+      createdAt: r.createdAt,
+      processedAt: r.processedAt,
+    }));
+
+    res.json({
+      success: true,
+      withdrawals,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    });
+  } catch (err: any) {
+    console.error('[Withdrawal API] History fetch error:', err);
+    res.status(500).json({ error: 'Failed to retrieve withdrawal history' });
+  }
+};
+
+router.get('/withdrawals/history', requireAuth, handleWithdrawalHistory);
+router.get('/api/withdrawals/history', requireAuth, handleWithdrawalHistory);
+
+// Legacy compat
 router.get('/withdrawals/my', requireAuth, async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
@@ -1158,95 +1621,26 @@ router.get('/withdrawals/my', requireAuth, async (req: Request, res: Response): 
     res.status(500).json({ error: err.message || 'Failed to fetch withdrawals' });
   }
 });
+router.get('/api/withdrawals/my', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const requests = await prisma.boosterWithdrawalRequest.findMany({
+      where: { boosterId: user.discordId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
 
-router.post(
-  '/withdrawals/quote',
-  requireAuth,
-  requireCsrf,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { user } = req as AuthenticatedRequest;
-      const { payoutMethod, requestedUsdCents, destinationAddress } = req.body;
-
-      if (!payoutMethod || !requestedUsdCents || !destinationAddress) {
-        res.status(400).json({ error: 'payoutMethod, requestedUsdCents, and destinationAddress are required' });
-        return;
-      }
-
-      let quoteResult;
-      if (payoutMethod.toLowerCase() === 'usdt') {
-        quoteResult = await generateUsdtWithdrawalQuote({
-          boosterId: user.discordId,
-          requestedUsdCents: Number(requestedUsdCents),
-          destinationAddress: String(destinationAddress).trim(),
-        });
-      } else if (payoutMethod.toLowerCase() === 'irt') {
-        quoteResult = await generateIrtWithdrawalQuote({
-          boosterId: user.discordId,
-          requestedUsdCents: Number(requestedUsdCents),
-          destinationAddress: String(destinationAddress).trim(),
-        });
-      } else {
-        res.status(400).json({ error: "Unsupported payoutMethod. Use 'usdt' or 'irt'." });
-        return;
-      }
-
-      const requestRecord = await createWithdrawalRequestFromQuote(quoteResult);
-
-      res.json({
-        success: true,
-        quote: {
-          id: requestRecord.id,
-          withdrawalRef: requestRecord.withdrawalRef,
-          payoutMethod: requestRecord.payoutMethod,
-          requestedUsdCents: requestRecord.requestedUsdCents,
-          fixedFeeUsdCents: requestRecord.fixedFeeUsdCents,
-          quotedNetPayoutAmount: requestRecord.quotedNetPayoutAmount,
-          destinationAddress: requestRecord.destinationAddress,
-          quoteExpiresAt: requestRecord.quoteExpiresAt,
-          quoteHash: requestRecord.quoteHash,
-          status: requestRecord.status,
-          simplifiedStatus: mapWithdrawalStatus(requestRecord.status),
-        },
-      });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message || 'Failed to generate withdrawal quote' });
-    }
+    res.json({
+      success: true,
+      withdrawals: requests.map((r) => ({
+        ...r,
+        simplifiedStatus: mapWithdrawalStatus(r.status),
+      })),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Failed to fetch withdrawals' });
   }
-);
-
-router.post(
-  '/withdrawals/confirm',
-  requireAuth,
-  requireCsrf,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { user } = req as AuthenticatedRequest;
-      const { requestId } = req.body;
-
-      if (!requestId || typeof requestId !== 'number') {
-        res.status(400).json({ error: 'Valid numeric requestId required' });
-        return;
-      }
-
-      const { request, wallet } = await confirmAndSubmitWithdrawalRequest(requestId, user.discordId);
-
-      res.json({
-        success: true,
-        request: {
-          ...request,
-          simplifiedStatus: mapWithdrawalStatus(request.status),
-        },
-        wallet: {
-          availableCents: wallet.availableCents,
-          reservedCents: wallet.reservedCents,
-        },
-      });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message || 'Failed to confirm withdrawal' });
-    }
-  }
-);
+});
 
 router.get(
   '/admin/withdrawals',

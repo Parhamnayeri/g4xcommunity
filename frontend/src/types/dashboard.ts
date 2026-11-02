@@ -25,6 +25,8 @@ export interface WalletOverviewData {
   confirmedEarningsUsd: string;
   paidCents: number;
   paidUsd: string;
+  totalPaidCents?: number;
+  totalPaidUsd?: string;
   refundedCents: number;
   refundedUsd: string;
   totalHeldCents: number;

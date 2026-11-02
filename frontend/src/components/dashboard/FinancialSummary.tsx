@@ -194,19 +194,19 @@ export const FinancialSummary: React.FC<FinancialSummaryProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <span style={{ fontSize: '1.2rem' }}>💳</span>
           <div>
-            <span style={{ color: 'var(--text-muted)' }}>Eligible for Payout (USDT BSC BEP-20 / IRT): </span>
+            <span style={{ color: 'var(--text-muted)' }}>Eligible to Request (Gross Liquid): </span>
             <span style={{ fontWeight: 800, color: 'var(--accent-lime)' }}>
               ${wallet.eligibleWithdrawalUsd} USD
             </span>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>
-              Booster fixed fee: $0.40 on BSC BEP-20. Tuesday IRT batch schedule applies.
+              Method fees apply upon submission: $0.40 (USDT BEP-20) or $1.30 (IRT Bank). Wednesday &amp; Saturday cycles.
             </span>
           </div>
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <a href="/legacy#withdraw" className="btn btn-outline btn-sm">
-            Request Payout &rarr;
+          <a href="/withdraw" className="btn btn-outline btn-sm">
+            Manage &amp; Withdraw &rarr;
           </a>
         </div>
       </div>
