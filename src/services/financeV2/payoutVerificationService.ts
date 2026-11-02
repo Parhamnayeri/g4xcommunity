@@ -1,48 +1,68 @@
 /**
  * payoutVerificationService.ts — اعتبارسنجی مدارک تسویه برون‌سیستمی و انطباق تراکنش‌های مالی
  *
- * اصول و الزامات امنیتی:
- *  ۱. رد هرگونه مقدار متنی دلخواه کاربر/ادمین بدون انطباق مستقل و موثق (Authoritative Reconciliation).
- *  ۲. برای تتر BEP-20: انطباق دقیق شبکه BSC، هش ۶۶ کاراکتری هگز، موفقیت تراکنش، آدرس گیرنده، قرارداد توکن USDT و مبلغ.
- *  ۳. برای تومان IRT: بررسی مدارک تسویه بانکی معتبر، تایید دوطرفه مالی و جلوگیری از ثبت ردیابی فاقد استناد.
- *  ۴. ممانعت قطعی از استفاده مجدد از مدارک تسویه در چندین درخواست (Duplicate Evidence Replay Prevention).
- *  ۵. در صورت در دسترس نبودن زیرساخت استعلام زنده یا غیرفعال بودن FINANCE_V2_LIVE_PAYOUTS_ENABLED،
- *     درخواست در وضعیت بررسی ادمین (UNDER_ADMIN_REVIEW / PROCESSING) باقی می‌ماند و وضعیت PAID ثبت نمی‌شود.
+ * اصول و الزامات امنیتی حاکمیتی:
+ *  ۱. رد هرگونه مدرک جعلی یا ارسال‌شده در بدنه درخواست کاربر/ادمین بدون استعلام مستقل (Authoritative Reconciliation).
+ *  ۲. برای تتر BEP-20:
+ *      - هش تراکنش (TxHash) صرفاً به عنوان یک شناسه جستجوی ناموثق (Untrusted Lookup Identifier) در نظر گرفته می‌شود.
+ *      - رسید تراکنش و لاگ‌های رخداد مستقیماً از ارائه‌دهنده معتبر BSC RPC سرور واکشی می‌شوند.
+ *      - بررسی قطعی Chain ID (مقدار ۵۶ برای BSC Mainnet).
+ *      - بررسی موفقیت تراکنش (Status = 0x1) و تعداد تاییدیه (Confirmations >= 1).
+ *      - بررسی دقیق رخداد Transfer(address,address,uint256) توکن BEP-20 USDT با قرارداد رسمی مین‌نت.
+ *      - رد قطعی هرگونه آدرس تست‌نت به عنوان مدرک تسویه مین‌نت.
+ *      - بررسی دقیق آدرس مقصد با آدرس گیرنده روی زنجیره.
+ *      - بررسی دقیق رقم انتقال با مقایسه واحدهای صحیح مقیاس‌پذیر (BigInt integer units) بدون استفاده از parseFloat.
+ *      - در صورت عدم دسترسی یا خطای RPC، سامانه Fail-Closed عمل کرده و وضعیت درخواست در حال بررسی باقی می‌ماند.
+ *  ۳. برای حواله بانکی تومان (IRT Bank):
+ *      - عدم پذیرش مدرک بانکی صرفاً بر اساس اطلاعات متنی فیلدهای ارسالی JSON ادمین.
+ *      - الزام بررسی دوطرفه مالی توسط یک ارزیاب دوم معتبر و احراز هویت‌شده (Distinct Authenticated Secondary Reviewer).
+ *      - اتصال به اسناد تسویه موثق یا ارائه‌دهنده بانکی مستقل.
+ *      - در غیاب استعلام بانکی مستقل، وضعیت تسویه‌نشده حفظ شده و وضعیت PAID ثبت نمی‌گردد.
+ *  ۴. ممانعت قطعی از ثبت مدرک تسویه تکراری در تراکنش‌های همزمان با اتکا به قفل‌های دیتابیس.
  */
 
 import prisma from '../../database/db';
+import { authorize } from '../authorizationService';
+import { Permission } from '../permissionTypes';
 import { BoosterWithdrawalMethod, BoosterWithdrawalStatus } from './financeV2Types';
 
 // آدرس‌های رسمی قرارداد توکن USDT روی شبکه BNB Smart Chain
 export const BSC_USDT_CONTRACT_MAINNET = '0x55d398326f99059fF775485246999027B3197955'.toLowerCase();
 export const BSC_USDT_CONTRACT_TESTNET = '0x337610d27c682E347C9cD60BD4b3b107C9d34dDd'.toLowerCase();
 
-export interface UsdtPayoutReconciliationEvidence {
-  network: string; // e.g., 'BNB_SMART_CHAIN' | 'BSC' | 'BSC_TESTNET'
-  txHash: string;
-  tokenContract: string;
-  recipientAddress: string;
-  amountUnits: string; // e.g. "49.60"
-  confirmed: boolean;
-  status: 'SUCCESS' | 'FAILED';
-  confirmations?: number;
-  blockNumber?: number;
-}
-
-export interface IrtPayoutReconciliationEvidence {
-  bankName: string;
-  trackingCode: string;
-  transferType: 'SATNA' | 'PAYA' | 'INTERNAL_CARD' | 'INTERNAL_ACCOUNT';
-  transferTimestamp: Date | string;
-  secondaryReviewerId?: string; // تایید دوطرفه کارشناس امور مالی
-  reconciliationNotes?: string;
-}
+// امضای رسمی رخداد Transfer توکن ERC-20 / BEP-20
+// keccak256("Transfer(address,address,uint256)")
+export const ERC20_TRANSFER_TOPIC0 = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'.toLowerCase();
 
 export interface PayoutReconciliationResult {
   verified: boolean;
   reason?: string;
   normalizedEvidenceRef?: string;
   reconciliationMetadata?: Record<string, any>;
+}
+
+export interface UsdtReconciliationRequest {
+  id: number;
+  destinationAddress: string;
+  quotedNetPayoutAmount: string;
+  netUsdCents?: number;
+}
+
+export interface UsdtReconciliationOptions {
+  rpcUrl?: string;
+  rpcClient?: (method: string, params: any[]) => Promise<any>;
+}
+
+export interface IrtReconciliationOptions {
+  actorId: string;
+  secondReviewerId?: string;
+  settlementRecord?: {
+    verifiedAt: Date | string;
+    settlementBatchId: string;
+    sourceBank: string;
+    verifiedAmountIrt: number;
+    destinationIban: string;
+  };
 }
 
 /**
@@ -123,97 +143,242 @@ export async function assertNoDuplicatePayoutEvidence(
 }
 
 /**
- * ۳. انطباق مستقل تراکنش تتر BEP-20 روی زنجیره بلوکی
+ * ۳. انطباق مستقل تراکنش تتر BEP-20 روی زنجیره بلوکی BSC Mainnet
+ *
+ * الزامات امنیتی:
+ *  - استعلام مستقل رسید و لاگ‌ها از RPC معتبر سرور
+ *  - بررسی Chain ID شبکه (۵۶ مین‌نت)
+ *  - تایید موفقیت (status = 0x1) و تاییدیه‌ها (confirmations >= 1)
+ *  - انطباق دقیق قرارداد توکن رسمی مین‌نت
+ *  - انطباق دقیق گیرنده در تاپیک دوم لاگ Transfer
+ *  - انطباق دقیق مقدار انتقال به کمک محاسبات اعداد صحیح BigInt
  */
 export async function reconcileUsdtBep20Payout(
-  request: {
-    id: number;
-    destinationAddress: string;
-    quotedNetPayoutAmount: string;
-  },
+  request: UsdtReconciliationRequest,
   txHash: string,
-  evidence?: UsdtPayoutReconciliationEvidence | null
+  options?: UsdtReconciliationOptions
 ): Promise<PayoutReconciliationResult> {
-  const normTx = txHash.toLowerCase();
+  const normTx = txHash ? txHash.toLowerCase().trim() : '';
 
-  // در صورتی که مدرک تفصیلی انطباق ارسال شده باشد
-  if (evidence) {
-    if (evidence.txHash.toLowerCase() !== normTx) {
-      return {
-        verified: false,
-        reason: 'RECONCILIATION_TX_MISMATCH: Provided reconciliation evidence txHash does not match target transaction',
-      };
-    }
-
-    const netLower = evidence.network.toLowerCase();
-    const isBsc = netLower.includes('bsc') || netLower.includes('bnb') || netLower.includes('binance');
-    if (!isBsc) {
-      return {
-        verified: false,
-        reason: `INVALID_BLOCKCHAIN_NETWORK: Expected BNB Smart Chain (BEP-20), received '${evidence.network}'`,
-      };
-    }
-
-    if (evidence.status !== 'SUCCESS' || !evidence.confirmed) {
-      return {
-        verified: false,
-        reason: 'TRANSACTION_NOT_CONFIRMED: Blockchain transaction is pending or failed on-chain',
-      };
-    }
-
-    const expectedRecipient = request.destinationAddress.toLowerCase();
-    if (evidence.recipientAddress.toLowerCase() !== expectedRecipient) {
-      return {
-        verified: false,
-        reason: `RECIPIENT_ADDRESS_MISMATCH: On-chain recipient '${evidence.recipientAddress}' does not match withdrawal destination '${request.destinationAddress}'`,
-      };
-    }
-
-    const tokenLower = evidence.tokenContract.toLowerCase();
-    const isUsdtContract =
-      tokenLower === BSC_USDT_CONTRACT_MAINNET ||
-      tokenLower === BSC_USDT_CONTRACT_TESTNET ||
-      (process.env.USDT_BEP20_CONTRACT_ADDRESS && tokenLower === process.env.USDT_BEP20_CONTRACT_ADDRESS.toLowerCase());
-
-    if (!isUsdtContract) {
-      return {
-        verified: false,
-        reason: `INVALID_TOKEN_CONTRACT: Expected BSC USDT contract, received '${evidence.tokenContract}'`,
-      };
-    }
-
-    const expectedAmount = parseFloat(request.quotedNetPayoutAmount);
-    const actualAmount = parseFloat(evidence.amountUnits);
-    if (isNaN(actualAmount) || Math.abs(expectedAmount - actualAmount) > 0.001) {
-      return {
-        verified: false,
-        reason: `PAYOUT_AMOUNT_MISMATCH: Expected ${expectedAmount} USDT, but on-chain transferred ${actualAmount} USDT`,
-      };
-    }
-
+  const formatCheck = /^0x[0-9a-f]{64}$/;
+  if (!formatCheck.test(normTx)) {
     return {
-      verified: true,
-      normalizedEvidenceRef: normTx,
-      reconciliationMetadata: {
-        network: evidence.network,
-        tokenContract: evidence.tokenContract,
-        confirmed: true,
-        confirmations: evidence.confirmations ?? 1,
-      },
+      verified: false,
+      reason: 'INVALID_BLOCKCHAIN_TX_HASH: Transaction hash must be a valid 66-character 0x-prefixed hexadecimal string on BNB Smart Chain',
     };
   }
 
-  // در صورتی که اوراکل استعلام RPC بلاکچین یا سیستم تصدیق بیرونی وجود نداشته باشد
-  // طبق دستورالعمل: درخواست در وضعیت بررسی باقی مانده و نباید PAID شود.
+  // آماده‌سازی کلاینت RPC مستقل
+  let rpcCall: (method: string, params: any[]) => Promise<any>;
+
+  if (options?.rpcClient) {
+    rpcCall = options.rpcClient;
+  } else {
+    const rpcUrl = options?.rpcUrl !== undefined ? options.rpcUrl : process.env.BSC_RPC_URL;
+    if (!rpcUrl || !rpcUrl.trim()) {
+      return {
+        verified: false,
+        reason:
+          'UNAVAILABLE_VERIFICATION_INFRASTRUCTURE: Server-configured BSC_RPC_URL provider is missing. Payout verification failed closed.',
+      };
+    }
+
+    rpcCall = async (method: string, params: any[]) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 8000);
+      try {
+        const res = await fetch(rpcUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: Date.now(),
+            method,
+            params,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok) {
+          throw new Error(`RPC_HTTP_STATUS_${res.status}: ${res.statusText}`);
+        }
+
+        const data: any = await res.json();
+        if (data.error) {
+          throw new Error(`RPC_ERROR: ${data.error.message || JSON.stringify(data.error)}`);
+        }
+        return data.result;
+      } finally {
+        clearTimeout(timeout);
+      }
+    };
+  }
+
+  // ۱. بررسی شناسه زنجیره (Chain ID ۵۶ برای BSC Mainnet)
+  let chainIdHex: string;
+  try {
+    chainIdHex = await rpcCall('eth_chainId', []);
+  } catch (err: any) {
+    return {
+      verified: false,
+      reason: `UNAVAILABLE_VERIFICATION_INFRASTRUCTURE: Failed to query BSC RPC chain ID: ${err.message}`,
+    };
+  }
+
+  const chainId = parseInt(chainIdHex, 16);
+  if (chainId !== 56) {
+    return {
+      verified: false,
+      reason: `INVALID_BLOCKCHAIN_CHAIN_ID: Expected BSC Mainnet (Chain ID 56 / 0x38), received chain ID ${chainId} (${chainIdHex})`,
+    };
+  }
+
+  // ۲. واکشی رسید تراکنش از RPC
+  let receipt: any;
+  try {
+    receipt = await rpcCall('eth_getTransactionReceipt', [normTx]);
+  } catch (err: any) {
+    return {
+      verified: false,
+      reason: `UNAVAILABLE_VERIFICATION_INFRASTRUCTURE: Failed to fetch transaction receipt: ${err.message}`,
+    };
+  }
+
+  if (!receipt) {
+    return {
+      verified: false,
+      reason: 'RECEIPT_NOT_FOUND: Transaction receipt not found on BSC provider. Transaction may be unconfirmed or pending.',
+    };
+  }
+
+  // ۳. بررسی وضعیت موفقیت تراکنش روی زنجیره
+  const statusVal = receipt.status;
+  if (statusVal !== '0x1' && statusVal !== 1 && statusVal !== '0x01') {
+    return {
+      verified: false,
+      reason: `TRANSACTION_EXECUTION_FAILED: On-chain transaction execution failed or reverted (status: ${statusVal})`,
+    };
+  }
+
+  // ۴. بررسی تعداد تاییدیه‌ها (Confirmations >= 1)
+  let currentBlockHex: string;
+  try {
+    currentBlockHex = await rpcCall('eth_blockNumber', []);
+  } catch (err: any) {
+    return {
+      verified: false,
+      reason: `UNAVAILABLE_VERIFICATION_INFRASTRUCTURE: Failed to fetch latest block number: ${err.message}`,
+    };
+  }
+
+  const currentBlock = BigInt(currentBlockHex);
+  const receiptBlock = BigInt(receipt.blockNumber);
+  const confirmations = currentBlock - receiptBlock + 1n;
+  if (confirmations < 1n) {
+    return {
+      verified: false,
+      reason: 'INSUFFICIENT_CONFIRMATIONS: Transaction has less than 1 confirmation on BSC Mainnet',
+    };
+  }
+
+  // ۵. تجزیه لاگ‌های رخداد جهت یافتن رویداد Transfer توکن تتر
+  const logs: any[] = receipt.logs || [];
+  const transferLog = logs.find((l: any) =>
+    Array.isArray(l.topics) &&
+    l.topics.length >= 3 &&
+    l.topics[0]?.toLowerCase() === ERC20_TRANSFER_TOPIC0
+  );
+
+  if (!transferLog) {
+    return {
+      verified: false,
+      reason: 'NO_TRANSFER_EVENT: Receipt contains no ERC-20 / BEP-20 Transfer event log',
+    };
+  }
+
+  // ۶. اعتبارسنجی آدرس قرارداد توکن (منحصراً قرارداد رسمی USDT مین‌نت، رد قرارداد تست‌نت)
+  const logContract = transferLog.address ? transferLog.address.toLowerCase() : '';
+  if (logContract === BSC_USDT_CONTRACT_TESTNET) {
+    return {
+      verified: false,
+      reason: 'TESTNET_CONTRACT_REJECTED: Testnet USDT contract cannot be accepted as valid mainnet settlement evidence',
+    };
+  }
+  if (logContract !== BSC_USDT_CONTRACT_MAINNET) {
+    return {
+      verified: false,
+      reason: `INVALID_TOKEN_CONTRACT: Expected BSC USDT Mainnet contract (${BSC_USDT_CONTRACT_MAINNET}), received '${logContract}'`,
+    };
+  }
+
+  // ۷. انطباق آدرس گیرنده با مقصد ثبت‌شده در درخواست
+  // تاپیک دوم (ایندکس ۲) حاوی آدرس گیرنده با پد صفر ۳۲ بایتی است
+  const rawRecipientTopic: string = transferLog.topics[2] || '';
+  if (rawRecipientTopic.length < 42) {
+    return {
+      verified: false,
+      reason: 'MALFORMED_RECIPIENT_TOPIC: Transfer event recipient topic is invalid',
+    };
+  }
+  const logRecipient = '0x' + rawRecipientTopic.slice(-40).toLowerCase();
+  const expectedRecipient = request.destinationAddress.toLowerCase();
+  if (logRecipient !== expectedRecipient) {
+    return {
+      verified: false,
+      reason: `RECIPIENT_ADDRESS_MISMATCH: On-chain recipient '${logRecipient}' does not match withdrawal destination '${request.destinationAddress}'`,
+    };
+  }
+
+  // ۸. انطباق دقیق مقدار انتقال با مقایسه واحدهای صحیح مقیاس‌پذیر (BigInt integer units)
+  // تتر روی BSC Mainnet دارای ۱۸ رقم اعشار (Decimals = 18) است.
+  // در سامانه G4X، مبلغ خالص دلاری (netUsdCents) بر حسب سنت (۰.۰۱ دلار) نگهداری می‌شود.
+  // ۱ دلار = 10^18 واحد توکن | ۱ سنت = 10^16 واحد توکن (10_000_000_000_000_000n)
+  let netCents = request.netUsdCents;
+  if (netCents === undefined || netCents === null) {
+    netCents = Math.round(parseFloat(request.quotedNetPayoutAmount) * 100);
+  }
+
+  const expectedUnits = BigInt(netCents) * 10_000_000_000_000_000n;
+  let actualUnits: bigint;
+  try {
+    actualUnits = BigInt(transferLog.data);
+  } catch {
+    return {
+      verified: false,
+      reason: 'MALFORMED_TRANSFER_DATA: Unable to parse on-chain transfer data as integer token units',
+    };
+  }
+
+  if (actualUnits !== expectedUnits) {
+    return {
+      verified: false,
+      reason: `PAYOUT_AMOUNT_MISMATCH: Expected ${expectedUnits.toString()} token units (${netCents} cents), but on-chain transferred ${actualUnits.toString()} units`,
+    };
+  }
+
   return {
-    verified: false,
-    reason:
-      'UNAVAILABLE_VERIFICATION_INFRASTRUCTURE: Live blockchain verification oracle is not configured. Request cannot be marked PAID and remains in review.',
+    verified: true,
+    normalizedEvidenceRef: normTx,
+    reconciliationMetadata: {
+      chainId: 56,
+      tokenContract: BSC_USDT_CONTRACT_MAINNET,
+      recipient: logRecipient,
+      expectedUnits: expectedUnits.toString(),
+      transferredUnits: actualUnits.toString(),
+      blockNumber: Number(receiptBlock),
+      confirmations: Number(confirmations),
+    },
   };
 }
 
 /**
  * ۴. انطباق مستقل تسویه حواله بانکی تومانی (IRT Bank Settlement Reconciliation)
+ *
+ * الزامات امنیتی:
+ *  - عدم پذیرش مدرک بانکی صرفاً بر اساس متون تایپ‌شده کاربر/ادمین
+ *  - الزام تایید دوطرفه مالی توسط یک ارزیاب مالی مستقل و احراز هویت‌شده (Distinct Second Finance Reviewer)
+ *  - انطباق با سوابق تسویه مستقل بانکی (Independent Settlement Records)
+ *  - در صورت عدم استعلام بانکی مستقل، وضعیت تسویه‌نشده حفظ شده و تسویه PAID مسدود می‌گردد
  */
 export async function reconcileIrtBankPayout(
   request: {
@@ -222,40 +387,70 @@ export async function reconcileIrtBankPayout(
     quotedNetPayoutAmount: string;
   },
   receiptRef: string,
-  evidence?: IrtPayoutReconciliationEvidence | null
+  options?: IrtReconciliationOptions
 ): Promise<PayoutReconciliationResult> {
-  const normRef = receiptRef.trim();
+  const normRef = receiptRef ? receiptRef.trim() : '';
 
-  if (evidence) {
-    if (!evidence.bankName || evidence.bankName.trim().length < 2) {
-      return {
-        verified: false,
-        reason: 'MISSING_SETTLEMENT_BANK: Valid originating banking institution must be specified',
-      };
-    }
-
-    if (!evidence.secondaryReviewerId) {
-      return {
-        verified: false,
-        reason: 'DUAL_AUTHORIZATION_REQUIRED: IRT bank payout requires independent secondary authorized finance review',
-      };
-    }
-
+  // ۱. بررسی ارزیاب دوم احراز هویت‌شده و مجزا از ادمین مجری
+  if (!options?.secondReviewerId) {
     return {
-      verified: true,
-      normalizedEvidenceRef: normRef,
-      reconciliationMetadata: {
-        bankName: evidence.bankName,
-        transferType: evidence.transferType,
-        secondaryReviewerId: evidence.secondaryReviewerId,
-        transferTimestamp: evidence.transferTimestamp,
-      },
+      verified: false,
+      reason: 'DUAL_AUTHORIZATION_REQUIRED: IRT bank payout requires an authenticated, distinct secondary finance reviewer',
+    };
+  }
+
+  if (options.secondReviewerId === options.actorId) {
+    return {
+      verified: false,
+      reason: 'DUAL_AUTHORIZATION_SAME_USER: Secondary finance reviewer must be distinct from executing administrator',
+    };
+  }
+
+  // اعتبارسنجی مجوزهای مالی ارزیاب دوم در دیتابیس
+  const secondAuth = await authorize(options.secondReviewerId, Permission.FINANCE_ADJUST);
+  if (!secondAuth.allowed) {
+    return {
+      verified: false,
+      reason: 'INVALID_SECONDARY_REVIEWER: Secondary reviewer lacks FINANCE_ADJUST or administrative permissions',
+    };
+  }
+
+  // ۲. استعلام سوابق تسویه مستقل بانکی
+  if (!options.settlementRecord) {
+    return {
+      verified: false,
+      reason:
+        'UNAVAILABLE_BANK_SETTLEMENT_PROVIDER: Independent bank-side settlement verification oracle is not connected. Payout cannot be marked PAID based solely on an unverified typed receipt reference.',
+    };
+  }
+
+  // ۳. انطباق شماره شبا یا مقصد بانکی
+  const cleanIban = request.destinationAddress.replace(/\s+/g, '').toUpperCase();
+  const recordIban = options.settlementRecord.destinationIban.replace(/\s+/g, '').toUpperCase();
+  if (cleanIban !== recordIban) {
+    return {
+      verified: false,
+      reason: `BANK_SETTLEMENT_DESTINATION_MISMATCH: Bank settlement record destination '${recordIban}' does not match withdrawal IBAN '${cleanIban}'`,
+    };
+  }
+
+  // ۴. انطباق مبلغ تومانی تسویه
+  const expectedIrt = Number(request.quotedNetPayoutAmount);
+  if (options.settlementRecord.verifiedAmountIrt !== expectedIrt) {
+    return {
+      verified: false,
+      reason: `BANK_SETTLEMENT_AMOUNT_MISMATCH: Bank settlement record amount (${options.settlementRecord.verifiedAmountIrt}) does not match quoted net IRT (${expectedIrt})`,
     };
   }
 
   return {
-    verified: false,
-    reason:
-      'PENDING_FINANCE_SETTLEMENT_EVIDENCE: IRT bank payout requires verified bank settlement evidence and dual authorized finance review.',
+    verified: true,
+    normalizedEvidenceRef: normRef,
+    reconciliationMetadata: {
+      sourceBank: options.settlementRecord.sourceBank,
+      settlementBatchId: options.settlementRecord.settlementBatchId,
+      secondReviewerId: options.secondReviewerId,
+      verifiedAt: options.settlementRecord.verifiedAt,
+    },
   };
 }

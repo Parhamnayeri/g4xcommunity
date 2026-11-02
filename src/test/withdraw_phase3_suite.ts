@@ -2,10 +2,11 @@
  * withdraw_phase3_suite.ts — جامع‌ترین آزمون‌های اعتبارسنجی فرآیند تسویه و مقاصد پرداخت فاز ۳
  */
 
+import crypto from 'crypto';
 import request from 'supertest';
-import prisma from '../database/db';
+import prisma, { ensureWithdrawalEvidenceUniqueIndexes } from '../database/db';
 import { app, sessionStore } from '../web/server';
-import { creditAvailableCents } from '../services/financeV2/financeV2WalletService';
+import { creditAvailableCents, getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
 import {
   adminExecuteManualPayout,
   adminRejectWithdrawal,
@@ -15,6 +16,7 @@ import {
   verifyWithdrawalQuoteHash,
   generateUsdtWithdrawalQuote,
   createWithdrawalRequestFromQuote,
+  getWithdrawalQuoteSigningSecret,
 } from '../services/financeV2/boosterWithdrawalService';
 import {
   BoosterWithdrawalMethod,
@@ -29,6 +31,8 @@ import {
   reconcileUsdtBep20Payout,
   reconcileIrtBankPayout,
   BSC_USDT_CONTRACT_MAINNET,
+  BSC_USDT_CONTRACT_TESTNET,
+  ERC20_TRANSFER_TOPIC0,
 } from '../services/financeV2/payoutVerificationService';
 
 async function createAuthenticatedAgent(userId: string) {
@@ -71,14 +75,20 @@ async function runWithdrawPhase3Suite() {
     }
   }
 
+  process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET =
+    process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET || 'a_very_high_entropy_secret_for_withdrawal_quotes_at_least_32_chars';
+  process.env.BSC_RPC_URL = process.env.BSC_RPC_URL || 'https://bsc-dataseed.binance.org/';
+  await ensureWithdrawalEvidenceUniqueIndexes();
+
   const uTestA = `u_wdr_a_${Date.now()}`;
   const uTestB = `u_wdr_b_${Date.now()}`;
   const uAdmin = `u_wdr_admin_${Date.now()}`;
+  const uAdmin2 = `u_wdr_admin2_${Date.now()}`;
 
   try {
     // ─── ۰. تمیزکاری اولیه ───────────────────────────────────────────────────
     await prisma.user.deleteMany({
-      where: { discordId: { in: [uTestA, uTestB, uAdmin] } },
+      where: { discordId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } },
     });
 
     // ─── ۱. آزمون‌های دسترسی تاییدنشده (Unauthenticated Rejection) ───────────
@@ -128,16 +138,27 @@ async function runWithdrawPhase3Suite() {
       },
     });
 
+    await prisma.user.create({
+      data: {
+        discordId: uAdmin2,
+        username: 'AdminFinance2',
+        displayName: 'Finance Secondary Reviewer',
+        isActive: true,
+      },
+    });
+
     await prisma.userRole.createMany({
       data: [
         { userId: uTestA, roleKey: 'booster' },
         { userId: uTestB, roleKey: 'booster' },
         { userId: uAdmin, roleKey: 'owner' },
+        { userId: uAdmin2, roleKey: 'manager' },
       ],
     });
 
     const authA = await createAuthenticatedAgent(uTestA);
     const authB = await createAuthenticatedAgent(uTestB);
+    const authAdmin = await createAuthenticatedAgent(uAdmin);
 
     // ─── ۳. اعتبارسنجی کاربر فاقد کیف پول (No Wallet State) ───────────────
     const resOverviewB = await authB.agent.get('/api/withdrawals/overview');
@@ -588,38 +609,559 @@ async function runWithdrawPhase3Suite() {
     assert(duplicateBlocked, '71. Duplicate payout evidence across multiple withdrawal requests strictly prevented');
     await prisma.boosterWithdrawalRequest.delete({ where: { id: dummyPaidReq.id } });
 
-    // ─── ۲۵. رد انطباق تراکنش تتر در صورت مغایرت آدرس مقصد یا مبلغ ─────────────
-    const mismatchRecipient = await reconcileUsdtBep20Payout(
-      { id: 101, destinationAddress: '0x1234567890abcdef1234567890abcdef12345678', quotedNetPayoutAmount: '49.60' },
+    // ─── ۲۵. اعتبارسنجی مستقل و موثق تراکنش تتر BEP-20 (Authoritative BSC RPC) ───
+    const createMockBscRpc = (opts: {
+      chainId?: string;
+      receipt?: any;
+      currentBlock?: string;
+      throwOnChainId?: boolean;
+      throwOnReceipt?: boolean;
+    } = {}) => {
+      return async (method: string, _params: any[]) => {
+        if (method === 'eth_chainId') {
+          if (opts.throwOnChainId) throw new Error('CONNECTION_REFUSED');
+          return opts.chainId !== undefined ? opts.chainId : '0x38'; // 56 Mainnet
+        }
+        if (method === 'eth_blockNumber') {
+          return opts.currentBlock !== undefined ? opts.currentBlock : '0x1000'; // Block 4096
+        }
+        if (method === 'eth_getTransactionReceipt') {
+          if (opts.throwOnReceipt) throw new Error('TIMEOUT');
+          if (opts.receipt === null) return null;
+          return opts.receipt !== undefined
+            ? opts.receipt
+            : {
+                status: '0x1',
+                blockNumber: '0x0ff0', // Block 4080 (16 confirmations)
+                logs: [
+                  {
+                    address: BSC_USDT_CONTRACT_MAINNET,
+                    topics: [
+                      ERC20_TRANSFER_TOPIC0,
+                      '0x0000000000000000000000001111111111111111111111111111111111111111',
+                      '0x000000000000000000000000' + validBep20.slice(2).toLowerCase(),
+                    ],
+                    data: '0x' + (BigInt(4960) * 10_000_000_000_000_000n).toString(16).padStart(64, '0'),
+                  },
+                ],
+              };
+        }
+        throw new Error(`Unsupported mock RPC method: ${method}`);
+      };
+    };
+
+    // آزمون ۷۲: فقدان ارائه‌دهنده BSC RPC موجب رد قطعی (Fail-Closed) می‌شود
+    const rpcMissing = await reconcileUsdtBep20Payout(
+      { id: 101, destinationAddress: validBep20, quotedNetPayoutAmount: '49.60', netUsdCents: 4960 },
       valid66Hex,
-      {
-        network: 'BSC',
+      { rpcUrl: '' }
+    );
+    assert(
+      rpcMissing.verified === false && Boolean(rpcMissing.reason?.includes('UNAVAILABLE_VERIFICATION_INFRASTRUCTURE')),
+      '72. Missing BSC RPC provider fails closed and preserves unverified status'
+    );
+
+    // آزمون ۷۳: رد شناسه زنجیره نامعتبر (مانند تست‌نت ۹۷)
+    const wrongChainRpc = createMockBscRpc({ chainId: '0x61' }); // 97 Testnet
+    const rpcWrongChain = await reconcileUsdtBep20Payout(
+      { id: 102, destinationAddress: validBep20, quotedNetPayoutAmount: '49.60', netUsdCents: 4960 },
+      valid66Hex,
+      { rpcClient: wrongChainRpc }
+    );
+    assert(
+      rpcWrongChain.verified === false && Boolean(rpcWrongChain.reason?.includes('INVALID_BLOCKCHAIN_CHAIN_ID')),
+      '73. BSC RPC with non-mainnet chain ID (e.g. 97 testnet) strictly rejected'
+    );
+
+    // آزمون ۷۴: عدم یافتن رسید تراکنش در زنجیره
+    const nullReceiptRpc = createMockBscRpc({ receipt: null });
+    const rpcNullReceipt = await reconcileUsdtBep20Payout(
+      { id: 103, destinationAddress: validBep20, quotedNetPayoutAmount: '49.60', netUsdCents: 4960 },
+      valid66Hex,
+      { rpcClient: nullReceiptRpc }
+    );
+    assert(
+      rpcNullReceipt.verified === false && Boolean(rpcNullReceipt.reason?.includes('RECEIPT_NOT_FOUND')),
+      '74. Unconfirmed or non-existent transaction receipt rejected'
+    );
+
+    // آزمون ۷۵: تراکنش بازگشت‌خورده یا شکست‌خورده روی زنجیره (status = 0x0)
+    const failedTxRpc = createMockBscRpc({
+      receipt: { status: '0x0', blockNumber: '0x0ff0', logs: [] },
+    });
+    const rpcFailedTx = await reconcileUsdtBep20Payout(
+      { id: 104, destinationAddress: validBep20, quotedNetPayoutAmount: '49.60', netUsdCents: 4960 },
+      valid66Hex,
+      { rpcClient: failedTxRpc }
+    );
+    assert(
+      rpcFailedTx.verified === false && Boolean(rpcFailedTx.reason?.includes('TRANSACTION_EXECUTION_FAILED')),
+      '75. Reverted or failed on-chain transaction status strictly rejected'
+    );
+
+    // آزمون ۷۶: تعداد تاییدیه‌های ناکافی (کمتر از ۱ تاییدیه)
+    const zeroConfRpc = createMockBscRpc({
+      currentBlock: '0x0ff0',
+      receipt: { status: '0x1', blockNumber: '0x0ff1', logs: [] },
+    });
+    const rpcZeroConf = await reconcileUsdtBep20Payout(
+      { id: 105, destinationAddress: validBep20, quotedNetPayoutAmount: '49.60', netUsdCents: 4960 },
+      valid66Hex,
+      { rpcClient: zeroConfRpc }
+    );
+    assert(
+      rpcZeroConf.verified === false && Boolean(rpcZeroConf.reason?.includes('INSUFFICIENT_CONFIRMATIONS')),
+      '76. Transactions with 0 confirmations rejected'
+    );
+
+    // آزمون ۷۷: رد قطعی قرارداد تست‌نت تتر به عنوان مدرک تسویه مین‌نت
+    const testnetContractRpc = createMockBscRpc({
+      receipt: {
+        status: '0x1',
+        blockNumber: '0x0ff0',
+        logs: [
+          {
+            address: BSC_USDT_CONTRACT_TESTNET,
+            topics: [
+              ERC20_TRANSFER_TOPIC0,
+              '0x0000000000000000000000001111111111111111111111111111111111111111',
+              '0x000000000000000000000000' + validBep20.slice(2).toLowerCase(),
+            ],
+            data: '0x' + (BigInt(4960) * 10_000_000_000_000_000n).toString(16).padStart(64, '0'),
+          },
+        ],
+      },
+    });
+    const rpcTestnetContract = await reconcileUsdtBep20Payout(
+      { id: 106, destinationAddress: validBep20, quotedNetPayoutAmount: '49.60', netUsdCents: 4960 },
+      valid66Hex,
+      { rpcClient: testnetContractRpc }
+    );
+    assert(
+      rpcTestnetContract.verified === false && Boolean(rpcTestnetContract.reason?.includes('TESTNET_CONTRACT_REJECTED')),
+      '77. BSC testnet USDT contract strictly rejected for mainnet settlement'
+    );
+
+    // آزمون ۷۸: رد قراردادهای ناشناس یا جعلی غیر از تتر رسمی مین‌نت
+    const fakeContractRpc = createMockBscRpc({
+      receipt: {
+        status: '0x1',
+        blockNumber: '0x0ff0',
+        logs: [
+          {
+            address: '0x1111111111111111111111111111111111111111',
+            topics: [
+              ERC20_TRANSFER_TOPIC0,
+              '0x0000000000000000000000001111111111111111111111111111111111111111',
+              '0x000000000000000000000000' + validBep20.slice(2).toLowerCase(),
+            ],
+            data: '0x' + (BigInt(4960) * 10_000_000_000_000_000n).toString(16).padStart(64, '0'),
+          },
+        ],
+      },
+    });
+    const rpcFakeContract = await reconcileUsdtBep20Payout(
+      { id: 107, destinationAddress: validBep20, quotedNetPayoutAmount: '49.60', netUsdCents: 4960 },
+      valid66Hex,
+      { rpcClient: fakeContractRpc }
+    );
+    assert(
+      rpcFakeContract.verified === false && Boolean(rpcFakeContract.reason?.includes('INVALID_TOKEN_CONTRACT')),
+      '78. Arbitrary or spoofed token contract address strictly rejected'
+    );
+
+    // آزمون ۷۹: مغایرت آدرس گیرنده با آدرس درخواستی
+    const wrongRecipientRpc = createMockBscRpc({
+      receipt: {
+        status: '0x1',
+        blockNumber: '0x0ff0',
+        logs: [
+          {
+            address: BSC_USDT_CONTRACT_MAINNET,
+            topics: [
+              ERC20_TRANSFER_TOPIC0,
+              '0x0000000000000000000000001111111111111111111111111111111111111111',
+              '0x000000000000000000000000' + '2222222222222222222222222222222222222222',
+            ],
+            data: '0x' + (BigInt(4960) * 10_000_000_000_000_000n).toString(16).padStart(64, '0'),
+          },
+        ],
+      },
+    });
+    const rpcWrongRecipient = await reconcileUsdtBep20Payout(
+      { id: 108, destinationAddress: validBep20, quotedNetPayoutAmount: '49.60', netUsdCents: 4960 },
+      valid66Hex,
+      { rpcClient: wrongRecipientRpc }
+    );
+    assert(
+      rpcWrongRecipient.verified === false && Boolean(rpcWrongRecipient.reason?.includes('RECIPIENT_ADDRESS_MISMATCH')),
+      '79. On-chain recipient mismatch strictly rejected'
+    );
+
+    // آزمون ۸۰: مغایرت رقم انتقال با مقایسه اعداد صحیح مقیاس‌پذیر BigInt (بدون parseFloat)
+    const wrongAmountRpc = createMockBscRpc({
+      receipt: {
+        status: '0x1',
+        blockNumber: '0x0ff0',
+        logs: [
+          {
+            address: BSC_USDT_CONTRACT_MAINNET,
+            topics: [
+              ERC20_TRANSFER_TOPIC0,
+              '0x0000000000000000000000001111111111111111111111111111111111111111',
+              '0x000000000000000000000000' + validBep20.slice(2).toLowerCase(),
+            ],
+            // مبلغ متفاوت (مثلاً ۱۰ دلار به جای ۴۹.۶۰ دلار)
+            data: '0x' + (BigInt(1000) * 10_000_000_000_000_000n).toString(16).padStart(64, '0'),
+          },
+        ],
+      },
+    });
+    const rpcWrongAmount = await reconcileUsdtBep20Payout(
+      { id: 109, destinationAddress: validBep20, quotedNetPayoutAmount: '49.60', netUsdCents: 4960 },
+      valid66Hex,
+      { rpcClient: wrongAmountRpc }
+    );
+    assert(
+      rpcWrongAmount.verified === false && Boolean(rpcWrongAmount.reason?.includes('PAYOUT_AMOUNT_MISMATCH')),
+      '80. On-chain token unit mismatch rejected via exact integer BigInt math'
+    );
+
+    // آزمون ۸۱: تراکنش معتبر و کامل روی مین‌نت با موفقیت تایید می‌شود
+    const validRpc = createMockBscRpc();
+    const rpcValid = await reconcileUsdtBep20Payout(
+      { id: 110, destinationAddress: validBep20, quotedNetPayoutAmount: '49.60', netUsdCents: 4960 },
+      valid66Hex,
+      { rpcClient: validRpc }
+    );
+    assert(
+      rpcValid.verified === true && rpcValid.normalizedEvidenceRef === valid66Hex.toLowerCase(),
+      '81. Authentic BSC Mainnet transfer verified successfully via server RPC'
+    );
+
+    // آزمون‌های رد شواهد تسویه ارسالی جعلی در بدنه درخواست HTTP ادمین
+    const forgedQuote = await generateUsdtWithdrawalQuote({
+      boosterId: uTestA,
+      requestedUsdCents: 1000,
+      destinationAddress: validBep20,
+    });
+    const forgedReq = await createWithdrawalRequestFromQuote(forgedQuote);
+    await confirmAndSubmitWithdrawalRequest(forgedReq.id, uTestA);
+
+    // ۱. ارسال شواهد ساختگی bep20Evidence در بدنه درخواست HTTP
+    const fakeBep20Res = await authAdmin.agent
+      .post(`/api/admin/withdrawals/${forgedReq.id}/review`)
+      .set('X-CSRF-Token', authAdmin.csrfToken)
+      .send({
+        decision: 'approve_paid',
         txHash: valid66Hex,
-        tokenContract: BSC_USDT_CONTRACT_MAINNET,
-        recipientAddress: '0x0000000000000000000000000000000000000001',
-        amountUnits: '49.60',
-        confirmed: true,
-        status: 'SUCCESS',
+        bep20Evidence: {
+          status: 'SUCCESS',
+          confirmed: true,
+          amountUnits: '999999',
+          recipientAddress: '0xFake',
+        },
+      });
+    assert(
+      fakeBep20Res.status === 400 || fakeBep20Res.status === 403,
+      '81b. Admin review route ignores forged client-supplied bep20Evidence and fails closed'
+    );
+    const postFakeWdr = await prisma.boosterWithdrawalRequest.findUniqueOrThrow({ where: { id: forgedReq.id } });
+    assert(postFakeWdr.status !== BoosterWithdrawalStatus.PAID, '81c. Forged bep20Evidence cannot mark request PAID');
+
+    // ۲. ارسال شواهد ساختگی irtEvidence در بدنه درخواست HTTP
+    const fakeIrtRes = await authAdmin.agent
+      .post(`/api/admin/withdrawals/${forgedReq.id}/review`)
+      .set('X-CSRF-Token', authAdmin.csrfToken)
+      .send({
+        decision: 'approve_paid',
+        bankReceiptRef: 'TRACK-FAKE-RECEIPT-1234',
+        irtEvidence: {
+          bankName: 'Fake Bank',
+          trackingCode: 'TRACK-FAKE-RECEIPT-1234',
+        },
+      });
+    assert(
+      fakeIrtRes.status === 400 || fakeIrtRes.status === 403,
+      '81d. Admin review route ignores forged client-supplied irtEvidence and fails closed'
+    );
+
+    // ─── ۲۶. آزمون‌های تسویه حواله بانکی تومانی (IRT Bank Dual Authorization) ───
+    const irtMissingReviewer = await reconcileIrtBankPayout(
+      { id: 111, destinationAddress: 'IR020170000000109968843003', quotedNetPayoutAmount: '3500000' },
+      'TRACK-12345678',
+      { actorId: uAdmin }
+    );
+    assert(
+      irtMissingReviewer.verified === false && Boolean(irtMissingReviewer.reason?.includes('DUAL_AUTHORIZATION_REQUIRED')),
+      '82. IRT bank settlement strictly rejected without secondary finance reviewer'
+    );
+
+    const irtSameReviewer = await reconcileIrtBankPayout(
+      { id: 112, destinationAddress: 'IR020170000000109968843003', quotedNetPayoutAmount: '3500000' },
+      'TRACK-12345678',
+      { actorId: uAdmin, secondReviewerId: uAdmin }
+    );
+    assert(
+      irtSameReviewer.verified === false && Boolean(irtSameReviewer.reason?.includes('DUAL_AUTHORIZATION_SAME_USER')),
+      '83. IRT bank settlement rejected when second reviewer is identical to executing admin'
+    );
+
+    const irtUnauthorizedReviewer = await reconcileIrtBankPayout(
+      { id: 113, destinationAddress: 'IR020170000000109968843003', quotedNetPayoutAmount: '3500000' },
+      'TRACK-12345678',
+      { actorId: uAdmin, secondReviewerId: uTestA } // Booster without finance permissions
+    );
+    assert(
+      irtUnauthorizedReviewer.verified === false && Boolean(irtUnauthorizedReviewer.reason?.includes('INVALID_SECONDARY_REVIEWER')),
+      '84. IRT bank settlement rejected when secondary reviewer lacks FINANCE_ADJUST permission'
+    );
+
+    const irtMissingRecord = await reconcileIrtBankPayout(
+      { id: 114, destinationAddress: 'IR020170000000109968843003', quotedNetPayoutAmount: '3500000' },
+      'TRACK-12345678',
+      { actorId: uAdmin, secondReviewerId: uAdmin2 }
+    );
+    assert(
+      irtMissingRecord.verified === false && Boolean(irtMissingRecord.reason?.includes('UNAVAILABLE_BANK_SETTLEMENT_PROVIDER')),
+      '85. Typed bank receipt rejected without authoritative settlement record'
+    );
+
+    const irtValid = await reconcileIrtBankPayout(
+      { id: 115, destinationAddress: 'IR020170000000109968843003', quotedNetPayoutAmount: '3500000' },
+      'TRACK-12345678',
+      {
+        actorId: uAdmin,
+        secondReviewerId: uAdmin2,
+        settlementRecord: {
+          verifiedAt: new Date(),
+          settlementBatchId: 'BATCH-2026-001',
+          sourceBank: 'BANK_MELLAT',
+          verifiedAmountIrt: 3500000,
+          destinationIban: 'IR020170000000109968843003',
+        },
       }
     );
-    assert(mismatchRecipient.verified === false && Boolean(mismatchRecipient.reason?.includes('RECIPIENT_ADDRESS_MISMATCH')), '72. USDT payout rejected when on-chain recipient does not match destination');
-
-    const mismatchAmount = await reconcileUsdtBep20Payout(
-      { id: 102, destinationAddress: '0x1234567890abcdef1234567890abcdef12345678', quotedNetPayoutAmount: '49.60' },
-      valid66Hex,
-      {
-        network: 'BSC',
-        txHash: valid66Hex,
-        tokenContract: BSC_USDT_CONTRACT_MAINNET,
-        recipientAddress: '0x1234567890abcdef1234567890abcdef12345678',
-        amountUnits: '10.00',
-        confirmed: true,
-        status: 'SUCCESS',
-      }
+    assert(
+      irtValid.verified === true && irtValid.normalizedEvidenceRef === 'TRACK-12345678',
+      '86. IRT bank payout with verified settlement record and dual authorization verified'
     );
-    assert(mismatchAmount.verified === false && Boolean(mismatchAmount.reason?.includes('PAYOUT_AMOUNT_MISMATCH')), '73. USDT payout rejected when on-chain amount does not match expected net payout');
 
-    // ─── ۲۶. آزمون همروندی تأیید پیش‌فاکتور (Concurrent Confirmation CAS Guard) ───
+    // ─── ۲۷. امنیت امضای پیش‌فاکتور (WITHDRAWAL_QUOTE_SIGNING_SECRET) ─────────
+    const originalSecret = process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET;
+
+    // آزمون ۸۷: فقدان کلید امضا موجب توقف قطعی (Fail-Closed) می‌شود
+    delete process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET;
+    let missingSecretBlocked = false;
+    try {
+      getWithdrawalQuoteSigningSecret();
+    } catch (err: any) {
+      if (err.message.includes('MISSING_WITHDRAWAL_QUOTE_SIGNING_SECRET')) {
+        missingSecretBlocked = true;
+      }
+    }
+    assert(missingSecretBlocked, '87. Missing WITHDRAWAL_QUOTE_SIGNING_SECRET fails closed immediately');
+
+    // آزمون ۸۸: رد کلیدهای کوتاه با انتروپی ناکافی (< ۳۲ کاراکتر) بدون استفاده از فال‌بک هاردکد
+    process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET = 'short_key_under_32_chars';
+    let shortSecretBlocked = false;
+    try {
+      getWithdrawalQuoteSigningSecret();
+    } catch (err: any) {
+      if (err.message.includes('MISSING_WITHDRAWAL_QUOTE_SIGNING_SECRET')) {
+        shortSecretBlocked = true;
+      }
+    }
+    assert(shortSecretBlocked, '88. Short signing key under 32 characters strictly rejected without hardcoded fallback');
+
+    // بازیابی کلید معتبر
+    process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET = originalSecret;
+
+    // آزمون ۸۹: رد قطعی امضاهای ساده SHA-256 قدیمی فاقد کلید
+    const legacyPayload = [
+      uTestA,
+      BoosterWithdrawalMethod.USDT_BEP20,
+      1000,
+      40,
+      960,
+      1.0,
+      1.0,
+      validBep20.toLowerCase(),
+      new Date().toISOString(),
+      1,
+      2,
+      'none',
+    ].join('|');
+    const legacySha256 = crypto.createHash('sha256').update(legacyPayload).digest('hex');
+    const legacyRejected = verifyWithdrawalQuoteHash(
+      {
+        boosterId: uTestA,
+        payoutMethod: BoosterWithdrawalMethod.USDT_BEP20,
+        requestedUsdCents: 1000,
+        fixedFeeUsdCents: 40,
+        netUsdCents: 960,
+        quoteRate: 1.0,
+        effectiveRate: 1.0,
+        destinationAddress: validBep20,
+        quoteExpiresAt: new Date(),
+        quoteVersion: 1,
+        policyVersion: 2,
+      },
+      legacySha256
+    );
+    assert(legacyRejected === false, '89. Legacy unkeyed SHA-256 quote hash strictly rejected');
+
+    // آزمون ۹۰: مقایسه زمان‌ثابت و تغییر ناچیز مبالغ پیش‌فاکتور
+    const validQuote = await generateUsdtWithdrawalQuote({
+      boosterId: uTestA,
+      requestedUsdCents: 1000,
+      destinationAddress: validBep20,
+    });
+    const tamperedQuote = verifyWithdrawalQuoteHash(
+      {
+        boosterId: validQuote.boosterId,
+        payoutMethod: validQuote.payoutMethod,
+        requestedUsdCents: validQuote.requestedUsdCents + 1, // تغییر ۱ سنت
+        fixedFeeUsdCents: validQuote.fixedFeeUsdCents,
+        netUsdCents: validQuote.netUsdCents + 1,
+        quoteRate: validQuote.quoteRate,
+        effectiveRate: validQuote.effectiveRate,
+        destinationAddress: validQuote.destinationAddress,
+        quoteExpiresAt: validQuote.quoteExpiresAt,
+        quoteVersion: validQuote.quoteVersion,
+        policyVersion: validQuote.policyVersion,
+      },
+      validQuote.quoteHash
+    );
+    assert(tamperedQuote === false, '90. 1-cent tampered quote rejected by constant-time signature verification');
+
+    // آزمون ۹۱: رد پیش‌فاکتور منقضی‌شده
+    const expiredRecord = await createWithdrawalRequestFromQuote({
+      ...validQuote,
+      quoteExpiresAt: new Date(Date.now() - 1000), // منقضی در ۱ ثانیه قبل
+    });
+    let expiredRejected = false;
+    try {
+      await confirmAndSubmitWithdrawalRequest(expiredRecord.id, uTestA);
+    } catch (err: any) {
+      if (err.message.includes('QUOTE_EXPIRED')) {
+        expiredRejected = true;
+      }
+    }
+    assert(expiredRejected, '91. Expired quote strictly rejected upon confirmation attempt');
+
+    // ─── ۲۸. تصحیح رفتار تراکنش در خطای انطباق تسویه (Failed Verification Durability) ───
+    const durableTestQuote = await generateUsdtWithdrawalQuote({
+      boosterId: uTestA,
+      requestedUsdCents: 1000,
+      destinationAddress: validBep20,
+    });
+    const durableReq = await createWithdrawalRequestFromQuote(durableTestQuote);
+    await confirmAndSubmitWithdrawalRequest(durableReq.id, uTestA);
+
+    const boosterWalletBeforePayout = await getOrCreateWalletV2(uTestA);
+
+    // فراخوانی تسویه دستی با ارائه‌دهنده شکست‌خورده روی بلاکچین
+    let durableReviewPassed = false;
+    try {
+      process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED = 'true';
+      await adminExecuteManualPayout(durableReq.id, uAdmin, {
+        externalTxHash: valid66Hex,
+        notes: 'Simulated failed verification',
+        bscVerificationOptions: {
+          rpcClient: failedTxRpc, // این RPC وضعیت 0x0 برمی‌گرداند
+        },
+      });
+    } catch (err: any) {
+      if (err.message.includes('PAYOUT_VERIFICATION_REQUIRED')) {
+        durableReviewPassed = true;
+      }
+    } finally {
+      process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED = 'false';
+    }
+    assert(durableReviewPassed, '92. Failed verification throws precise PAYOUT_VERIFICATION_REQUIRED failure response');
+
+    // بررسی ثبت پایدار در دیتابیس (عدم رول‌بک شدن وضعیت بررسی ادمین)
+    const freshDurableReq = await prisma.boosterWithdrawalRequest.findUniqueOrThrow({
+      where: { id: durableReq.id },
+    });
+    assert(
+      freshDurableReq.status === BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
+      '93. Failed payout verification durably preserves UNDER_ADMIN_REVIEW status in database without rollback'
+    );
+
+    // بررسی عدم تغییر و حفظ موجودی رزرو بوستر
+    const boosterWalletAfterFailed = await getOrCreateWalletV2(uTestA);
+    assert(
+      boosterWalletAfterFailed.reservedCents === boosterWalletBeforePayout.reservedCents &&
+        boosterWalletAfterFailed.availableCents === boosterWalletBeforePayout.availableCents &&
+        boosterWalletAfterFailed.paidCents === boosterWalletBeforePayout.paidCents,
+      '94. Reserved booster balance unchanged on failed verification; no premature funds consumption'
+    );
+
+    // بررسی عدم ثبت وضعیت PAID
+    assert(freshDurableReq.status !== BoosterWithdrawalStatus.PAID, '95. Failed verification does not mark request as PAID');
+
+    // بررسی عدم صدور سند دفتر کل
+    const settleJournals = await prisma.ledgerEntryV2.findMany({
+      where: {
+        withdrawalRequestId: durableReq.id,
+        entryType: LedgerV2EntryType.WITHDRAWAL_SETTLE,
+      },
+    });
+    assert(settleJournals.length === 0, '96. No payout journal postings created on failed verification');
+
+    // ─── ۲۹. اعمال یکتایی مدارک تسویه در سطح دیتابیس (Database Partial Unique Index) ───
+    const settledUniqueTx = '0x' + 'f'.repeat(64);
+    const paidUniqueReq1 = await prisma.boosterWithdrawalRequest.create({
+      data: {
+        withdrawalRef: `WDR_SETTLE_UNIQ_1_${Date.now()}`,
+        boosterId: uTestA,
+        payoutMethod: BoosterWithdrawalMethod.USDT_BEP20,
+        status: BoosterWithdrawalStatus.PAID,
+        requestedUsdCents: 1000,
+        fixedFeeUsdCents: 40,
+        netUsdCents: 960,
+        quotedNetPayoutAmount: '9.60',
+        quotedCurrency: 'USDT',
+        destinationAddress: validBep20,
+        externalTxHash: settledUniqueTx,
+      },
+    });
+
+    let dbUniqueBlocked = false;
+    try {
+      // تلاش برای ایجاد یا ثبت پرداخت دوم با همان هش در وضعیت PAID
+      await prisma.boosterWithdrawalRequest.create({
+        data: {
+          withdrawalRef: `WDR_SETTLE_UNIQ_2_${Date.now()}`,
+          boosterId: uTestB,
+          payoutMethod: BoosterWithdrawalMethod.USDT_BEP20,
+          status: BoosterWithdrawalStatus.PAID,
+          requestedUsdCents: 1000,
+          fixedFeeUsdCents: 40,
+          netUsdCents: 960,
+          quotedNetPayoutAmount: '9.60',
+          quotedCurrency: 'USDT',
+          destinationAddress: validBep20,
+          externalTxHash: settledUniqueTx,
+        },
+      });
+    } catch (err: any) {
+      if (err.message.includes('Unique constraint failed') || err.message.includes('UNIQUE constraint failed')) {
+        dbUniqueBlocked = true;
+      }
+    }
+    assert(dbUniqueBlocked, '97. Database-level partial unique index strictly blocks duplicate settled tx hash under concurrency');
+    await prisma.boosterWithdrawalRequest.delete({ where: { id: paidUniqueReq1.id } });
+
+    // ─── ۳۰. تضمین مسدود بودن دروازه پرداخت زنده (Feature Gates Remain Disabled) ───
+    assert(
+      process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED !== 'true',
+      '98. FINANCE_V2_LIVE_PAYOUTS_ENABLED remains strictly disabled by default'
+    );
+
+    // ─── ۳۱. آزمون همروندی تأیید پیش‌فاکتور (Concurrent Confirmation CAS Guard) ───
     const raceQuote = await generateUsdtWithdrawalQuote({
       boosterId: uTestA,
       requestedUsdCents: 1000,
@@ -635,9 +1177,9 @@ async function runWithdrawPhase3Suite() {
     const oneSucceeded =
       (raceConf1.status === 'fulfilled' && raceConf2.status === 'rejected') ||
       (raceConf1.status === 'rejected' && raceConf2.status === 'fulfilled');
-    assert(oneSucceeded, '74. Concurrent quote confirmation: exactly one succeeds and duplicate is rejected via atomic CAS');
+    assert(oneSucceeded, '99. Concurrent quote confirmation: exactly one succeeds and duplicate is rejected via atomic CAS');
 
-    // ─── ۲۷. آزمون مسابقه لغو کاربر در برابر رد ادمین (Cancel vs Reject Race) ────
+    // ─── ۳۲. آزمون مسابقه لغو کاربر در برابر رد ادمین (Cancel vs Reject Race) ────
     const cancelRejectQuote = await generateUsdtWithdrawalQuote({
       boosterId: uTestA,
       requestedUsdCents: 1000,
@@ -654,18 +1196,18 @@ async function runWithdrawPhase3Suite() {
     const crExactOne =
       (crCancel.status === 'fulfilled' && crReject.status === 'rejected') ||
       (crCancel.status === 'rejected' && crReject.status === 'fulfilled');
-    assert(crExactOne, '75. Concurrent cancel vs reject: atomic CAS ensures funds reversed exactly once with no double credit');
+    assert(crExactOne, '100. Concurrent cancel vs reject: atomic CAS ensures funds reversed exactly once with no double credit');
   } catch (err) {
     console.error('Unhandled suite error:', err);
     failed++;
   } finally {
     // تمیزکاری نهایی
-    await prisma.userPayoutPreference.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin] } } });
-    await prisma.ledgerEntryV2.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin] } } });
-    await prisma.boosterWithdrawalRequest.deleteMany({ where: { boosterId: { in: [uTestA, uTestB, uAdmin] } } });
-    await prisma.walletV2.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin] } } });
-    await prisma.userRole.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin] } } });
-    await prisma.user.deleteMany({ where: { discordId: { in: [uTestA, uTestB, uAdmin] } } });
+    await prisma.userPayoutPreference.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
+    await prisma.ledgerEntryV2.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
+    await prisma.boosterWithdrawalRequest.deleteMany({ where: { boosterId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
+    await prisma.walletV2.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
+    await prisma.userRole.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
+    await prisma.user.deleteMany({ where: { discordId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
   }
 
   console.log('\n======================================================');

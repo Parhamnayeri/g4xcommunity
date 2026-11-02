@@ -107,6 +107,7 @@ async function runFinanceV21HardeningSuite() {
   const testBoosterA = 't21_bst_902';
   const testBoosterB = 't21_bst_903';
   const testAdminId = 't21_adm_904';
+  const testAdmin2Id = 't21_adm_908';
   const testStaffId = 't21_stf_905';
   const testExchangerId = 't21_exc_906';
   const testUnauthorizedId = 't21_unauth_907';
@@ -122,6 +123,7 @@ async function runFinanceV21HardeningSuite() {
       testBoosterA,
       testBoosterB,
       testAdminId,
+      testAdmin2Id,
       testStaffId,
       testExchangerId,
       testUnauthorizedId,
@@ -138,6 +140,11 @@ async function runFinanceV21HardeningSuite() {
       where: { userId_roleKey: { userId: testAdminId, roleKey: 'owner' } },
       update: {},
       create: { userId: testAdminId, roleKey: 'owner' },
+    });
+    await prisma.userRole.upsert({
+      where: { userId_roleKey: { userId: testAdmin2Id, roleKey: 'owner' } },
+      update: {},
+      create: { userId: testAdmin2Id, roleKey: 'owner' },
     });
     await prisma.userRole.upsert({
       where: { userId_roleKey: { userId: testStaffId, roleKey: 'manager' } },
@@ -724,9 +731,18 @@ async function runFinanceV21HardeningSuite() {
 
     // Complete payout legitimately
     process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED = 'true';
+    const validReceiptRef = `RECEIPT-VALID-${Date.now()}`;
     await adminExecuteManualPayout(freshWdrReq.id, testAdminId, {
-      bankReceiptRef: `RECEIPT-VALID-${Date.now()}`,
+      bankReceiptRef: validReceiptRef,
       notes: 'Legitimate payout',
+      secondReviewerId: testAdmin2Id,
+      bankSettlementRecord: {
+        verifiedAt: new Date(),
+        settlementBatchId: 'BATCH-2026-TEST',
+        sourceBank: 'Mellat',
+        verifiedAmountIrt: Math.round(Number(freshIrtQuote.quotedNetPayoutAmount)),
+        destinationIban: freshIrtQuote.destinationAddress,
+      },
     });
     process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED = 'false';
 
@@ -734,9 +750,18 @@ async function runFinanceV21HardeningSuite() {
     let repeatedPayoutRejected = false;
     try {
       process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED = 'true';
+      const repeatReceiptRef = `RECEIPT-REPEAT-${Date.now()}`;
       await adminExecuteManualPayout(freshWdrReq.id, testAdminId, {
-        bankReceiptRef: `RECEIPT-REPEAT-${Date.now()}`,
+        bankReceiptRef: repeatReceiptRef,
         notes: 'Repeated attempt',
+        secondReviewerId: testAdmin2Id,
+        bankSettlementRecord: {
+          verifiedAt: new Date(),
+          settlementBatchId: 'BATCH-2026-TEST',
+          sourceBank: 'Mellat',
+          verifiedAmountIrt: Math.round(Number(freshIrtQuote.quotedNetPayoutAmount)),
+          destinationIban: freshIrtQuote.destinationAddress,
+        },
       });
     } catch (err: any) {
       if (err.message.includes('ALREADY_PAID') || err.message.includes('INVALID_STATUS')) {
@@ -994,6 +1019,7 @@ async function runFinanceV21HardeningSuite() {
               testBoosterA,
               testBoosterB,
               testAdminId,
+              testAdmin2Id,
               testStaffId,
               testExchangerId,
               testUnauthorizedId,
@@ -1009,6 +1035,7 @@ async function runFinanceV21HardeningSuite() {
               testBoosterA,
               testBoosterB,
               testAdminId,
+              testAdmin2Id,
               testStaffId,
               testExchangerId,
               testUnauthorizedId,
@@ -1024,6 +1051,7 @@ async function runFinanceV21HardeningSuite() {
               testBoosterA,
               testBoosterB,
               testAdminId,
+              testAdmin2Id,
               testStaffId,
               testExchangerId,
               testUnauthorizedId,

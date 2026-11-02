@@ -1633,7 +1633,7 @@ router.post(
     try {
       const { user } = req as AuthenticatedRequest;
       const id = Number(req.params.id);
-      const { decision, txHash, bankReceiptRef, reason } = req.body;
+      const { decision, txHash, bankReceiptRef, reason, secondReviewerId } = req.body;
 
       if (decision === 'approve_paid') {
         const tx = txHash ? String(txHash).trim() : '';
@@ -1645,11 +1645,11 @@ router.post(
           });
           return;
         }
+        // ساختارهای مدارک ارسالی کلاینت نادیده گرفته شده و استعلام صرفاً توسط سرور انجام می‌شود
         const { request: updatedReq } = await adminExecuteManualPayout(id, user.discordId, {
           externalTxHash: tx || undefined,
           bankReceiptRef: receipt || undefined,
-          bep20Evidence: req.body.bep20Evidence,
-          irtEvidence: req.body.irtEvidence,
+          secondReviewerId: secondReviewerId ? String(secondReviewerId).trim() : undefined,
           notes: req.body.notes || 'Executed via Admin Hub with verified disbursement evidence',
         });
         res.json({

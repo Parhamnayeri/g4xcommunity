@@ -53,8 +53,9 @@ import {
   assertNoDuplicatePayoutEvidence,
   reconcileUsdtBep20Payout,
   reconcileIrtBankPayout,
-  UsdtPayoutReconciliationEvidence,
-  IrtPayoutReconciliationEvidence,
+  PayoutReconciliationResult,
+  UsdtReconciliationOptions,
+  IrtReconciliationOptions,
 } from './payoutVerificationService';
 
 export interface UsdtQuoteInput {
@@ -98,8 +99,22 @@ export interface PayoutScheduleResult {
 }
 
 /**
- * محاسبه هش یا امضای غیرقابل تغییر پیش‌فاکتور (HMAC-SHA256 Quote Integrity Signature)
- * امضا شده توسط کلید محرمانه سرور جهت جلوگیری از جعل و دستکاری سمت کلاینت
+ * بازیابی امن کلید اختصاصی امضای پیش‌فاکتورهای تسویه با اعتبارسنجی حداقل ۳۲ کاراکتر انتروپی
+ * در صورت فقدان یا ناکافی بودن انتروپی، سامانه Fail-Closed شده و خطای صریح صادر می‌کند.
+ */
+export function getWithdrawalQuoteSigningSecret(): string {
+  const secret = process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET;
+  if (!secret || secret.trim().length < 32) {
+    throw new Error(
+      'MISSING_WITHDRAWAL_QUOTE_SIGNING_SECRET: Dedicated server-side WITHDRAWAL_QUOTE_SIGNING_SECRET with at least 32 characters of entropy is strictly required for financial quote operations.'
+    );
+  }
+  return secret.trim();
+}
+
+/**
+ * محاسبه امضای غیرقابل تغییر پیش‌فاکتور (HMAC-SHA256 Quote Integrity Signature)
+ * متصل به شناسه کاربر، روش برداشت، مبالغ، کارمزدها، نرخ موثق، مقصد، نسخه و زمان انقضا
  */
 export function computeWithdrawalQuoteHash(params: {
   boosterId: string;
@@ -111,8 +126,11 @@ export function computeWithdrawalQuoteHash(params: {
   effectiveRate: number | null;
   destinationAddress: string;
   quoteExpiresAt: Date;
+  quoteVersion?: number;
   policyVersion: number;
+  quoteId?: string | number | null;
 }): string {
+  const secret = getWithdrawalQuoteSigningSecret();
   const payload = [
     params.boosterId,
     params.payoutMethod,
@@ -123,15 +141,17 @@ export function computeWithdrawalQuoteHash(params: {
     params.effectiveRate ?? 'null',
     params.destinationAddress.toLowerCase().trim(),
     params.quoteExpiresAt.toISOString(),
+    params.quoteVersion ?? 1,
     params.policyVersion,
+    params.quoteId ? String(params.quoteId) : 'none',
   ].join('|');
 
-  const secret = process.env.SESSION_SECRET || process.env.JWT_SECRET || 'g4x-internal-quote-signing-key-v2';
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
 
 /**
- * بررسی یکپارچگی هش پیش‌فاکتور (پشتیبانی از امضای HMAC و تطابق SHA-256 گذشته)
+ * بررسی یکپارچگی امضای پیش‌فاکتور با استفاده از مقایسه زمان‌ثابت (Constant-Time Comparison)
+ * رد قطعی هرگونه امضای ساده SHA-256 یا کلیدهای دیفالت و فاقد اعتبار
  */
 export function verifyWithdrawalQuoteHash(
   params: {
@@ -144,30 +164,26 @@ export function verifyWithdrawalQuoteHash(
     effectiveRate: number | null;
     destinationAddress: string;
     quoteExpiresAt: Date;
+    quoteVersion?: number;
     policyVersion: number;
+    quoteId?: string | number | null;
   },
   expectedHash: string
 ): boolean {
-  const payload = [
-    params.boosterId,
-    params.payoutMethod,
-    params.requestedUsdCents,
-    params.fixedFeeUsdCents,
-    params.netUsdCents,
-    params.quoteRate ?? 'null',
-    params.effectiveRate ?? 'null',
-    params.destinationAddress.toLowerCase().trim(),
-    params.quoteExpiresAt.toISOString(),
-    params.policyVersion,
-  ].join('|');
+  if (!expectedHash || typeof expectedHash !== 'string') return false;
 
-  const secret = process.env.SESSION_SECRET || process.env.JWT_SECRET || 'g4x-internal-quote-signing-key-v2';
-  const hmacSignature = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  if (hmacSignature === expectedHash) return true;
+  const computedHash = computeWithdrawalQuoteHash(params);
 
-  // سازگاری با هش‌های ساده پیشین
-  const legacySha256 = crypto.createHash('sha256').update(payload).digest('hex');
-  return legacySha256 === expectedHash;
+  // مقایسه زمان‌ثابت جهت ایمنی در برابر حملات تحلیل زمانی (Timing Attacks)
+  const computedBuffer = Buffer.from(computedHash, 'hex');
+  const expectedBuffer = Buffer.from(expectedHash, 'hex');
+
+  if (computedBuffer.length !== expectedBuffer.length || computedBuffer.length === 0) {
+    return false;
+  }
+
+  // عدم پذیرش قطعی هش‌های فاقد کلید یا ناسازگار
+  return crypto.timingSafeEqual(computedBuffer, expectedBuffer);
 }
 
 /**
@@ -588,13 +604,16 @@ export async function confirmAndSubmitWithdrawalRequest(
           effectiveRate: request.effectiveRate,
           destinationAddress: request.destinationAddress,
           quoteExpiresAt: request.quoteExpiresAt,
+          quoteVersion: request.quoteVersion,
           policyVersion: request.policyVersion ?? 2,
         },
         request.quoteHash
       );
 
       if (!isIntegrityValid) {
-        throw new Error('QUOTE_TAMPERED: Persisted quote hash integrity check failed. Quote data has been modified.');
+        throw new Error(
+          'QUOTE_TAMPERED: Persisted quote hash integrity check failed. Quote data has been modified or uses an expired/unsupported legacy signature. Requoting is mandatory.'
+        );
       }
     }
 
@@ -650,9 +669,51 @@ export async function confirmAndSubmitWithdrawalRequest(
   });
 }
 
+async function recordDurableFailedReview(
+  requestId: number,
+  actorId: string,
+  reason: string,
+  payoutMethod: BoosterWithdrawalMethod,
+  normalizedRef: string | null
+): Promise<void> {
+  const sanitizedReason = reason.replace(/[\r\n\t]/g, ' ').substring(0, 500);
+
+  // تغییر وضعیت به UNDER_ADMIN_REVIEW با استفاده از شرط CAS
+  // تضمین می‌کند اگر درخواست در حین استعلام کنسل یا رد شده باشد، بازنویسی نشود
+  await prisma.boosterWithdrawalRequest.updateMany({
+    where: {
+      id: requestId,
+      status: {
+        in: [
+          BoosterWithdrawalStatus.RESERVED,
+          BoosterWithdrawalStatus.PROCESSING,
+          BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
+        ],
+      },
+    },
+    data: {
+      status: BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
+      externalTxHash: payoutMethod === BoosterWithdrawalMethod.USDT_BEP20 ? normalizedRef : null,
+      bankReceiptRef: payoutMethod === BoosterWithdrawalMethod.IRT_BANK ? normalizedRef : null,
+    },
+  });
+
+  // ثبت لاگ ممیزی پایدار خارج از هرگونه تراکنش قابل ابطال
+  await prisma.auditLog.create({
+    data: {
+      actorId,
+      action: 'WITHDRAWAL_PAYOUT_VERIFICATION_FAILED',
+      entityType: 'BoosterWithdrawalRequest',
+      entityId: String(requestId),
+      reason: sanitizedReason,
+      isSuccess: false,
+    },
+  });
+}
+
 /**
  * ۶. تایید و پرداخت دستی توسط ادمین (Admin Manual Payout Execution)
- * منوط به ثبت هش تراکنش بلاکچین یا شماره پیگیری فیش بانکی و تراز کامل دفاتر
+ * منوط به استعلام موثق و مستقل سرور از وضعیت بلاکچین یا بانک و تراز کامل دفاتر
  */
 export async function adminExecuteManualPayout(
   requestId: number,
@@ -661,8 +722,15 @@ export async function adminExecuteManualPayout(
     externalTxHash?: string;
     bankReceiptRef?: string;
     notes?: string;
-    bep20Evidence?: UsdtPayoutReconciliationEvidence;
-    irtEvidence?: IrtPayoutReconciliationEvidence;
+    secondReviewerId?: string;
+    bscVerificationOptions?: UsdtReconciliationOptions;
+    bankSettlementRecord?: {
+      verifiedAt: Date | string;
+      settlementBatchId: string;
+      sourceBank: string;
+      verifiedAmountIrt: number;
+      destinationIban: string;
+    };
   }
 ) {
   assertLivePayoutsEnabled();
@@ -672,80 +740,110 @@ export async function adminExecuteManualPayout(
     throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions to execute payouts'}`);
   }
 
-  const { externalTxHash, bankReceiptRef, notes, bep20Evidence, irtEvidence } = options;
+  const { externalTxHash, bankReceiptRef, notes, secondReviewerId, bscVerificationOptions, bankSettlementRecord } = options;
 
-  return await prisma.$transaction(async (tx) => {
-    const request = await tx.boosterWithdrawalRequest.findUnique({
-      where: { id: requestId },
-    });
+  const request = await prisma.boosterWithdrawalRequest.findUnique({
+    where: { id: requestId },
+  });
 
-    if (!request) {
-      throw new Error(`WITHDRAWAL_NOT_FOUND: Request #${requestId} not found`);
-    }
+  if (!request) {
+    throw new Error(`WITHDRAWAL_NOT_FOUND: Request #${requestId} not found`);
+  }
 
-    if (request.status === BoosterWithdrawalStatus.PAID) {
-      throw new Error(`ALREADY_PAID: Withdrawal #${requestId} has already been settled and paid`);
-    }
+  if (request.status === BoosterWithdrawalStatus.PAID) {
+    throw new Error(`ALREADY_PAID: Withdrawal #${requestId} has already been settled and paid`);
+  }
 
-    if (![BoosterWithdrawalStatus.RESERVED, BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW, BoosterWithdrawalStatus.PROCESSING].includes(request.status as BoosterWithdrawalStatus)) {
-      throw new Error(`INVALID_STATUS: Cannot execute payout on withdrawal in status '${request.status}'`);
-    }
+  if (![BoosterWithdrawalStatus.RESERVED, BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW, BoosterWithdrawalStatus.PROCESSING].includes(request.status as BoosterWithdrawalStatus)) {
+    throw new Error(`INVALID_STATUS: Cannot execute payout on withdrawal in status '${request.status}'`);
+  }
 
-    // ۱. اعتبارسنجی دقیق فرمت مدرک تسویه برون‌سیستمی متناسب با روش پرداخت
-    const formatValidation = validatePayoutEvidenceFormat(
+  // ۱. اعتبارسنجی دقیق فرمت مدرک تسویه برون‌سیستمی متناسب با روش پرداخت
+  const formatValidation = validatePayoutEvidenceFormat(
+    request.payoutMethod as BoosterWithdrawalMethod,
+    { externalTxHash, bankReceiptRef }
+  );
+  if (!formatValidation.isValid) {
+    await recordDurableFailedReview(
+      requestId,
+      actorId,
+      formatValidation.error || 'INVALID_EVIDENCE_FORMAT',
       request.payoutMethod as BoosterWithdrawalMethod,
-      { externalTxHash, bankReceiptRef }
+      null
     );
-    if (!formatValidation.isValid) {
-      throw new Error(formatValidation.error);
-    }
+    throw new Error(formatValidation.error);
+  }
 
-    const normalizedRef = formatValidation.normalizedRef;
+  const normalizedRef = formatValidation.normalizedRef;
 
-    // ۲. ممانعت قطعی از ثبت مدرک تسویه تکراری که قبلاً در پرداخت دیگری استفاده شده است
+  // ۲. ممانعت قطعی از ثبت مدرک تسویه تکراری که قبلاً در پرداخت دیگری استفاده شده است
+  try {
     await assertNoDuplicatePayoutEvidence(
       request.payoutMethod as BoosterWithdrawalMethod,
       normalizedRef,
       request.id,
-      tx
+      prisma
+    );
+  } catch (dupErr: any) {
+    await recordDurableFailedReview(
+      requestId,
+      actorId,
+      dupErr.message,
+      request.payoutMethod as BoosterWithdrawalMethod,
+      normalizedRef
+    );
+    throw dupErr;
+  }
+
+  // ۳. انطباق مستقل و موثق تسویه (Authoritative Server-Side Reconciliation)
+  let reconciliationResult: PayoutReconciliationResult;
+  if (request.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20) {
+    reconciliationResult = await reconcileUsdtBep20Payout(
+      {
+        id: request.id,
+        destinationAddress: request.destinationAddress,
+        quotedNetPayoutAmount: request.quotedNetPayoutAmount,
+        netUsdCents: request.netUsdCents,
+      },
+      normalizedRef,
+      bscVerificationOptions
+    );
+  } else {
+    reconciliationResult = await reconcileIrtBankPayout(
+      {
+        id: request.id,
+        destinationAddress: request.destinationAddress,
+        quotedNetPayoutAmount: request.quotedNetPayoutAmount,
+      },
+      normalizedRef,
+      {
+        actorId,
+        secondReviewerId,
+        settlementRecord: bankSettlementRecord,
+      }
+    );
+  }
+
+  if (!reconciliationResult.verified) {
+    const sanitizedReason = (reconciliationResult.reason || 'Authoritative payout verification failed')
+      .replace(/[\r\n\t]/g, ' ')
+      .substring(0, 500);
+
+    // ثبت پایدار و متعهد وضعیت در دیتابیس (خارج از تراکنش لغو شونده)
+    await recordDurableFailedReview(
+      requestId,
+      actorId,
+      sanitizedReason,
+      request.payoutMethod as BoosterWithdrawalMethod,
+      normalizedRef
     );
 
-    // ۳. انطباق مستقل و موثق تسویه (Authoritative Reconciliation)
-    let reconciliationResult: any = null;
-    if (request.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20) {
-      reconciliationResult = await reconcileUsdtBep20Payout(
-        {
-          id: request.id,
-          destinationAddress: request.destinationAddress,
-          quotedNetPayoutAmount: request.quotedNetPayoutAmount,
-        },
-        normalizedRef,
-        bep20Evidence
-      );
-    } else {
-      reconciliationResult = await reconcileIrtBankPayout(
-        {
-          id: request.id,
-          destinationAddress: request.destinationAddress,
-          quotedNetPayoutAmount: request.quotedNetPayoutAmount,
-        },
-        normalizedRef,
-        irtEvidence
-      );
-    }
+    // پرتاب خطای صریح بدون ابطال وضعیت پایدار ثبت‌شده در دیتابیس
+    throw new Error(`PAYOUT_VERIFICATION_REQUIRED: ${sanitizedReason}`);
+  }
 
-    if (!reconciliationResult.verified) {
-      // در صورت عدم انطباق یا در دسترس نبودن زیرساخت استعلام، درخواست در وضعیت بررسی حفظ شده و پرداخت نمی‌شود
-      await tx.boosterWithdrawalRequest.update({
-        where: { id: requestId },
-        data: { status: BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW },
-      });
-      throw new Error(
-        `PAYOUT_VERIFICATION_REQUIRED: ${reconciliationResult.reason || 'Authoritative payout verification failed'}`
-      );
-    }
-
-    // ۴. قفل همروندی اتمیک (Atomic Compare-and-Swap): اطمینان از اینکه پرداخت دو بار به صورت همزمان ثبت نشود
+  // ۴. در صورت تایید انطباق، ورود به تراکنش اتمیک تسویه دفاتر کل و تغییر قطعی به PAID
+  return await prisma.$transaction(async (tx) => {
     const casUpdate = await tx.boosterWithdrawalRequest.updateMany({
       where: {
         id: requestId,
