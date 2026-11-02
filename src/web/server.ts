@@ -26,8 +26,8 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // ─── میدل‌ویرهای پایه و پارس بدنه ──────────────────────────────────────────
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // هدرهای پایه امنیت وب
 app.use((_req, res, next) => {

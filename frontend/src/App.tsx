@@ -9,6 +9,7 @@ import { PrivacyPage } from './pages/PrivacyPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { WithdrawPage } from './pages/WithdrawPage';
 import { AdvertiserPage } from './pages/AdvertiserPage';
+import { WalletPage } from './pages/WalletPage';
 import { LegacyTransitionPage } from './pages/LegacyTransitionPage';
 
 export const App: React.FC = () => {
@@ -26,17 +27,7 @@ export const App: React.FC = () => {
           {/* Authenticated Routes with Member Dashboard Layout */}
           <Route element={<DashboardLayout />}>
             <Route path="/dashboard" element={<DashboardPage />} />
-            <Route
-              path="/wallet"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Unified USD Wallet & Ledger"
-                  category="Authenticated"
-                  description="Check your available USD balance, pending boost earnings, and double-entry transaction history."
-                  legacyTab="wallet"
-                />
-              }
-            />
+            <Route path="/wallet" element={<WalletPage />} />
             <Route path="/withdraw" element={<WithdrawPage />} />
             <Route
               path="/profile"

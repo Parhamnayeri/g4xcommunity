@@ -49,6 +49,7 @@ import { DomainError, DomainErrorCode } from '../services/domainErrors';
 import { getOrCreateWalletV2, getWalletV2Summary } from '../services/financeV2/financeV2WalletService';
 import { marketplaceRouter } from './marketplaceRoutes';
 import { paymentRouter } from './paymentRoutes';
+import { walletRouter } from './walletRoutes';
 import { getGlobalDiscordClient } from '../services/orderDiscordService';
 import {
   getOrderDiagnostics,
@@ -198,6 +199,7 @@ router.use('/marketplace', marketplaceRouter);
 
 // ─── روت‌های پرداخت، وب‌هوک و اعتبارسنجی وصول وجوه ─────────────────────────
 router.use('/', paymentRouter);
+router.use('/', walletRouter);
 
 // ─── کاتالوگ عمومی بازی‌ها و سرویس‌های فعال پلتفرم G4X ─────────────────────
 router.get('/public/games', async (_req: Request, res: Response): Promise<void> => {
