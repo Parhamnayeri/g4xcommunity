@@ -152,7 +152,49 @@ export const DashboardLayout: React.FC = () => {
           >
             Profile &amp; Characters
           </Link>
-          {isOwnerOrAdmin && (
+          {hasRole('staff', 'manager', 'admin', 'owner') && (
+            <Link
+              to="/staff"
+              style={{
+                padding: '0.4rem 0.8rem',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                color: location.pathname === '/staff' ? 'var(--accent-lime)' : 'var(--text-muted)',
+                borderBottom: location.pathname === '/staff' ? '2px solid var(--accent-lime)' : 'none',
+              }}
+            >
+              Staff Portal
+            </Link>
+          )}
+          {hasRole('manager', 'admin', 'owner') && (
+            <>
+              <Link
+                to="/management"
+                style={{
+                  padding: '0.4rem 0.8rem',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  color: location.pathname === '/management' ? 'var(--accent-lime)' : 'var(--text-muted)',
+                  borderBottom: location.pathname === '/management' ? '2px solid var(--accent-lime)' : 'none',
+                }}
+              >
+                Management
+              </Link>
+              <Link
+                to="/management/kyc"
+                style={{
+                  padding: '0.4rem 0.8rem',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  color: location.pathname === '/management/kyc' ? 'var(--accent-lime)' : 'var(--text-muted)',
+                  borderBottom: location.pathname === '/management/kyc' ? '2px solid var(--accent-lime)' : 'none',
+                }}
+              >
+                KYC Review
+              </Link>
+            </>
+          )}
+          {hasRole('admin', 'owner') && (
             <Link
               to="/admin"
               style={{
@@ -162,7 +204,7 @@ export const DashboardLayout: React.FC = () => {
                 color: location.pathname.startsWith('/admin') ? 'var(--accent-lime)' : 'var(--text-muted)',
               }}
             >
-              Staff &amp; Admin
+              Admin
             </Link>
           )}
         </div>

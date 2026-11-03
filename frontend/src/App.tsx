@@ -14,6 +14,10 @@ import { ExchangePage } from './pages/ExchangePage';
 import { ExchangerPage } from './pages/ExchangerPage';
 import { LegacyTransitionPage } from './pages/LegacyTransitionPage';
 
+import { StaffPage } from './pages/StaffPage';
+import { ManagementPage } from './pages/ManagementPage';
+import { KycManagementPage } from './pages/KycManagementPage';
+
 export const App: React.FC = () => {
   return (
     <AuthProvider>
@@ -57,18 +61,11 @@ export const App: React.FC = () => {
             <Route path="/exchange" element={<ExchangePage />} />
             <Route path="/exchanger" element={<ExchangerPage />} />
 
-            {/* Operations Routes */}
-            <Route
-              path="/staff"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Staff Operations"
-                  category="Operations"
-                  description="Review booster proofs, order presign countdowns, and customer disputes."
-                  legacyTab="staff"
-                />
-              }
-            />
+            {/* Operations Routes — Website Phase 7 */}
+            <Route path="/staff" element={<StaffPage />} />
+            <Route path="/management" element={<ManagementPage />} />
+            <Route path="/management/kyc" element={<KycManagementPage />} />
+
             <Route
               path="/admin"
               element={
@@ -77,28 +74,6 @@ export const App: React.FC = () => {
                   category="Operations"
                   description="Execute manual withdrawal payouts, approve published orders, and oversee platform reconciliations."
                   legacyTab="admin"
-                />
-              }
-            />
-            <Route
-              path="/management"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Management Operations"
-                  category="Operations"
-                  description="Audit platform logs, oversee staff workflows, and monitor order lifecycles."
-                  legacyTab="management"
-                />
-              }
-            />
-            <Route
-              path="/management/kyc"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Identity & Pilot KYC Review"
-                  category="Operations"
-                  description="Verify pilot credentials, ID proofs, and contact details for high-stakes account handling."
-                  legacyTab="kyc"
                 />
               }
             />
