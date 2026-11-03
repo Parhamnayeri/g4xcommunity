@@ -17,6 +17,8 @@ import { LegacyTransitionPage } from './pages/LegacyTransitionPage';
 import { StaffPage } from './pages/StaffPage';
 import { ManagementPage } from './pages/ManagementPage';
 import { KycManagementPage } from './pages/KycManagementPage';
+import { AdminPage } from './pages/AdminPage';
+import { OwnerPage } from './pages/OwnerPage';
 
 export const App: React.FC = () => {
   return (
@@ -66,41 +68,12 @@ export const App: React.FC = () => {
             <Route path="/management" element={<ManagementPage />} />
             <Route path="/management/kyc" element={<KycManagementPage />} />
 
-            <Route
-              path="/admin"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Administrative Center"
-                  category="Operations"
-                  description="Execute manual withdrawal payouts, approve published orders, and oversee platform reconciliations."
-                  legacyTab="admin"
-                />
-              }
-            />
+            {/* Admin Operations Portal — Website Phase 8 */}
+            <Route path="/admin" element={<AdminPage />} />
 
-            {/* Owner Routes */}
-            <Route
-              path="/owner"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Owner Executive Portal"
-                  category="Owner"
-                  description="Complete administrative oversight, system health diagnostics, and platform security."
-                  legacyTab="owner"
-                />
-              }
-            />
-            <Route
-              path="/owner/finance"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Financial Engine & Ledgers"
-                  category="Owner"
-                  description="Review external platform accounts, balance sheets, and double-entry reconciliation batches."
-                  legacyTab="owner-finance"
-                />
-              }
-            />
+            {/* Owner Executive Portal — Website Phase 8 */}
+            <Route path="/owner" element={<OwnerPage />} />
+            <Route path="/owner/finance" element={<OwnerPage />} />
             <Route
               path="/owner/games"
               element={

@@ -188,12 +188,18 @@ import { validateBep20Address } from '../services/financeV2/bep20Validator';
 import { FINANCE_V2_CONSTANTS, BoosterWithdrawalMethod, BoosterWithdrawalStatus } from '../services/financeV2/financeV2Types';
 
 import { ownerGateRouter } from './ownerGate';
+import { adminPortalRouter } from './adminPortalRoutes';
+import { ownerPortalRouter } from './ownerPortalRoutes';
 
 export const router = Router();
 
 // ─── دروازه ورود اختصاصی و امن مالک (OwnerGate) ─────────────────────────────
 router.use('/OwnerGate', ownerGateRouter);
 router.use('/ownergate', ownerGateRouter);
+
+// ─── روت‌های پورتال ادمین و مالک (Website Phase 8) ──────────────────────────
+router.use('/', adminPortalRouter);
+router.use('/', ownerPortalRouter);
 
 // ─── روت‌های بازار مبادله، معاملات طلا و شارژ همتا‌به‌همتا (Finance V2.2) ──────
 router.use('/marketplace', marketplaceRouter);

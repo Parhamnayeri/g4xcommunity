@@ -194,7 +194,7 @@ export const DashboardLayout: React.FC = () => {
               </Link>
             </>
           )}
-          {hasRole('admin', 'owner') && (
+          {hasRole('admin', 'manager', 'owner') && (
             <Link
               to="/admin"
               style={{
@@ -202,9 +202,24 @@ export const DashboardLayout: React.FC = () => {
                 fontSize: '0.85rem',
                 fontWeight: 600,
                 color: location.pathname.startsWith('/admin') ? 'var(--accent-lime)' : 'var(--text-muted)',
+                borderBottom: location.pathname.startsWith('/admin') ? '2px solid var(--accent-lime)' : 'none',
               }}
             >
-              Admin
+              Admin Hub
+            </Link>
+          )}
+          {hasRole('owner') && (
+            <Link
+              to="/owner"
+              style={{
+                padding: '0.4rem 0.8rem',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                color: location.pathname.startsWith('/owner') ? 'var(--accent-lime)' : 'var(--text-muted)',
+                borderBottom: location.pathname.startsWith('/owner') ? '2px solid var(--accent-lime)' : 'none',
+              }}
+            >
+              👑 Owner Portal
             </Link>
           )}
         </div>

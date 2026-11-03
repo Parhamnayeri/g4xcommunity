@@ -62,7 +62,8 @@
     "test:migration": "ts-node src/test/migration_evidence_preservation_suite.ts",
     "test:phase6": "ts-node src/test/phase6_exchange_marketplace_suite.ts",
     "test:phase6:security": "ts-node src/test/phase6_exchange_security_hardening_suite.ts",
-    "test:phase7": "ts-node src/test/website_phase7_operations_suite.ts"
+    "test:phase7": "ts-node src/test/website_phase7_operations_suite.ts",
+    "test:phase8": "ts-node src/test/website_phase8_admin_owner_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"

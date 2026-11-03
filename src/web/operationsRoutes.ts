@@ -21,14 +21,9 @@ import { recordStaffReview, recordAdminFinalApproval } from '../services/finance
 import { getSeparatedOrdersList, getCategorizedOrders, publishOrder, getOrderDiagnostics } from '../services/orderLifecycleService';
 import { reviewApplication } from '../services/registrationService';
 import { getGlobalDiscordClient } from '../services/orderDiscordService';
+import { KYC_DOCS_DIR, validateKycDocumentReference } from '../services/kycDocumentSecurity';
 
 export const operationsRouter = Router();
-
-// Storage directory for uploaded KYC evidence
-const KYC_DOCS_DIR = path.join(process.cwd(), 'storage', 'kyc_documents');
-if (!fs.existsSync(KYC_DOCS_DIR)) {
-  fs.mkdirSync(KYC_DOCS_DIR, { recursive: true });
-}
 
 // ─── Middleware Guards ────────────────────────────────────────────────────────
 
@@ -1047,38 +1042,26 @@ async function serveSecureKycDocument(
     trustedDocRef = requestedBase;
   }
 
-  const baseName = path.basename(trustedDocRef);
-  if (baseName.includes('..') || baseName.includes('/') || baseName.includes('\\') || baseName !== trustedDocRef) {
-    res.status(400).json({ error: 'PATH_TRAVERSAL_DETECTED', message: 'Invalid document reference format' });
-    return;
-  }
-
-  const safeRegex = /^[a-zA-Z0-9_\-\.]+\.(png|jpg|jpeg|webp|pdf)$/i;
-  if (!safeRegex.test(baseName)) {
-    res.status(400).json({ error: 'DISALLOWED_DOC_TYPE', message: 'Disallowed document format or extension' });
-    return;
-  }
-
-  const targetPath = path.resolve(KYC_DOCS_DIR, baseName);
-  if (!fs.existsSync(targetPath)) {
+  const valResult = validateKycDocumentReference(trustedDocRef, KYC_DOCS_DIR);
+  if (!valResult.valid) {
+    if (valResult.error === 'PATH_TRAVERSAL_DETECTED') {
+      res.status(400).json({ error: 'PATH_TRAVERSAL_DETECTED', message: 'Invalid document reference format' });
+      return;
+    }
+    if (valResult.error === 'DISALLOWED_DOC_TYPE') {
+      res.status(400).json({ error: 'DISALLOWED_DOC_TYPE', message: 'Disallowed document format or extension' });
+      return;
+    }
+    if (valResult.error === 'ILLEGAL_LINK_DETECTED') {
+      res.status(403).json({ error: 'ILLEGAL_LINK_DETECTED', message: 'Symbolic links are strictly prohibited' });
+      return;
+    }
     res.status(404).json({ error: 'DOCUMENT_NOT_FOUND', message: 'Document file not found on secure storage' });
     return;
   }
 
-  // Symlink check
-  const lstat = fs.lstatSync(targetPath);
-  if (lstat.isSymbolicLink()) {
-    res.status(403).json({ error: 'ILLEGAL_LINK_DETECTED', message: 'Symbolic links are strictly prohibited' });
-    return;
-  }
-
-  // Canonical realpath containment check
-  const realKycDir = fs.realpathSync(KYC_DOCS_DIR);
-  const canonicalPath = fs.realpathSync(targetPath);
-  if (!canonicalPath.startsWith(realKycDir + path.sep)) {
-    res.status(403).json({ error: 'PATH_TRAVERSAL_DETECTED', message: 'Path traversal or symlink escape detected' });
-    return;
-  }
+  const baseName = valResult.baseName!;
+  const canonicalPath = valResult.canonicalPath!;
 
   const ext = path.extname(baseName).toLowerCase();
   const mimeMap: Record<string, string> = {

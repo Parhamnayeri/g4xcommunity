@@ -11,6 +11,7 @@ import { fetchCharacterData, fetchRaiderIOProfile, parseRaiderIOProfileUrl, Raid
 import { Prisma } from '@prisma/client';
 import { PermissionFlagsBits } from 'discord.js';
 import { processNotificationOutbox } from './notificationWorker';
+import { validateApplicationKycDocuments } from './kycDocumentSecurity';
 
 export type RegistrationCategory = 'booster' | 'pilot' | 'advertiser' | 'exchanger';
 
@@ -1082,35 +1083,25 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         throw new Error('IDENTITY_ALREADY_VERIFIED: Identity for this application has already been verified');
       }
 
-      // اعتبارسنجی مدارک هویتی اجباری طبق خط‌مشی احراز هویت
-      if (currentApp.category === 'pilot') {
-        const verif = await tx.pilotVerification.findFirst({
-          where: {
-            userId: applicantId,
-            ...(currentApp.gameSlug ? { gameSlug: currentApp.gameSlug } : {}),
-          },
-        });
-        let qualDocs: any = {};
-        try {
-          qualDocs = JSON.parse(currentApp.qualifications || '{}');
-        } catch {}
+      if (currentApp.identityStatus === 'rejected') {
+        throw new Error('IDENTITY_ALREADY_REJECTED: Cannot verify identity for an application with rejected identity');
+      }
 
-        const hasId = Boolean(verif?.identityDocumentRef || qualDocs?.identityDocumentRef);
-        const hasPassport = Boolean(verif?.passportDocumentRef || qualDocs?.passportDocumentRef);
-        const hasSelfie = Boolean(verif?.selfieDocumentRef || qualDocs?.selfieDocumentRef);
+      if (!['pilot', 'exchanger'].includes(currentApp.category)) {
+        throw new Error('INELIGIBLE_FOR_IDENTITY_VERIFICATION: Only pilot and exchanger applications undergo KYC identity verification');
+      }
 
-        if (!((hasId || hasPassport) && hasSelfie)) {
-          throw new Error('MANDATORY_EVIDENCE_MISSING: Pilot identity verification requires valid identity/passport and selfie documentation');
-        }
-      } else if (currentApp.category === 'exchanger') {
-        let qualDocs: any = {};
-        try {
-          qualDocs = JSON.parse(currentApp.qualifications || '{}');
-        } catch {}
-        const hasDocs = Boolean(qualDocs?.identityDocumentRef || qualDocs?.passportDocumentRef || qualDocs?.selfieDocumentRef);
-        if (!hasDocs) {
-          throw new Error('MANDATORY_EVIDENCE_MISSING: Exchanger identity verification requires valid submitted identity documentation');
-        }
+      const verif = await tx.pilotVerification.findFirst({
+        where: {
+          userId: applicantId,
+          ...(currentApp.gameSlug ? { gameSlug: currentApp.gameSlug } : {}),
+        },
+      });
+
+      // اعتبارسنجی فیزیکی و قطعی مدارک بر روی دیسک امن (Reject forged references, missing files, symlinks, traversal)
+      const docValidation = validateApplicationKycDocuments(currentApp, verif);
+      if (!docValidation.valid) {
+        throw new Error(docValidation.error || 'MANDATORY_EVIDENCE_MISSING: Valid identity evidence files are missing or corrupted');
       }
 
       if (currentApp.category === 'pilot' && currentApp.gameSlug) {
@@ -1118,6 +1109,7 @@ export async function reviewApplication(input: ApplicationReviewInput) {
           where: {
             userId: applicantId,
             gameSlug: currentApp.gameSlug,
+            status: { not: 'rejected' },
           },
           data: {
             status: 'approved',
@@ -1128,8 +1120,13 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         });
       }
 
-      const updatedApp = await tx.registrationApplication.update({
-        where: { id: applicationId },
+      // به‌روزرسانی اتمیک با شرط مقایسه-و-تعویض (Atomic CAS) جهت جلوگیری از تایید همزمان یا متعارض
+      const updateResult = await tx.registrationApplication.updateMany({
+        where: {
+          id: applicationId,
+          identityStatus: { notIn: ['verified', 'rejected'] },
+          status: { notIn: ['approved', 'rejected', 'cancelled'] },
+        },
         data: {
           identityStatus: 'verified',
           status: 'under_review',
@@ -1137,6 +1134,14 @@ export async function reviewApplication(input: ApplicationReviewInput) {
           reviewedById: reviewerId,
           reviewedAt: new Date(),
         },
+      });
+
+      if (updateResult.count === 0) {
+        throw new Error('CONCURRENT_MODIFICATION: Application status changed or was already verified concurrently');
+      }
+
+      const updatedApp = await tx.registrationApplication.findUniqueOrThrow({
+        where: { id: applicationId },
       });
 
       await tx.auditLog.create({
