@@ -18,6 +18,10 @@ data/
 *.db-journal
 *.db-shm
 *.db-wal
+storage/**
+!storage/
+!storage/**/
+!storage/**/.gitkeep
 
 # ─── Temporary & Scratch Folders ──────────────────────────────────────────
 scratch/
