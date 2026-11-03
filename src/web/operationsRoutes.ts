@@ -33,17 +33,18 @@ if (!fs.existsSync(KYC_DOCS_DIR)) {
 // ─── Middleware Guards ────────────────────────────────────────────────────────
 
 /**
- * Ensures user has at least Staff, Admin, Manager, or Owner role.
+ * Ensures user has live server-authoritative operational staff permissions.
+ * Evaluates Permission.PROOF_REVIEW (held by staff, admin, manager, owner).
+ * Rejects stale/revoked session roles immediately.
  */
-function requireStaffAccess(req: Request, res: Response, next: () => void): void {
+async function requireLiveStaffAccess(req: Request, res: Response, next: () => void): Promise<void> {
   const user = (req as AuthenticatedRequest).user;
   if (!user) {
     res.status(401).json({ error: 'AUTHENTICATION_REQUIRED', message: 'You must sign in to access staff operations.' });
     return;
   }
-  const userRoles = (user.userRoles?.map((r) => r.roleKey) || []).map((r) => r.toLowerCase());
-  const isAllowed = userRoles.some((r) => ['owner', 'manager', 'admin', 'staff'].includes(r));
-  if (!isAllowed) {
+  const auth = await authorize(user.discordId, Permission.PROOF_REVIEW);
+  if (!auth.allowed) {
     res.status(403).json({ error: 'STAFF_ACCESS_DENIED', message: 'This view is reserved for authorized staff and management.' });
     return;
   }
@@ -51,17 +52,21 @@ function requireStaffAccess(req: Request, res: Response, next: () => void): void
 }
 
 /**
- * Ensures user has at least Manager, Admin, or Owner role (Staff excluded).
+ * Ensures user has live server-authoritative management oversight permissions.
+ * Evaluates Permission.ORDER_VIEW_PRIVATE or AUDIT_LOG_VIEW (held by manager, admin, owner; staff excluded).
+ * Rejects stale/revoked session roles immediately.
  */
-function requireManagementAccess(req: Request, res: Response, next: () => void): void {
+async function requireLiveManagementAccess(req: Request, res: Response, next: () => void): Promise<void> {
   const user = (req as AuthenticatedRequest).user;
   if (!user) {
     res.status(401).json({ error: 'AUTHENTICATION_REQUIRED', message: 'You must sign in to access management.' });
     return;
   }
-  const userRoles = (user.userRoles?.map((r) => r.roleKey) || []).map((r) => r.toLowerCase());
-  const isAllowed = userRoles.some((r) => ['owner', 'manager', 'admin'].includes(r));
-  if (!isAllowed) {
+  const [authPrivate, authAudit] = await Promise.all([
+    authorize(user.discordId, Permission.ORDER_VIEW_PRIVATE),
+    authorize(user.discordId, Permission.AUDIT_LOG_VIEW),
+  ]);
+  if (!authPrivate.allowed && !authAudit.allowed) {
     res.status(403).json({ error: 'MANAGEMENT_ACCESS_DENIED', message: 'This view requires Manager, Admin, or Owner oversight privileges.' });
     return;
   }
@@ -69,24 +74,33 @@ function requireManagementAccess(req: Request, res: Response, next: () => void):
 }
 
 /**
- * Ensures user has SENSITIVE_IDENTITY_REVIEW permission (Manager and Owner only).
+ * Higher-order middleware to require specific live server-authoritative permissions.
  */
-async function requireKycReviewerAccess(req: Request, res: Response, next: () => void): Promise<void> {
-  const user = (req as AuthenticatedRequest).user;
-  if (!user) {
-    res.status(401).json({ error: 'AUTHENTICATION_REQUIRED', message: 'Authentication required' });
-    return;
-  }
-  const auth = await authorize(user.discordId, Permission.SENSITIVE_IDENTITY_REVIEW);
-  if (!auth.allowed) {
+function requireLivePermission(permissions: Permission | Permission[]) {
+  return async (req: Request, res: Response, next: () => void): Promise<void> => {
+    const user = (req as AuthenticatedRequest).user;
+    if (!user) {
+      res.status(401).json({ error: 'AUTHENTICATION_REQUIRED', message: 'Authentication required' });
+      return;
+    }
+    const perms = Array.isArray(permissions) ? permissions : [permissions];
+    for (const p of perms) {
+      const auth = await authorize(user.discordId, p);
+      if (auth.allowed) {
+        return next();
+      }
+    }
     res.status(403).json({
-      error: 'KYC_ACCESS_DENIED',
-      message: 'Access Denied: Identity and KYC document review requires SENSITIVE_IDENTITY_REVIEW permission (Manager/Owner only).',
+      error: 'PERMISSION_DENIED',
+      message: `Access Denied: Required permission (${perms.join(', ')}) not granted or revoked.`,
     });
-    return;
-  }
-  next();
+  };
 }
+
+// Aliases for compatibility
+const requireStaffAccess = requireLiveStaffAccess;
+const requireManagementAccess = requireLiveManagementAccess;
+const requireKycReviewerAccess = requireLivePermission(Permission.SENSITIVE_IDENTITY_REVIEW);
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. STAFF PORTAL ENDPOINTS (/api/staff/*)
@@ -394,7 +408,7 @@ operationsRouter.get('/management/overview', requireAuth, requireManagementAcces
 /**
  * GET /management/orders — Separated order pipeline (G4X vs Advertiser) with pagination & filters
  */
-operationsRouter.get('/management/orders', requireAuth, requireManagementAccess, async (req: Request, res: Response): Promise<void> => {
+operationsRouter.get('/management/orders', requireAuth, requireLivePermission(Permission.ORDER_VIEW_PRIVATE), async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
     const tab = req.query.tab === 'advertiser' ? 'advertiser' : 'g4x';
@@ -427,7 +441,7 @@ operationsRouter.get('/management/orders', requireAuth, requireManagementAccess,
 /**
  * POST /management/orders/:id/approve — Management final operational approval of completed boost
  */
-operationsRouter.post('/management/orders/:id/approve', requireAuth, requireManagementAccess, requireCsrf, async (req: Request, res: Response): Promise<void> => {
+operationsRouter.post('/management/orders/:id/approve', requireAuth, requireLivePermission(Permission.ORDER_FINAL_APPROVE), requireCsrf, async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
     const orderId = Number(req.params.id);
@@ -452,7 +466,7 @@ operationsRouter.post('/management/orders/:id/approve', requireAuth, requireMana
 /**
  * POST /management/orders/:id/publish — Publish validated order to Discord Orders Board
  */
-operationsRouter.post('/management/orders/:id/publish', requireAuth, requireManagementAccess, requireCsrf, async (req: Request, res: Response): Promise<void> => {
+operationsRouter.post('/management/orders/:id/publish', requireAuth, requireLivePermission(Permission.ORDER_PUBLISH), requireCsrf, async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
     const orderId = Number(req.params.id);
@@ -476,7 +490,12 @@ operationsRouter.post('/management/orders/:id/publish', requireAuth, requireMana
 /**
  * GET /management/applications — Registration applications queue (booster, pilot, advertiser, exchanger)
  */
-operationsRouter.get('/management/applications', requireAuth, requireManagementAccess, async (req: Request, res: Response): Promise<void> => {
+operationsRouter.get('/management/applications', requireAuth, requireLivePermission([
+  Permission.BOOSTER_APPLICATION_REVIEW,
+  Permission.PILOT_APPLICATION_REVIEW,
+  Permission.ADVERTISER_APPLICATION_REVIEW,
+  Permission.EXCHANGER_APPLICATION_REVIEW,
+]), async (req: Request, res: Response): Promise<void> => {
   try {
     const category = req.query.category ? String(req.query.category) : undefined;
     const status = req.query.status ? String(req.query.status) : undefined;
@@ -525,9 +544,9 @@ operationsRouter.get('/management/applications', requireAuth, requireManagementA
 });
 
 /**
- * POST /management/applications/:id/review — Review registration application with anti self-review
+ * POST /management/applications/:id/review — Review registration application with anti self-review and category permissions
  */
-operationsRouter.post('/management/applications/:id/review', requireAuth, requireManagementAccess, requireCsrf, async (req: Request, res: Response): Promise<void> => {
+operationsRouter.post('/management/applications/:id/review', requireAuth, requireCsrf, async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
     const applicationId = Number(req.params.id);
@@ -553,6 +572,29 @@ operationsRouter.post('/management/applications/:id/review', requireAuth, requir
       return;
     }
 
+    // Dynamic Server-Authoritative Category Permission Enforcement
+    let requiredPermission = Permission.BOOSTER_APPLICATION_REVIEW;
+    if (existingApp.category === 'pilot') {
+      requiredPermission = Permission.PILOT_APPLICATION_REVIEW;
+    } else if (existingApp.category === 'advertiser') {
+      requiredPermission = Permission.ADVERTISER_APPLICATION_REVIEW;
+    } else if (existingApp.category === 'exchanger') {
+      requiredPermission = Permission.EXCHANGER_APPLICATION_REVIEW;
+    }
+
+    if (decision === 'start_identity_verification' || decision === 'verify_identity') {
+      requiredPermission = Permission.SENSITIVE_IDENTITY_REVIEW;
+    }
+
+    const auth = await authorize(user.discordId, requiredPermission);
+    if (!auth.allowed) {
+      res.status(403).json({
+        error: 'UNAUTHORIZED_REVIEWER',
+        message: `Insufficient permissions: '${requiredPermission}' required to evaluate ${existingApp.category} applications.`,
+      });
+      return;
+    }
+
     const updated = await reviewApplication({
       reviewerId: user.discordId,
       applicationId,
@@ -568,7 +610,11 @@ operationsRouter.post('/management/applications/:id/review', requireAuth, requir
       application: updated,
     });
   } catch (err: any) {
-    const status = err.code === 'SELF_REVIEW_PROHIBITED' ? 403 : 400;
+    const isForbidden = err.code === 'SELF_REVIEW_PROHIBITED' ||
+      err.code === 'UNAUTHORIZED_REVIEWER' ||
+      err.message?.includes('UNAUTHORIZED_REVIEWER') ||
+      err.message?.includes('CANNOT_REVIEW_OWN_APPLICATION');
+    const status = isForbidden ? 403 : 400;
     res.status(status).json({ error: err.code || 'REVIEW_FAILED', message: err.message || 'Application review failed' });
   }
 });
@@ -576,7 +622,7 @@ operationsRouter.post('/management/applications/:id/review', requireAuth, requir
 /**
  * GET /management/disputes — Full disputes queue for management
  */
-operationsRouter.get('/management/disputes', requireAuth, requireManagementAccess, async (req: Request, res: Response): Promise<void> => {
+operationsRouter.get('/management/disputes', requireAuth, requireLivePermission(Permission.DISPUTE_REVIEW), async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
     const statusFilter = req.query.status ? String(req.query.status) : undefined;
@@ -590,7 +636,7 @@ operationsRouter.get('/management/disputes', requireAuth, requireManagementAcces
 /**
  * POST /management/disputes/:id/resolve — Management resolution of order dispute with anti self-approval
  */
-operationsRouter.post('/management/disputes/:id/resolve', requireAuth, requireManagementAccess, requireCsrf, async (req: Request, res: Response): Promise<void> => {
+operationsRouter.post('/management/disputes/:id/resolve', requireAuth, requireLivePermission(Permission.DISPUTE_RESOLVE), requireCsrf, async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
     const disputeId = Number(req.params.id);
@@ -925,8 +971,151 @@ operationsRouter.post('/management/kyc/applications/:id/decision', requireAuth, 
 });
 
 /**
- * GET /management/kyc/documents/:docRef — Secure document file access
- * Prevents path traversal, requires SENSITIVE_IDENTITY_REVIEW permission.
+ * Shared helper to authoritatively serve a KYC document:
+ *  - Enforces SENSITIVE_IDENTITY_REVIEW permission
+ *  - Resolves target application and checks eligibility
+ *  - Validates document is registered in DB for this application
+ *  - Derives filename strictly from trusted database metadata
+ *  - Verifies realpath containment and rejects symlinks
+ *  - Sets no-cache, no-store, nosniff and security headers
+ *  - Never exposes filesystem paths or sensitive error details
+ */
+async function serveSecureKycDocument(
+  res: Response,
+  applicationId: number,
+  docTypeOrRef: string,
+  byDocType: boolean
+): Promise<void> {
+  if (isNaN(applicationId) || applicationId <= 0) {
+    res.status(400).json({ error: 'INVALID_APPLICATION_ID', message: 'Valid application ID required' });
+    return;
+  }
+
+  const application = await prisma.registrationApplication.findUnique({
+    where: { id: applicationId },
+  });
+  if (!application) {
+    res.status(404).json({ error: 'APPLICATION_NOT_FOUND', message: 'Application not found' });
+    return;
+  }
+
+  const isEligible = ['pilot', 'exchanger'].includes(application.category) || (application.identityStatus && application.identityStatus !== 'none');
+  if (!isEligible) {
+    res.status(400).json({ error: 'INELIGIBLE_FOR_KYC', message: 'Application is not eligible for KYC document review' });
+    return;
+  }
+
+  const pilotVerif = await prisma.pilotVerification.findFirst({
+    where: {
+      userId: application.userId,
+      ...(application.gameSlug ? { gameSlug: application.gameSlug } : {}),
+    },
+  });
+
+  let qualDocs: any = {};
+  try {
+    qualDocs = JSON.parse(application.qualifications || '{}');
+  } catch {}
+
+  const registeredDocs: Record<string, string | null> = {
+    identity: pilotVerif?.identityDocumentRef || qualDocs?.identityDocumentRef || null,
+    identitydoc: pilotVerif?.identityDocumentRef || qualDocs?.identityDocumentRef || null,
+    passport: pilotVerif?.passportDocumentRef || qualDocs?.passportDocumentRef || null,
+    passportdoc: pilotVerif?.passportDocumentRef || qualDocs?.passportDocumentRef || null,
+    selfie: pilotVerif?.selfieDocumentRef || qualDocs?.selfieDocumentRef || null,
+    selfiedoc: pilotVerif?.selfieDocumentRef || qualDocs?.selfieDocumentRef || null,
+  };
+
+  let trustedDocRef: string | null = null;
+  if (byDocType) {
+    const normalizedType = docTypeOrRef.toLowerCase().trim();
+    trustedDocRef = registeredDocs[normalizedType] || null;
+    if (!trustedDocRef) {
+      res.status(404).json({ error: 'DOCUMENT_NOT_FOUND', message: 'Requested document type not registered for this application' });
+      return;
+    }
+  } else {
+    // Matching by docRef: Must belong to this application's registered documents
+    const requestedBase = path.basename(docTypeOrRef);
+    const matchesAny = Object.values(registeredDocs).some(
+      (ref) => ref && path.basename(ref) === requestedBase
+    );
+    if (!matchesAny) {
+      res.status(403).json({ error: 'DOCUMENT_NOT_ASSOCIATED', message: 'Document does not belong to the authorized application' });
+      return;
+    }
+    trustedDocRef = requestedBase;
+  }
+
+  const baseName = path.basename(trustedDocRef);
+  if (baseName.includes('..') || baseName.includes('/') || baseName.includes('\\') || baseName !== trustedDocRef) {
+    res.status(400).json({ error: 'PATH_TRAVERSAL_DETECTED', message: 'Invalid document reference format' });
+    return;
+  }
+
+  const safeRegex = /^[a-zA-Z0-9_\-\.]+\.(png|jpg|jpeg|webp|pdf)$/i;
+  if (!safeRegex.test(baseName)) {
+    res.status(400).json({ error: 'DISALLOWED_DOC_TYPE', message: 'Disallowed document format or extension' });
+    return;
+  }
+
+  const targetPath = path.resolve(KYC_DOCS_DIR, baseName);
+  if (!fs.existsSync(targetPath)) {
+    res.status(404).json({ error: 'DOCUMENT_NOT_FOUND', message: 'Document file not found on secure storage' });
+    return;
+  }
+
+  // Symlink check
+  const lstat = fs.lstatSync(targetPath);
+  if (lstat.isSymbolicLink()) {
+    res.status(403).json({ error: 'ILLEGAL_LINK_DETECTED', message: 'Symbolic links are strictly prohibited' });
+    return;
+  }
+
+  // Canonical realpath containment check
+  const realKycDir = fs.realpathSync(KYC_DOCS_DIR);
+  const canonicalPath = fs.realpathSync(targetPath);
+  if (!canonicalPath.startsWith(realKycDir + path.sep)) {
+    res.status(403).json({ error: 'PATH_TRAVERSAL_DETECTED', message: 'Path traversal or symlink escape detected' });
+    return;
+  }
+
+  const ext = path.extname(baseName).toLowerCase();
+  const mimeMap: Record<string, string> = {
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.webp': 'image/webp',
+    '.pdf': 'application/pdf',
+  };
+
+  res.setHeader('Content-Type', mimeMap[ext] || 'application/octet-stream');
+  res.setHeader('Content-Disposition', 'inline');
+  res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'");
+  res.sendFile(canonicalPath);
+}
+
+/**
+ * GET /management/kyc/applications/:id/documents/:docType — Application-scoped secure document file access
+ * Enforces SENSITIVE_IDENTITY_REVIEW, application ownership, and realpath containment.
+ */
+operationsRouter.get('/management/kyc/applications/:id/documents/:docType', requireAuth, requireKycReviewerAccess, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const applicationId = Number(req.params.id);
+    const docType = req.params.docType;
+    await serveSecureKycDocument(res, applicationId, docType, true);
+  } catch (err: any) {
+    res.status(500).json({ error: 'DOC_RETRIEVAL_FAILED', message: 'Failed to retrieve document' });
+  }
+});
+
+/**
+ * GET /management/kyc/documents/:docRef — Direct document file access with application binding
+ * Validates docRef format, requires applicationId query, verifies ownership and containment.
  */
 operationsRouter.get('/management/kyc/documents/:docRef', requireAuth, requireKycReviewerAccess, async (req: Request, res: Response): Promise<void> => {
   try {
@@ -936,39 +1125,18 @@ operationsRouter.get('/management/kyc/documents/:docRef', requireAuth, requireKy
       return;
     }
 
-    // Path traversal defense: only allow sanitized alphanumeric basename with approved extension
-    const baseName = path.basename(rawRef);
-    if (rawRef.includes('..') || rawRef.includes('/') || rawRef.includes('\\') || baseName !== rawRef) {
+    if (rawRef.includes('..') || rawRef.includes('/') || rawRef.includes('\\') || path.basename(rawRef) !== rawRef) {
       res.status(400).json({ error: 'PATH_TRAVERSAL_DETECTED', message: 'Invalid document reference format' });
       return;
     }
 
-    const safeRegex = /^[a-zA-Z0-9_\-\.]+\.(png|jpg|jpeg|webp|pdf)$/i;
-    if (!safeRegex.test(baseName)) {
-      res.status(400).json({ error: 'DISALLOWED_DOC_TYPE', message: 'Disallowed document format or characters' });
+    const applicationId = Number(req.query.applicationId);
+    if (!applicationId || isNaN(applicationId) || applicationId <= 0) {
+      res.status(400).json({ error: 'APPLICATION_ID_REQUIRED', message: 'Application ID is required to verify document ownership' });
       return;
     }
 
-    const filePath = path.join(KYC_DOCS_DIR, baseName);
-    if (!fs.existsSync(filePath)) {
-      res.status(404).json({ error: 'DOCUMENT_NOT_FOUND', message: 'Requested KYC document not found on secure storage' });
-      return;
-    }
-
-    const ext = path.extname(baseName).toLowerCase();
-    const mimeMap: Record<string, string> = {
-      '.png': 'image/png',
-      '.jpg': 'image/jpeg',
-      '.jpeg': 'image/jpeg',
-      '.webp': 'image/webp',
-      '.pdf': 'application/pdf',
-    };
-
-    res.setHeader('Content-Type', mimeMap[ext] || 'application/octet-stream');
-    res.setHeader('Content-Disposition', 'inline');
-    res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.sendFile(filePath);
+    await serveSecureKycDocument(res, applicationId, rawRef, false);
   } catch (err: any) {
     res.status(500).json({ error: 'DOC_RETRIEVAL_FAILED', message: 'Failed to retrieve document' });
   }

@@ -37,6 +37,7 @@ export const KycManagementPage: React.FC = () => {
 
   // Secure Document Viewer State
   const [activeDocRef, setActiveDocRef] = useState<string | null>(null);
+  const [activeDocType, setActiveDocType] = useState<'identityDoc' | 'passportDoc' | 'selfieDoc' | null>(null);
 
   // Load Queue
   const loadQueue = useCallback(async (page: number = 1) => {
@@ -65,6 +66,7 @@ export const KycManagementPage: React.FC = () => {
     setDecisionFeedback(null);
     setReviewerNotes('');
     setActiveDocRef(null);
+    setActiveDocType(null);
     try {
       const res = await fetchKycDetail(id);
       setDetail(res);
@@ -552,7 +554,10 @@ export const KycManagementPage: React.FC = () => {
                       {detail.documents.identityDocumentRef ? (
                         <button
                           type="button"
-                          onClick={() => setActiveDocRef(detail.documents.identityDocumentRef)}
+                          onClick={() => {
+                            setActiveDocRef(detail.documents.identityDocumentRef);
+                            setActiveDocType('identityDoc');
+                          }}
                           className="btn btn-sm"
                           style={{
                             backgroundColor: 'var(--primary-purple)',
@@ -584,7 +589,10 @@ export const KycManagementPage: React.FC = () => {
                       {detail.documents.passportDocumentRef ? (
                         <button
                           type="button"
-                          onClick={() => setActiveDocRef(detail.documents.passportDocumentRef)}
+                          onClick={() => {
+                            setActiveDocRef(detail.documents.passportDocumentRef);
+                            setActiveDocType('passportDoc');
+                          }}
                           className="btn btn-sm"
                           style={{
                             backgroundColor: 'var(--primary-purple)',
@@ -616,7 +624,10 @@ export const KycManagementPage: React.FC = () => {
                       {detail.documents.selfieDocumentRef ? (
                         <button
                           type="button"
-                          onClick={() => setActiveDocRef(detail.documents.selfieDocumentRef)}
+                          onClick={() => {
+                            setActiveDocRef(detail.documents.selfieDocumentRef);
+                            setActiveDocType('selfieDoc');
+                          }}
                           className="btn btn-sm"
                           style={{
                             backgroundColor: 'var(--primary-purple)',
@@ -635,7 +646,7 @@ export const KycManagementPage: React.FC = () => {
                 </div>
 
                 {/* Secure Document Previewer */}
-                {activeDocRef && (
+                {activeDocRef && activeDocType && (
                   <div
                     style={{
                       backgroundColor: 'var(--bg-main)',
@@ -649,11 +660,14 @@ export const KycManagementPage: React.FC = () => {
                   >
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--accent-lime)' }}>
-                        Secure Document Preview: {activeDocRef}
+                        Secure Document Preview: {activeDocType} ({activeDocRef})
                       </span>
                       <button
                         type="button"
-                        onClick={() => setActiveDocRef(null)}
+                        onClick={() => {
+                          setActiveDocRef(null);
+                          setActiveDocType(null);
+                        }}
                         style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
                       >
                         Close Preview &times;
@@ -661,7 +675,7 @@ export const KycManagementPage: React.FC = () => {
                     </div>
                     <div style={{ textAlign: 'center', padding: '1rem', backgroundColor: '#000000', borderRadius: 'var(--radius-xs)' }}>
                       <img
-                        src={`/api/management/kyc/documents/${encodeURIComponent(activeDocRef)}`}
+                        src={`/api/management/kyc/applications/${detail.application.id}/documents/${activeDocType}`}
                         alt="KYC Evidence"
                         style={{ maxWidth: '100%', maxHeight: '350px', objectFit: 'contain' }}
                         onError={(e) => {

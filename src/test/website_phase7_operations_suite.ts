@@ -4,18 +4,34 @@
  * Covers:
  *  1. Staff authentication, authorization and RBAC boundaries (unauthenticated, booster, staff, manager, owner).
  *  2. Management authorization and executive endpoint security.
- *  3. KYC document security, traversal prevention and strict SENSITIVE_IDENTITY_REVIEW enforcement.
- *  4. Anti self-approval enforcement across proofs, disputes, applications, and KYC decisions.
- *  5. Mythic+ booster roster slot rules and external order wallet isolation.
- *  6. Duplicate decision prevention under state transitions.
- *  7. Financial gate integrity (all 5 live financial feature gates remain disabled).
+ *  3. KYC document security, traversal prevention and strict SENSITIVE_IDENTITY_REVIEW enforcement:
+ *     - Authorized KYC document belonging to selected application (200 OK with no-store, nosniff).
+ *     - Document belonging to another application rejected with 403 DOCUMENT_NOT_ASSOCIATED.
+ *     - Arbitrary valid-looking filename rejected with 403.
+ *     - Missing document or application metadata fails closed (404).
+ *     - Symlink escape and directory traversal rejection.
+ *  4. Live Authorization & Stale Session Role Revocation:
+ *     - Staff attempting KYC approval rejected with 403.
+ *     - Stale manager session role rejected immediately upon DB role revocation.
+ *     - Unauthorized application approval rejected (Admin cannot approve Advertiser app).
+ *  5. Anti self-approval enforcement across proofs, disputes, applications, and KYC decisions.
+ *  6. Duplicate decision and state transition prevention (terminal locked, duplicate KYC rejected).
+ *  7. CSRF mutation protection.
+ *  8. Financial safety and gate integrity (no phantom wallet credits, all 5 live gates disabled).
  */
 
 import assert from 'assert';
 import request from 'supertest';
+import path from 'path';
+import fs from 'fs';
 import prisma from '../database/db';
 import { app, sessionStore } from '../web/server';
 import { Permission } from '../services/permissionTypes';
+
+const KYC_DOCS_DIR = path.join(process.cwd(), 'storage', 'kyc_documents');
+if (!fs.existsSync(KYC_DOCS_DIR)) {
+  fs.mkdirSync(KYC_DOCS_DIR, { recursive: true });
+}
 
 // Helper to create an authenticated session agent for testing
 async function createAuthenticatedAgent(userId: string) {
@@ -48,12 +64,19 @@ async function runPhase7OperationsSuite() {
   const timestamp = Date.now();
   const testBoosterId = `phase7_booster_${timestamp}`;
   const testStaffId = `phase7_staff_${timestamp}`;
+  const testAdminId = `phase7_admin_${timestamp}`;
   const testManagerId = `phase7_manager_${timestamp}`;
   const testOwnerId = `phase7_owner_${timestamp}`;
+  const tempManagerId = `phase7_temp_manager_${timestamp}`;
+
+  const docAName = `kyc_doc_a_${timestamp}.png`;
+  const docBName = `kyc_doc_b_${timestamp}.png`;
+  const docAPath = path.join(KYC_DOCS_DIR, docAName);
+  const docBPath = path.join(KYC_DOCS_DIR, docBName);
 
   try {
     // 0. Seed test roles if not present
-    const rolesToEnsure = ['booster', 'staff', 'manager', 'owner'];
+    const rolesToEnsure = ['booster', 'staff', 'admin', 'manager', 'owner'];
     for (const r of rolesToEnsure) {
       await prisma.role.upsert({
         where: { roleKey: r },
@@ -61,6 +84,10 @@ async function runPhase7OperationsSuite() {
         create: { roleKey: r, name: `${r.toUpperCase()} Role` },
       });
     }
+
+    // Create test dummy files
+    fs.writeFileSync(docAPath, 'VALID_KYC_DOCUMENT_A_PAYLOAD');
+    fs.writeFileSync(docBPath, 'VALID_KYC_DOCUMENT_B_PAYLOAD');
 
     // Create test users
     await prisma.user.create({
@@ -81,6 +108,14 @@ async function runPhase7OperationsSuite() {
 
     await prisma.user.create({
       data: {
+        discordId: testAdminId,
+        username: `admin_${timestamp}`,
+        userRoles: { create: [{ roleKey: 'admin' }] },
+      },
+    });
+
+    await prisma.user.create({
+      data: {
         discordId: testManagerId,
         username: `manager_${timestamp}`,
         userRoles: { create: [{ roleKey: 'manager' }] },
@@ -95,7 +130,15 @@ async function runPhase7OperationsSuite() {
       },
     });
 
-    console.log('[Phase 7 Test] Test users seeded successfully.');
+    await prisma.user.create({
+      data: {
+        discordId: tempManagerId,
+        username: `temp_mgr_${timestamp}`,
+        userRoles: { create: [{ roleKey: 'manager' }] },
+      },
+    });
+
+    console.log('[Phase 7 Test] Test users and dummy KYC files seeded successfully.');
 
     // -------------------------------------------------------------------------
     // TEST 1: Unauthenticated & Generic User Access Restrictions
@@ -112,39 +155,36 @@ async function runPhase7OperationsSuite() {
     const boosterMgmtRes = await boosterAgent.agent.get('/api/management/overview');
     assert.strictEqual(boosterMgmtRes.status, 403, 'Booster user must receive 403 on /management/overview');
 
-    console.log('✓ Unauthenticated and unprivileged access successfully rejected with 401/403');
+    console.log('✓ Unauthenticated and unprivileged access denied appropriately (401/403)');
 
     // -------------------------------------------------------------------------
-    // TEST 2: Staff RBAC Boundaries (Staff allowed on staff, blocked on management/kyc)
+    // TEST 2: Staff Portal Capabilities & Boundaries
     // -------------------------------------------------------------------------
-    console.log('\n[Test 2] Testing Staff RBAC boundary isolation...');
+    console.log('\n[Test 2] Testing Staff portal endpoints with authorized Staff user...');
 
     const staffAgent = await createAuthenticatedAgent(testStaffId);
     const staffOverviewRes = await staffAgent.agent.get('/api/staff/overview');
     assert.strictEqual(staffOverviewRes.status, 200, 'Staff user must be able to access /api/staff/overview');
     assert.strictEqual(staffOverviewRes.body.success, true);
-    assert.strictEqual(staffOverviewRes.body.user.discordId, testStaffId);
+    assert.strictEqual(typeof staffOverviewRes.body.metrics.pendingProofsCount, 'number');
 
     const staffProofsRes = await staffAgent.agent.get('/api/staff/pending-proofs');
     assert.strictEqual(staffProofsRes.status, 200, 'Staff user must be able to access /api/staff/pending-proofs');
     assert.ok(Array.isArray(staffProofsRes.body.proofs), 'Proofs must return an array');
 
-    // Verify staff CANNOT access management oversight
+    // Staff cannot access Management or KYC overview
     const staffMgmtRes = await staffAgent.agent.get('/api/management/overview');
-    assert.strictEqual(staffMgmtRes.status, 403, 'Staff user without manager role must receive 403 on /management/overview');
-
-    const staffOrdersRes = await staffAgent.agent.get('/api/management/orders');
-    assert.strictEqual(staffOrdersRes.status, 403, 'Staff user must receive 403 on /management/orders');
+    assert.strictEqual(staffMgmtRes.status, 403, 'Staff user must be denied access to /api/management/overview');
 
     const staffKycRes = await staffAgent.agent.get('/api/management/kyc/applications');
-    assert.strictEqual(staffKycRes.status, 403, 'Staff user must receive 403 on /management/kyc/applications');
+    assert.strictEqual(staffKycRes.status, 403, 'Staff user must be denied access to /api/management/kyc/applications');
 
-    console.log('✓ Staff RBAC isolation confirmed: Staff has operational access but is strictly forbidden from Management/KYC');
+    console.log('✓ Staff operational capabilities verified and management/KYC boundaries enforced');
 
     // -------------------------------------------------------------------------
-    // TEST 3: Management Oversight Access
+    // TEST 3: Management Portal Executive Capabilities
     // -------------------------------------------------------------------------
-    console.log('\n[Test 3] Testing Management authorization...');
+    console.log('\n[Test 3] Testing Management portal endpoints with authorized Manager user...');
 
     const managerAgent = await createAuthenticatedAgent(testManagerId);
     const mgmtOverviewRes = await managerAgent.agent.get('/api/management/overview');
@@ -170,13 +210,52 @@ async function runPhase7OperationsSuite() {
     // -------------------------------------------------------------------------
     // TEST 4: KYC Security, Document Protection & Path Traversal Prevention
     // -------------------------------------------------------------------------
-    console.log('\n[Test 4] Testing KYC document security and path traversal prevention...');
+    console.log('\n[Test 4] Testing KYC document security, application binding and traversal prevention...');
+
+    // Seed test applications with registered documents
+    const appA = await prisma.registrationApplication.create({
+      data: {
+        userId: testBoosterId,
+        category: 'pilot',
+        gameSlug: 'wow_midnight',
+        status: 'pending',
+        identityStatus: 'awaiting_submission',
+        qualifications: JSON.stringify({
+          identityDocumentRef: docAName,
+          selfieDocumentRef: docAName,
+        }),
+      },
+    });
+
+    await prisma.pilotVerification.create({
+      data: {
+        userId: testBoosterId,
+        gameSlug: 'wow_midnight',
+        status: 'pending',
+        identityDocumentRef: docAName,
+        selfieDocumentRef: docAName,
+      },
+    });
+
+    const appB = await prisma.registrationApplication.create({
+      data: {
+        userId: testStaffId,
+        category: 'pilot',
+        gameSlug: 'wow_midnight',
+        status: 'pending',
+        identityStatus: 'awaiting_submission',
+        qualifications: JSON.stringify({
+          identityDocumentRef: docBName,
+          selfieDocumentRef: docBName,
+        }),
+      },
+    });
 
     // 4a: Staff cannot access KYC document viewer
-    const staffDocRes = await staffAgent.agent.get('/api/management/kyc/documents/test_doc.png');
-    assert.strictEqual(staffDocRes.status, 403, 'Staff user must be denied access to /management/kyc/documents/:docRef');
+    const staffDocRes = await staffAgent.agent.get(`/api/management/kyc/applications/${appA.id}/documents/identityDoc`);
+    assert.strictEqual(staffDocRes.status, 403, 'Staff user must be denied access to KYC document viewer');
 
-    // 4b: Path traversal attempts by manager must fail closed
+    // 4b: Path traversal attempts fail closed
     const traversalRes1 = await managerAgent.agent.get('/api/management/kyc/documents/..%2F..%2Fetc%2Fpasswd');
     assert.strictEqual(traversalRes1.status, 400, 'Path traversal ../ must be rejected with 400');
     assert.strictEqual(traversalRes1.body.error, 'PATH_TRAVERSAL_DETECTED');
@@ -185,14 +264,113 @@ async function runPhase7OperationsSuite() {
     assert.strictEqual(traversalRes2.status, 400, 'Path traversal ..\\ must be rejected with 400');
     assert.strictEqual(traversalRes2.body.error, 'PATH_TRAVERSAL_DETECTED');
 
-    console.log('✓ KYC documents protected: Staff denied, path traversal attempts rejected');
+    // 4c: Authorized KYC document belonging to selected application returns 200 with security headers
+    const authDocRes = await managerAgent.agent.get(`/api/management/kyc/applications/${appA.id}/documents/identityDoc`);
+    assert.strictEqual(authDocRes.status, 200, 'Authorized KYC document for application must return 200');
+    assert.strictEqual(authDocRes.headers['x-content-type-options'], 'nosniff');
+    assert.ok(authDocRes.headers['cache-control']?.includes('no-store'), 'Must include no-store header');
+
+    // 4d: Document belonging to another application rejected with 403 DOCUMENT_NOT_ASSOCIATED
+    const crossAppDocRes = await managerAgent.agent.get(`/api/management/kyc/documents/${docBName}?applicationId=${appA.id}`);
+    assert.strictEqual(crossAppDocRes.status, 403, 'Document belonging to appB cannot be fetched under appA');
+    assert.strictEqual(crossAppDocRes.body.error, 'DOCUMENT_NOT_ASSOCIATED');
+
+    // 4e: Arbitrary valid-looking filename without matching DB record rejected with 403
+    const arbitraryDocRes = await managerAgent.agent.get(`/api/management/kyc/documents/unrelated_secret.png?applicationId=${appA.id}`);
+    assert.strictEqual(arbitraryDocRes.status, 403, 'Unregistered document reference must be rejected with 403');
+    assert.strictEqual(arbitraryDocRes.body.error, 'DOCUMENT_NOT_ASSOCIATED');
+
+    // 4f: Missing document or application metadata fails closed
+    const missingAppRes = await managerAgent.agent.get('/api/management/kyc/applications/999999/documents/identityDoc');
+    assert.strictEqual(missingAppRes.status, 404, 'Non-existent application must return 404');
+    assert.strictEqual(missingAppRes.body.error, 'APPLICATION_NOT_FOUND');
+
+    // 4g: Symlink escape protection
+    const symlinkPath = path.join(KYC_DOCS_DIR, `symlink_escape_${timestamp}.png`);
+    let symlinkCreated = false;
+    try {
+      fs.symlinkSync(path.join(process.cwd(), 'package.json'), symlinkPath);
+      symlinkCreated = true;
+    } catch {
+      // Symlink creation might require Developer Mode/Admin on Windows; fallback noted
+    }
+
+    if (symlinkCreated) {
+      try {
+        const symlinkApp = await prisma.registrationApplication.create({
+          data: {
+            userId: testBoosterId,
+            category: 'pilot',
+            status: 'pending',
+            identityStatus: 'awaiting_submission',
+            qualifications: JSON.stringify({ identityDocumentRef: path.basename(symlinkPath) }),
+          },
+        });
+        const symlinkRes = await managerAgent.agent.get(`/api/management/kyc/applications/${symlinkApp.id}/documents/identityDoc`);
+        assert.strictEqual(symlinkRes.status, 403, 'Symlink escaping storage directory must be rejected with 403');
+        assert.ok(['ILLEGAL_LINK_DETECTED', 'PATH_TRAVERSAL_DETECTED'].includes(symlinkRes.body.error));
+        await prisma.registrationApplication.delete({ where: { id: symlinkApp.id } });
+      } finally {
+        fs.unlinkSync(symlinkPath);
+      }
+    }
+
+    console.log('✓ KYC documents protected: Ownership bound, cross-app access blocked, security headers verified');
 
     // -------------------------------------------------------------------------
-    // TEST 5: Anti Self-Approval Enforcement (Proofs, Disputes, Applications, KYC)
+    // TEST 5: Live Authorization & Stale Session Revocation
     // -------------------------------------------------------------------------
-    console.log('\n[Test 5] Testing Anti Self-Approval enforcement...');
+    console.log('\n[Test 5] Testing live server-authoritative authorization and stale session revocation...');
 
-    // 5a: Proof Anti Self-Approval
+    // 5a: Staff attempting KYC approval rejected
+    const staffKycDecisionRes = await staffAgent.agent
+      .post(`/api/management/kyc/applications/${appA.id}/decision`)
+      .set('x-csrf-token', staffAgent.csrfToken || '')
+      .send({ decision: 'verify_identity' });
+    assert.strictEqual(staffKycDecisionRes.status, 403, 'Staff user must be rejected with 403 on KYC decision');
+    assert.strictEqual(staffKycDecisionRes.body.error, 'PERMISSION_DENIED');
+
+    // 5b: Stale manager session role rejected immediately upon DB role deletion
+    const tempMgrAgent = await createAuthenticatedAgent(tempManagerId);
+    const activeMgrCheck = await tempMgrAgent.agent.get('/api/management/overview');
+    assert.strictEqual(activeMgrCheck.status, 200, 'Initial active manager session must have access');
+
+    // Revoke manager role directly in database
+    await prisma.userRole.deleteMany({ where: { userId: tempManagerId } });
+
+    // Stale session attempt
+    const staleMgrCheck = await tempMgrAgent.agent.get('/api/management/overview');
+    assert.strictEqual(staleMgrCheck.status, 403, 'Revoked manager role must immediately fail on next request (stale session rejected)');
+    assert.strictEqual(staleMgrCheck.body.error, 'MANAGEMENT_ACCESS_DENIED');
+
+    // 5c: Unauthorized application approval (Admin attempting to approve Advertiser application)
+    const adminAgent = await createAuthenticatedAgent(testAdminId);
+    const advApp = await prisma.registrationApplication.create({
+      data: {
+        userId: testBoosterId,
+        category: 'advertiser',
+        status: 'pending',
+        identityStatus: 'none',
+        qualifications: JSON.stringify({ company: 'Test Adv' }),
+      },
+    });
+
+    const adminAdvReviewRes = await adminAgent.agent
+      .post(`/api/management/applications/${advApp.id}/review`)
+      .set('x-csrf-token', adminAgent.csrfToken || '')
+      .send({ decision: 'approve', reviewerNotes: 'Unauthorized admin approval attempt' });
+
+    assert.strictEqual(adminAdvReviewRes.status, 403, 'Admin without ADVERTISER_APPLICATION_REVIEW permission must be rejected with 403');
+    assert.strictEqual(adminAdvReviewRes.body.error, 'UNAUTHORIZED_REVIEWER');
+
+    console.log('✓ Live authorization enforced: Revocations reject stale sessions, role boundaries respected');
+
+    // -------------------------------------------------------------------------
+    // TEST 6: Anti Self-Approval Enforcement (Proofs, Disputes, Applications, KYC)
+    // -------------------------------------------------------------------------
+    console.log('\n[Test 6] Testing Anti Self-Approval enforcement across all workflows...');
+
+    // 6a: Proof Anti Self-Approval
     const firstGame = await prisma.game.findFirst();
     const firstService = await prisma.gameService.findFirst();
 
@@ -237,7 +415,7 @@ async function runPhase7OperationsSuite() {
     assert.strictEqual(selfProofRes.status, 403, 'Staff cannot approve their own submitted run proof');
     assert.strictEqual(selfProofRes.body.error, 'CANNOT_REVIEW_OWN_PROOF');
 
-    // Now manager (different user) approves the proof
+    // Non-submitter manager approves the proof
     const otherProofRes = await managerAgent.agent
       .post(`/api/staff/proofs/${testProof.id}/review`)
       .set('x-csrf-token', managerAgent.csrfToken || '')
@@ -247,9 +425,7 @@ async function runPhase7OperationsSuite() {
     assert.strictEqual(otherProofRes.body.success, true);
     assert.strictEqual(otherProofRes.body.proof.status, 'approved');
 
-    // 5b: Dispute Anti Self-Resolution
-    // Create a mock dispute opened by testManagerId
-
+    // 6b: Dispute Anti Self-Resolution
     const testDispute = await prisma.orderDispute.create({
       data: {
         orderId: testOrder.id,
@@ -268,7 +444,7 @@ async function runPhase7OperationsSuite() {
     assert.strictEqual(selfDisputeRes.status, 403, 'Manager cannot resolve their own opened dispute');
     assert.strictEqual(selfDisputeRes.body.error, 'CANNOT_RESOLVE_OWN_DISPUTE');
 
-    // 5c: Application Anti Self-Review
+    // 6c: Application Anti Self-Review
     const testApp = await prisma.registrationApplication.create({
       data: {
         userId: testManagerId,
@@ -287,12 +463,21 @@ async function runPhase7OperationsSuite() {
     assert.strictEqual(selfAppRes.status, 403, 'Reviewer cannot approve their own registration application');
     assert.strictEqual(selfAppRes.body.error, 'CANNOT_REVIEW_OWN_APPLICATION');
 
-    console.log('✓ Anti self-approval strictly enforced across proofs, disputes, and registration applications');
+    // 6d: KYC Anti Self-Review
+    const selfKycDecisionRes = await managerAgent.agent
+      .post(`/api/management/kyc/applications/${testApp.id}/decision`)
+      .set('x-csrf-token', managerAgent.csrfToken || '')
+      .send({ decision: 'verify_identity' });
+
+    assert.strictEqual(selfKycDecisionRes.status, 403, 'Reviewer cannot verify their own KYC application');
+    assert.strictEqual(selfKycDecisionRes.body.error, 'SELF_REVIEW_PROHIBITED');
+
+    console.log('✓ Anti self-approval strictly enforced across proofs, disputes, applications, and KYC');
 
     // -------------------------------------------------------------------------
-    // TEST 6: Duplicate Decision & State Transition Prevention
+    // TEST 7: Duplicate Decision & State Transition Prevention
     // -------------------------------------------------------------------------
-    console.log('\n[Test 6] Testing duplicate decision & state transition validation...');
+    console.log('\n[Test 7] Testing duplicate decisions and state transition validation...');
 
     // Attempting to review the already approved proof again
     const dupProofRes = await managerAgent.agent
@@ -303,13 +488,40 @@ async function runPhase7OperationsSuite() {
     assert.strictEqual(dupProofRes.status, 400, 'Duplicate proof review must be rejected with 400');
     assert.strictEqual(dupProofRes.body.error, 'PROOF_ALREADY_REVIEWED');
 
+    // Manager verifies identity on appA
+    const kycVerifyRes = await managerAgent.agent
+      .post(`/api/management/kyc/applications/${appA.id}/decision`)
+      .set('x-csrf-token', managerAgent.csrfToken || '')
+      .send({ decision: 'verify_identity', reviewNotes: 'Verified with valid ID and selfie' });
+    assert.strictEqual(kycVerifyRes.status, 200, 'Manager can verify identity with valid documents');
+
+    // Attempting duplicate verify_identity on already verified application
+    const dupKycVerifyRes = await managerAgent.agent
+      .post(`/api/management/kyc/applications/${appA.id}/decision`)
+      .set('x-csrf-token', managerAgent.csrfToken || '')
+      .send({ decision: 'verify_identity', reviewNotes: 'Duplicate verification attempt' });
+    assert.strictEqual(dupKycVerifyRes.status, 400, 'Duplicate identity verification must be rejected');
+
     console.log('✓ Duplicate decisions on closed entities rejected fail-closed');
 
     // -------------------------------------------------------------------------
-    // TEST 7: Financial Gate Verification (All 5 gates disabled)
+    // TEST 8: CSRF & Financial Integrity
     // -------------------------------------------------------------------------
-    console.log('\n[Test 7] Verifying live financial feature gates remain disabled...');
+    console.log('\n[Test 8] Testing CSRF enforcement and financial safety...');
 
+    // 8a: CSRF validation failure on missing token
+    const noCsrfRes = await managerAgent.agent
+      .post(`/api/management/orders/${testOrder.id}/approve`)
+      .send({ notes: 'No CSRF token provided' });
+    assert.strictEqual(noCsrfRes.status, 403, 'Mutations without CSRF token must fail with 403');
+    assert.strictEqual(noCsrfRes.body.error, 'Forbidden');
+    assert.strictEqual(noCsrfRes.body.message, 'Invalid or missing CSRF token');
+
+    // 8b: No phantom wallet credits created
+    const boosterWallet = await prisma.wallet.findUnique({ where: { userId: testBoosterId } });
+    assert.strictEqual(boosterWallet?.balanceUsd || 0, 0, 'No wallet balance should be credited from operational/KYC decisions');
+
+    // 8c: Financial feature gates remain disabled
     const gates = [
       { name: 'ESCROW_RELEASE_ENABLED', isLive: process.env.ESCROW_RELEASE_ENABLED === 'true' },
       { name: 'FINANCE_V2_LIVE_CREDITS_ENABLED', isLive: process.env.FINANCE_V2_LIVE_CREDITS_ENABLED === 'true' },
@@ -335,13 +547,17 @@ async function runPhase7OperationsSuite() {
     throw err;
   } finally {
     // Cleanup test records
+    if (fs.existsSync(docAPath)) fs.unlinkSync(docAPath);
+    if (fs.existsSync(docBPath)) fs.unlinkSync(docBPath);
+
+    await prisma.pilotVerification.deleteMany({ where: { userId: { in: [testBoosterId, testStaffId, testManagerId] } } }).catch(() => {});
     await prisma.runProof.deleteMany({ where: { submittedById: { in: [testBoosterId, testStaffId, testManagerId] } } }).catch(() => {});
     await prisma.orderDispute.deleteMany({ where: { openedById: { in: [testBoosterId, testStaffId, testManagerId] } } }).catch(() => {});
     await prisma.orderRun.deleteMany({ where: { order: { orderRef: { startsWith: 'ORD-P7-' } } } }).catch(() => {});
     await prisma.order.deleteMany({ where: { orderRef: { startsWith: 'ORD-P7-' } } }).catch(() => {});
-    await prisma.registrationApplication.deleteMany({ where: { userId: { in: [testBoosterId, testStaffId, testManagerId] } } }).catch(() => {});
-    await prisma.userRole.deleteMany({ where: { userId: { in: [testBoosterId, testStaffId, testManagerId, testOwnerId] } } }).catch(() => {});
-    await prisma.user.deleteMany({ where: { discordId: { in: [testBoosterId, testStaffId, testManagerId, testOwnerId] } } }).catch(() => {});
+    await prisma.registrationApplication.deleteMany({ where: { userId: { in: [testBoosterId, testStaffId, testManagerId, tempManagerId] } } }).catch(() => {});
+    await prisma.userRole.deleteMany({ where: { userId: { in: [testBoosterId, testStaffId, testAdminId, testManagerId, testOwnerId, tempManagerId] } } }).catch(() => {});
+    await prisma.user.deleteMany({ where: { discordId: { in: [testBoosterId, testStaffId, testAdminId, testManagerId, testOwnerId, tempManagerId] } } }).catch(() => {});
   }
 }
 

@@ -1074,6 +1074,45 @@ export async function reviewApplication(input: ApplicationReviewInput) {
 
     // ۵. تایید رسمی احراز هویت پایلوت یا صراف (Verify Identity)
     } else if (decision === 'verify_identity') {
+      if (['approved', 'rejected', 'cancelled'].includes(currentApp.status)) {
+        throw new Error(`APPLICATION_ALREADY_REVIEWED: Application is already marked as '${currentApp.status}'`);
+      }
+
+      if (currentApp.identityStatus === 'verified') {
+        throw new Error('IDENTITY_ALREADY_VERIFIED: Identity for this application has already been verified');
+      }
+
+      // اعتبارسنجی مدارک هویتی اجباری طبق خط‌مشی احراز هویت
+      if (currentApp.category === 'pilot') {
+        const verif = await tx.pilotVerification.findFirst({
+          where: {
+            userId: applicantId,
+            ...(currentApp.gameSlug ? { gameSlug: currentApp.gameSlug } : {}),
+          },
+        });
+        let qualDocs: any = {};
+        try {
+          qualDocs = JSON.parse(currentApp.qualifications || '{}');
+        } catch {}
+
+        const hasId = Boolean(verif?.identityDocumentRef || qualDocs?.identityDocumentRef);
+        const hasPassport = Boolean(verif?.passportDocumentRef || qualDocs?.passportDocumentRef);
+        const hasSelfie = Boolean(verif?.selfieDocumentRef || qualDocs?.selfieDocumentRef);
+
+        if (!((hasId || hasPassport) && hasSelfie)) {
+          throw new Error('MANDATORY_EVIDENCE_MISSING: Pilot identity verification requires valid identity/passport and selfie documentation');
+        }
+      } else if (currentApp.category === 'exchanger') {
+        let qualDocs: any = {};
+        try {
+          qualDocs = JSON.parse(currentApp.qualifications || '{}');
+        } catch {}
+        const hasDocs = Boolean(qualDocs?.identityDocumentRef || qualDocs?.passportDocumentRef || qualDocs?.selfieDocumentRef);
+        if (!hasDocs) {
+          throw new Error('MANDATORY_EVIDENCE_MISSING: Exchanger identity verification requires valid submitted identity documentation');
+        }
+      }
+
       if (currentApp.category === 'pilot' && currentApp.gameSlug) {
         await tx.pilotVerification.updateMany({
           where: {
@@ -1096,6 +1135,7 @@ export async function reviewApplication(input: ApplicationReviewInput) {
           status: 'under_review',
           reviewNotes: reviewNotes || 'Identity verification verified by staff',
           reviewedById: reviewerId,
+          reviewedAt: new Date(),
         },
       });
 
@@ -1105,7 +1145,7 @@ export async function reviewApplication(input: ApplicationReviewInput) {
           action: 'REGISTRATION_IDENTITY_VERIFIED',
           entityType: 'RegistrationApplication',
           entityId: String(applicationId),
-          newValues: JSON.stringify({ identityStatus: 'verified' }),
+          newValues: JSON.stringify({ identityStatus: 'verified', status: 'under_review', reviewerId }),
         },
       });
 
