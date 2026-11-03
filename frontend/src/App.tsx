@@ -19,6 +19,8 @@ import { ManagementPage } from './pages/ManagementPage';
 import { KycManagementPage } from './pages/KycManagementPage';
 import { AdminPage } from './pages/AdminPage';
 import { OwnerPage } from './pages/OwnerPage';
+import { ProfilePage } from './pages/ProfilePage';
+import { BoosterSettingsPage } from './pages/BoosterSettingsPage';
 
 export const App: React.FC = () => {
   return (
@@ -37,28 +39,9 @@ export const App: React.FC = () => {
             <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/wallet" element={<WalletPage />} />
             <Route path="/withdraw" element={<WithdrawPage />} />
-            <Route
-              path="/profile"
-              element={
-                <LegacyTransitionPage
-                  moduleName="User Profile & WoW Characters"
-                  category="Authenticated"
-                  description="Manage linked Blizzard Raider.IO characters, mythic scores, and contact preferences."
-                  legacyTab="characters"
-                />
-              }
-            />
-            <Route
-              path="/booster/settings"
-              element={
-                <LegacyTransitionPage
-                  moduleName="Booster Settings"
-                  category="Authenticated"
-                  description="Configure boost game preferences, availability alerts, and Discord notifications."
-                  legacyTab="settings"
-                />
-              }
-            />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/booster/settings" element={<BoosterSettingsPage />} />
+            <Route path="/settings" element={<BoosterSettingsPage />} />
             <Route path="/advertiser" element={<AdvertiserPage />} />
             <Route path="/exchange" element={<ExchangePage />} />
             <Route path="/exchanger" element={<ExchangerPage />} />

@@ -148,9 +148,22 @@ export const DashboardLayout: React.FC = () => {
               fontSize: '0.85rem',
               fontWeight: 600,
               color: location.pathname === '/profile' ? 'var(--accent-lime)' : 'var(--text-muted)',
+              borderBottom: location.pathname === '/profile' ? '2px solid var(--accent-lime)' : 'none',
             }}
           >
             Profile &amp; Characters
+          </Link>
+          <Link
+            to="/booster/settings"
+            style={{
+              padding: '0.4rem 0.8rem',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              color: ['/booster/settings', '/settings'].includes(location.pathname) ? 'var(--accent-lime)' : 'var(--text-muted)',
+              borderBottom: ['/booster/settings', '/settings'].includes(location.pathname) ? '2px solid var(--accent-lime)' : 'none',
+            }}
+          >
+            Booster Hub
           </Link>
           {hasRole('staff', 'manager', 'admin', 'owner') && (
             <Link

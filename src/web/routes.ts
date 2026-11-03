@@ -190,6 +190,7 @@ import { FINANCE_V2_CONSTANTS, BoosterWithdrawalMethod, BoosterWithdrawalStatus 
 import { ownerGateRouter } from './ownerGate';
 import { adminPortalRouter } from './adminPortalRoutes';
 import { ownerPortalRouter } from './ownerPortalRoutes';
+import { profileSettingsRouter } from './profileSettingsRoutes';
 
 export const router = Router();
 
@@ -200,6 +201,9 @@ router.use('/ownergate', ownerGateRouter);
 // ─── روت‌های پورتال ادمین و مالک (Website Phase 8) ──────────────────────────
 router.use('/', adminPortalRouter);
 router.use('/', ownerPortalRouter);
+
+// ─── روت‌های پروفایل کاربر، تنظیمات و پورتال بوستر (Website Phase 9) ─────────
+router.use('/', profileSettingsRouter);
 
 // ─── روت‌های بازار مبادله، معاملات طلا و شارژ همتا‌به‌همتا (Finance V2.2) ──────
 router.use('/marketplace', marketplaceRouter);
