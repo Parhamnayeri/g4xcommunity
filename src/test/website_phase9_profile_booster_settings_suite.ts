@@ -278,6 +278,38 @@ async function runPhase9Suite() {
 
     // 7. Booster Portal Data & Mythic+ Roster Rules
     console.log('[Test 7] Booster Portal Data & Mythic+ Roster Requirements...');
+    // 7a. Regular user without booster role is rejected (403)
+    const nonBoosterRes = await userSession.agent.get('/api/booster/portal-data');
+    assert.strictEqual(nonBoosterRes.status, 403, 'Non-booster user must receive 403');
+    assert.strictEqual(nonBoosterRes.body.error, 'BOOSTER_ROLE_REQUIRED');
+
+    // 7b. Suspended booster is rejected (403)
+    const suspendedBoosterId = `phase9_suspended_${timestamp}`;
+    await prisma.user.create({
+      data: {
+        discordId: suspendedBoosterId,
+        username: `suspended_${timestamp}`,
+        isActive: true,
+        userRoles: {
+          create: [{ role: { connect: { roleKey: 'booster' } } }],
+        },
+        gameApprovals: {
+          create: [
+            {
+              gameSlug: testGame.slug,
+              approvalType: 'booster',
+              status: 'suspended',
+            },
+          ],
+        },
+      },
+    });
+    const suspendedSession = await createAuthenticatedAgent(suspendedBoosterId);
+    const suspendedRes = await suspendedSession.agent.get('/api/booster/portal-data');
+    assert.strictEqual(suspendedRes.status, 403, 'Suspended booster must receive 403');
+    assert.strictEqual(suspendedRes.body.error, 'BOOSTER_SUSPENDED');
+
+    // 7c. Approved active booster succeeds (200)
     const boosterSession = await createAuthenticatedAgent(testBoosterId);
     const boosterDataRes = await boosterSession.agent.get('/api/booster/portal-data');
     assert.strictEqual(boosterDataRes.status, 200);
@@ -295,7 +327,7 @@ async function runPhase9Suite() {
       assert.strictEqual(sample.rosterSlotsNeeded.healers, 1);
       assert.strictEqual(sample.rosterSlotsNeeded.dps, 2);
     }
-    console.log('  ✓ Pass: Booster portal data and Mythic+ roster composition confirmed');
+    console.log('  ✓ Pass: Booster portal privacy, 403 guards and Mythic+ roster composition confirmed');
 
     // 8. CSRF Protection
     console.log('[Test 8] CSRF protection on mutating endpoints...');
@@ -325,27 +357,28 @@ async function runPhase9Suite() {
   } finally {
     // Cleanup test records
     try {
+      const allTestUserIds = [testUserId, testUser2Id, testBoosterId, `phase9_suspended_${timestamp}`];
       await prisma.userRole.deleteMany({
-        where: { userId: { in: [testUserId, testUser2Id, testBoosterId] } },
+        where: { userId: { in: allTestUserIds } },
       });
       await prisma.userGameApproval.deleteMany({
-        where: { userId: { in: [testUserId, testUser2Id, testBoosterId] } },
+        where: { userId: { in: allTestUserIds } },
       });
       await prisma.pilotVerification.deleteMany({
-        where: { userId: { in: [testUserId, testUser2Id, testBoosterId] } },
+        where: { userId: { in: allTestUserIds } },
       });
       await prisma.auditLog.deleteMany({
-        where: { actorId: { in: [testUserId, testUser2Id, testBoosterId] } },
+        where: { actorId: { in: allTestUserIds } },
       });
       await prisma.user.deleteMany({
-        where: { discordId: { in: [testUserId, testUser2Id, testBoosterId] } },
+        where: { discordId: { in: allTestUserIds } },
       });
       await prisma.game.deleteMany({
         where: { slug: `wow_test_${timestamp}` },
       });
 
       // Cleanup user settings storage files
-      for (const uid of [testUserId, testUser2Id, testBoosterId]) {
+      for (const uid of allTestUserIds) {
         const p = path.join(process.cwd(), 'storage', 'user_settings', `${uid}.json`);
         if (fs.existsSync(p)) fs.unlinkSync(p);
       }

@@ -678,11 +678,52 @@ async function handleGetBoosterPortalData(req: Request, res: Response): Promise<
     const user = (req as AuthenticatedRequest).user;
     const userId = user.discordId;
 
-    const [dbUser, approvals, myAssignments, availableOrdersRaw, pilotVerif] = await Promise.all([
-      prisma.user.findUnique({
-        where: { discordId: userId },
-        include: { userRoles: true },
-      }),
+    const dbUser = await prisma.user.findUnique({
+      where: { discordId: userId },
+      include: { userRoles: true },
+    });
+
+    if (!dbUser) {
+      res.status(401).json({ error: 'UNAUTHORIZED', message: 'User record not found.' });
+      return;
+    }
+
+    // Check account status: suspended/inactive boosters are strictly blocked
+    if (!dbUser.isActive) {
+      res.status(403).json({
+        error: 'ACCOUNT_SUSPENDED',
+        message: 'Your account is suspended or inactive. Access to booster portal is revoked.',
+      });
+      return;
+    }
+
+    const userRoles = (dbUser.userRoles || []).map((r) => r.roleKey);
+    const isBooster = userRoles.includes('booster');
+    const isStaffOrAdmin = userRoles.some((r) => ['admin', 'manager', 'owner', 'staff'].includes(r));
+
+    // Check if booster is suspended at the game approval level
+    const suspendedApproval = await prisma.userGameApproval.findFirst({
+      where: { userId, status: 'suspended' },
+    });
+
+    if (suspendedApproval && !isStaffOrAdmin) {
+      res.status(403).json({
+        error: 'BOOSTER_SUSPENDED',
+        message: 'Your booster credentials are suspended. Access to booster portal is revoked.',
+      });
+      return;
+    }
+
+    // Server-authoritative Booster check: return 403 for unauthorized users
+    if (!isBooster && !isStaffOrAdmin) {
+      res.status(403).json({
+        error: 'BOOSTER_ROLE_REQUIRED',
+        message: 'Access restricted to authorized community boosters.',
+      });
+      return;
+    }
+
+    const [approvals, myAssignments, pilotVerif] = await Promise.all([
       prisma.userGameApproval.findMany({
         where: { userId, status: 'approved' },
         include: { game: { select: { slug: true, displayName: true } } },
@@ -701,26 +742,39 @@ async function handleGetBoosterPortalData(req: Request, res: Response): Promise<
         orderBy: { assignedAt: 'desc' },
         take: 15,
       }),
-      prisma.order.findMany({
-        where: {
-          status: { in: ['open_presign', 'pending', 'assigned'] },
-          paymentStatus: { in: ['verified', 'unneeded'] },
-        },
-        include: {
-          game: { select: { slug: true, displayName: true } },
-          service: { select: { displayName: true } },
-          assignments: { select: { assignedRole: true, userId: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 20,
-      }),
       prisma.pilotVerification.findFirst({
         where: { userId },
         orderBy: { submittedAt: 'desc' },
       }),
     ]);
 
-    const isBooster = (dbUser?.userRoles || []).some((r) => r.roleKey === 'booster');
+    const approvedGameSlugs = approvals.map((a) => a.gameSlug);
+
+    // Apply game eligibility: regular boosters only see queues for cleared games
+    const availableOrdersWhere: any = {
+      status: { in: ['open_presign', 'pending', 'assigned'] },
+      paymentStatus: { in: ['verified', 'unneeded'] },
+    };
+
+    if (!isStaffOrAdmin) {
+      if (approvedGameSlugs.length === 0) {
+        availableOrdersWhere.gameSlug = '__NO_GAMES_APPROVED__';
+      } else {
+        availableOrdersWhere.gameSlug = { in: approvedGameSlugs };
+      }
+    }
+
+    const availableOrdersRaw = await prisma.order.findMany({
+      where: availableOrdersWhere,
+      include: {
+        game: { select: { slug: true, displayName: true } },
+        service: { select: { displayName: true } },
+        assignments: { select: { assignedRole: true, userId: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+
     const settings = loadUserSettings(userId);
 
     const avatarIndex = (() => {
