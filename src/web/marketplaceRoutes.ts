@@ -409,13 +409,16 @@ marketplaceRouter.get(
 
       const p2pSettlementEnabled = process.env.FINANCE_V2_P2P_SETTLEMENT_ENABLED === 'true';
 
+      const userSummary = {
+        discordId: user.discordId,
+        username: user.username,
+        displayName: user.displayName || user.username,
+      };
+
       res.json({
         success: true,
-        profile: {
-          discordId: user.discordId,
-          username: user.username,
-          displayName: user.displayName || user.username,
-        },
+        profile: userSummary,
+        exchanger: userSummary,
         wallet: {
           availableCents: walletSummary.availableCents,
           availableUsd: (walletSummary.availableCents / 100).toFixed(2),
@@ -950,7 +953,16 @@ marketplaceRouter.get(
         orderBy: { createdAt: 'desc' },
         take: 100,
       });
-      res.json({ success: true, trades: trades.map(serializeAdminTrade) });
+      res.json({
+        success: true,
+        trades: trades.map(serializeAdminTrade),
+        pagination: {
+          page: 1,
+          limit: trades.length,
+          total: trades.length,
+          totalPages: 1,
+        },
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

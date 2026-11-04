@@ -1231,6 +1231,7 @@ export interface SeparatedOrdersResult {
   pagination: {
     page: number;
     limit: number;
+    total?: number;
     totalCount: number;
     totalPages: number;
     hasNext: boolean;
@@ -1631,6 +1632,7 @@ export async function getSeparatedOrdersList(
     pagination: {
       page,
       limit,
+      total: totalCount,
       totalCount,
       totalPages,
       hasNext: page < totalPages,

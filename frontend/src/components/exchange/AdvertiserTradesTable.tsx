@@ -19,6 +19,7 @@ export const AdvertiserTradesTable: React.FC<AdvertiserTradesTableProps> = ({
   onFilterChange,
   onRefresh,
 }) => {
+  const safePagination = pagination || { page: 1, limit: 10, total: trades?.length || 0, totalPages: 1 };
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [actionTrade, setActionTrade] = useState<GoldTrade | null>(null);
   const [actionType, setActionType] = useState<'deliver' | 'confirm_receipt' | 'dispute' | 'cancel' | null>(null);
@@ -182,7 +183,7 @@ export const AdvertiserTradesTable: React.FC<AdvertiserTradesTableProps> = ({
                 return (
                   <tr key={trade.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
                     <td style={{ padding: '12px 8px', fontFamily: 'monospace', color: 'var(--text-primary)' }}>
-                      #{trade.id.substring(0, 8)}
+                      #{trade.tradeRef || String(trade.id)}
                     </td>
                     <td style={{ padding: '12px 8px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                       {new Date(trade.createdAt).toLocaleDateString()} {new Date(trade.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -302,34 +303,34 @@ export const AdvertiserTradesTable: React.FC<AdvertiserTradesTableProps> = ({
           {/* Pagination Controls */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Showing {trades.length} of {pagination.total} trades (Page {pagination.page} of {pagination.totalPages || 1})
+              Showing {trades.length} of {safePagination.total} trades (Page {safePagination.page} of {safePagination.totalPages || 1})
             </span>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
-                disabled={pagination.page <= 1}
-                onClick={() => onPageChange(pagination.page - 1)}
+                disabled={safePagination.page <= 1}
+                onClick={() => onPageChange(safePagination.page - 1)}
                 style={{
                   padding: '6px 12px',
                   backgroundColor: 'var(--bg-main)',
-                  color: pagination.page <= 1 ? 'var(--text-muted)' : 'var(--text-primary)',
+                  color: safePagination.page <= 1 ? 'var(--text-muted)' : 'var(--text-primary)',
                   border: '1px solid var(--border-subtle)',
                   borderRadius: '6px',
-                  cursor: pagination.page <= 1 ? 'not-allowed' : 'pointer',
+                  cursor: safePagination.page <= 1 ? 'not-allowed' : 'pointer',
                   fontSize: '0.85rem'
                 }}
               >
                 Previous
               </button>
               <button
-                disabled={pagination.page >= pagination.totalPages}
-                onClick={() => onPageChange(pagination.page + 1)}
+                disabled={safePagination.page >= safePagination.totalPages}
+                onClick={() => onPageChange(safePagination.page + 1)}
                 style={{
                   padding: '6px 12px',
                   backgroundColor: 'var(--bg-main)',
-                  color: pagination.page >= pagination.totalPages ? 'var(--text-muted)' : 'var(--text-primary)',
+                  color: safePagination.page >= safePagination.totalPages ? 'var(--text-muted)' : 'var(--text-primary)',
                   border: '1px solid var(--border-subtle)',
                   borderRadius: '6px',
-                  cursor: pagination.page >= pagination.totalPages ? 'not-allowed' : 'pointer',
+                  cursor: safePagination.page >= safePagination.totalPages ? 'not-allowed' : 'pointer',
                   fontSize: '0.85rem'
                 }}
               >
@@ -373,7 +374,7 @@ export const AdvertiserTradesTable: React.FC<AdvertiserTradesTableProps> = ({
             </h3>
 
             <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              Trade #{actionTrade.id.substring(0, 8)} — {actionTrade.goldAmountK.toLocaleString()}k Gold (
+              Trade #{actionTrade.tradeRef || String(actionTrade.id)} — {actionTrade.goldAmountK.toLocaleString()}k Gold (
               {actionTrade.settlementMethod})
             </div>
 

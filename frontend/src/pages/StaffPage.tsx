@@ -67,8 +67,8 @@ export const StaffPage: React.FC = () => {
         limit: 10,
         status: proofStatusFilter || undefined,
       });
-      setProofs(res.proofs);
-      setProofsPagination(res.pagination);
+      setProofs(Array.isArray(res?.proofs) ? res.proofs : []);
+      setProofsPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
     } catch (err: any) {
       console.error('Failed to load proofs:', err);
     } finally {
@@ -81,8 +81,8 @@ export const StaffPage: React.FC = () => {
     setDisputesLoading(true);
     try {
       const res = await fetchStaffDisputes({ page, limit: 10 });
-      setDisputes(res.disputes);
-      setDisputesPagination(res.pagination);
+      setDisputes(Array.isArray(res?.disputes) ? res.disputes : []);
+      setDisputesPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
     } catch (err: any) {
       console.error('Failed to load disputes:', err);
     } finally {
@@ -356,7 +356,7 @@ export const StaffPage: React.FC = () => {
             </div>
 
             <button
-              onClick={() => loadProofs(proofsPagination.page)}
+              onClick={() => loadProofs(proofsPagination?.page ?? 1)}
               className="btn btn-sm"
               style={{
                 backgroundColor: 'var(--bg-surface-hover)',
@@ -514,7 +514,7 @@ export const StaffPage: React.FC = () => {
             )}
 
             {/* Pagination Controls */}
-            {proofsPagination.totalPages > 1 && (
+            {(proofsPagination?.totalPages ?? 0) > 1 && (
               <div
                 style={{
                   display: 'flex',
@@ -527,12 +527,12 @@ export const StaffPage: React.FC = () => {
                 }}
               >
                 <div>
-                  Page {proofsPagination.page} of {proofsPagination.totalPages} ({proofsPagination.total} total proofs)
+                  Page {proofsPagination?.page ?? 1} of {proofsPagination?.totalPages || 1} ({proofsPagination?.total ?? 0} total proofs)
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
-                    disabled={proofsPagination.page <= 1}
-                    onClick={() => loadProofs(proofsPagination.page - 1)}
+                    disabled={(proofsPagination?.page ?? 1) <= 1}
+                    onClick={() => loadProofs((proofsPagination?.page ?? 1) - 1)}
                     className="btn btn-sm"
                     style={{
                       backgroundColor: 'var(--bg-surface-hover)',
@@ -543,8 +543,8 @@ export const StaffPage: React.FC = () => {
                     &larr; Previous
                   </button>
                   <button
-                    disabled={proofsPagination.page >= proofsPagination.totalPages}
-                    onClick={() => loadProofs(proofsPagination.page + 1)}
+                    disabled={(proofsPagination?.page ?? 1) >= (proofsPagination?.totalPages || 1)}
+                    onClick={() => loadProofs((proofsPagination?.page ?? 1) + 1)}
                     className="btn btn-sm"
                     style={{
                       backgroundColor: 'var(--bg-surface-hover)',

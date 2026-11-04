@@ -94,8 +94,8 @@ export const ManagementPage: React.FC = () => {
         page,
         limit: 10,
       });
-      setOrders(res.orders);
-      setOrdersPagination(res.pagination);
+      setOrders(Array.isArray(res?.orders) ? res.orders : []);
+      setOrdersPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
     } catch (err: any) {
       console.error('Failed to load management orders:', err);
     } finally {
@@ -113,8 +113,8 @@ export const ManagementPage: React.FC = () => {
         page,
         limit: 10,
       });
-      setApplications(res.applications);
-      setAppsPagination(res.pagination);
+      setApplications(Array.isArray(res?.applications) ? res.applications : []);
+      setAppsPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
     } catch (err: any) {
       console.error('Failed to load applications:', err);
     } finally {
@@ -127,8 +127,8 @@ export const ManagementPage: React.FC = () => {
     setDisputesLoading(true);
     try {
       const res = await fetchManagementDisputes({ page, limit: 10 });
-      setDisputes(res.disputes);
-      setDisputesPagination(res.pagination);
+      setDisputes(Array.isArray(res?.disputes) ? res.disputes : []);
+      setDisputesPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
     } catch (err: any) {
       console.error('Failed to load disputes:', err);
     } finally {
@@ -157,7 +157,7 @@ export const ManagementPage: React.FC = () => {
     try {
       const res = await approveOrderAdmin(orderId, 'Operational final approval by Manager console');
       setOrderActionFeedback({ text: res.message || `Order #${orderId} approved successfully.`, type: 'success' });
-      loadOrders(ordersPagination.page);
+      loadOrders(ordersPagination?.page ?? 1);
       loadOverview();
     } catch (err: any) {
       setOrderActionFeedback({ text: err.message || `Failed to approve order #${orderId}`, type: 'error' });
@@ -173,7 +173,7 @@ export const ManagementPage: React.FC = () => {
     try {
       const res = await publishOrderCard(orderId);
       setOrderActionFeedback({ text: res.message || `Order #${orderId} published to Discord.`, type: 'success' });
-      loadOrders(ordersPagination.page);
+      loadOrders(ordersPagination?.page ?? 1);
     } catch (err: any) {
       setOrderActionFeedback({ text: err.message || `Failed to publish order #${orderId}`, type: 'error' });
     } finally {
@@ -195,7 +195,7 @@ export const ManagementPage: React.FC = () => {
       });
       setTimeout(() => {
         setSelectedApp(null);
-        loadApplications(appsPagination.page);
+        loadApplications(appsPagination?.page ?? 1);
         loadOverview();
       }, 1200);
     } catch (err: any) {
@@ -226,7 +226,7 @@ export const ManagementPage: React.FC = () => {
       });
       setTimeout(() => {
         setSelectedDispute(null);
-        loadDisputes(disputesPagination.page);
+        loadDisputes(disputesPagination?.page ?? 1);
         loadOverview();
       }, 1200);
     } catch (err: any) {
@@ -522,7 +522,7 @@ export const ManagementPage: React.FC = () => {
             </div>
 
             <button
-              onClick={() => loadOrders(ordersPagination.page)}
+              onClick={() => loadOrders(ordersPagination?.page ?? 1)}
               className="btn btn-sm"
               style={{
                 backgroundColor: 'var(--bg-surface-hover)',
@@ -685,7 +685,7 @@ export const ManagementPage: React.FC = () => {
             )}
 
             {/* Pagination Controls */}
-            {ordersPagination.totalPages > 1 && (
+            {(ordersPagination?.totalPages ?? 0) > 1 && (
               <div
                 style={{
                   display: 'flex',
@@ -698,20 +698,20 @@ export const ManagementPage: React.FC = () => {
                 }}
               >
                 <div>
-                  Page {ordersPagination.page} of {ordersPagination.totalPages} ({ordersPagination.total} orders)
+                  Page {ordersPagination?.page ?? 1} of {ordersPagination?.totalPages || 1} ({ordersPagination?.total ?? 0} orders)
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
-                    disabled={ordersPagination.page <= 1}
-                    onClick={() => loadOrders(ordersPagination.page - 1)}
+                    disabled={(ordersPagination?.page ?? 1) <= 1}
+                    onClick={() => loadOrders((ordersPagination?.page ?? 1) - 1)}
                     className="btn btn-sm"
                     style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
                   >
                     &larr; Prev
                   </button>
                   <button
-                    disabled={ordersPagination.page >= ordersPagination.totalPages}
-                    onClick={() => loadOrders(ordersPagination.page + 1)}
+                    disabled={(ordersPagination?.page ?? 1) >= (ordersPagination?.totalPages || 1)}
+                    onClick={() => loadOrders((ordersPagination?.page ?? 1) + 1)}
                     className="btn btn-sm"
                     style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
                   >

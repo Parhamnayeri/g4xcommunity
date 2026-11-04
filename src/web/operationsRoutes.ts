@@ -202,12 +202,19 @@ operationsRouter.get('/staff/pending-proofs', requireAuth, requireStaffAccess, a
       }),
     ]);
 
+    const totalPages = Math.ceil(total / limit) || 1;
     res.json({
       success: true,
       page,
       limit,
       total,
-      totalPages: Math.ceil(total / limit),
+      totalPages,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
       proofs: proofs.map((p) => ({
         id: p.id,
         runId: p.runId,
@@ -215,14 +222,19 @@ operationsRouter.get('/staff/pending-proofs', requireAuth, requireStaffAccess, a
         orderId: p.run.orderId,
         orderRef: p.run.order.orderRef,
         orderName: p.run.order.orderName,
+        game: p.run.order.gameSlug,
         gameSlug: p.run.order.gameSlug,
+        service: 'Boost Run',
         creatorType: p.run.order.creatorType,
         proofType: p.proofType,
         evidenceUrl: p.evidenceUrl,
         description: p.description,
+        notes: null,
         status: p.status,
         submittedAt: p.submittedAt,
+        createdAt: p.submittedAt ? p.submittedAt.toISOString() : new Date().toISOString(),
         submittedBy: {
+          id: p.submittedBy.discordId,
           discordId: p.submittedBy.discordId,
           username: p.submittedBy.username,
           displayName: p.submittedBy.displayName,
@@ -313,6 +325,77 @@ operationsRouter.post('/staff/orders/:id/review', requireAuth, requireStaffAcces
     });
   } catch (err: any) {
     res.status(400).json({ error: 'STAFF_REVIEW_FAILED', message: err.message || 'Staff order review failed' });
+  }
+});
+
+/**
+ * GET /staff/disputes — Paginated disputes queue for staff members
+ */
+operationsRouter.get('/staff/disputes', requireAuth, requireStaffAccess, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 10));
+    const skip = (page - 1) * limit;
+    const statusFilter = req.query.status ? String(req.query.status).trim() : undefined;
+
+    const where: any = {};
+    if (statusFilter && statusFilter !== 'all') {
+      where.status = statusFilter;
+    }
+
+    const [total, rawDisputes] = await Promise.all([
+      prisma.orderDispute.count({ where }),
+      prisma.orderDispute.findMany({
+        where,
+        include: {
+          openedBy: { select: { discordId: true, username: true, displayName: true } },
+          assignedReviewer: { select: { discordId: true, username: true, displayName: true } },
+          order: { select: { id: true, orderRef: true, gameSlug: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit) || 1;
+    const disputes = rawDisputes.map((d: any) => ({
+      id: d.id,
+      orderId: d.orderId,
+      orderRef: d.order?.orderRef,
+      gameSlug: d.order?.gameSlug,
+      disputeType: d.disputeType,
+      status: d.status,
+      description: d.description,
+      evidenceUrls: [],
+      openedBy: {
+        id: d.openedBy?.discordId || d.openedById,
+        username: d.openedBy?.username || 'Unknown',
+        displayName: d.openedBy?.displayName || null,
+      },
+      assignedStaffId: d.assignedReviewerId,
+      resolutionNotes: d.resolutionNotes,
+      resolvedAt: d.resolvedAt,
+      createdAt: d.createdAt,
+    }));
+
+    res.json({
+      success: true,
+      page,
+      limit,
+      total,
+      totalPages,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+      disputes,
+    });
+  } catch (err: any) {
+    console.error('[Operations] Staff disputes error:', err);
+    res.status(500).json({ error: 'Failed to fetch staff disputes' });
   }
 });
 
@@ -524,12 +607,19 @@ operationsRouter.get('/management/applications', requireAuth, requireLivePermiss
       }),
     ]);
 
+    const totalPages = Math.ceil(total / limit) || 1;
     res.json({
       success: true,
       page,
       limit,
       total,
-      totalPages: Math.ceil(total / limit),
+      totalPages,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
       applications,
     });
   } catch (err: any) {
@@ -620,9 +710,29 @@ operationsRouter.post('/management/applications/:id/review', requireAuth, requir
 operationsRouter.get('/management/disputes', requireAuth, requireLivePermission(Permission.DISPUTE_REVIEW), async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 15));
     const statusFilter = req.query.status ? String(req.query.status) : undefined;
-    const disputes = await getDisputesForUser(user.discordId, true, { status: statusFilter });
-    res.json({ success: true, disputes });
+    const allDisputes = await getDisputesForUser(user.discordId, true, { status: statusFilter });
+    const total = allDisputes.length;
+    const totalPages = Math.ceil(total / limit) || 1;
+    const skip = (page - 1) * limit;
+    const paginatedDisputes = allDisputes.slice(skip, skip + limit);
+
+    res.json({
+      success: true,
+      page,
+      limit,
+      total,
+      totalPages,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
+      disputes: paginatedDisputes,
+    });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to fetch disputes' });
   }
@@ -779,12 +889,19 @@ operationsRouter.get('/management/kyc/applications', requireAuth, requireKycRevi
       };
     });
 
+    const totalPages = Math.ceil(total / limit) || 1;
     res.json({
       success: true,
       page,
       limit,
       total,
-      totalPages: Math.ceil(total / limit),
+      totalPages,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+      },
       applications: kycItems,
     });
   } catch (err: any) {

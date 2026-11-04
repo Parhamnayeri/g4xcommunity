@@ -134,8 +134,8 @@ export const OwnerPage: React.FC = () => {
         limit: auditPagination.limit,
         action: auditActionFilter || undefined,
       });
-      setAuditLogs(data.logs);
-      setAuditPagination(data.pagination);
+      setAuditLogs(data?.logs || []);
+      setAuditPagination(data?.pagination || { page: 1, limit: 25, total: 0, totalPages: 1 });
     } catch (err) {
       console.error('Failed to load owner audit:', err);
     } finally {
@@ -846,22 +846,22 @@ export const OwnerPage: React.FC = () => {
               {/* Pagination */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  Page {ledgersData.pagination.page} of {ledgersData.pagination.totalPages || 1} ({ledgersData.pagination.total} total)
+                  Page {ledgersData?.pagination?.page ?? 1} of {ledgersData?.pagination?.totalPages || 1} ({ledgersData?.pagination?.total ?? 0} total)
                 </span>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
                     type="button"
-                    disabled={ledgersData.pagination.page <= 1}
+                    disabled={(ledgersData?.pagination?.page ?? 1) <= 1}
                     className="btn btn-secondary btn-sm"
-                    onClick={() => loadLedgers(ledgersData.pagination.page - 1)}
+                    onClick={() => loadLedgers((ledgersData?.pagination?.page ?? 1) - 1)}
                   >
                     &larr; Prev
                   </button>
                   <button
                     type="button"
-                    disabled={ledgersData.pagination.page >= ledgersData.pagination.totalPages}
+                    disabled={(ledgersData?.pagination?.page ?? 1) >= (ledgersData?.pagination?.totalPages || 1)}
                     className="btn btn-secondary btn-sm"
-                    onClick={() => loadLedgers(ledgersData.pagination.page + 1)}
+                    onClick={() => loadLedgers((ledgersData?.pagination?.page ?? 1) + 1)}
                   >
                     Next &rarr;
                   </button>
@@ -1014,22 +1014,22 @@ export const OwnerPage: React.FC = () => {
               {/* Pagination */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  Page {auditPagination.page} of {auditPagination.totalPages || 1} ({auditPagination.total} total)
+                  Page {auditPagination?.page ?? 1} of {auditPagination?.totalPages || 1} ({auditPagination?.total ?? 0} total)
                 </span>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
                     type="button"
-                    disabled={auditPagination.page <= 1}
+                    disabled={(auditPagination?.page ?? 1) <= 1}
                     className="btn btn-secondary btn-sm"
-                    onClick={() => loadAudit(auditPagination.page - 1)}
+                    onClick={() => loadAudit((auditPagination?.page ?? 1) - 1)}
                   >
                     &larr; Prev
                   </button>
                   <button
                     type="button"
-                    disabled={auditPagination.page >= auditPagination.totalPages}
+                    disabled={(auditPagination?.page ?? 1) >= (auditPagination?.totalPages || 1)}
                     className="btn btn-secondary btn-sm"
-                    onClick={() => loadAudit(auditPagination.page + 1)}
+                    onClick={() => loadAudit((auditPagination?.page ?? 1) + 1)}
                   >
                     Next &rarr;
                   </button>

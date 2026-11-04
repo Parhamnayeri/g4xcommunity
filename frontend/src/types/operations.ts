@@ -37,32 +37,40 @@ export interface PendingProofItem {
   id: number;
   runId: number;
   orderId: number | null;
-  game: string | null;
-  service: string | null;
+  orderRef?: string | null;
+  orderName?: string | null;
+  game?: string | null;
+  gameSlug?: string | null;
+  service?: string | null;
   status: 'pending' | 'approved' | 'rejected';
   proofType: string;
   evidenceUrl: string;
   description: string | null;
-  notes: string | null;
+  notes?: string | null;
   submittedBy: {
     id: string;
+    discordId?: string;
     username: string;
     displayName: string | null;
   };
-  reviewedBy: string | null;
-  reviewedAt: string | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
+  submittedAt?: string;
   createdAt: string;
 }
 
 export interface DisputeItem {
   id: number;
   orderId: number;
+  orderRef?: string;
+  gameSlug?: string;
   disputeType: string;
   status: 'open' | 'under_review' | 'waiting_for_evidence' | 'resolved' | 'cancelled';
   description: string;
   evidenceUrls: string[];
   openedBy: {
     id: string;
+    discordId?: string;
     username: string;
     displayName: string | null;
   };
@@ -70,6 +78,59 @@ export interface DisputeItem {
   resolutionNotes: string | null;
   resolvedAt: string | null;
   createdAt: string;
+}
+
+export interface PendingProofsResponse {
+  success: boolean;
+  page?: number;
+  limit?: number;
+  total?: number;
+  totalPages?: number;
+  pagination?: PaginationMeta;
+  proofs: PendingProofItem[];
+}
+
+export interface DisputesResponse {
+  success: boolean;
+  page?: number;
+  limit?: number;
+  total?: number;
+  totalPages?: number;
+  pagination?: PaginationMeta;
+  disputes: DisputeItem[];
+}
+
+export interface RegistrationApplicationsResponse {
+  success: boolean;
+  page?: number;
+  limit?: number;
+  total?: number;
+  totalPages?: number;
+  pagination?: PaginationMeta;
+  applications: RegistrationApplicationItem[];
+}
+
+export interface KycApplicationsResponse {
+  success: boolean;
+  page?: number;
+  limit?: number;
+  total?: number;
+  totalPages?: number;
+  pagination?: PaginationMeta;
+  applications: KycApplicationItem[];
+}
+
+export interface ManagementOrdersResponse {
+  success: boolean;
+  tab?: string;
+  counts?: { g4x: number; advertiser: number; needsReview: number };
+  page?: number;
+  limit?: number;
+  total?: number;
+  totalCount?: number;
+  totalPages?: number;
+  pagination?: PaginationMeta & { totalCount?: number; hasNext?: boolean; hasPrev?: boolean };
+  orders: OrderItem[];
 }
 
 export interface ManagementOverviewResponse {

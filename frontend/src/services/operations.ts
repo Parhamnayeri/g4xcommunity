@@ -11,6 +11,30 @@ import {
   PaginationMeta,
 } from '../types/operations';
 
+/**
+ * Universal pagination normalizer
+ * Defensively extracts pagination metadata regardless of whether the API
+ * returns flat fields (page, limit, total, totalPages) or a nested pagination object.
+ */
+export function normalizePagination(raw: any, defaultLimit: number = 10): PaginationMeta {
+  if (!raw || typeof raw !== 'object') {
+    return { page: 1, limit: defaultLimit, total: 0, totalPages: 1 };
+  }
+  if (raw.pagination && typeof raw.pagination === 'object') {
+    const p = raw.pagination;
+    const total = Number(p.total ?? p.totalCount ?? 0) || 0;
+    const limit = Number(p.limit) || defaultLimit;
+    const page = Number(p.page) || 1;
+    const totalPages = Number(p.totalPages) || (total > 0 ? Math.ceil(total / limit) : 1);
+    return { page, limit, total, totalPages: Math.max(1, totalPages) };
+  }
+  const total = Number(raw.total ?? raw.totalCount ?? 0) || 0;
+  const limit = Number(raw.limit) || defaultLimit;
+  const page = Number(raw.page) || 1;
+  const totalPages = Number(raw.totalPages) || (total > 0 ? Math.ceil(total / limit) : 1);
+  return { page, limit, total, totalPages: Math.max(1, totalPages) };
+}
+
 // ==========================================
 // Staff Operations APIs
 // ==========================================
@@ -30,7 +54,26 @@ export async function fetchPendingProofs(params?: {
   if (params?.limit) query.set('limit', String(params.limit));
   if (params?.status) query.set('status', params.status);
   if (params?.game) query.set('game', params.game);
-  return apiRequest(`/api/staff/pending-proofs?${query.toString()}`);
+
+  const res = await apiRequest<any>(`/api/staff/pending-proofs?${query.toString()}`);
+  const rawProofs = Array.isArray(res?.proofs) ? res.proofs : [];
+  const proofs: PendingProofItem[] = rawProofs.map((p: any) => ({
+    ...p,
+    game: p.game || p.gameSlug || 'WoW',
+    service: p.service || 'Boost Run',
+    createdAt: p.createdAt || p.submittedAt || new Date().toISOString(),
+    submittedBy: {
+      id: p.submittedBy?.id || p.submittedBy?.discordId || '',
+      discordId: p.submittedBy?.discordId || p.submittedBy?.id || '',
+      username: p.submittedBy?.username || 'Unknown',
+      displayName: p.submittedBy?.displayName || null,
+    },
+  }));
+
+  return {
+    proofs,
+    pagination: normalizePagination(res, params?.limit || 15),
+  };
 }
 
 export async function reviewProof(
@@ -63,7 +106,25 @@ export async function fetchStaffDisputes(params?: {
   if (params?.page) query.set('page', String(params.page));
   if (params?.limit) query.set('limit', String(params.limit));
   if (params?.status) query.set('status', params.status);
-  return apiRequest(`/api/staff/disputes?${query.toString()}`);
+
+  const res = await apiRequest<any>(`/api/staff/disputes?${query.toString()}`);
+  const rawDisputes = Array.isArray(res?.disputes) ? res.disputes : [];
+  const disputes: DisputeItem[] = rawDisputes.map((d: any) => ({
+    ...d,
+    evidenceUrls: Array.isArray(d.evidenceUrls) ? d.evidenceUrls : [],
+    createdAt: d.createdAt || new Date().toISOString(),
+    openedBy: {
+      id: d.openedBy?.id || d.openedBy?.discordId || '',
+      discordId: d.openedBy?.discordId || d.openedBy?.id || '',
+      username: d.openedBy?.username || 'Unknown',
+      displayName: d.openedBy?.displayName || null,
+    },
+  }));
+
+  return {
+    disputes,
+    pagination: normalizePagination(res, params?.limit || 10),
+  };
 }
 
 // ==========================================
@@ -89,7 +150,12 @@ export async function fetchManagementOrders(params?: {
   if (params?.search) query.set('search', params.search);
   if (params?.page) query.set('page', String(params.page));
   if (params?.limit) query.set('limit', String(params.limit));
-  return apiRequest(`/api/management/orders?${query.toString()}`);
+
+  const res = await apiRequest<any>(`/api/management/orders?${query.toString()}`);
+  return {
+    orders: Array.isArray(res?.orders) ? res.orders : [],
+    pagination: normalizePagination(res, params?.limit || 15),
+  };
 }
 
 export async function approveOrderAdmin(
@@ -121,7 +187,12 @@ export async function fetchRegistrationApplications(params?: {
   if (params?.status) query.set('status', params.status);
   if (params?.page) query.set('page', String(params.page));
   if (params?.limit) query.set('limit', String(params.limit));
-  return apiRequest(`/api/management/applications?${query.toString()}`);
+
+  const res = await apiRequest<any>(`/api/management/applications?${query.toString()}`);
+  return {
+    applications: Array.isArray(res?.applications) ? res.applications : [],
+    pagination: normalizePagination(res, params?.limit || 15),
+  };
 }
 
 export async function reviewRegistrationApplication(
@@ -144,7 +215,25 @@ export async function fetchManagementDisputes(params?: {
   if (params?.status) query.set('status', params.status);
   if (params?.page) query.set('page', String(params.page));
   if (params?.limit) query.set('limit', String(params.limit));
-  return apiRequest(`/api/management/disputes?${query.toString()}`);
+
+  const res = await apiRequest<any>(`/api/management/disputes?${query.toString()}`);
+  const rawDisputes = Array.isArray(res?.disputes) ? res.disputes : [];
+  const disputes: DisputeItem[] = rawDisputes.map((d: any) => ({
+    ...d,
+    evidenceUrls: Array.isArray(d.evidenceUrls) ? d.evidenceUrls : [],
+    createdAt: d.createdAt || new Date().toISOString(),
+    openedBy: {
+      id: d.openedBy?.id || d.openedBy?.discordId || '',
+      discordId: d.openedBy?.discordId || d.openedBy?.id || '',
+      username: d.openedBy?.username || 'Unknown',
+      displayName: d.openedBy?.displayName || null,
+    },
+  }));
+
+  return {
+    disputes,
+    pagination: normalizePagination(res, params?.limit || 15),
+  };
 }
 
 export async function resolveManagementDispute(
@@ -173,7 +262,12 @@ export async function fetchKycApplications(params?: {
   if (params?.status) query.set('status', params.status);
   if (params?.page) query.set('page', String(params.page));
   if (params?.limit) query.set('limit', String(params.limit));
-  return apiRequest(`/api/management/kyc/applications?${query.toString()}`);
+
+  const res = await apiRequest<any>(`/api/management/kyc/applications?${query.toString()}`);
+  return {
+    applications: Array.isArray(res?.applications) ? res.applications : [],
+    pagination: normalizePagination(res, params?.limit || 15),
+  };
 }
 
 export async function fetchKycDetail(applicationId: number): Promise<KycDetailResponse> {

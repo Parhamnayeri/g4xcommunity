@@ -3,6 +3,7 @@
  */
 
 import { apiRequest } from './api';
+import { normalizePagination } from './operations';
 import {
   OwnerOverviewResponse,
   FeatureGateItem,
@@ -45,7 +46,13 @@ export async function fetchOwnerWalletsLedgers(params?: {
   const query = new URLSearchParams();
   if (params?.page) query.set('page', String(params.page));
   if (params?.limit) query.set('limit', String(params.limit));
-  return apiRequest<WalletsLedgersResponse>(`/api/owner/wallets-ledgers?${query.toString()}`);
+  const res = await apiRequest<any>(`/api/owner/wallets-ledgers?${query.toString()}`);
+  return {
+    ...res,
+    ledgerEntries: Array.isArray(res?.ledgerEntries) ? res.ledgerEntries : [],
+    wallets: Array.isArray(res?.wallets) ? res.wallets : [],
+    pagination: normalizePagination(res, params?.limit || 25),
+  };
 }
 
 export async function fetchOwnerAuditLogs(params?: {
@@ -64,7 +71,11 @@ export async function fetchOwnerAuditLogs(params?: {
   if (params?.action) query.set('action', params.action);
   if (params?.entityType) query.set('entityType', params.entityType);
   if (params?.actorId) query.set('actorId', params.actorId);
-  return apiRequest(`/api/owner/audit-logs?${query.toString()}`);
+  const res = await apiRequest<any>(`/api/owner/audit-logs?${query.toString()}`);
+  return {
+    logs: Array.isArray(res?.logs) ? res.logs : [],
+    pagination: normalizePagination(res, params?.limit || 25),
+  };
 }
 
 export async function fetchOwnerSecurityHealth(): Promise<SecurityHealthResponse> {

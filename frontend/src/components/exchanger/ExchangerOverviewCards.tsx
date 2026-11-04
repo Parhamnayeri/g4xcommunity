@@ -6,7 +6,17 @@ interface ExchangerOverviewCardsProps {
 }
 
 export const ExchangerOverviewCards: React.FC<ExchangerOverviewCardsProps> = ({ overview }) => {
-  const { exchanger, wallet, metrics, featureGates } = overview;
+  const exchanger = overview?.exchanger || overview?.profile || { discordId: '', username: 'Exchanger', displayName: 'Exchanger' };
+  const wallet = overview?.wallet || { availableCents: 0, reservedCents: 0 };
+  const metrics = overview?.metrics || {
+    activeOffersCount: 0,
+    totalTradesCount: 0,
+    pendingDeliveryCount: 0,
+    pendingPaymentCount: 0,
+    settledTradesCount: 0,
+    settledVolumeUsdCents: 0,
+  };
+  const featureGates = overview?.featureGates || { p2pSettlementEnabled: false };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '28px' }}>

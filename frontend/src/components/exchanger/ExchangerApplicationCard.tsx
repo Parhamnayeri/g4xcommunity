@@ -113,11 +113,13 @@ export const ExchangerApplicationCard: React.FC<ExchangerApplicationCardProps> =
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', fontSize: '0.875rem' }}>
             <div>
               <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>APPLICATION ID</span>
-              <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>#{application.id.substring(0, 8)}</span>
+              <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace' }}>#{String(application.id)}</span>
             </div>
             <div>
               <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>SUBMITTED DATE</span>
-              <span style={{ color: 'var(--text-primary)' }}>{new Date(application.createdAt).toLocaleDateString()}</span>
+              <span style={{ color: 'var(--text-primary)' }}>
+                {new Date(application.submittedAt || application.createdAt || Date.now()).toLocaleDateString()}
+              </span>
             </div>
             {application.reviewNotes && (
               <div style={{ gridColumn: '1 / -1', marginTop: '6px' }}>

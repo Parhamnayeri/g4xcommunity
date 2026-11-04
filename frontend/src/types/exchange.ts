@@ -119,7 +119,8 @@ export interface ExchangerStatusResponse {
       label: string;
       colorClass: string;
     };
-    submittedAt: string;
+    submittedAt?: string;
+    createdAt?: string;
     rejectionReason?: string | null;
     reviewNotes?: string | null;
   } | null;
@@ -127,7 +128,12 @@ export interface ExchangerStatusResponse {
 
 export interface ExchangerOverviewResponse {
   success: boolean;
-  profile: {
+  profile?: {
+    discordId: string;
+    username: string;
+    displayName: string;
+  };
+  exchanger?: {
     discordId: string;
     username: string;
     displayName: string;

@@ -3,6 +3,7 @@
  */
 
 import { apiRequest } from './api';
+import { normalizePagination } from './operations';
 import {
   AdminOverviewResponse,
   AdminDepositItem,
@@ -30,7 +31,11 @@ export async function fetchAdminDeposits(params?: {
   if (params?.limit) query.set('limit', String(params.limit));
   if (params?.status) query.set('status', params.status);
   if (params?.search) query.set('search', params.search);
-  return apiRequest(`/api/admin/deposits?${query.toString()}`);
+  const res = await apiRequest<any>(`/api/admin/deposits?${query.toString()}`);
+  return {
+    deposits: Array.isArray(res?.deposits) ? res.deposits : [],
+    pagination: normalizePagination(res, params?.limit || 20),
+  };
 }
 
 export async function reviewAdminDeposit(
@@ -56,7 +61,11 @@ export async function fetchAdminTrades(params?: {
   if (params?.page) query.set('page', String(params.page));
   if (params?.limit) query.set('limit', String(params.limit));
   if (params?.status) query.set('status', params.status);
-  return apiRequest(`/api/admin/exchange/trades?${query.toString()}`);
+  const res = await apiRequest<any>(`/api/admin/exchange/trades?${query.toString()}`);
+  return {
+    trades: Array.isArray(res?.trades) ? res.trades : [],
+    pagination: normalizePagination(res, params?.limit || 20),
+  };
 }
 
 export async function fetchAdminOffers(): Promise<{ offers: AdminOfferItem[] }> {
@@ -79,7 +88,11 @@ export async function fetchAdminAuditLogs(params?: {
   if (params?.action) query.set('action', params.action);
   if (params?.entityType) query.set('entityType', params.entityType);
   if (params?.actorId) query.set('actorId', params.actorId);
-  return apiRequest(`/api/admin/audit-logs?${query.toString()}`);
+  const res = await apiRequest<any>(`/api/admin/audit-logs?${query.toString()}`);
+  return {
+    logs: Array.isArray(res?.logs) ? res.logs : [],
+    pagination: normalizePagination(res, params?.limit || 20),
+  };
 }
 
 export async function fetchRolesMatrix(): Promise<RolesMatrixResponse> {
@@ -110,7 +123,11 @@ export async function fetchAdminUsers(params?: {
   if (params?.search) query.set('search', params.search);
   if (params?.role) query.set('role', params.role);
   if (params?.accountStatus) query.set('accountStatus', params.accountStatus);
-  return apiRequest(`/api/admin/users?${query.toString()}`);
+  const res = await apiRequest<any>(`/api/admin/users?${query.toString()}`);
+  return {
+    users: Array.isArray(res?.users) ? res.users : [],
+    pagination: normalizePagination(res, params?.limit || 20),
+  };
 }
 
 export async function updateAdminUserStatus(

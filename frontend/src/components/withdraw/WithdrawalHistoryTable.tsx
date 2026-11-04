@@ -32,10 +32,11 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
       });
 
       if (res.success) {
-        setWithdrawals(res.withdrawals);
-        setPage(res.pagination.page);
-        setTotalPages(res.pagination.totalPages);
-        setTotalCount(res.pagination.total);
+        setWithdrawals(res.withdrawals || []);
+        const pag = res.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 };
+        setPage(pag.page ?? 1);
+        setTotalPages(pag.totalPages ?? 1);
+        setTotalCount(pag.total ?? 0);
       } else {
         setError(res.error || 'Failed to retrieve withdrawal history.');
       }

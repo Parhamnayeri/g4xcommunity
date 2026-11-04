@@ -1,4 +1,5 @@
 import { apiRequest } from './api';
+import { normalizePagination } from './operations';
 import {
   ExchangerOffer,
   GoldTrade,
@@ -36,7 +37,12 @@ export async function fetchActiveOffers(params?: {
   if (params?.sortOrder) query.append('sortOrder', params.sortOrder);
 
   const qs = query.toString();
-  return apiRequest<OffersResponse>(`/api/marketplace/offers${qs ? `?${qs}` : ''}`);
+  const res = await apiRequest<any>(`/api/marketplace/offers${qs ? `?${qs}` : ''}`);
+  return {
+    success: res?.success ?? true,
+    offers: Array.isArray(res?.offers) ? res.offers : [],
+    pagination: normalizePagination(res, params?.limit || 20),
+  };
 }
 
 export async function fetchOfferById(id: number): Promise<{ success: boolean; offer: ExchangerOffer }> {
@@ -48,7 +54,35 @@ export async function fetchExchangerStatus(): Promise<ExchangerStatusResponse> {
 }
 
 export async function fetchExchangerOverview(): Promise<ExchangerOverviewResponse> {
-  return apiRequest<ExchangerOverviewResponse>('/api/marketplace/exchanger/overview');
+  const res = await apiRequest<any>('/api/marketplace/exchanger/overview');
+  const userSummary = res?.profile || res?.exchanger || {
+    discordId: '',
+    username: 'Exchanger',
+    displayName: 'Exchanger',
+  };
+  return {
+    success: res?.success ?? true,
+    profile: userSummary,
+    exchanger: userSummary,
+    wallet: res?.wallet || {
+      availableCents: 0,
+      availableUsd: '0.00',
+      reservedCents: 0,
+      reservedUsd: '0.00',
+    },
+    metrics: res?.metrics || {
+      activeOffersCount: 0,
+      totalTradesCount: 0,
+      pendingDeliveryCount: 0,
+      pendingPaymentCount: 0,
+      settledTradesCount: 0,
+      settledVolumeUsdCents: 0,
+      settledVolumeUsd: '0.00',
+    },
+    featureGates: res?.featureGates || {
+      p2pSettlementEnabled: false,
+    },
+  };
 }
 
 export async function fetchExchangerOffers(): Promise<{ success: boolean; offers: ExchangerOffer[] }> {
@@ -102,7 +136,12 @@ export async function fetchExchangerTrades(params?: {
   if (params?.sortOrder) query.append('sortOrder', params.sortOrder);
 
   const qs = query.toString();
-  return apiRequest<TradesResponse>(`/api/marketplace/exchanger/trades${qs ? `?${qs}` : ''}`);
+  const res = await apiRequest<any>(`/api/marketplace/exchanger/trades${qs ? `?${qs}` : ''}`);
+  return {
+    success: res?.success ?? true,
+    trades: Array.isArray(res?.trades) ? res.trades : [],
+    pagination: normalizePagination(res, params?.limit || 10),
+  };
 }
 
 export async function submitExchangerPayment(
@@ -138,7 +177,12 @@ export async function fetchAdvertiserTrades(params?: {
   if (params?.sortOrder) query.append('sortOrder', params.sortOrder);
 
   const qs = query.toString();
-  return apiRequest<TradesResponse>(`/api/marketplace/advertiser/trades${qs ? `?${qs}` : ''}`);
+  const res = await apiRequest<any>(`/api/marketplace/advertiser/trades${qs ? `?${qs}` : ''}`);
+  return {
+    success: res?.success ?? true,
+    trades: Array.isArray(res?.trades) ? res.trades : [],
+    pagination: normalizePagination(res, params?.limit || 10),
+  };
 }
 
 export async function requestGoldTradeQuote(params: {

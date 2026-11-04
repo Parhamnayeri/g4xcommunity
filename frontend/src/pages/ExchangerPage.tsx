@@ -68,7 +68,7 @@ export const ExchangerPage: React.FC = () => {
     setOffersLoading(true);
     try {
       const res = await fetchExchangerOffers();
-      setOffers(res.offers);
+      setOffers(Array.isArray(res?.offers) ? res.offers : []);
     } catch (err) {
       console.error('Failed to load exchanger offers:', err);
     } finally {
@@ -87,8 +87,8 @@ export const ExchangerPage: React.FC = () => {
         limit: 10,
         sortOrder: 'desc',
       });
-      setTrades(res.trades);
-      setTradesPagination(res.pagination);
+      setTrades(Array.isArray(res?.trades) ? res.trades : []);
+      setTradesPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
     } catch (err) {
       console.error('Failed to load exchanger trades:', err);
     } finally {
@@ -259,7 +259,7 @@ export const ExchangerPage: React.FC = () => {
           onFilterChange={(status) => setTradesStatusFilter(status)}
           onRefresh={() => {
             loadStatus();
-            loadMyTrades(tradesPagination.page);
+            loadMyTrades(tradesPagination?.page ?? 1);
           }}
         />
       )}

@@ -44,8 +44,8 @@ export const ExchangePage: React.FC = () => {
         page,
         limit: 10,
       });
-      setOffers(res.offers);
-      setOffersPagination(res.pagination);
+      setOffers(Array.isArray(res?.offers) ? res.offers : []);
+      setOffersPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
     } catch (err) {
       console.error('Failed to load marketplace offers:', err);
     } finally {
@@ -64,8 +64,8 @@ export const ExchangePage: React.FC = () => {
         limit: 10,
         sortOrder: 'desc',
       });
-      setTrades(res.trades);
-      setTradesPagination(res.pagination);
+      setTrades(Array.isArray(res?.trades) ? res.trades : []);
+      setTradesPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
     } catch (err) {
       console.error('Failed to load user trades:', err);
     } finally {
@@ -195,7 +195,7 @@ export const ExchangePage: React.FC = () => {
             loading={tradesLoading}
             onPageChange={(page) => loadTrades(page)}
             onFilterChange={(status) => setTradesStatusFilter(status)}
-            onRefresh={() => loadTrades(tradesPagination.page)}
+            onRefresh={() => loadTrades(tradesPagination?.page ?? 1)}
           />
         </div>
       )}

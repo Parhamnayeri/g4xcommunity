@@ -50,8 +50,8 @@ export const KycManagementPage: React.FC = () => {
         page,
         limit: 10,
       });
-      setApplications(res.applications);
-      setPagination(res.pagination);
+      setApplications(Array.isArray(res?.applications) ? res.applications : []);
+      setPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
     } catch (err: any) {
       setError(err.message || 'Failed to load KYC verification queue');
     } finally {
@@ -103,7 +103,7 @@ export const KycManagementPage: React.FC = () => {
       setTimeout(() => {
         setSelectedAppId(null);
         setDetail(null);
-        loadQueue(pagination.page);
+        loadQueue(pagination?.page ?? 1);
       }, 1500);
     } catch (err: any) {
       setDecisionFeedback({ text: err.message || 'Failed to execute KYC decision', type: 'error' });
@@ -236,7 +236,7 @@ export const KycManagementPage: React.FC = () => {
             </div>
 
             <button
-              onClick={() => loadQueue(pagination.page)}
+              onClick={() => loadQueue(pagination?.page ?? 1)}
               className="btn btn-sm"
               style={{
                 backgroundColor: 'var(--bg-surface-hover)',
@@ -405,7 +405,7 @@ export const KycManagementPage: React.FC = () => {
             )}
 
             {/* Pagination Controls */}
-            {pagination.totalPages > 1 && (
+            {(pagination?.totalPages ?? 0) > 1 && (
               <div
                 style={{
                   display: 'flex',
@@ -418,20 +418,20 @@ export const KycManagementPage: React.FC = () => {
                 }}
               >
                 <div>
-                  Page {pagination.page} of {pagination.totalPages} ({pagination.total} applications)
+                  Page {pagination?.page ?? 1} of {pagination?.totalPages || 1} ({pagination?.total ?? 0} applications)
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
-                    disabled={pagination.page <= 1}
-                    onClick={() => loadQueue(pagination.page - 1)}
+                    disabled={(pagination?.page ?? 1) <= 1}
+                    onClick={() => loadQueue((pagination?.page ?? 1) - 1)}
                     className="btn btn-sm"
                     style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
                   >
                     &larr; Prev
                   </button>
                   <button
-                    disabled={pagination.page >= pagination.totalPages}
-                    onClick={() => loadQueue(pagination.page + 1)}
+                    disabled={(pagination?.page ?? 1) >= (pagination?.totalPages || 1)}
+                    onClick={() => loadQueue((pagination?.page ?? 1) + 1)}
                     className="btn btn-sm"
                     style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
                   >

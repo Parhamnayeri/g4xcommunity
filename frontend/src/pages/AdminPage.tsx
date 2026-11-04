@@ -115,8 +115,8 @@ export const AdminPage: React.FC = () => {
         role: userRoleFilter || undefined,
         accountStatus: userStatusFilter !== 'all' ? userStatusFilter : undefined,
       });
-      setUsers(data.users);
-      setUsersPagination(data.pagination);
+      setUsers(data?.users || []);
+      setUsersPagination(data?.pagination || { page: 1, limit: 15, total: 0, totalPages: 1 });
     } catch (err) {
       console.error('Failed to load users:', err);
     } finally {
@@ -133,8 +133,8 @@ export const AdminPage: React.FC = () => {
         limit: depositsPagination.limit,
         status: depositStatusFilter,
       });
-      setDeposits(data.deposits);
-      setDepositsPagination(data.pagination);
+      setDeposits(data?.deposits || []);
+      setDepositsPagination(data?.pagination || { page: 1, limit: 15, total: 0, totalPages: 1 });
     } catch (err) {
       console.error('Failed to load deposits:', err);
     } finally {
@@ -147,7 +147,7 @@ export const AdminPage: React.FC = () => {
     setWithdrawalsLoading(true);
     try {
       const data = await fetchAdminWithdrawals();
-      setWithdrawals(data.withdrawals || []);
+      setWithdrawals(data?.withdrawals || []);
     } catch (err) {
       console.error('Failed to load withdrawals:', err);
     } finally {
@@ -163,9 +163,9 @@ export const AdminPage: React.FC = () => {
         fetchAdminTrades({ page, limit: tradesPagination.limit }),
         fetchAdminOffers(),
       ]);
-      setTrades(tradesData.trades);
-      setTradesPagination(tradesData.pagination);
-      setOffers(offersData.offers);
+      setTrades(tradesData?.trades || []);
+      setTradesPagination(tradesData?.pagination || { page: 1, limit: 15, total: 0, totalPages: 1 });
+      setOffers(offersData?.offers || []);
     } catch (err) {
       console.error('Failed to load exchange oversight:', err);
     } finally {
@@ -182,8 +182,8 @@ export const AdminPage: React.FC = () => {
         limit: auditPagination.limit,
         action: auditActionFilter || undefined,
       });
-      setAuditLogs(data.logs);
-      setAuditPagination(data.pagination);
+      setAuditLogs(data?.logs || []);
+      setAuditPagination(data?.pagination || { page: 1, limit: 20, total: 0, totalPages: 1 });
     } catch (err) {
       console.error('Failed to load audit logs:', err);
     } finally {

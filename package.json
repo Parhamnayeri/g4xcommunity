@@ -65,7 +65,8 @@
     "test:phase7": "ts-node src/test/website_phase7_operations_suite.ts",
     "test:phase8": "ts-node src/test/website_phase8_admin_owner_suite.ts",
     "test:phase9": "ts-node src/test/website_phase9_profile_booster_settings_suite.ts",
-    "test:schema-repair": "ts-node src/test/schema_drift_repair_suite.ts"
+    "test:schema-repair": "ts-node src/test/schema_drift_repair_suite.ts",
+    "test:pagination-contract": "ts-node src/test/react_pagination_contract_regression_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"
