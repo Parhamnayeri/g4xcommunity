@@ -874,7 +874,7 @@ export async function reviewApplication(input: ApplicationReviewInput) {
           action: 'REGISTRATION_APPLICATION_APPROVED',
           entityType: 'RegistrationApplication',
           entityId: String(applicationId),
-          newValues: JSON.stringify({ status: 'approved', roleKey, reviewerId }),
+          newValues: JSON.stringify({ status: 'approved', roleKey, reviewerId, reviewNotes: reviewNotes ?? null }),
         },
       });
 
@@ -944,7 +944,7 @@ export async function reviewApplication(input: ApplicationReviewInput) {
           action: 'REGISTRATION_APPLICATION_REJECTED',
           entityType: 'RegistrationApplication',
           entityId: String(applicationId),
-          newValues: JSON.stringify({ status: 'rejected', reason, reviewerId }),
+          newValues: JSON.stringify({ status: 'rejected', reason, reviewerId, reviewNotes: reviewNotes ?? null }),
         },
       });
 

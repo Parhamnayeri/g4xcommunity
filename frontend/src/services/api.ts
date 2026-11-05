@@ -59,7 +59,7 @@ export async function apiRequest<T = any>(
     try {
       const errJson = await response.json();
       if (errJson?.error) {
-        errorDetail = errJson.error;
+        errorDetail = errJson.message || errJson.error;
       }
     } catch {
       // not a json response
