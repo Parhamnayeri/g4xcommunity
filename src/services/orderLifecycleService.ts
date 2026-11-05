@@ -31,6 +31,8 @@ import {
 } from './advertiserRankService';
 import { assertWalletInvariants } from './financeV2/financeV2WalletService';
 
+import { orderWorkspaceActions } from './orderWorkspacePolicy';
+
 export { LEGAL_ORDER_TRANSITIONS };
 
 export type OrderLifecycleCategory =
@@ -1129,11 +1131,11 @@ export async function cancelOrderWithLifecycle(
 export async function getOrderAuditHistory(orderId: number) {
   return await prisma.auditLog.findMany({
     where: {
-      entityType: 'Order',
+      entityType: { in: ['Order', 'order'] },
       entityId: String(orderId),
     },
     include: {
-      actor: true,
+      actor: { select: { username: true, displayName: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -1199,6 +1201,7 @@ export interface SeparatedOrderListItem {
   externalOrderId: string | null;
   orderName: string | null;
   discordChannelId: string | null;
+  discordMessageId: string | null;
   createdAt: string;
 }
 
@@ -1392,6 +1395,10 @@ export async function getSeparatedOrdersList(
         { orderRef: { contains: term } },
         { externalOrderId: { contains: term } },
         { notes: { contains: term } },
+        { orderName: { contains: term } },
+        { customerId: { contains: term } },
+        { advertiser: { username: { contains: term } } },
+        ...(Number.isSafeInteger(Number(term)) ? [{ id: Number(term) }] : []),
       ],
     });
   }
@@ -1399,7 +1406,7 @@ export async function getSeparatedOrdersList(
   if (query.startDate) {
     const start = new Date(query.startDate);
     if (!isNaN(start.getTime())) {
-      start.setHours(0, 0, 0, 0);
+      start.setUTCHours(0, 0, 0, 0);
       andFilters.push({ createdAt: { gte: start } });
     }
   }
@@ -1407,7 +1414,7 @@ export async function getSeparatedOrdersList(
   if (query.endDate) {
     const end = new Date(query.endDate);
     if (!isNaN(end.getTime())) {
-      end.setHours(23, 59, 59, 999);
+      end.setUTCHours(23, 59, 59, 999);
       andFilters.push({ createdAt: { lte: end } });
     }
   }
@@ -1415,11 +1422,12 @@ export async function getSeparatedOrdersList(
   const where: Prisma.OrderWhereInput = andFilters.length > 0 ? { AND: andFilters } : {};
 
   // Server-side pagination
-  const page = Math.max(1, Number(query.page) || 1);
-  const limit = Math.min(100, Math.max(1, Number(query.limit) || 10));
-  const skip = (page - 1) * limit;
-
+  const requestedPage = Number(query.page);
+  const requestedLimit = Number(query.limit);
+  const limit = Number.isSafeInteger(requestedLimit) ? Math.min(100, Math.max(1, requestedLimit)) : 10;
   const totalCount = await prisma.order.count({ where });
+  const page = Number.isSafeInteger(requestedPage) ? Math.max(1, requestedPage) : 1;
+  const skip = (page - 1) * limit;
   const orders = await prisma.order.findMany({
     where,
     include: {
@@ -1456,8 +1464,10 @@ export async function getSeparatedOrdersList(
       },
       boostReleaseTracker: true,
       financialSnapshot: true,
+      disputes: { select: { status: true } },
+      escrowHolds: { select: { status: true } },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     skip,
     take: limit,
   });
@@ -1506,6 +1516,13 @@ export async function getSeparatedOrdersList(
     counts = { g4x: 0, advertiser: myAdvCount, needsReview: 0 };
   }
 
+  const actionPermissions = new Set<Permission>();
+  if (isStaff) {
+    for (const permission of [Permission.ORDER_PUBLISH, Permission.ORDER_CANCEL, Permission.ORDER_PAYMENT_VERIFY, Permission.ORDER_ASSIGN, Permission.PROOF_REVIEW, Permission.ORDER_FINAL_APPROVE]) {
+      if ((await authorize(query.user.discordId, permission)).allowed) actionPermissions.add(permission);
+    }
+  }
+
   // Format DTOs
   const mappedOrders: SeparatedOrderListItem[] = orders.map((o) => {
     const origin = classifyOrderOrigin(o);
@@ -1550,27 +1567,9 @@ export async function getSeparatedOrdersList(
     const activeAssignment = o.assignments?.[0]?.user;
     const assignedBooster = activeAssignment ? (activeAssignment.displayName || activeAssignment.username) : null;
 
-    const actions: string[] = ['view_diagnostics'];
-    const isPaid = o.paymentStatus === 'verified' || o.paymentStatus === 'unneeded';
-
-    if (isStaff) {
-      if (isPaid && !o.discordMessageId && o.status !== 'cancelled' && o.status !== 'completed') {
-        actions.push('publish');
-      }
-      if (o.status !== 'cancelled' && o.status !== 'completed') {
-        actions.push('cancel');
-      }
-      if (o.boostReleaseTracker?.stage === 'PROOF_SUBMITTED') {
-        actions.push('staff_review');
-      }
-      if (o.boostReleaseTracker?.stage === 'STAFF_REVIEW') {
-        actions.push('final_approve');
-      }
-      if (o.paymentStatus === 'pending') {
-        actions.push('pay_wallet');
-        actions.push('verify_payment');
-      }
-    } else if (isAdvertiser && (o.advertiserId === query.user.discordId || o.creatorId === query.user.discordId)) {
+    const eligibility = evaluatePublicationEligibility(o);
+    const actions = isStaff ? orderWorkspaceActions(o, actionPermissions, eligibility.isPublishable) : ['view_diagnostics'];
+    if (!isStaff && isAdvertiser && (o.advertiserId === query.user.discordId || o.creatorId === query.user.discordId)) {
       if (o.paymentStatus === 'pending') {
         actions.push('pay_wallet');
       }
@@ -1615,12 +1614,13 @@ export async function getSeparatedOrdersList(
       assignedCount: o.assignments.length,
       assignedBooster,
       releaseStage: o.boostReleaseTracker?.stage || null,
-      isPublishable: isPaid && !o.discordMessageId && o.status !== 'cancelled' && o.status !== 'completed',
+      isPublishable: eligibility.isPublishable,
       authorizedActions: actions,
       notes: o.notes,
       externalOrderId: o.externalOrderId,
       orderName: o.orderName || null,
       discordChannelId: o.executionChannelId || o.discordChannelId || null,
+      discordMessageId: o.discordMessageId,
       createdAt: o.createdAt.toISOString(),
     };
   });
