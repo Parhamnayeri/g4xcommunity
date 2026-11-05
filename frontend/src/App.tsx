@@ -12,6 +12,7 @@ import { AdvertiserPage } from './pages/AdvertiserPage';
 import { WalletPage } from './pages/WalletPage';
 import { ExchangePage } from './pages/ExchangePage';
 import { ExchangerPage } from './pages/ExchangerPage';
+import { ApplicationsWorkspace, GamesWorkspace, ChannelsWorkspace } from './components/admin/NativeAdminModules';
 import { LegacyTransitionPage } from './pages/LegacyTransitionPage';
 
 import { StaffPage } from './pages/StaffPage';
@@ -58,6 +59,10 @@ export const App: React.FC = () => {
             {/* Admin Operations Portal — Website Phase 8 */}
             <Route path="/admin" element={<RouteErrorBoundary routeName="Admin Portal"><AdminPage /></RouteErrorBoundary>} />
 
+            <Route path="/management/applications" element={<RouteErrorBoundary routeName="Member Applications"><ApplicationsWorkspace /></RouteErrorBoundary>} />
+            <Route path="/admin/applications" element={<RouteErrorBoundary routeName="Member Applications"><ApplicationsWorkspace /></RouteErrorBoundary>} />
+            <Route path="/admin/games" element={<RouteErrorBoundary routeName="Game Registry"><GamesWorkspace /></RouteErrorBoundary>} />
+            <Route path="/admin/discord" element={<RouteErrorBoundary routeName="Discord Channels"><ChannelsWorkspace /></RouteErrorBoundary>} />
             {/* Owner Executive Portal — Website Phase 8 */}
             <Route path="/owner" element={<RouteErrorBoundary routeName="Owner Portal"><OwnerPage /></RouteErrorBoundary>} />
             <Route path="/owner/finance" element={<RouteErrorBoundary routeName="Owner Finance"><OwnerPage /></RouteErrorBoundary>} />
