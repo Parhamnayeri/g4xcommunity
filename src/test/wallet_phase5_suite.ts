@@ -12,6 +12,7 @@
  *  8. Paginated deposit history and double-entry ledger activity.
  */
 
+process.env.COOKIE_SECURE = 'false';
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
@@ -707,18 +708,23 @@ async function runWalletPhase5Suite() {
 
     // 5.9 Concurrency safety: simultaneous submissions with same evidence
     const concurrentEvidence = `CONCURRENT_DEP_${Date.now()}`;
+    const rec1 = await saveReceiptEvidence(VALID_PNG_BASE64, 'receipt1.png', userAdvertiser);
+    const rec2 = await saveReceiptEvidence(VALID_PNG_BASE64, 'receipt2.png', userVictim);
+
     const [c1, c2] = await Promise.allSettled([
       submitIrtDeposit({
         userId: userAdvertiser,
         targetUsdCents: 1000,
         evidenceRef: concurrentEvidence,
         payerIdentifier: 'Concurrent Payer 1',
+        receiptFileKey: rec1.fileKey,
       }),
       submitIrtDeposit({
         userId: userVictim,
         targetUsdCents: 1000,
         evidenceRef: concurrentEvidence,
         payerIdentifier: 'Concurrent Payer 2',
+        receiptFileKey: rec2.fileKey,
       }),
     ]);
     const fulfilledCount = [c1, c2].filter((r) => r.status === 'fulfilled').length;

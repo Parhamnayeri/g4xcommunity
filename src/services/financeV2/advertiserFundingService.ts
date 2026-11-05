@@ -191,6 +191,14 @@ export async function adminVerifyAndCreditUsdtFunding(
   actorId: string,
   adminNotes?: string
 ) {
+  const fundingRequestPre = await prisma.advertiserFundingRequest.findUnique({
+    where: { id: fundingId },
+    select: { advertiserId: true },
+  });
+  if (fundingRequestPre && fundingRequestPre.advertiserId === actorId) {
+    throw new Error('SELF_APPROVAL_PROHIBITED: You cannot review or approve your own deposit request.');
+  }
+
   assertLiveCreditsEnabled();
 
   const auth = await authorize(actorId, Permission.FINANCE_ADJUST);
@@ -205,6 +213,10 @@ export async function adminVerifyAndCreditUsdtFunding(
 
     if (!fundingRequest) {
       throw new Error(`FUNDING_REQUEST_NOT_FOUND: Request #${fundingId} does not exist`);
+    }
+
+    if (fundingRequest.advertiserId === actorId) {
+      throw new Error('SELF_APPROVAL_PROHIBITED: You cannot review or approve your own deposit request.');
     }
 
     if (fundingRequest.status === AdvertiserFundingStatus.CONFIRMED_CREDITED) {
@@ -391,6 +403,14 @@ export async function adminVerifyAndCreditIrtFunding(
   actorId: string,
   adminNotes?: string
 ) {
+  const fundingRequestPre = await prisma.advertiserFundingRequest.findUnique({
+    where: { id: fundingId },
+    select: { advertiserId: true },
+  });
+  if (fundingRequestPre && fundingRequestPre.advertiserId === actorId) {
+    throw new Error('SELF_APPROVAL_PROHIBITED: You cannot review or approve your own deposit request.');
+  }
+
   assertLiveCreditsEnabled();
 
   const auth = await authorize(actorId, Permission.FINANCE_ADJUST);
@@ -405,6 +425,10 @@ export async function adminVerifyAndCreditIrtFunding(
 
     if (!fundingRequest) {
       throw new Error(`FUNDING_REQUEST_NOT_FOUND: Request #${fundingId} does not exist`);
+    }
+
+    if (fundingRequest.advertiserId === actorId) {
+      throw new Error('SELF_APPROVAL_PROHIBITED: You cannot review or approve your own deposit request.');
     }
 
     if (fundingRequest.status === AdvertiserFundingStatus.CONFIRMED_CREDITED) {

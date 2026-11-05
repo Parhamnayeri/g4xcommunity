@@ -908,10 +908,11 @@ export async function submitIrtDeposit(input: SubmitIrtDepositInput) {
         );
       }
 
-      // ج. اعتبارسنجی فیش جدید قبل از ایجاد تعهد مالی
-      if (receiptFileKey) {
-        await verifyReceiptForDeposit(receiptFileKey, userId, tx);
+      // ج. اعتبارسنجی فیش جدید قبل از ایجاد تعهد مالی (الزامی بودن فیش برای درخواست‌های واریز تومانی جدید)
+      if (!receiptFileKey || typeof receiptFileKey !== 'string' || !receiptFileKey.trim()) {
+        throw new Error('MISSING_RECEIPT_EVIDENCE: A valid payment receipt screenshot is mandatory for manual IRT deposit requests.');
       }
+      await verifyReceiptForDeposit(receiptFileKey.trim(), userId, tx);
 
       // د. ثبت درخواست شارژ ادورتایزر در دیتابیس
       const result = await submitDirectIrtFunding(
@@ -1183,18 +1184,27 @@ export async function adminReviewFunding(
     throw new Error(`FUNDING_REQUEST_NOT_FOUND: Deposit request #${fundingId} not found.`);
   }
 
+  // Anti-self-approval check: A reviewer cannot approve or reject their own deposit request
+  if (funding.advertiserId === actorId) {
+    throw new Error('SELF_APPROVAL_PROHIBITED: You cannot review or approve your own deposit request.');
+  }
+
   if (funding.status === 'CONFIRMED_CREDITED') {
     throw new Error(`ALREADY_CREDITED: Deposit request #${fundingId} was already approved and credited.`);
   }
 
   if (action === 'REJECT') {
+    if (!notes || notes.trim().length < 5) {
+      throw new Error('REJECTION_NOTES_REQUIRED: A meaningful explanation (at least 5 characters) is required when rejecting a deposit request.');
+    }
+
     const updated = await prisma.advertiserFundingRequest.update({
       where: { id: fundingId },
       data: {
         status: 'REJECTED',
         verifiedBy: actorId,
         verifiedAt: new Date(),
-        adminNotes: notes ? `${funding.adminNotes || ''} | Rejected: ${notes}`.trim() : funding.adminNotes,
+        adminNotes: `${funding.adminNotes || ''} | Rejected: ${notes.trim()}`.trim(),
       },
     });
 
@@ -1204,7 +1214,7 @@ export async function adminReviewFunding(
         action: 'ADVERTISER_DEPOSIT_REJECTED',
         entityType: 'AdvertiserFundingRequest',
         entityId: String(fundingId),
-        reason: notes || 'Admin rejected manual deposit request',
+        reason: notes.trim(),
         isSuccess: true,
       },
     });

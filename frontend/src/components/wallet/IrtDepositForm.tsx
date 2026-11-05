@@ -140,6 +140,11 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
       return;
     }
 
+    if (!selectedFile && !uploadedFileKey) {
+      setSubmitError('A valid payment receipt screenshot is mandatory for manual IRT deposit verification.');
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -516,11 +521,11 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
         {/* Row 3: Secure Receipt Screenshot Upload */}
         <div>
           <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.4rem' }}>
-            Upload Payment Receipt Screenshot (Optional but recommended)
+            Payment Receipt Screenshot (Mandatory) *
           </label>
           <div
             style={{
-              border: '2px dashed var(--border-subtle)',
+              border: selectedFile ? '2px solid var(--accent-lime)' : '2px dashed var(--border-subtle)',
               borderRadius: '8px',
               padding: '1.25rem',
               textAlign: 'center',
@@ -542,20 +547,35 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
                 <img
                   src={filePreview}
                   alt="Receipt Preview"
-                  style={{ maxHeight: '120px', borderRadius: '4px', objectFit: 'contain' }}
+                  style={{ maxHeight: '160px', maxWidth: '100%', borderRadius: '4px', objectFit: 'contain', border: '1px solid var(--border-subtle)' }}
                 />
                 <span style={{ fontSize: '0.8rem', color: 'var(--accent-lime)' }}>
                   ✓ {selectedFile?.name} ({(selectedFile ? selectedFile.size / 1024 : 0).toFixed(1)} KB)
                 </span>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                  Click to choose a different image
-                </span>
+                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.25rem', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Click container to change image
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-xs"
+                    style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedFile(null);
+                      setFilePreview(null);
+                      setUploadedFileKey(null);
+                    }}
+                  >
+                    Clear Image
+                  </button>
+                </div>
               </div>
             ) : (
               <div>
-                <div style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>📎</div>
+                <div style={{ fontSize: '1.5rem', marginBottom: '0.25rem' }}>📸</div>
                 <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                  Click to select payment screenshot
+                  Click to select payment screenshot (Mandatory) *
                 </div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
                   Supported formats: PNG, JPEG, WEBP (Max 5 MB). Stored securely in non-public storage.
@@ -565,10 +585,10 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
           </div>
         </div>
 
-        {/* Optional Explanatory Notes */}
+        {/* Optional Explanatory Notes / Payment Description */}
         <div>
           <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '0.4rem' }}>
-            Additional Explanatory Note (Optional)
+            Payment Description / Bank Remarks (Optional)
           </label>
           <textarea
             value={adminNotes}
@@ -576,7 +596,7 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
             rows={2}
             className="input"
             style={{ width: '100%', resize: 'vertical' }}
-            placeholder="Add any additional details or bank transfer comments..."
+            placeholder="Add any additional details, tracking comments, or bank remarks..."
           />
         </div>
 

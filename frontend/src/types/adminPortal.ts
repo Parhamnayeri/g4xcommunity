@@ -74,7 +74,13 @@ export interface AdminDepositItem {
   exchangeRate: number | null;
   evidenceRef: string | null;
   payerIdentifier: string;
+  rawPayerIdentifier?: string | null;
   adminNotes: string | null;
+  receiptFileKey?: string | null;
+  receiptUrl?: string | null;
+  senderCardLast4?: string | null;
+  paymentDate?: string | null;
+  payerDescription?: string | null;
   verifiedBy: string | null;
   verifiedAt: string | null;
   creditedAt: string | null;

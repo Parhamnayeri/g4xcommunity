@@ -222,6 +222,9 @@ adminPortalRouter.get(
             verifier: {
               select: { discordId: true, username: true, displayName: true },
             },
+            paymentRequests: {
+              include: { attempts: true },
+            },
           },
           orderBy: { createdAt: 'desc' },
           skip: (page - 1) * limit,
@@ -229,27 +232,61 @@ adminPortalRouter.get(
         }),
       ]);
 
-      const serialized = requests.map((r) => ({
-        id: r.id,
-        fundingRef: r.fundingRef,
-        quoteRef: r.quoteRef,
-        advertiserId: r.advertiserId,
-        advertiserName: r.advertiser?.displayName || r.advertiser?.username || r.advertiserId,
-        fundingMethod: r.fundingMethod,
-        status: r.status,
-        targetUsdCents: r.targetUsdCents,
-        targetUsdFormatted: `$${(r.targetUsdCents / 100).toFixed(2)}`,
-        externalCurrency: r.externalCurrency,
-        externalAmountUnits: r.externalAmountUnits,
-        exchangeRate: r.exchangeRate,
-        evidenceRef: r.evidenceRef,
-        payerIdentifier: maskCard(r.payerIdentifier),
-        adminNotes: r.adminNotes,
-        verifiedBy: r.verifier?.displayName || r.verifier?.username || r.verifiedBy,
-        verifiedAt: r.verifiedAt,
-        creditedAt: r.creditedAt,
-        createdAt: r.createdAt,
-      }));
+      const serialized = requests.map((r) => {
+        const notes = r.adminNotes || '';
+        const receiptMatch = notes.match(/(?:^|\|\s*)Receipt:\s*([^\s|]+)/i);
+        const extractedReceiptKey = receiptMatch ? receiptMatch[1].trim() : null;
+
+        const dateMatch = notes.match(/(?:^|\|\s*)Date:\s*([^\s|]+)/i);
+        const extractedDate = dateMatch ? dateMatch[1].trim() : null;
+
+        const cardMatch = notes.match(/(?:^|\|\s*)CardLast4:\s*([^\s|]+)/i);
+        const extractedCardLast4 = cardMatch ? cardMatch[1].trim() : null;
+
+        let payerDescription = notes
+          .replace(/(?:^|\|\s*)Receipt:\s*[^\s|]+/gi, '')
+          .replace(/(?:^|\|\s*)Date:\s*[^\s|]+/gi, '')
+          .replace(/(?:^|\|\s*)CardLast4:\s*[^\s|]+/gi, '')
+          .replace(/\|\s*\|/g, '|')
+          .replace(/^\|\s*|\s*\|$/g, '')
+          .trim() || null;
+
+        const attempts = (r as any).paymentRequests?.flatMap((pr: any) => pr.attempts) || [];
+        const attempt = attempts.find((a: any) => a.method === 'CARD_TO_CARD_IRT') || attempts[0];
+
+        const receiptFileKey = extractedReceiptKey || (attempt?.receiptScreenshotUrl ? attempt.receiptScreenshotUrl.replace('/api/wallet/receipts/', '') : null);
+        const receiptUrl = receiptFileKey ? `/api/wallet/receipts/${receiptFileKey}` : (attempt?.receiptScreenshotUrl || null);
+        const senderCardLast4 = attempt?.senderCardLast4 || extractedCardLast4 || null;
+        const paymentDate = extractedDate || (attempt?.createdAt ? new Date(attempt.createdAt).toISOString().split('T')[0] : null);
+
+        return {
+          id: r.id,
+          fundingRef: r.fundingRef,
+          quoteRef: r.quoteRef,
+          advertiserId: r.advertiserId,
+          advertiserName: r.advertiser?.displayName || r.advertiser?.username || r.advertiserId,
+          fundingMethod: r.fundingMethod,
+          status: r.status,
+          targetUsdCents: r.targetUsdCents,
+          targetUsdFormatted: `$${(r.targetUsdCents / 100).toFixed(2)}`,
+          externalCurrency: r.externalCurrency,
+          externalAmountUnits: r.externalAmountUnits,
+          exchangeRate: r.exchangeRate,
+          evidenceRef: r.evidenceRef,
+          payerIdentifier: maskCard(r.payerIdentifier),
+          rawPayerIdentifier: r.payerIdentifier,
+          adminNotes: r.adminNotes,
+          receiptFileKey,
+          receiptUrl,
+          senderCardLast4,
+          paymentDate,
+          payerDescription,
+          verifiedBy: r.verifier?.displayName || r.verifier?.username || r.verifiedBy,
+          verifiedAt: r.verifiedAt,
+          creditedAt: r.creditedAt,
+          createdAt: r.createdAt,
+        };
+      });
 
       res.json({
         success: true,
