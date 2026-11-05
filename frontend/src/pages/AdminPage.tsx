@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { LoadingState } from '../components/ui/LoadingState';
+import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
 import {
   AdminOverviewResponse,
   AdminDepositItem,
@@ -29,7 +30,7 @@ export const AdminPage: React.FC = () => {
   const isAdminOrOwner = hasRole('owner', 'manager', 'admin');
 
   // Navigation tab
-  const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'deposits' | 'withdrawals' | 'exchange' | 'audit' | 'roles'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'users' | 'deposits' | 'withdrawals' | 'exchange' | 'audit' | 'roles'>('overview');
 
   // Overview state
   const [overview, setOverview] = useState<AdminOverviewResponse | null>(null);
@@ -301,6 +302,7 @@ export const AdminPage: React.FC = () => {
       >
         {[
           { key: 'overview', label: 'Overview & KPIs', icon: '📊' },
+          { key: 'orders', label: 'Order Workspace', icon: '📦' },
           { key: 'users', label: 'User Management', icon: '👥' },
           { key: 'deposits', label: 'Manual IRT Deposits', icon: '💳' },
           { key: 'withdrawals', label: 'Withdrawal Queue', icon: '💸' },
@@ -483,6 +485,16 @@ export const AdminPage: React.FC = () => {
             </>
           ) : null}
         </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB 1.5: UNIFIED ORDER MANAGEMENT WORKSPACE                                   */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'orders' && (
+        <OrderManagementWorkspace
+          title="Admin Order Management Workspace"
+          subtitle="Operational diagnostics, Discord board publishing, proof transitions, and multi-criteria order oversight."
+        />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
@@ -943,141 +955,273 @@ export const AdminPage: React.FC = () => {
             </div>
           )}
 
-          {/* Deposit Review Modal */}
-          {selectedDeposit && (
-            <div
-              style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 1000,
-                padding: '1rem',
-              }}
-            >
-              <div className="card-surface" style={{ maxWidth: '520px', width: '100%', padding: '2rem' }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-                  Review Deposit #{selectedDeposit.id} ({selectedDeposit.fundingRef})
-                </h3>
-                <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
-                  <div>Advertiser: <strong>{selectedDeposit.advertiserName}</strong></div>
-                  <div>Expected Amount: <strong>{selectedDeposit.externalAmountUnits} {selectedDeposit.externalCurrency}</strong> ({selectedDeposit.targetUsdFormatted})</div>
-                  <div>Payer Account: <strong>{selectedDeposit.payerIdentifier}</strong></div>
-                  <div>Evidence Ref: <strong>{selectedDeposit.evidenceRef || 'None'}</strong></div>
-                </div>
+          {/* Enhanced Deposit Review Modal */}
+          {selectedDeposit && (() => {
+            const isSelfReview = Boolean(user && user.discordId === selectedDeposit.advertiserId);
+            const isRejectionInvalid = depositAction === 'REJECT' && (!depositNotes || depositNotes.trim().length < 5);
 
-                {/* Gate Notice Warning */}
-                <div
-                  style={{
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    border: '1px solid rgba(239, 68, 68, 0.25)',
-                    padding: '0.75rem 1rem',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '0.8rem',
-                    color: '#fca5a5',
-                    marginBottom: '1rem',
-                  }}
-                >
-                  ⚠️ <strong>Live Credits Feature Gate Notice:</strong> Live balance crediting is currently disabled by system policy (FINANCE_V2_LIVE_CREDITS_ENABLED=false). Approving will record verified status without injecting live balances.
-                </div>
+            return (
+              <div
+                style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 1000,
+                  padding: '1rem',
+                }}
+              >
+                <div className="card-surface" style={{ maxWidth: '580px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.75rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem', marginBottom: '1rem' }}>
+                    <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0 }}>
+                      Review Manual Deposit #{selectedDeposit.id}
+                    </h3>
+                    <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                      {selectedDeposit.fundingRef}
+                    </span>
+                  </div>
 
-                <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.88rem' }}>
-                    <input
-                      type="radio"
-                      name="depAction"
-                      checked={depositAction === 'APPROVE'}
-                      onChange={() => setDepositAction('APPROVE')}
-                    />
-                    Approve &amp; Record Verification
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.88rem' }}>
-                    <input
-                      type="radio"
-                      name="depAction"
-                      checked={depositAction === 'REJECT'}
-                      onChange={() => setDepositAction('REJECT')}
-                    />
-                    Reject Deposit
-                  </label>
-                </div>
+                  {/* Anti-Self-Approval Guard Alert */}
+                  {isSelfReview && (
+                    <div
+                      style={{
+                        backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                        border: '1px solid var(--status-danger)',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '0.75rem 1rem',
+                        fontSize: '0.82rem',
+                        color: 'var(--status-danger)',
+                        marginBottom: '1rem',
+                        fontWeight: 600,
+                      }}
+                    >
+                      ⚠️ <strong>Anti-Self-Approval Guard:</strong> You are the depositor of this funding request. An independent administrator or owner must perform this review.
+                    </div>
+                  )}
 
-                <div style={{ marginBottom: '1.25rem' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                    Reviewer Notes / Verification Reference
-                  </label>
-                  <textarea
-                    rows={2}
-                    placeholder="E.g. Bank tracking number verified via online banking statement"
-                    value={depositNotes}
-                    onChange={(e) => setDepositNotes(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-main)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)',
-                      fontSize: '0.85rem',
-                    }}
-                  />
-                </div>
-
-                {depositReviewMsg && (
+                  {/* Deposit Information Box */}
                   <div
                     style={{
-                      padding: '0.65rem 0.85rem',
+                      backgroundColor: 'var(--bg-main)',
+                      padding: '1rem',
                       borderRadius: 'var(--radius-sm)',
-                      fontSize: '0.82rem',
                       marginBottom: '1rem',
-                      backgroundColor: depositReviewMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                      color: depositReviewMsg.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                      fontSize: '0.84rem',
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                      gap: '0.6rem',
                     }}
                   >
-                    {depositReviewMsg.text}
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Advertiser: </span>
+                      <strong>{selectedDeposit.advertiserName}</strong>
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>{selectedDeposit.advertiserId}</span>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Requested IRT: </span>
+                      <strong style={{ color: 'var(--accent-lime)' }}>
+                        {Number(selectedDeposit.externalAmountUnits).toLocaleString()} {selectedDeposit.externalCurrency}
+                      </strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Quoted USD Credit: </span>
+                      <strong>{selectedDeposit.targetUsdFormatted}</strong>
+                      {selectedDeposit.exchangeRate && (
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>
+                          Rate: {selectedDeposit.exchangeRate.toLocaleString()} IRT/USD
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Depositor Name / Card: </span>
+                      <strong>{selectedDeposit.rawPayerIdentifier || selectedDeposit.payerIdentifier}</strong>
+                      {selectedDeposit.senderCardLast4 && (
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>
+                          Card Last 4: {selectedDeposit.senderCardLast4}
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Bank Tracking Reference: </span>
+                      <strong style={{ fontFamily: 'monospace' }}>{selectedDeposit.evidenceRef || 'None'}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Payment Date: </span>
+                      <strong>{selectedDeposit.paymentDate || new Date(selectedDeposit.createdAt).toLocaleDateString()}</strong>
+                    </div>
+                    {selectedDeposit.payerDescription && (
+                      <div style={{ gridColumn: '1 / -1', borderTop: '1px solid rgba(45, 38, 69, 0.4)', paddingTop: '0.4rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Payer Description / Remarks: </span>
+                        <span>{selectedDeposit.payerDescription}</span>
+                      </div>
+                    )}
                   </div>
-                )}
 
-                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setSelectedDeposit(null)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={submittingDeposit}
-                    className="btn btn-cta btn-sm"
-                    onClick={async () => {
-                      setSubmittingDeposit(true);
-                      setDepositReviewMsg(null);
-                      try {
-                        await reviewAdminDeposit(selectedDeposit.id, depositAction, depositNotes);
-                        setDepositReviewMsg({ text: 'Decision successfully processed.', type: 'success' });
-                        setTimeout(() => {
-                          setSelectedDeposit(null);
-                          loadDeposits(depositsPagination.page);
-                        }, 800);
-                      } catch (err: any) {
-                        setDepositReviewMsg({ text: err.message || 'Review submission failed', type: 'error' });
-                      } finally {
-                        setSubmittingDeposit(false);
-                      }
+                  {/* Secure Receipt Screenshot Preview */}
+                  {selectedDeposit.receiptUrl ? (
+                    <div
+                      style={{
+                        backgroundColor: 'var(--bg-main)',
+                        padding: '0.85rem',
+                        borderRadius: 'var(--radius-sm)',
+                        marginBottom: '1rem',
+                        textAlign: 'center',
+                      }}
+                    >
+                      <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
+                        Payment Receipt Screenshot Evidence
+                      </div>
+                      <a href={selectedDeposit.receiptUrl} target="_blank" rel="noopener noreferrer" title="Click to view full image in a new tab">
+                        <img
+                          src={selectedDeposit.receiptUrl}
+                          alt="Payment Receipt Slip"
+                          style={{
+                            maxHeight: '180px',
+                            maxWidth: '100%',
+                            borderRadius: '6px',
+                            border: '1px solid var(--border-subtle)',
+                            objectFit: 'contain',
+                            cursor: 'pointer',
+                          }}
+                        />
+                      </a>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                        Click screenshot to inspect original in new browser tab
+                      </div>
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        backgroundColor: 'var(--bg-main)',
+                        padding: '0.75rem',
+                        borderRadius: 'var(--radius-sm)',
+                        marginBottom: '1rem',
+                        textAlign: 'center',
+                        fontSize: '0.8rem',
+                        color: 'var(--text-muted)',
+                      }}
+                    >
+                      📎 No receipt screenshot attached (Historical deposit submission)
+                    </div>
+                  )}
+
+                  {/* Gate Notice Warning */}
+                  <div
+                    style={{
+                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.25)',
+                      padding: '0.75rem 1rem',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.8rem',
+                      color: '#fca5a5',
+                      marginBottom: '1rem',
                     }}
                   >
-                    {submittingDeposit ? 'Submitting...' : 'Submit Decision'}
-                  </button>
+                    ⚠️ <strong>Live Credits Feature Gate Notice:</strong> Live balance crediting is currently disabled by system policy (FINANCE_V2_LIVE_CREDITS_ENABLED=false). Approving will record verified status without injecting live balances.
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.88rem' }}>
+                      <input
+                        type="radio"
+                        name="depAction"
+                        checked={depositAction === 'APPROVE'}
+                        onChange={() => setDepositAction('APPROVE')}
+                      />
+                      Approve &amp; Record Verification
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.88rem' }}>
+                      <input
+                        type="radio"
+                        name="depAction"
+                        checked={depositAction === 'REJECT'}
+                        onChange={() => setDepositAction('REJECT')}
+                      />
+                      Reject Deposit
+                    </label>
+                  </div>
+
+                  <div style={{ marginBottom: '1.25rem' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                      Reviewer Notes / Verification Reference {depositAction === 'REJECT' && <span style={{ color: 'var(--status-danger)' }}>* (Min 5 chars required)</span>}
+                    </label>
+                    <textarea
+                      rows={2}
+                      placeholder={
+                        depositAction === 'REJECT'
+                          ? 'Please provide a clear reason for rejecting this deposit (min 5 chars)...'
+                          : 'E.g. Bank tracking number verified via online banking statement'
+                      }
+                      value={depositNotes}
+                      onChange={(e) => setDepositNotes(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '0.6rem',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: 'var(--bg-main)',
+                        border: '1px solid var(--border-subtle)',
+                        color: 'var(--text-primary)',
+                        fontSize: '0.85rem',
+                      }}
+                    />
+                  </div>
+
+                  {depositReviewMsg && (
+                    <div
+                      style={{
+                        padding: '0.65rem 0.85rem',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.82rem',
+                        marginBottom: '1rem',
+                        backgroundColor: depositReviewMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                        color: depositReviewMsg.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                      }}
+                    >
+                      {depositReviewMsg.text}
+                    </div>
+                  )}
+
+                  <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setSelectedDeposit(null)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={submittingDeposit || isSelfReview || isRejectionInvalid}
+                      className="btn btn-cta btn-sm"
+                      onClick={async () => {
+                        setSubmittingDeposit(true);
+                        setDepositReviewMsg(null);
+                        try {
+                          await reviewAdminDeposit(selectedDeposit.id, depositAction, depositNotes);
+                          setDepositReviewMsg({ text: 'Decision successfully processed.', type: 'success' });
+                          setTimeout(() => {
+                            setSelectedDeposit(null);
+                            loadDeposits(depositsPagination.page);
+                          }, 800);
+                        } catch (err: any) {
+                          setDepositReviewMsg({ text: err.message || 'Review submission failed', type: 'error' });
+                        } finally {
+                          setSubmittingDeposit(false);
+                        }
+                      }}
+                    >
+                      {submittingDeposit ? 'Submitting...' : 'Submit Decision'}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
 

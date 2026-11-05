@@ -49,8 +49,10 @@ export const App: React.FC = () => {
             <Route path="/exchanger" element={<RouteErrorBoundary routeName="Exchanger Portal"><ExchangerPage /></RouteErrorBoundary>} />
 
             {/* Operations Routes — Website Phase 7 */}
+            <Route path="/orders" element={<RouteErrorBoundary routeName="Order Management"><ManagementPage defaultTab="orders" /></RouteErrorBoundary>} />
             <Route path="/staff" element={<RouteErrorBoundary routeName="Staff Operations"><StaffPage /></RouteErrorBoundary>} />
             <Route path="/management" element={<RouteErrorBoundary routeName="Management Portal"><ManagementPage /></RouteErrorBoundary>} />
+            <Route path="/management/orders" element={<RouteErrorBoundary routeName="Order Management"><ManagementPage defaultTab="orders" /></RouteErrorBoundary>} />
             <Route path="/management/kyc" element={<RouteErrorBoundary routeName="KYC Management"><KycManagementPage /></RouteErrorBoundary>} />
 
             {/* Admin Operations Portal — Website Phase 8 */}

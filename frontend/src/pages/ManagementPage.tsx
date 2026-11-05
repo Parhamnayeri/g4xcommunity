@@ -19,8 +19,13 @@ import {
   resolveManagementDispute,
 } from '../services/operations';
 import { LoadingState } from '../components/ui/LoadingState';
+import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
 
-export const ManagementPage: React.FC = () => {
+interface ManagementPageProps {
+  defaultTab?: 'orders' | 'applications' | 'disputes' | 'audit';
+}
+
+export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'orders' }) => {
   const { user } = useAuth();
 
   // Overview State
@@ -29,7 +34,7 @@ export const ManagementPage: React.FC = () => {
   const [overviewError, setOverviewError] = useState<string | null>(null);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<'orders' | 'applications' | 'disputes' | 'audit'>('orders');
+  const [activeTab, setActiveTab] = useState<'orders' | 'applications' | 'disputes' | 'audit'>(defaultTab);
 
   // Orders State
   const [orders, setOrders] = useState<OrderItem[]>([]);
@@ -452,276 +457,12 @@ export const ManagementPage: React.FC = () => {
         </div>
       )}
 
-      {/* Tab 1: Order Pipeline */}
+      {/* Tab 1: Unified Order Management Pipeline Workspace */}
       {activeTab === 'orders' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {/* Controls */}
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: '1rem',
-            }}
-          >
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
-              <select
-                value={orderSourceFilter}
-                onChange={(e) => setOrderSourceFilter(e.target.value as any)}
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  padding: '0.4rem 0.8rem',
-                  borderRadius: 'var(--radius-xs)',
-                  fontSize: '0.85rem',
-                }}
-              >
-                <option value="all">All Sources (G4X &amp; Advertiser)</option>
-                <option value="external_g4x">G4X Marketplace Orders</option>
-                <option value="advertiser">External Advertiser Orders</option>
-              </select>
-
-              <select
-                value={orderStatusFilter}
-                onChange={(e) => setOrderStatusFilter(e.target.value)}
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  padding: '0.4rem 0.8rem',
-                  borderRadius: 'var(--radius-xs)',
-                  fontSize: '0.85rem',
-                }}
-              >
-                <option value="">All Statuses</option>
-                <option value="CREATED">Created</option>
-                <option value="ROSTERING">Rostering</option>
-                <option value="CONFIRMED">Confirmed</option>
-                <option value="IN_PROGRESS">In Progress</option>
-                <option value="COMPLETED">Completed</option>
-                <option value="CANCELLED">Cancelled</option>
-              </select>
-
-              <input
-                type="text"
-                placeholder="Search order ID or customer..."
-                value={orderSearch}
-                onChange={(e) => setOrderSearch(e.target.value)}
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  padding: '0.4rem 0.8rem',
-                  borderRadius: 'var(--radius-xs)',
-                  fontSize: '0.85rem',
-                  width: '220px',
-                }}
-              />
-            </div>
-
-            <button
-              onClick={() => loadOrders(ordersPagination?.page ?? 1)}
-              className="btn btn-sm"
-              style={{
-                backgroundColor: 'var(--bg-surface-hover)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-subtle)',
-              }}
-            >
-              Refresh Orders
-            </button>
-          </div>
-
-          {/* Orders Table */}
-          <div className="card-surface" style={{ padding: 0, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
-            {ordersLoading ? (
-              <div style={{ padding: '3rem' }}>
-                <LoadingState message="Fetching pipeline orders..." />
-              </div>
-            ) : orders.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                No orders match current criteria.
-              </div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Order ID</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Source</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Service</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Customer</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Status</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Payment</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Roster</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600, textAlign: 'right' }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {orders.map((order) => {
-                      const isPublishable =
-                        (order.status === 'CREATED' || order.status === 'ROSTERING') &&
-                        !order.discordMessageId &&
-                        ['ESCROW_LOCKED', 'PAID', 'OVERPAID'].includes(order.paymentStatus);
-
-                      const isAwaitingAdminApproval =
-                        order.boostReleaseTracker?.stage === 'staff_reviewed' &&
-                        !order.boostReleaseTracker?.adminApprovedAt;
-
-                      const isBusy = actionInProgressOrderId === order.id;
-
-                      return (
-                        <tr key={order.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                          <td style={{ padding: '0.9rem 1.25rem', fontWeight: 700 }}>#{order.id}</td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <span
-                              style={{
-                                padding: '0.2rem 0.5rem',
-                                borderRadius: 'var(--radius-xs)',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                backgroundColor:
-                                  order.source === 'external_g4x'
-                                    ? 'rgba(204, 255, 0, 0.15)'
-                                    : 'rgba(124, 58, 237, 0.15)',
-                                color:
-                                  order.source === 'external_g4x'
-                                    ? 'var(--accent-lime)'
-                                    : 'var(--primary-purple)',
-                              }}
-                            >
-                              {order.source === 'external_g4x' ? 'G4X Market' : `Adv: ${order.advertiserName || 'External'}`}
-                            </span>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <div>{order.game}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{order.service}</div>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                            {order.customerDiscordId}
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <span
-                              style={{
-                                padding: '0.2rem 0.6rem',
-                                borderRadius: 'var(--radius-xs)',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                              }}
-                            >
-                              {order.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <span
-                              style={{
-                                padding: '0.2rem 0.6rem',
-                                borderRadius: 'var(--radius-xs)',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                color: ['ESCROW_LOCKED', 'PAID', 'OVERPAID'].includes(order.paymentStatus)
-                                  ? 'var(--status-success)'
-                                  : 'var(--status-warning)',
-                              }}
-                            >
-                              {order.paymentStatus}
-                            </span>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <div style={{ fontSize: '0.8rem' }}>
-                              {order.slots?.filter((s) => s.boosterUserId).length || 0} / {order.slots?.length || 0} slots
-                            </div>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem', textAlign: 'right' }}>
-                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                              {isPublishable && (
-                                <button
-                                  disabled={isBusy}
-                                  onClick={() => handlePublishOrder(order.id)}
-                                  className="btn btn-sm"
-                                  style={{
-                                    backgroundColor: 'var(--primary-purple)',
-                                    color: '#ffffff',
-                                    fontSize: '0.75rem',
-                                    padding: '0.3rem 0.6rem',
-                                    fontWeight: 600,
-                                  }}
-                                >
-                                  {isBusy ? '...' : 'Publish Card'}
-                                </button>
-                              )}
-                              {isAwaitingAdminApproval && (
-                                <button
-                                  disabled={isBusy}
-                                  onClick={() => handleApproveOrder(order.id)}
-                                  className="btn btn-sm"
-                                  style={{
-                                    backgroundColor: 'var(--status-success)',
-                                    color: '#0d0b12',
-                                    fontSize: '0.75rem',
-                                    padding: '0.3rem 0.6rem',
-                                    fontWeight: 700,
-                                  }}
-                                >
-                                  {isBusy ? '...' : 'Approve Run'}
-                                </button>
-                              )}
-                              {!isPublishable && !isAwaitingAdminApproval && (
-                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                  {order.discordMessageId ? 'Published' : 'Locked'}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Pagination Controls */}
-            {(ordersPagination?.totalPages ?? 0) > 1 && (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '1rem 1.5rem',
-                  borderTop: '1px solid var(--border-subtle)',
-                  fontSize: '0.85rem',
-                  color: 'var(--text-muted)',
-                }}
-              >
-                <div>
-                  Page {ordersPagination?.page ?? 1} of {ordersPagination?.totalPages || 1} ({ordersPagination?.total ?? 0} orders)
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    disabled={(ordersPagination?.page ?? 1) <= 1}
-                    onClick={() => loadOrders((ordersPagination?.page ?? 1) - 1)}
-                    className="btn btn-sm"
-                    style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
-                  >
-                    &larr; Prev
-                  </button>
-                  <button
-                    disabled={(ordersPagination?.page ?? 1) >= (ordersPagination?.totalPages || 1)}
-                    onClick={() => loadOrders((ordersPagination?.page ?? 1) + 1)}
-                    className="btn btn-sm"
-                    style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
-                  >
-                    Next &rarr;
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <OrderManagementWorkspace
+          title="Management Order Pipeline Oversight"
+          subtitle="Real-time multi-criteria order pipeline, roster status, proof reviews, Discord board publishing, and diagnostics."
+        />
       )}
 
       {/* Tab 2: Registration Applications Queue */}

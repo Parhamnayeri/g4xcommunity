@@ -136,18 +136,33 @@ export async function fetchManagementOverview(): Promise<ManagementOverviewRespo
 }
 
 export async function fetchManagementOrders(params?: {
+  tab?: 'g4x' | 'advertiser';
   source?: 'advertiser' | 'external_g4x';
   status?: string;
   paymentStatus?: string;
+  gameSlug?: string;
+  sourceWebsite?: string;
   search?: string;
+  startDate?: string;
+  endDate?: string;
   page?: number;
   limit?: number;
-}): Promise<{ orders: OrderItem[]; pagination: PaginationMeta }> {
+}): Promise<{
+  orders: OrderItem[];
+  pagination: PaginationMeta;
+  counts?: { g4x: number; advertiser: number; needsReview: number };
+  tab?: string;
+}> {
   const query = new URLSearchParams();
+  if (params?.tab) query.set('tab', params.tab);
   if (params?.source) query.set('source', params.source);
   if (params?.status) query.set('status', params.status);
   if (params?.paymentStatus) query.set('paymentStatus', params.paymentStatus);
+  if (params?.gameSlug) query.set('gameSlug', params.gameSlug);
+  if (params?.sourceWebsite) query.set('source', params.sourceWebsite);
   if (params?.search) query.set('search', params.search);
+  if (params?.startDate) query.set('startDate', params.startDate);
+  if (params?.endDate) query.set('endDate', params.endDate);
   if (params?.page) query.set('page', String(params.page));
   if (params?.limit) query.set('limit', String(params.limit));
 
@@ -155,7 +170,39 @@ export async function fetchManagementOrders(params?: {
   return {
     orders: Array.isArray(res?.orders) ? res.orders : [],
     pagination: normalizePagination(res, params?.limit || 15),
+    counts: res?.counts,
+    tab: res?.tab,
   };
+}
+
+export async function fetchOrderDiagnostics(
+  orderId: number
+): Promise<{ success: boolean; order: any }> {
+  return apiRequest(`/api/admin/orders/${orderId}`);
+}
+
+export async function fetchOrderAuditHistory(
+  orderId: number
+): Promise<{ success: boolean; auditLogs: any[] }> {
+  return apiRequest(`/api/admin/orders/${orderId}/audit-history`);
+}
+
+export async function cancelOrder(
+  orderId: number,
+  reason: string
+): Promise<{ success: boolean; message?: string }> {
+  return apiRequest(`/api/orders/${orderId}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function payOrderFromWallet(
+  orderId: number
+): Promise<{ success: boolean; message?: string }> {
+  return apiRequest(`/api/orders/${orderId}/pay-from-wallet`, {
+    method: 'POST',
+  });
 }
 
 export async function approveOrderAdmin(

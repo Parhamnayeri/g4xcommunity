@@ -166,17 +166,62 @@ export interface OrderRosterSlot {
 
 export interface OrderItem {
   id: number;
-  customerDiscordId: string;
-  game: string;
-  service: string;
+  orderRef?: string;
+  customerDiscordId?: string;
+  game?: string;
+  gameSlug?: string;
+  gameName?: string;
+  service?: string;
+  serviceId?: number;
+  serviceName?: string;
   status: string;
   paymentStatus: string;
-  source: 'advertiser' | 'external_g4x';
-  advertiserDiscordId: string | null;
-  advertiserName: string | null;
-  grossAmountMinor: number;
-  customerPriceMinor: number;
-  discordMessageId: string | null;
+  source?: 'advertiser' | 'external_g4x';
+  sourceType?: string;
+  sourceWebsite?: string | null;
+  sourceLabel?: string;
+  originType?: string;
+  advertiserDiscordId?: string | null;
+  advertiserName?: string | null;
+  advertiser?: {
+    id: string | null;
+    username: string | null;
+    displayName: string;
+    advertiserRank?: string;
+    rankCommissionBps?: number;
+    commissionPercent?: string;
+  };
+  platformAccount?: {
+    id: number;
+    displayName: string;
+    accountRef: string;
+    platform: string;
+  } | null;
+  grossAmountMinor?: number;
+  grossAmountUsd?: string;
+  customerPriceMinor?: number;
+  currency?: string;
+  feeInfo?: {
+    platformFeeUsd?: string;
+    advertiserFeeUsd?: string;
+    boosterPoolUsd?: string;
+    netAmountUsd?: string;
+    platformAccountName?: string | null;
+    platformAccountRef?: string | null;
+    settlementState?: string;
+  };
+  discordMessageId?: string | null;
+  discordChannelId?: string | null;
+  simplifiedStatus?: string;
+  runsCount?: number;
+  assignedCount?: number;
+  assignedBooster?: string | null;
+  releaseStage?: string | null;
+  isPublishable?: boolean;
+  authorizedActions?: string[];
+  notes?: string | null;
+  externalOrderId?: string | null;
+  orderName?: string | null;
   createdAt: string;
   boostReleaseTracker?: {
     stage: string;
@@ -184,7 +229,76 @@ export interface OrderItem {
     staffReviewedAt: string | null;
     adminApprovedAt: string | null;
   } | null;
-  slots: OrderRosterSlot[];
+  slots?: OrderRosterSlot[];
+}
+
+export interface OrderDiagnosticsData {
+  orderId: number;
+  orderRef: string;
+  gameSlug: string;
+  gameName: string;
+  serviceId: number;
+  serviceName: string;
+  orderMode: string;
+  status: string;
+  paymentStatus: string;
+  grossAmountMinor: number;
+  grossAmountUsd: string;
+  boosterPoolMinor: number;
+  boosterPoolUsd: string;
+  platformFeeMinor: number;
+  platformFeeUsd: string;
+  advertiserFeeMinor: number;
+  advertiserFeeUsd: string;
+  currency: string;
+  customerId: string;
+  creatorId: string;
+  advertiserId: string | null;
+  discordMessageId: string | null;
+  discordChannelId: string | null;
+  executionChannelId: string | null;
+  reviewChannelId: string | null;
+  isPublishable: boolean;
+  publicationBlockReasons: string[];
+  explanationEnglish: string;
+  requiredNextActionEnglish: string;
+  assignments?: Array<{
+    userId: string;
+    assignedRole: string;
+    status: string;
+    assignedAt: string;
+    user?: { username: string; displayName: string | null };
+  }>;
+  runs?: Array<{
+    id: number;
+    runNumber: number;
+    status: string;
+    completedAt: string | null;
+  }>;
+  boostReleaseTracker?: {
+    stage: string;
+    proofSubmittedAt: string | null;
+    staffReviewedAt: string | null;
+    adminApprovedAt: string | null;
+    holdExpiresAt?: string | null;
+    payoutReleasedAt?: string | null;
+  } | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrderAuditLogItem {
+  id: number;
+  actorId: string;
+  actorUsername?: string;
+  action: string;
+  entityType: string;
+  entityId: string;
+  reason: string | null;
+  oldValues: string | null;
+  newValues: string | null;
+  isSuccess: boolean;
+  createdAt: string;
 }
 
 export interface RegistrationApplicationItem {
