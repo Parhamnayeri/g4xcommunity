@@ -66,7 +66,9 @@
     "test:phase8": "ts-node src/test/website_phase8_admin_owner_suite.ts",
     "test:phase9": "ts-node src/test/website_phase9_profile_booster_settings_suite.ts",
     "test:schema-repair": "ts-node src/test/schema_drift_repair_suite.ts",
-    "test:pagination-contract": "ts-node src/test/react_pagination_contract_regression_suite.ts"
+    "test:pagination-contract": "ts-node src/test/react_pagination_contract_regression_suite.ts",
+    "test:order-workspace": "node scripts/test-order-workspace.cjs",
+    "test:order-workspace:api": "ts-node src/test/order_workspace_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"
@@ -97,6 +99,7 @@
     "@types/uuid": "^9.0.7",
     "@vitejs/plugin-react": "^6.2.1",
     "nodemon": "^3.0.3",
+    "react-test-renderer": "18.3.1",
     "supertest": "^7.3.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3",

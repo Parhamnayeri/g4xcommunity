@@ -9,6 +9,7 @@ import {
   KycApplicationItem,
   KycDetailResponse,
   PaginationMeta,
+  OrderDiagnosticsData,
 } from '../types/operations';
 
 /**
@@ -177,8 +178,8 @@ export async function fetchManagementOrders(params?: {
 
 export async function fetchOrderDiagnostics(
   orderId: number
-): Promise<{ success: boolean; order: any }> {
-  return apiRequest(`/api/admin/orders/${orderId}`);
+): Promise<{ success: boolean; order: OrderDiagnosticsData }> {
+  return apiRequest(`/api/management/orders/${orderId}`);
 }
 
 export async function fetchOrderAuditHistory(
@@ -330,4 +331,16 @@ export async function submitKycDecision(
     method: 'POST',
     body: JSON.stringify({ decision, reviewerNotes }),
   });
+}
+
+export async function assignOrderRoster(orderId: number, candidates: Array<{ claimId: number; assignedRole: string }>): Promise<{ success: boolean; message: string }> {
+  return apiRequest(`/api/management/orders/${orderId}/assign`, { method: 'POST', body: JSON.stringify({ candidates }) });
+}
+
+export async function verifyOrderPayment(orderId: number, receiptRef: string): Promise<{ success: boolean; message: string }> {
+  return apiRequest(`/api/orders/${orderId}/verify-payment`, { method: 'POST', body: JSON.stringify({ receiptRef }) });
+}
+
+export async function refreshOrderDiscord(orderId: number): Promise<{ success: boolean; message: string }> {
+  return apiRequest(`/api/management/orders/${orderId}/refresh-discord`, { method: 'POST' });
 }

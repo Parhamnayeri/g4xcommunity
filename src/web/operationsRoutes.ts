@@ -18,9 +18,12 @@ import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 import { reviewRunProof, resolveOrderDispute, getDisputesForUser } from '../services/orderDisputeService';
 import { recordStaffReview, recordAdminFinalApproval } from '../services/financeV2/g4xBoostReleaseService';
-import { getSeparatedOrdersList, getCategorizedOrders, publishOrder, getOrderDiagnostics } from '../services/orderLifecycleService';
+import { getSeparatedOrdersList, getCategorizedOrders, publishOrder, getOrderDiagnostics, getOrderAuditHistory } from '../services/orderLifecycleService';
+import { assignOrderBoosters } from '../services/assignmentService';
+import { parsePresignRoles } from '../services/presignReviewService';
+import { orderWorkspaceActions } from '../services/orderWorkspacePolicy';
 import { reviewApplication } from '../services/registrationService';
-import { getGlobalDiscordClient } from '../services/orderDiscordService';
+import { publishOrRefreshOrderCard, getGlobalDiscordClient } from '../services/orderDiscordService';
 import { KYC_DOCS_DIR, validateKycDocumentReference } from '../services/kycDocumentSecurity';
 
 export const operationsRouter = Router();
@@ -514,6 +517,101 @@ operationsRouter.get('/management/orders', requireAuth, requireLivePermission(Pe
     console.error('[Operations] Management orders error:', err);
     res.status(500).json({ error: err.message || 'Failed to fetch management orders' });
   }
+});
+
+/** A single authorized details contract shared by Management, Admin and Owner. */
+operationsRouter.get('/management/orders/:id', requireAuth, requireLivePermission(Permission.ORDER_VIEW_PRIVATE), async (req: Request, res: Response): Promise<void> => {
+  const orderId = Number(req.params.id);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+    res.status(400).json({ error: 'INVALID_ORDER_ID' }); return;
+  }
+  try {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        requiredRoles: true,
+        assignments: { include: { user: { select: { username: true, displayName: true } } }, orderBy: { assignedAt: 'desc' } },
+        presigns: { where: { status: 'registered' }, include: { user: { select: { username: true, displayName: true } } } },
+        runs: { include: { proofs: { include: {
+          submittedBy: { select: { username: true } }, reviewedBy: { select: { username: true } },
+        } } }, orderBy: { runNumber: 'asc' } },
+        disputes: { orderBy: { createdAt: 'desc' } }, escrowHolds: true, boostReleaseTracker: true,
+      },
+    });
+    if (!order) { res.status(404).json({ error: 'ORDER_NOT_FOUND' }); return; }
+    const actorId = (req as AuthenticatedRequest).user.discordId;
+    const permissions = new Set<Permission>();
+    for (const permission of [Permission.ORDER_PUBLISH, Permission.ORDER_CANCEL, Permission.ORDER_PAYMENT_VERIFY, Permission.ORDER_ASSIGN, Permission.PROOF_REVIEW, Permission.ORDER_FINAL_APPROVE, Permission.AUDIT_LOG_VIEW]) {
+      if ((await authorize(actorId, permission)).allowed) permissions.add(permission);
+    }
+    const diagnostics = await getOrderDiagnostics(orderId);
+    const auditLogs = permissions.has(Permission.AUDIT_LOG_VIEW) ? await getOrderAuditHistory(orderId) : [];
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, order: {
+      ...diagnostics,
+      orderMode: order.orderMode, platformFeeUsd: (order.platformFeeMinor / 100).toFixed(2),
+      advertiserFeeUsd: (order.advertiserFeeMinor / 100).toFixed(2),
+      customerId: order.customerId, advertiserId: order.advertiserId,
+      notes: order.notes, externalOrderId: order.externalOrderId,
+      discordChannelId: order.discordChannelId, executionChannelId: order.executionChannelId, reviewChannelId: order.reviewChannelId,
+      requiredRoles: order.requiredRoles, assignments: order.assignments, presigns: order.presigns,
+      runs: order.runs, disputes: order.disputes, escrowHolds: order.escrowHolds,
+      boostReleaseTracker: order.boostReleaseTracker,
+      authorizedActions: orderWorkspaceActions(order, permissions, diagnostics.isPublishable),
+      auditAvailable: permissions.has(Permission.AUDIT_LOG_VIEW), auditLogs,
+    } });
+  } catch (err: any) {
+    res.status(500).json({ error: 'ORDER_DETAILS_FAILED', message: err.message });
+  }
+});
+
+/** Select registered applicants; existing assignment engine owns approvals, reservations and Discord updates. */
+operationsRouter.post('/management/orders/:id/assign', requireAuth, requireLivePermission(Permission.ORDER_ASSIGN), requireCsrf, async (req: Request, res: Response): Promise<void> => {
+  const orderId = Number(req.params.id);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0 || !Array.isArray(req.body.candidates) || !req.body.candidates.length || req.body.candidates.length > 40) {
+    res.status(400).json({ error: 'INVALID_ASSIGNMENT' }); return;
+  }
+  try {
+    const order = await prisma.order.findUnique({ where: { id: orderId }, include: {
+      requiredRoles: true, assignments: { where: { status: { in: ['assigned', 'accepted'] } } }, service: true,
+    } });
+    if (!order) { res.status(404).json({ error: 'ORDER_NOT_FOUND' }); return; }
+    if (!['open_presign', 'presign_closed'].includes(order.status) || !['verified', 'unneeded'].includes(order.paymentStatus)) {
+      res.status(400).json({ error: 'ORDER_NOT_ASSIGNABLE' }); return;
+    }
+    const candidates = [];
+    for (const candidate of req.body.candidates) {
+      if (!Number.isSafeInteger(candidate?.claimId) || typeof candidate?.assignedRole !== 'string') throw new Error('INVALID_CANDIDATE');
+      const claim = await prisma.orderPresign.findFirst({ where: { id: candidate.claimId, orderId, status: 'registered' } });
+      if (!claim || !parsePresignRoles(claim.registeredRole).includes(candidate.assignedRole)) throw new Error('INVALID_REGISTERED_ROLE');
+      candidates.push({ claimId: claim.id, userId: claim.userId, assignedRole: candidate.assignedRole });
+    }
+    if (new Set(candidates.map(c => c.userId)).size !== candidates.length) throw new Error('DUPLICATE_BOOSTER');
+    const result = await assignOrderBoosters({ orderId, actorId: (req as AuthenticatedRequest).user.discordId, candidates, requireCompleteRegisteredRoster: true, discordClient: getGlobalDiscordClient() });
+    res.json({ ...result, message: 'Roster assigned. Check Discord channel and board state for synchronization.' });
+  } catch (err: any) {
+    res.status(400).json({ error: 'ASSIGNMENT_FAILED', message: err.message });
+  }
+});
+
+/** Refresh only an already published, funded order; public claims remain controlled by the existing card builder. */
+operationsRouter.post('/management/orders/:id/refresh-discord', requireAuth, requireLivePermission(Permission.ORDER_PUBLISH), requireCsrf, async (req: Request, res: Response): Promise<void> => {
+  const orderId = Number(req.params.id);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) { res.status(400).json({ error: 'INVALID_ORDER_ID' }); return; }
+  try {
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) { res.status(404).json({ error: 'ORDER_NOT_FOUND' }); return; }
+    if (!order.discordMessageId || !order.discordChannelId || ['completed', 'cancelled'].includes(order.status) || !['verified', 'unneeded'].includes(order.paymentStatus)) {
+      res.status(400).json({ error: 'ORDER_NOT_REFRESHABLE' }); return;
+    }
+    const result = await publishOrRefreshOrderCard(getGlobalDiscordClient(), orderId);
+    if (!result.success) { res.status(400).json({ error: 'DISCORD_SYNC_FAILED', message: result.error }); return; }
+    await prisma.auditLog.create({ data: {
+      actorId: (req as AuthenticatedRequest).user.discordId, action: 'ORDER_DISCORD_REFRESHED', entityType: 'Order', entityId: String(orderId),
+      reason: 'Refresh existing order card from the React workspace', newValues: JSON.stringify(result),
+    } });
+    res.json({ ...result, message: 'Discord order card synchronized.' });
+  } catch (err: any) { res.status(400).json({ error: 'DISCORD_SYNC_FAILED', message: err.message }); }
 });
 
 /**
