@@ -60,6 +60,10 @@ async function main() {
   const unpaid = await prisma.order.create({
     data: { ...common, orderRef: `${prefix}unpaid`, status: 'payment_pending', paymentStatus: 'pending' },
   });
+  const guardedOrder = await prisma.order.create({ data: { ...common, creatorId: id('manager'), orderRef: `${prefix}guarded`, status: 'payment_pending', paymentStatus: 'pending' } });
+  // Test-only balance in the disposable database; never create a real funding receipt or enable payouts.
+  await prisma.walletV2.create({ data: { userId: id('manager'), availableCents: 12345 } });
+  const walletBefore = await prisma.walletV2.findUniqueOrThrow({ where: { userId: id('manager') } });
   const run = await prisma.orderRun.create({
     data: { orderId: order.id, runNumber: 1, status: 'completed' },
   });
@@ -102,6 +106,17 @@ async function main() {
       assert.equal(details.status, 403);
     });
   }
+  for (const role of ['staff', 'booster', 'advertiser']) {
+    const account = await session(role);
+    const spoofedFunding = await account.agent.post(`/api/orders/${guardedOrder.id}/pay-from-wallet`).set('x-csrf-token', account.csrf).send({ actorId: id('manager'), userId: id('manager') });
+    check(`${role} cannot debit another creator wallet by spoofing the actor`, () => assert.equal(spoofedFunding.status, 400));
+    for (const action of ['assign', 'refresh-discord', 'approve']) {
+      const denied = await account.agent.post(`/api/management/orders/${order.id}/${action}`).set('x-csrf-token', account.csrf).send({ actorId: id('admin'), candidates: [{ claimId: 1, assignedRole: 'tank' }] });
+      check(`${role} cannot bypass server authorization for ${action}`, () => assert.equal(denied.status, 403));
+    }
+  }
+  const noWalletCsrf = await admin.agent.post(`/api/orders/${guardedOrder.id}/pay-from-wallet`).send({});
+  check('wallet funding cannot bypass CSRF even for an admin', () => assert.equal(noWalletCsrf.status, 403));
   for (const role of ['admin', 'manager', 'owner']) {
     const account = await session(role);
     const result = await account.agent.get(`/api/management/orders/${order.id}`);
@@ -129,7 +144,7 @@ async function main() {
   const filtered = await admin.agent
     .get('/api/management/orders')
     .query({
-      search: prefix,
+      search: `${prefix}unpaid`,
       paymentStatus: 'pending',
       gameSlug: 'wow_midnight',
       limit: 1,
@@ -304,6 +319,12 @@ async function main() {
   check('revoked role in an existing session immediately loses access', () =>
     assert.equal(stale.status, 403),
   );
+  const walletAfter = await prisma.walletV2.findUniqueOrThrow({ where: { userId: id('manager') } });
+  const guardedAfter = await prisma.order.findUniqueOrThrow({ where: { id: guardedOrder.id } });
+  const newLedgerEntries = await prisma.ledgerEntryV2.count({ where: { OR: [{ userId: { startsWith: prefix } }, { orderId: { in: [order.id, unpaid.id, guardedOrder.id] } }] } });
+  check('denied funding, roster and Discord operations never mutate wallet balances or ledger', () => {
+    assert.deepStrictEqual(walletAfter, walletBefore); assert.equal(newLedgerEntries, 0); assert.equal(guardedAfter.paymentStatus, 'pending');
+  });
   check('financial gates remain disabled', () => {
     for (const name of [
       'ESCROW_RELEASE_ENABLED',

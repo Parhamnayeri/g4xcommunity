@@ -40,6 +40,6 @@ The API suite requires a `task2*.db` URL and creates uniquely named fixtures in 
 
 ## Known failures reproduced on unchanged main
 
-- `test:phase7`: the KYC symlink-escape test expects 403 and receives 200. This is an existing KYC document security defect outside order management.
+- The original `test:phase7` symlink fixture changed only application qualifications while a higher-priority pilot verification still referenced the valid document. The fixture is corrected and the complete suite passes. Both effective-symlink retrieval routes return 403; see `PR1_SECURITY_REVIEW.md`.
 - `test:publication`: legacy fixed service IDs produce a routing mismatch and a foreign-key error on service ID 18 with the current canonical seed. The targeted workspace API suite tests actual publication/refresh with dynamically resolved service IDs.
 - Standalone frontend `tsc` reports existing errors in other modules. The changed order workspace and portal files have no diagnostics; the production `npm run build` (server TypeScript plus Vite) passes.
