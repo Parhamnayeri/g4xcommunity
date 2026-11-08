@@ -90,27 +90,74 @@ export async function authorize(
     }
 
     // ۴. بررسی موارد انحصاری Owner
-    if (permission === Permission.SYSTEM_CONFIG_MANAGE && !isOwner) {
-      await logAuthorizationAudit(client, actorId, permission, false, 'OWNER_ONLY_INFRASTRUCTURE', context);
+    const ownerExclusivePermissions = [
+      Permission.SYSTEM_CONFIG_MANAGE,
+      Permission.FINANCIAL_POLICY_MANAGE,
+      Permission.ESCROW_HOLD_MANAGE,
+      Permission.ESCROW_RELEASE_ADMIN,
+      Permission.FINANCE_ADJUST,
+    ];
+
+    if (ownerExclusivePermissions.includes(permission) && !isOwner) {
+      const reasonCode = permission === Permission.FINANCE_ADJUST ? 'FINANCE_ADJUST_FORBIDDEN' : 'OWNER_ONLY_INFRASTRUCTURE';
+      await logAuthorizationAudit(client, actorId, permission, false, reasonCode, context);
       return {
         allowed: false,
-        reason: 'OWNER_ONLY_INFRASTRUCTURE: Infrastructure configuration is strictly reserved for Owner',
+        reason: `${reasonCode}: This action is strictly reserved for Owner`,
         actorId,
         permission,
         context,
       };
     }
 
-    // ۵. بررسی اسناد هویتی حساس (فقط Manager و Owner)
-    if (permission === Permission.SENSITIVE_IDENTITY_REVIEW && !userRoles.includes('manager')) {
+    // ۵. بررسی اسناد هویتی حساس (فقط Admin و Owner؛ مدیریت و استاف سلب دسترسی هستند)
+    if (permission === Permission.SENSITIVE_IDENTITY_REVIEW && !userRoles.includes('admin') && !isOwner) {
       await logAuthorizationAudit(client, actorId, permission, false, 'SENSITIVE_IDENTITY_ACCESS_DENIED', context);
       return {
         allowed: false,
-        reason: 'SENSITIVE_IDENTITY_ACCESS_DENIED: Identity documents can only be reviewed by Manager or Owner',
+        reason: 'SENSITIVE_IDENTITY_ACCESS_DENIED: Identity documents can only be reviewed by Admin or Owner',
         actorId,
         permission,
         context,
       };
+    }
+
+    // بررسی تایید واریز دستی (MANUAL_DEPOSIT_REVIEW: فقط Admin و Owner)
+    if (permission === Permission.MANUAL_DEPOSIT_REVIEW && !userRoles.includes('admin') && !isOwner) {
+      await logAuthorizationAudit(client, actorId, permission, false, 'MANUAL_DEPOSIT_REVIEW_FORBIDDEN', context);
+      return {
+        allowed: false,
+        reason: 'MANUAL_DEPOSIT_REVIEW_FORBIDDEN: Manual deposit review requires Admin or Owner',
+        actorId,
+        permission,
+        context,
+      };
+    }
+
+    // بررسی تایید یا رد برداشت (WITHDRAWAL_REVIEW: فقط Admin و Owner؛ مدیریت فقط خواندنی است)
+    if (permission === Permission.WITHDRAWAL_REVIEW && !userRoles.includes('admin') && !isOwner) {
+      await logAuthorizationAudit(client, actorId, permission, false, 'WITHDRAWAL_REVIEW_FORBIDDEN', context);
+      return {
+        allowed: false,
+        reason: 'WITHDRAWAL_REVIEW_FORBIDDEN: Withdrawal approvals and review require Admin or Owner',
+        actorId,
+        permission,
+        context,
+      };
+    }
+
+    // بررسی ضد خود-تاییدی (Anti-Self-Approval): کاربر نمی‌تواند خود را مسدود کند یا به خود نقش دهد
+    if (context?.targetUserId && context.targetUserId === actorId) {
+      if ([Permission.USER_BAN, Permission.USER_ROLE_ASSIGN].includes(permission)) {
+        await logAuthorizationAudit(client, actorId, permission, false, 'ANTI_SELF_APPROVAL', context);
+        return {
+          allowed: false,
+          reason: 'ANTI_SELF_APPROVAL: Cannot modify roles or ban your own account',
+          actorId,
+          permission,
+          context,
+        };
+      }
     }
 
     // ۶. ارزیابی دسترسی‌های مبتنی بر منبع و زمینه (Contextual Authorization Rules)
@@ -379,7 +426,7 @@ export async function authorize(
     // ۶.۷. مشاهده والت شخصی در برابر والت دیگران
     if (permission === Permission.WALLET_VIEW_OWN) {
       if (context?.targetUserId && context.targetUserId !== actorId) {
-        const canViewOthers = userRoles.some((r) => ['manager'].includes(r));
+        const canViewOthers = userRoles.some((r) => ['owner', 'admin', 'manager'].includes(r));
         if (!canViewOthers) {
           await logAuthorizationAudit(client, actorId, permission, false, 'UNAUTHORIZED_WALLET_VIEW', context);
           return {
@@ -396,11 +443,11 @@ export async function authorize(
 
     // ۶.۸. تعدیل مانده و جابجایی مالی (FINANCE_ADJUST)
     if (permission === Permission.FINANCE_ADJUST) {
-      if (!userRoles.includes('manager')) {
+      if (!isOwner) {
         await logAuthorizationAudit(client, actorId, permission, false, 'FINANCE_ADJUST_FORBIDDEN', context);
         return {
           allowed: false,
-          reason: 'FINANCE_ADJUST_FORBIDDEN: Staff and admins cannot adjust financial balances',
+          reason: 'FINANCE_ADJUST_FORBIDDEN: Staff, management, and admins cannot adjust financial balances. Reserved for Owner.',
           actorId,
           permission,
           context,

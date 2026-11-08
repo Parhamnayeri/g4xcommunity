@@ -15,7 +15,7 @@
 import prisma from '../database/db';
 import { DomainError, DomainErrorCode } from './domainErrors';
 import { syncDiscordRole } from './registrationService';
-import { SystemRoleKey } from './permissionTypes';
+import { SystemRoleKey, getEffectivePermissions } from './permissionTypes';
 
 export interface ListAdminUsersOptions {
   page?: number;
@@ -32,6 +32,7 @@ export interface UserSummaryDto {
   displayName: string | null;
   isActive: boolean;
   roles: string[];
+  permissions: string[];
   advertiserRank: string | null;
   approvalsSummary: Record<string, string>;
   restrictions: string[];
@@ -233,6 +234,7 @@ export async function listAdminUsers(options: ListAdminUsersOptions): Promise<Pa
       displayName: u.displayName,
       isActive: u.isActive,
       roles,
+      permissions: getEffectivePermissions(roles),
       advertiserRank: u.advertiserRank,
       approvalsSummary,
       restrictions,
@@ -372,6 +374,7 @@ export async function getAdminUserProfile(targetUserId: string): Promise<UserPro
     displayName: u.displayName,
     isActive: u.isActive,
     roles,
+    permissions: getEffectivePermissions(roles),
     advertiserRank: u.advertiserRank,
     approvalsSummary,
     restrictions,
@@ -455,6 +458,37 @@ export async function updateUserAccountStatus(params: {
     throw new DomainError(DomainErrorCode.VALIDATION_ERROR, 'REASON_REQUIRED: A valid audit reason (min 3 chars) is mandatory for status change');
   }
 
+  // گارد ضد خود-مسدودسازی: کاربر نمی‌تواند حساب خود را مسدود کند
+  if (actorId === targetUserId) {
+    throw new DomainError(
+      DomainErrorCode.PERMISSION_DENIED,
+      'SELF_STATUS_CHANGE_FORBIDDEN: You cannot suspend or deactivate your own account'
+    );
+  }
+
+  // استعلام اطلاعات کاربر مجری (Actor)
+  const actor = await prisma.user.findUnique({
+    where: { discordId: actorId },
+    include: { userRoles: true },
+  });
+
+  if (!actor || !actor.isActive) {
+    throw new DomainError(DomainErrorCode.PERMISSION_DENIED, 'ACTOR_INACTIVE_OR_NOT_FOUND: Operating user is not active');
+  }
+
+  const actorRoles = actor.userRoles.map((r) => r.roleKey);
+  const isActorOwner = actor.discordId === PRIMARY_OWNER_ID || actorRoles.includes('owner');
+  const isActorAdmin = actorRoles.includes('admin');
+  const isActorManager = actorRoles.includes('manager');
+
+  // استاف حق تغییر وضعیت کاربران را ندارد
+  if (!isActorOwner && !isActorAdmin && !isActorManager) {
+    throw new DomainError(
+      DomainErrorCode.PERMISSION_DENIED,
+      'STAFF_BAN_FORBIDDEN: Staff members hold read-only user access and cannot ban or unban accounts'
+    );
+  }
+
   const user = await prisma.user.findUnique({
     where: { discordId: targetUserId },
     include: { userRoles: true },
@@ -464,14 +498,37 @@ export async function updateUserAccountStatus(params: {
     throw new DomainError(DomainErrorCode.VALIDATION_ERROR, `USER_NOT_FOUND: User '${targetUserId}' does not exist`);
   }
 
-  const isOwner = user.discordId === PRIMARY_OWNER_ID || user.userRoles.some((r) => r.roleKey === 'owner');
+  const targetRoles = user.userRoles.map((r) => r.roleKey);
+  const targetIsOwner = user.discordId === PRIMARY_OWNER_ID || targetRoles.includes('owner');
+  const targetIsAdmin = targetRoles.includes('admin');
+  const targetIsManager = targetRoles.includes('manager');
 
   // محافظت از Owner در برابر تعلیق یا غیرفعال‌سازی
-  if (isOwner && !isActive) {
+  if (targetIsOwner && !isActive) {
     throw new DomainError(
       DomainErrorCode.PERMISSION_DENIED,
       'OWNER_PROTECTION_VIOLATION: Cannot suspend or deactivate the platform owner account'
     );
+  }
+
+  // ممانعت ادمین از مسدودسازی ادمین‌های دیگر یا مالک
+  if (isActorAdmin && !isActorOwner) {
+    if (targetIsOwner || targetIsAdmin) {
+      throw new DomainError(
+        DomainErrorCode.PERMISSION_DENIED,
+        'HIERARCHY_VIOLATION: Administrators cannot suspend other Admin or Owner accounts'
+      );
+    }
+  }
+
+  // ممانعت منیجر از مسدودسازی منیجرها، ادمین‌ها یا مالک
+  if (isActorManager && !isActorAdmin && !isActorOwner) {
+    if (targetIsOwner || targetIsAdmin || targetIsManager) {
+      throw new DomainError(
+        DomainErrorCode.PERMISSION_DENIED,
+        'HIERARCHY_VIOLATION: Management cannot suspend Manager, Admin, or Owner accounts'
+      );
+    }
   }
 
   if (user.isActive === isActive) {
@@ -495,8 +552,8 @@ export async function updateUserAccountStatus(params: {
         action: isActive ? 'USER_REACTIVATED' : 'USER_SUSPENDED',
         entityType: 'User',
         entityId: targetUserId,
-        previousValues: JSON.stringify({ isActive: user.isActive }),
-        newValues: JSON.stringify({ isActive }),
+        previousValues: JSON.stringify({ isActive: user.isActive, status: user.isActive ? 'active' : 'suspended' }),
+        newValues: JSON.stringify({ isActive, status: isActive ? 'active' : 'suspended' }),
         reason: reason.trim(),
         isSuccess: true,
       },
@@ -562,8 +619,9 @@ export async function assignOrRevokeUserRole(params: {
 
   const actorRoles = actor.userRoles.map((r) => r.roleKey);
   const isActorOwner = actor.discordId === PRIMARY_OWNER_ID || actorRoles.includes('owner');
+  const isActorAdmin = actorRoles.includes('admin');
 
-  // قانون امنیتی ۴: هیچ ادمین یا حسابی حق اعطای خاموش یا آشکار رول 'owner' به خود یا دیگری را ندارد مگر این‌که خودش مالک اصلی سیستم باشد.
+  // قانون امنیتی: بررسی دسترسی‌های انحصاری نقش Owner
   if (normalizedRole === 'owner') {
     if (!isActorOwner) {
       throw new DomainError(
@@ -572,11 +630,39 @@ export async function assignOrRevokeUserRole(params: {
       );
     }
 
-    // قانون امنیتی ۵: رول مالک از مالک اصلی هرگز سلب نمی‌شود
+    // قانون امنیتی: رول مالک از مالک اصلی یا کاربر جاری هرگز سلب نمی‌شود
     if (action === 'revoke' && (targetUserId === PRIMARY_OWNER_ID || targetUserId === actorId)) {
       throw new DomainError(
         DomainErrorCode.PERMISSION_DENIED,
         'OWNER_PROTECTION_VIOLATION: Cannot revoke Owner role from primary platform owner'
+      );
+    }
+  }
+
+  // گارد ضد خود-ترفیع: کاربر نمی‌تواند رول‌های خود را تغییر دهد
+  if (actorId === targetUserId) {
+    throw new DomainError(
+      DomainErrorCode.PERMISSION_DENIED,
+      'ANTI_SELF_ELEVATION: Cannot assign or revoke roles on your own account'
+    );
+  }
+
+  // رول‌های دارای امتیاز بالا که فقط توسط مالک قابل انتساب یا سلب هستند
+  const privilegedRoles: SystemRoleKey[] = ['owner', 'admin', 'manager'];
+
+  if (!isActorOwner) {
+    if (!isActorAdmin) {
+      throw new DomainError(
+        DomainErrorCode.PERMISSION_DENIED,
+        'ROLE_MANAGEMENT_FORBIDDEN: Only Admin and Owner can assign or revoke user roles'
+      );
+    }
+
+    // ادمین فقط مجاز به تخصیص رول‌های غیرحساس است (staff, advertiser, booster, pilot, exchanger)
+    if (privilegedRoles.includes(normalizedRole)) {
+      throw new DomainError(
+        DomainErrorCode.PERMISSION_DENIED,
+        `PRIVILEGE_ESCALATION_FORBIDDEN: Only Owner can assign or revoke privileged roles (${normalizedRole})`
       );
     }
   }
@@ -591,9 +677,37 @@ export async function assignOrRevokeUserRole(params: {
     throw new DomainError(DomainErrorCode.VALIDATION_ERROR, `USER_NOT_FOUND: User '${targetUserId}' does not exist`);
   }
 
+  const targetRoles = targetUser.userRoles.map((r) => r.roleKey);
+  const targetIsOwner = targetUser.discordId === PRIMARY_OWNER_ID || targetRoles.includes('owner');
+
+  if (targetIsOwner && !isActorOwner) {
+    throw new DomainError(
+      DomainErrorCode.PERMISSION_DENIED,
+      'OWNER_PROTECTION_VIOLATION: Cannot modify roles for platform Owner'
+    );
+  }
+
+  // محافظت از آخرین مالک سیستم و مالک اصلی
+  if (normalizedRole === 'owner' && action === 'revoke') {
+    if (targetUserId === PRIMARY_OWNER_ID) {
+      throw new DomainError(
+        DomainErrorCode.PERMISSION_DENIED,
+        'OWNER_PROTECTION_VIOLATION: Cannot revoke Owner role from primary platform owner'
+      );
+    }
+
+    const ownerCount = await prisma.userRole.count({ where: { roleKey: 'owner' } });
+    if (ownerCount <= 1) {
+      throw new DomainError(
+        DomainErrorCode.PERMISSION_DENIED,
+        'LAST_OWNER_PROTECTION: Cannot revoke the last remaining Owner role on the platform'
+      );
+    }
+  }
+
   const targetHasRole = targetUser.userRoles.some((r) => r.roleKey === normalizedRole);
 
-  // انجام تراکنش دیتابیس
+  // انجام تراکنش دیتابیس (پشتیبانی کامل از چند نقشی: نقش‌های دیگر دست‌نخورده می‌مانند)
   await prisma.$transaction(async (tx) => {
     if (action === 'grant') {
       await tx.userRole.upsert({
@@ -812,5 +926,49 @@ export async function getUserAuditLogs(targetUserId: string, limit = 50) {
         },
       },
     },
+  });
+}
+
+/**
+ * ۷. دریافت تاریخچه تغییرات وضعیت و مسدودسازی کاربر (User Ban / Unban Audit History)
+ */
+export async function getUserBanHistory(targetUserId: string) {
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      entityType: 'User',
+      entityId: targetUserId,
+      action: { in: ['USER_SUSPENDED', 'USER_REACTIVATED', 'USER_BANNED', 'USER_UNBANNED'] },
+    },
+    include: {
+      actor: { select: { discordId: true, username: true, displayName: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  return logs.map((l) => {
+    let prevStatus = 'active';
+    let newStatus = 'suspended';
+    try {
+      if (l.previousValues) {
+        const parsed = JSON.parse(l.previousValues);
+        prevStatus = parsed.status || (parsed.isActive ? 'active' : 'suspended');
+      }
+      if (l.newValues) {
+        const parsed = JSON.parse(l.newValues);
+        newStatus = parsed.status || (parsed.isActive ? 'active' : 'suspended');
+      }
+    } catch {}
+
+    return {
+      id: l.id,
+      actorId: l.actorId,
+      actorName: l.actor?.displayName || l.actor?.username || l.actorId,
+      targetUserId: l.entityId,
+      action: l.action,
+      previousStatus: prevStatus,
+      resultingStatus: newStatus,
+      reason: l.reason,
+      createdAt: l.createdAt.toISOString(),
+    };
   });
 }
