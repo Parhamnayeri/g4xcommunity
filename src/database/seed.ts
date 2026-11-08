@@ -195,98 +195,27 @@ export const GAME_SERVICES = [
   },
 ];
 
+/** Explicit fresh-install bootstrap: create missing defaults, never synchronize existing data. */
 export async function seed(): Promise<void> {
-  console.log('[Seed] Seeding system roles...');
-  for (const role of SYSTEM_ROLES) {
-    await prisma.role.upsert({
-      where: { roleKey: role.roleKey },
-      update: { name: role.name },
-      create: role,
-    });
-  }
-
-  console.log('[Seed] Seeding supported games...');
-  for (const game of SUPPORTED_GAMES) {
-    await prisma.game.upsert({
-      where: { slug: game.slug },
-      update: {
-        displayName: game.displayName,
-        serviceCategory: game.serviceCategory,
-        isActive: game.isActive,
-      },
-      create: game,
-    });
-  }
-
-  console.log('[Seed] Deactivating legacy / unsupported games...');
-  const activeGameSlugs = SUPPORTED_GAMES.map((g) => g.slug);
-  const deactivatedGames = await prisma.game.updateMany({
-    where: {
-      slug: { notIn: activeGameSlugs },
-      isActive: true,
-    },
-    data: {
-      isActive: false,
-    },
-  });
-  if (deactivatedGames.count > 0) {
-    console.log(`[Seed] Deactivated ${deactivatedGames.count} legacy game(s).`);
-  }
-
-  console.log('[Seed] Seeding game services...');
-  for (const service of GAME_SERVICES) {
-    await prisma.gameService.upsert({
-      where: {
-        gameSlug_serviceKey: {
-          gameSlug: service.gameSlug,
-          serviceKey: service.serviceKey,
-        },
-      },
-      update: {
-        displayName: service.displayName,
-        serviceMode: service.serviceMode,
-        profileMode: service.profileMode,
-        requiresPilotApproval: service.requiresPilotApproval,
-        isActive: service.isActive,
-      },
-      create: service,
-    });
-  }
-
-  console.log('[Seed] Deactivating obsolete / legacy services...');
-  // 1. Deactivate services belonging to inactive games
-  const deactivatedLegacyServices = await prisma.gameService.updateMany({
-    where: {
-      gameSlug: { notIn: activeGameSlugs },
-      isActive: true,
-    },
-    data: {
-      isActive: false,
-    },
-  });
-  if (deactivatedLegacyServices.count > 0) {
-    console.log(`[Seed] Deactivated ${deactivatedLegacyServices.count} legacy game service(s).`);
-  }
-
-  // 2. Deactivate obsolete services for active games that are no longer configured
-  for (const game of SUPPORTED_GAMES) {
-    const activeKeys = GAME_SERVICES.filter((s) => s.gameSlug === game.slug).map((s) => s.serviceKey);
-    const deactivatedObsolete = await prisma.gameService.updateMany({
-      where: {
-        gameSlug: game.slug,
-        serviceKey: { notIn: activeKeys },
-        isActive: true,
-      },
-      data: {
-        isActive: false,
-      },
-    });
-    if (deactivatedObsolete.count > 0) {
-      console.log(`[Seed] Deactivated ${deactivatedObsolete.count} obsolete service(s) for ${game.slug}.`);
+  await prisma.$transaction(async (tx) => {
+    for (const role of SYSTEM_ROLES) {
+      if (!(await tx.role.findUnique({ where: { roleKey: role.roleKey } }))) {
+        await tx.role.create({ data: role });
+      }
     }
-  }
-
-  console.log('[Seed] ✅ Seeding complete.');
+    for (const game of SUPPORTED_GAMES) {
+      if (!(await tx.game.findUnique({ where: { slug: game.slug } }))) {
+        await tx.game.create({ data: game });
+      }
+    }
+    for (const service of GAME_SERVICES) {
+      const where = { gameSlug_serviceKey: { gameSlug: service.gameSlug, serviceKey: service.serviceKey } };
+      if (!(await tx.gameService.findUnique({ where }))) {
+        await tx.gameService.create({ data: service });
+      }
+    }
+  });
+  console.log('[Seed] ✅ Missing defaults initialized; existing configuration preserved.');
 }
 
 if (require.main === module) {

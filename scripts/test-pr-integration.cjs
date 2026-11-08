@@ -93,9 +93,20 @@ check('order and application API response contracts occupy separate namespaces',
   assert(two('frontend/src/components/admin/NativeAdminModules.tsx').includes('submittedAt'));
   assert(one('frontend/src/types/operations.ts').includes('label: string; colorClass: string; rawStatus: string'));
 });
-check('shared HTTP error handling and dependency lockfiles are identical', () => {
+check('shared HTTP error handling and dependency contracts are preserved', () => {
   assert.equal(one('frontend/src/services/api.ts'), two('frontend/src/services/api.ts'));
-  assert.equal(one('package-lock.json'), two('package-lock.json'));
+  if (!combined) assert.equal(one('package-lock.json'), two('package-lock.json'));
+  else {
+    // Post-integration security remediation deliberately updates the router/uuid
+    // and transitive patches. Preserve every other direct production contract,
+    // and require the manifest to agree with the committed lockfile.
+    const before = JSON.parse(one('package.json')).dependencies;
+    const after = JSON.parse(two('package.json')).dependencies;
+    for (const [name, version] of Object.entries(before)) {
+      if (!['react-router-dom', 'uuid'].includes(name)) assert.equal(after[name], version, name);
+    }
+    assert.deepEqual(JSON.parse(two('package-lock.json')).packages[''].dependencies, after);
+  }
   assert.equal(JSON.parse(one('package.json')).devDependencies['react-test-renderer'], JSON.parse(two('package.json')).devDependencies['react-test-renderer']);
 });
 const orderScripts = ['test:order-workspace','test:order-workspace:api'];
