@@ -1,0 +1,19 @@
+/* Never uses an existing DB: each invocation creates and migrates a private disposable SQLite file. */
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'g4x-release-blockers-'));
+fs.writeFileSync(path.join(directory, 'release_fixture.db'), '', { flag: 'wx' });
+const env = { ...process.env, DATABASE_URL: `file:${directory}/release_fixture.db`, NODE_ENV: 'test', COOKIE_SECURE: 'false', WEB_BASE_URL: 'http://localhost:3000' };
+for (const name of ['ESCROW_RELEASE_ENABLED', 'FINANCE_V2_LIVE_CREDITS_ENABLED', 'FINANCE_V2_LIVE_PAYOUTS_ENABLED', 'FINANCE_V2_P2P_SETTLEMENT_ENABLED', 'NOWPAYMENTS_LIVE_COLLECTION_ENABLED']) env[name] = 'false';
+env.NOWPAYMENTS_MODE = 'disabled';
+function run(args) {
+  const result = spawnSync(process.execPath, args, { env, stdio: 'inherit', timeout: 240000 });
+  if (result.status !== 0) process.exit(result.status || 1);
+}
+console.log(`Disposable test database: ${directory}`);
+run(['node_modules/prisma/build/index.js', 'migrate', 'deploy']);
+const selected = process.argv[2];
+if (!selected || selected === 'startup') run(['node_modules/ts-node/dist/bin.js', 'src/test/startup_persistence_suite.ts']);
+if (!selected || selected === 'spa') run(['node_modules/ts-node/dist/bin.js', 'src/test/spa_routing_suite.ts']);

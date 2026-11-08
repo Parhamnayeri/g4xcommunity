@@ -1,0 +1,1567 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Prisma Schema — G4X Community Platform
+// دیتابیس: SQLite محلی در مسیر data/g4x.db
+// ─────────────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ۱. کاربران پلتفرم ───────────────────────────────────────────────────────
+model User {
+  discordId        String  @id @map("discord_id")
+  username         String
+  displayName      String? @map("display_name")
+  phoneNumber      String? @map("phone_number")
+  telegramUsername String? @map("telegram_username")
+  whatsappNumber   String? @map("whatsapp_number")
+  isActive         Boolean @default(true) @map("is_active")
+  advertiserRank   String?  @map("advertiser_rank") // BRONZE | SILVER | GOLD | DIAMOND | OFFICIAL_PARTNERS | FOUNDING_ADVERTISER
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  // روابط
+  userRoles         UserRole[]
+  gameApprovals     UserGameApproval[]
+  wowCharacters     WowCharacter[]
+  pilotVerifications PilotVerification[]   @relation("UserPilots")
+  reviewedPilots     PilotVerification[]   @relation("ReviewedPilots")
+  wallet            Wallet?
+  ledgerEntries     LedgerTransaction[]   @relation("UserLedger")
+  createdLedger     LedgerTransaction[]   @relation("CreatedByLedger")
+  ordersAsCustomer  Order[]               @relation("CustomerOrders")
+  ordersAsAdv       Order[]               @relation("AdvertiserOrders")
+  createdOrders     Order[]               @relation("CreatedOrders")
+  verifiedPayments  Order[]               @relation("VerifiedOrderPayments")
+  presigns          OrderPresign[]
+  assignedTo        OrderAssignment[]     @relation("AssignedUser")
+  assignedBy        OrderAssignment[]     @relation("AssignedBy")
+  reservations      BoosterReservation[]  @relation("UserReservations")
+  createdReservations BoosterReservation[] @relation("CreatedReservations")
+  completedRuns     OrderRun[]            @relation("RunCompletedBy")
+  ledTeams          PremadeSquad[]
+  squadMemberships  SquadMember[]
+  exchangerOffers   ExchangerOffer[]
+  goldSales         GoldExchangeOrder[]   @relation("SellerGoldOrders")
+  goldExchanges     GoldExchangeOrder[]   @relation("ExchangerGoldOrders")
+  verifiedGold      GoldExchangeOrder[]   @relation("VerifiedGoldOrders")
+  approvalReviews   UserGameApproval[]    @relation("ReviewedApprovals")
+  roleGrants        UserRole[]            @relation("GrantedByUser")
+  runEvents         RunEvent[]            @relation("RunEventActor")
+  submittedProofs   RunProof[]            @relation("ProofSubmitter")
+  reviewedProofs    RunProof[]            @relation("ProofReviewer")
+  openedDisputes    OrderDispute[]        @relation("DisputeOpener")
+  assignedDisputes  OrderDispute[]        @relation("DisputeReviewer")
+  resolvedDisputes  OrderDispute[]        @relation("DisputeResolver")
+  createdHolds      EscrowHold[]          @relation("HoldCreator")
+  releasedHolds     EscrowHold[]          @relation("HoldReleaser")
+  auditLogs         AuditLog[]            @relation("AuditActor")
+  notifications     NotificationOutbox[]  @relation("NotificationRecipient")
+  registrationApplications RegistrationApplication[] @relation("UserRegistrationApplications")
+  reviewedApplications     RegistrationApplication[] @relation("ReviewedRegistrationApplications")
+  reconciledBatches        PlatformWithdrawalBatch[] @relation("BatchReconciledBy")
+  finalizedSnapshots       OrderFinancialSnapshot[]  @relation("SnapshotFinalizedBy")
+  boosterAllocations       BoosterPayoutAllocation[] @relation("BoosterAllocations")
+  createdPlatformTransactions PlatformAccountTransaction[] @relation("PlatformTxCreator")
+  walletV2                 WalletV2?
+  ledgerEntriesV2          LedgerEntryV2[]            @relation("UserLedgerV2")
+  advertiserFundingRequests AdvertiserFundingRequest[] @relation("AdvertiserFunding")
+  verifiedFundingRequests  AdvertiserFundingRequest[] @relation("VerifiedFunding")
+  goldTradesAsAdvertiser   GoldExchangeTradeOrder[]   @relation("AdvertiserGoldTrades")
+  goldTradesAsExchanger    GoldExchangeTradeOrder[]   @relation("ExchangerGoldTrades")
+  verifiedGoldTrades       GoldExchangeTradeOrder[]   @relation("VerifiedGoldTrades")
+  boosterWithdrawals       BoosterWithdrawalRequest[] @relation("BoosterWithdrawals")
+  approvedWithdrawals      BoosterWithdrawalRequest[] @relation("ApprovedWithdrawals")
+  processedWithdrawals     BoosterWithdrawalRequest[] @relation("ProcessedWithdrawals")
+  staffReviewedReleases    G4XBoostReleaseTracker[]   @relation("StaffReviewedReleases")
+  adminApprovedReleases    G4XBoostReleaseTracker[]   @relation("AdminApprovedReleases")
+  exchangerFeeOffers       ExchangerFeeOffer[]        @relation("ExchangerOffers")
+  goldTradesAsSeller       GoldTrade[]                @relation("SellerGoldTrades")
+  goldTradesAsBuyer        GoldTrade[]                @relation("BuyerGoldTrades")
+  verifiedGoldTradesV2     GoldTrade[]                @relation("VerifiedGoldTradesV2")
+  paymentRequests          PaymentRequest[]           @relation("UserPaymentRequests")
+  reviewedPaymentAttempts  PaymentAttempt[]           @relation("ReviewedPaymentAttempts")
+  payoutPreference         UserPayoutPreference?
+
+  @@index([advertiserRank])
+  @@map("users")
+}
+
+// ─── ۲. رول‌های سیستمی پلتفرم ────────────────────────────────────────────────
+model Role {
+  roleKey String @id @map("role_key")
+  name    String @unique
+
+  userRoles UserRole[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  userId    String   @map("user_id")
+  roleKey   String   @map("role_key")
+  grantedBy String?  @map("granted_by")
+  grantedAt DateTime @default(now()) @map("granted_at")
+
+  user      User  @relation(fields: [userId], references: [discordId], onDelete: Cascade)
+  role      Role  @relation(fields: [roleKey], references: [roleKey], onDelete: Cascade)
+  grantedByUser User? @relation("GrantedByUser", fields: [grantedBy], references: [discordId])
+
+  @@id([userId, roleKey])
+  @@map("user_roles")
+}
+
+// ─── ۳. بازی‌ها و کاتالوگ سرویس‌ها ──────────────────────────────────────────
+model Game {
+  slug            String @id
+  displayName     String @map("display_name")
+  serviceCategory String @map("service_category") // non_pilot | pilot | both
+  description     String?
+  sortOrder       Int      @default(0) @map("sort_order")
+  isActive        Boolean @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  services       GameService[]
+  approvals      UserGameApproval[]
+  characters     WowCharacter[]
+  pilotVerif     PilotVerification[]
+  orders         Order[]
+  squads         PremadeSquad[]
+  exchangerOffers ExchangerOffer[]
+  currencyOrders GoldExchangeOrder[]
+  channelRoutes  ChannelRoute[]
+  registrationApplications RegistrationApplication[]
+  discordChannelMappings DiscordChannelMapping[]
+
+  @@map("games")
+}
+
+model GameService {
+  id                   Int     @id @default(autoincrement())
+  gameSlug             String  @map("game_slug")
+  serviceKey           String  @map("service_key")
+  displayName          String  @map("display_name")
+  serviceMode          String  @default("non_pilot") @map("service_mode") // pilot | non_pilot
+  profileMode          String  @map("profile_mode") // raiderio | manual | none
+  requiresPilotApproval Boolean @default(false) @map("requires_pilot_approval")
+  description          String?
+  sortOrder            Int     @default(0) @map("sort_order")
+  isActive             Boolean @default(true) @map("is_active")
+
+  game          Game            @relation(fields: [gameSlug], references: [slug], onDelete: Cascade)
+  orders        Order[]
+  approvals     UserGameApproval[]
+  settings      ServiceSetting?
+  channelRoutes ChannelRoute[]
+  registrationApplications RegistrationApplication[]
+  discordChannelMappings DiscordChannelMapping[]
+
+  @@unique([gameSlug, serviceKey])
+  @@map("game_services")
+}
+
+// ─── ۴. تأیید صلاحیت اعضا در هر بازی ───────────────────────────────────────
+model UserGameApproval {
+  id           Int      @id @default(autoincrement())
+  userId       String   @map("user_id")
+  gameSlug     String   @map("game_slug")
+  serviceId    Int?     @map("service_id")
+  approvalType String   @map("approval_type") // booster | pilot | advertiser | exchanger
+  status       String   @default("pending")   // pending | approved | rejected | suspended
+  reviewedBy   String?  @map("reviewed_by")
+  reviewNote   String?  @map("review_note")
+  reviewedAt   DateTime? @map("reviewed_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user        User         @relation(fields: [userId], references: [discordId], onDelete: Cascade)
+  game        Game         @relation(fields: [gameSlug], references: [slug], onDelete: Cascade)
+  service     GameService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  reviewer    User?        @relation("ReviewedApprovals", fields: [reviewedBy], references: [discordId])
+
+  @@unique([userId, gameSlug, serviceId, approvalType])
+  @@map("user_game_approvals")
+}
+
+// ─── ۵. کاراکترهای WoW ────────────────────────────────────────────────────────
+model WowCharacter {
+  id             Int      @id @default(autoincrement())
+  userId         String   @map("user_id")
+  gameSlug       String   @default("wow") @map("game_slug")
+  characterName  String   @map("character_name")
+  realm          String
+  region         String   @default("eu") // eu | us | kr | tw | cn
+  characterClass String?  @map("character_class")
+  activeSpec     String?  @map("active_spec")
+  itemLevel      Int?     @map("item_level")
+  mythicScore    Float?   @map("mythic_score")
+  tankScore      Float?   @map("tank_score")
+  healerScore    Float?   @map("healer_score")
+  dpsScore       Float?   @map("dps_score")
+  raidProgression String? @map("raid_progression")
+  raiderioUrl    String?  @map("raiderio_url")
+  isMain         Boolean  @default(false) @map("is_main")
+  isActive       Boolean  @default(true) @map("is_active")
+  syncStatus     String   @default("pending") @map("sync_status") // pending | synced | failed | not_found
+  lastSyncedAt   DateTime? @map("last_synced_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  user     User    @relation(fields: [userId], references: [discordId], onDelete: Cascade)
+  game     Game    @relation(fields: [gameSlug], references: [slug], onDelete: Cascade)
+  presigns OrderPresign[]
+  squadMembers SquadMember[]
+
+  @@unique([userId, gameSlug, region, realm, characterName])
+  @@index([userId])
+  @@index([gameSlug, mythicScore])
+  @@map("wow_characters")
+}
+
+// ─── ۶. احراز هویت برای سفارش‌های Pilot ─────────────────────────────────────
+model PilotVerification {
+  id                  Int       @id @default(autoincrement())
+  userId              String    @map("user_id")
+  gameSlug            String    @map("game_slug")
+  status              String    @default("pending") // pending | approved | rejected | expired
+  identityDocumentRef String?   @map("identity_document_ref")
+  passportDocumentRef String?   @map("passport_document_ref")
+  selfieDocumentRef   String?   @map("selfie_document_ref")
+  reviewedBy          String?   @map("reviewed_by")
+  reviewNote          String?   @map("review_note")
+  submittedAt         DateTime  @default(now()) @map("submitted_at")
+  reviewedAt          DateTime? @map("reviewed_at")
+  expiresAt           DateTime? @map("expires_at")
+
+  user     User  @relation("UserPilots", fields: [userId], references: [discordId], onDelete: Cascade)
+  game     Game  @relation(fields: [gameSlug], references: [slug], onDelete: Cascade)
+  reviewer User? @relation("ReviewedPilots", fields: [reviewedBy], references: [discordId])
+
+  @@map("pilot_verifications")
+}
+
+// ─── ۷. خزانه‌داری و کیف‌پول‌ها ──────────────────────────────────────────────
+model Wallet {
+  userId               String   @id @map("user_id")
+  balanceUsd           Int      @default(0) @map("balance_usd")
+  escrowUsd            Int      @default(0) @map("escrow_usd")
+  balanceGold          Int      @default(0) @map("balance_gold")
+  escrowGold           Int      @default(0) @map("escrow_gold")
+  balanceUsdt          Int      @default(0) @map("balance_usdt")
+  escrowUsdt           Int      @default(0) @map("escrow_usdt")
+  balanceIrt           Int      @default(0) @map("balance_irt")
+  escrowIrt            Int      @default(0) @map("escrow_irt")
+  customCommissionRate Float?   @map("custom_commission_rate")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [discordId], onDelete: Cascade)
+
+  @@map("wallets")
+}
+
+// ─── ۸. دفتر کل تراکنش‌ها ────────────────────────────────────────────────────
+model LedgerTransaction {
+  id             Int      @id @default(autoincrement())
+  transactionRef String   @unique @map("transaction_ref")
+  userId         String?  @map("user_id")
+  orderId        Int?     @map("order_id")
+  currency       String   // USD | GOLD | USDT | IRT
+  amountMinor    Int      @map("amount_minor")
+  entryType      String    @map("entry_type") // credit | debit | escrow_lock | escrow_release | refund | adjustment
+  status         String    @default("posted") // pending | posted | settled | reversed
+  escrowStartAt  DateTime? @map("escrow_start_at")
+  releaseAt      DateTime? @map("release_at")
+  createdBy      String?   @map("created_by")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  user        User?        @relation("UserLedger", fields: [userId], references: [discordId], onDelete: SetNull)
+  creator     User?        @relation("CreatedByLedger", fields: [createdBy], references: [discordId])
+  escrowHolds EscrowHold[]
+
+  @@index([userId])
+  @@index([orderId])
+  @@index([status, releaseAt])
+  @@map("ledger_transactions")
+}
+
+// ─── ۹. سفارش‌های بوستینگ ────────────────────────────────────────────────────
+model Order {
+  id                  Int       @id @default(autoincrement())
+  orderRef            String    @unique @map("order_ref")
+  gameSlug            String    @map("game_slug")
+  serviceId           Int       @map("service_id")
+  customerId          String?   @map("customer_id")
+  advertiserId        String?   @map("advertiser_id")
+  creatorId           String?   @map("creator_id")
+  creatorType         String    @default("g4x") @map("creator_type") // g4x | advertiser
+  orderName           String?   @map("order_name")
+  orderType           String    @map("order_type") // solo | group | pilot
+  orderMode           String    @default("non_pilot") @map("order_mode") // non_pilot | pilot
+  quantity            Int       @default(1)
+  notes               String?
+  sourceType          String    @default("internal") @map("source_type") // internal | website | direct
+  sourceWebsite       String?   @map("source_website") // g2g | skycoach | eldorado | null
+  externalOrderId     String?   @map("external_order_id")
+  platformAccountId   Int?      @map("platform_account_id")
+  currency            String    // USD | GOLD | USDT | IRT
+  grossAmountMinor    Int       @map("gross_amount_minor")
+  platformFeeMinor    Int       @default(0) @map("platform_fee_minor")
+  advertiserFeeMinor  Int       @default(0) @map("advertiser_fee_minor")
+  boosterPoolMinor    Int       @default(0) @map("booster_pool_minor")
+  advertiserRank      String?   @map("advertiser_rank")
+  rankCommissionBps   Int?      @map("rank_commission_bps")
+  paymentStatus       String    @default("pending") @map("payment_status") // pending | verified | unneeded | refunded
+  paymentVerifiedBy   String?   @map("payment_verified_by")
+  paymentVerifiedAt   DateTime? @map("payment_verified_at")
+  status              String    @default("draft") @map("status")
+  // draft | payment_pending | open_presign | presign_closed | assigned | in_progress | completed | cancelled
+  discordChannelId    String?   @map("discord_channel_id")
+  discordMessageId    String?   @map("discord_message_id")
+  executionChannelId  String?   @map("execution_channel_id")
+  reviewChannelId     String?   @map("review_channel_id")
+  reviewMessageId     String?   @map("review_message_id")
+  presignDeadline     DateTime? @map("presign_deadline")
+  publishedAt         DateTime? @map("published_at")
+  completedAt         DateTime? @map("completed_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  game            Game                  @relation(fields: [gameSlug], references: [slug])
+  service         GameService           @relation(fields: [serviceId], references: [id])
+  customer        User?                 @relation("CustomerOrders", fields: [customerId], references: [discordId], onDelete: SetNull)
+  advertiser      User?                 @relation("AdvertiserOrders", fields: [advertiserId], references: [discordId], onDelete: SetNull)
+  creator         User?                 @relation("CreatedOrders", fields: [creatorId], references: [discordId], onDelete: SetNull)
+  paymentVerifier User?                 @relation("VerifiedOrderPayments", fields: [paymentVerifiedBy], references: [discordId], onDelete: SetNull)
+  platformAccount PlatformAccount?      @relation("OrderPlatformAccount", fields: [platformAccountId], references: [id], onDelete: SetNull)
+  presigns        OrderPresign[]
+  assignments     OrderAssignment[]
+  requiredRoles   OrderRequiredRole[]
+  keyRequirements OrderKeyRequirement[]
+  runs            OrderRun[]
+  reservations    BoosterReservation[]
+  orderChannels   OrderChannel[]
+  disputes        OrderDispute[]
+  escrowHolds     EscrowHold[]
+  financialSnapshot        OrderFinancialSnapshot?
+  withdrawalAllocations    OrderWithdrawalAllocation[]
+  boosterPayoutAllocations BoosterPayoutAllocation[]
+  platformTransactions     PlatformAccountTransaction[]
+  boostReleaseTracker      G4XBoostReleaseTracker?
+  ledgerEntriesV2          LedgerEntryV2[]
+  paymentRequests          PaymentRequest[]
+
+  @@index([status])
+  @@index([gameSlug, status])
+  @@index([advertiserId])
+  @@index([creatorId])
+  @@index([platformAccountId])
+  @@index([paymentStatus])
+  @@index([advertiserRank])
+  @@map("orders")
+}
+
+// ─── ۱۰. تیم‌های آماده ───────────────────────────────────────────────────────
+model PremadeSquad {
+  id        Int      @id @default(autoincrement())
+  gameSlug  String   @map("game_slug")
+  teamName  String   @map("team_name")
+  leaderId  String   @map("leader_id")
+  squadType String   @default("full") @map("squad_type") // duo | trio | full
+  status    String   @default("pending") // pending | active | disbanded
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  game        Game              @relation(fields: [gameSlug], references: [slug], onDelete: Cascade)
+  leader      User              @relation(fields: [leaderId], references: [discordId])
+  members     SquadMember[]
+  presigns    OrderPresign[]
+  assignments OrderAssignment[]
+
+  @@unique([gameSlug, teamName])
+  @@index([gameSlug, status])
+  @@map("premade_squads")
+}
+
+model SquadMember {
+  squadId     Int      @map("squad_id")
+  userId      String   @map("user_id")
+  memberRole  String?  @map("member_role") // tank | healer | dps | flex
+  characterId Int?     @map("character_id")
+  status      String   @default("pending") // pending | accepted | declined
+  joinedAt    DateTime @default(now()) @map("joined_at")
+
+  squad     PremadeSquad  @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  user      User          @relation(fields: [userId], references: [discordId], onDelete: Cascade)
+  character WowCharacter? @relation(fields: [characterId], references: [id], onDelete: SetNull)
+
+  @@id([squadId, userId])
+  @@map("squad_members")
+}
+
+// ─── ۱۱. ثبت درخواست و پیش‌ثبت‌نام (Order Claims / Pre-sign) ──────────────────
+model OrderPresign {
+  id             Int       @id @default(autoincrement())
+  orderId        Int       @map("order_id")
+  userId         String    @map("user_id")
+  characterId    Int?      @map("character_id")
+  squadId        Int?      @map("squad_id")
+  claimType      String    @default("individual") @map("claim_type") // individual | squad
+  registeredRole String    @map("registered_role") // tank | healer | dps | solo | pilot | team
+  hasKey         String    @default("unknown") @map("has_key") // yes | no | unknown
+  keyDungeon     String?   @map("key_dungeon")
+  keyLevel       Int?      @map("key_level")
+  keyVerified    Boolean   @default(false) @map("key_verified")
+  status         String    @default("registered") // registered | withdrawn | selected | rejected
+  registeredAt   DateTime  @default(now()) @map("registered_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user        User              @relation(fields: [userId], references: [discordId], onDelete: Cascade)
+  character   WowCharacter?     @relation(fields: [characterId], references: [id], onDelete: SetNull)
+  squad       PremadeSquad?     @relation(fields: [squadId], references: [id], onDelete: SetNull)
+  assignments OrderAssignment[]
+
+  @@index([orderId, status])
+  @@index([orderId, userId])
+  @@index([userId])
+  @@index([squadId])
+  @@map("order_presigns")
+}
+
+// ─── ۱۲. تخصیص‌های نهایی بوسترها (Order Assignments) ─────────────────────────
+model OrderAssignment {
+  id                Int       @id @default(autoincrement())
+  orderId           Int       @map("order_id")
+  userId            String    @map("user_id")
+  assignedById      String    @map("assigned_by")
+  assignedRole      String    @map("assigned_role")
+  claimId           Int?      @map("claim_id")
+  squadId           Int?      @map("squad_id")
+  status            String    @default("assigned") // assigned | accepted | declined | completed | replaced | cancelled
+  assignedAt        DateTime  @default(now()) @map("assigned_at")
+  replacedById      Int?      @map("replaced_by_id")
+  replacedAt        DateTime? @map("replaced_at")
+  replacementReason String?   @map("replacement_reason")
+
+  order          Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user           User              @relation("AssignedUser", fields: [userId], references: [discordId], onDelete: Cascade)
+  assignedBy     User              @relation("AssignedBy", fields: [assignedById], references: [discordId])
+  claim          OrderPresign?     @relation(fields: [claimId], references: [id], onDelete: SetNull)
+  squad          PremadeSquad?     @relation(fields: [squadId], references: [id], onDelete: SetNull)
+  replacedBy     OrderAssignment?  @relation("AssignmentReplacement", fields: [replacedById], references: [id], onDelete: SetNull)
+  replacements   OrderAssignment[] @relation("AssignmentReplacement")
+  runAssignments RunAssignment[]
+
+  @@index([orderId, status])
+  @@index([orderId, userId])
+  @@index([userId])
+  @@index([claimId])
+  @@index([squadId])
+  @@map("order_assignments")
+}
+
+// ─── ۱۲.۱. رول‌های مورد نیاز هر سفارش (Required Roles per Order) ─────────────
+model OrderRequiredRole {
+  id       Int    @id @default(autoincrement())
+  orderId  Int    @map("order_id")
+  roleName String @map("role_name") // tank | healer | dps | pilot | booster | etc.
+  quantity Int    @default(1)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, roleName])
+  @@index([orderId])
+  @@map("order_required_roles")
+}
+
+// ─── ۱۲.۲. مشخصات کلید مورد نیاز هر سفارش (Key Requirements) ─────────────────
+model OrderKeyRequirement {
+  id          Int     @id @default(autoincrement())
+  orderId     Int     @map("order_id")
+  dungeonName String? @map("dungeon_name")
+  dungeonSlug String? @map("dungeon_slug")
+  keyLevel    Int?    @map("key_level")
+  isMandatory Boolean @default(false) @map("is_mandatory")
+  notes       String?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_key_requirements")
+}
+
+// ─── ۱۲.۳. ران‌های مجزای هر سفارش (Order Runs) ──────────────────────────────
+model OrderRun {
+  id          Int       @id @default(autoincrement())
+  orderId     Int       @map("order_id")
+  runNumber   Int       @map("run_number")
+  status      String    @default("pending") @map("status") // pending | in_progress | completed | failed | cancelled
+  startedAt   DateTime? @map("started_at")
+  finishedAt  DateTime? @map("finished_at")
+  completedAt DateTime? @map("completed_at")
+  completedBy String?   @map("completed_by")
+  notes       String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  order           Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  completedByUser User?                @relation("RunCompletedBy", fields: [completedBy], references: [discordId], onDelete: SetNull)
+  runAssignments  RunAssignment[]
+  reservations    BoosterReservation[]
+  runEvents       RunEvent[]
+  proofs          RunProof[]
+  disputes        OrderDispute[]
+  boosterPayoutAllocations BoosterPayoutAllocation[]
+
+  @@unique([orderId, runNumber])
+  @@index([orderId, status])
+  @@map("order_runs")
+}
+
+// ─── ۱۲.۴. تخصیص‌های اختصاصی هر ران (Run Assignments) ───────────────────────
+model RunAssignment {
+  id           Int       @id @default(autoincrement())
+  runId        Int       @map("run_id")
+  assignmentId Int       @map("assignment_id")
+  roleName     String    @map("role_name") // tank | healer | dps | pilot | booster
+  status       String    @default("assigned") @map("status") // assigned | completed | replaced | dropped
+  joinedAt     DateTime  @default(now()) @map("joined_at")
+  leftAt       DateTime? @map("left_at")
+
+  run        OrderRun        @relation(fields: [runId], references: [id], onDelete: Cascade)
+  assignment OrderAssignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([runId, status])
+  @@index([assignmentId])
+  @@map("run_assignments")
+}
+
+// ─── ۱۲.۵. رزروهای سراسری بوسترها جهت جلوگیری از دابل‌بوکینگ ───────────────
+model BoosterReservation {
+  id            Int       @id @default(autoincrement())
+  userId        String    @map("user_id")
+  orderId       Int       @map("order_id")
+  runId         Int?      @map("run_id")
+  status        String    @default("active") @map("status") // active | released | completed | cancelled | expired
+  reservedAt    DateTime  @default(now()) @map("reserved_at")
+  releasedAt    DateTime? @map("released_at")
+  releaseReason String?   @map("release_reason")
+  expiresAt     DateTime? @map("expires_at")
+  createdById   String?   @map("created_by_id")
+
+  user      User      @relation("UserReservations", fields: [userId], references: [discordId], onDelete: Cascade)
+  order     Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  run       OrderRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  createdBy User?     @relation("CreatedReservations", fields: [createdById], references: [discordId], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([orderId])
+  @@index([runId])
+  @@map("booster_reservations")
+}
+
+// ─── ۱۳. پیشنهادات صراف ─────────────────────────────────────────────────────
+model ExchangerOffer {
+  id                     Int      @id @default(autoincrement())
+  exchangerId            String   @map("exchanger_id")
+  gameSlug               String   @default("wow_midnight") @map("game_slug")
+  currencyType           String   @default("gold") @map("currency_type") // gold | divine_orb | aion_currency
+  minAmount              Int      @default(0) @map("min_amount")
+  maxAmount              Int?     @map("max_amount")
+  unitPriceMinor         Int      @default(0) @map("unit_price_minor")
+  priceBasis             Int      @default(1000000) @map("price_basis") // 1000000 for WoW Gold, 1 for POE2 Divine Orb
+  settlementCurrency     String   @map("settlement_currency") // IRT | USDT | TRY
+  settlementMethod       String   @map("settlement_method")   // sheba | card | usdt | iban_try
+  settlementTimeMinHours Int      @default(1) @map("settlement_time_min_hours")
+  settlementTimeMaxHours Int      @default(24) @map("settlement_time_max_hours")
+  minGoldAmount          Int?     @map("min_gold_amount")
+  maxGoldAmount          Int?     @map("max_gold_amount")
+  pricePerMillionIrt     Int?     @map("price_per_million_irt")
+  settlementTimeHours    Int?     @map("settlement_time_hours")
+  isActive               Boolean  @default(true) @map("is_active")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  exchanger User                @relation(fields: [exchangerId], references: [discordId], onDelete: Cascade)
+  game      Game                @relation(fields: [gameSlug], references: [slug], onDelete: Cascade)
+  orders    GoldExchangeOrder[]
+
+  @@index([gameSlug, currencyType, isActive])
+  @@index([exchangerId])
+  @@map("exchanger_offers")
+}
+
+// ─── ۱۴. سفارشات صرافی ارز درون‌بازی ────────────────────────────────────────
+model GoldExchangeOrder {
+  id                       Int       @id @default(autoincrement())
+  offerId                  Int       @map("offer_id")
+  exchangerId              String    @map("exchanger_id")
+  sellerId                 String?   @map("seller_id")
+  gameSlug                 String    @default("wow_midnight") @map("game_slug")
+  currencyType             String    @default("gold") @map("currency_type") // gold | divine_orb | aion_currency
+  amount                   Int       @default(0) @map("amount")
+  unitPriceMinor           Int       @default(0) @map("unit_price_minor")
+  priceBasis               Int       @default(1000000) @map("price_basis")
+  totalAmountMinor         Int       @map("total_amount_minor")
+  settlementCurrency       String    @map("settlement_currency") // IRT | USDT | TRY
+  settlementMethod         String?   @map("settlement_method")   // sheba | card | usdt | iban_try
+  goldAmount               Int?      @map("gold_amount")
+  agreedPricePerMillionIrt Int?      @map("agreed_price_per_million_irt")
+  trackingCode             String?   @map("tracking_code")
+  proofDocumentRef         String?   @map("proof_document_ref")
+  status                   String    @default("pending")
+  // pending | currency_received | payment_submitted | verified | rejected | cancelled
+  verifiedBy               String?   @map("verified_by")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  settledAt                DateTime? @map("settled_at")
+
+  offer     ExchangerOffer @relation(fields: [offerId], references: [id])
+  exchanger User           @relation("ExchangerGoldOrders", fields: [exchangerId], references: [discordId], onDelete: Cascade)
+  seller    User?          @relation("SellerGoldOrders", fields: [sellerId], references: [discordId], onDelete: SetNull)
+  verifier  User?          @relation("VerifiedGoldOrders", fields: [verifiedBy], references: [discordId])
+  game      Game           @relation(fields: [gameSlug], references: [slug], onDelete: Cascade)
+
+  @@index([exchangerId])
+  @@index([gameSlug, currencyType])
+  @@index([status])
+  @@map("gold_exchange_orders")
+}
+
+// ─── ۱۵. تنظیمات عملیاتی سرویس‌ها (Service Operating Settings) ────────────────
+model ServiceSetting {
+  id                 Int      @id @default(autoincrement())
+  serviceId          Int      @unique @map("service_id")
+  claimWindowSeconds Int      @default(600) @map("claim_window_seconds")
+  proofRequired      Boolean  @default(true) @map("proof_required")
+  allowPause         Boolean  @default(true) @map("allow_pause")
+  allowReplacement   Boolean  @default(true) @map("allow_replacement")
+  acceptsSquads      Boolean  @default(false) @map("accepts_squads")
+  requiresRoles      Boolean  @default(false) @map("requires_roles")
+  requiresKey        Boolean  @default(false) @map("requires_key")
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+
+  service GameService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@map("service_settings")
+}
+
+// ─── ۱۶. مسیربندی کانال‌های دیسکورد (Channel Routing) ─────────────────────────
+model ChannelRoute {
+  id               Int      @id @default(autoincrement())
+  discordGuildId   String   @map("discord_guild_id")
+  gameSlug         String   @map("game_slug")
+  serviceId        Int?     @map("service_id")
+  serviceMode      String   @map("service_mode") // pilot | non_pilot
+  discordChannelId String   @map("discord_channel_id")
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+
+  game    Game         @relation(fields: [gameSlug], references: [slug], onDelete: Cascade)
+  service GameService? @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([discordGuildId, gameSlug, serviceMode, isActive])
+  @@index([serviceId])
+  @@map("channel_routes")
+}
+
+// ─── ۱۷. کانال‌های اجرای سفارش (Private Execution Channels) ───────────────────
+model OrderChannel {
+  id               Int       @id @default(autoincrement())
+  orderId          Int       @map("order_id")
+  discordGuildId   String    @map("discord_guild_id")
+  discordChannelId String    @unique @map("discord_channel_id")
+  channelType      String    @default("execution") @map("channel_type") // execution | archive
+  status           String    @default("active") @map("status") // active | locked | archived | deleted
+  createdAt        DateTime  @default(now()) @map("created_at")
+  archivedAt       DateTime? @map("archived_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, status])
+  @@map("order_channels")
+}
+
+// ─── ۱۷.۱. نگاشت و همگام‌سازی خودکار کانال‌های دیسکورد (Discord Channel Mappings) ───
+model DiscordChannelMapping {
+  id               Int       @id @default(autoincrement())
+  guildId          String    @map("guild_id")
+  channelKey       String    @unique @map("channel_key")
+  categoryName     String    @map("category_name")
+  channelName      String    @map("channel_name")
+  purpose          String
+  channelType      String    @default("GUILD_TEXT") @map("channel_type") // GUILD_TEXT | GUILD_CATEGORY
+  gameSlug         String?   @map("game_slug")
+  serviceId        Int?      @map("service_id")
+  serviceMode      String?   @map("service_mode")
+  discordChannelId String?   @map("discord_channel_id")
+  parentCategoryId String?   @map("parent_category_id")
+  isOptional       Boolean   @default(false) @map("is_optional")
+  isActive         Boolean   @default(true) @map("is_active")
+  syncStatus       String    @default("PENDING") @map("sync_status") // SYNCED | MISSING | INVALID | DISABLED | MANUAL
+  lastSyncResult   String?   @map("last_sync_result")
+  lastSyncedAt     DateTime? @map("last_synced_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  game    Game?        @relation(fields: [gameSlug], references: [slug], onDelete: SetNull)
+  service GameService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  @@index([guildId, isActive])
+  @@index([gameSlug, serviceMode])
+  @@map("discord_channel_mappings")
+}
+
+// ─── ۱۸. تاریخچه و رویدادهای ران (Run Events / Execution History) ────────────
+model RunEvent {
+  id             Int      @id @default(autoincrement())
+  runId          Int      @map("run_id")
+  actorId        String?  @map("actor_id")
+  eventType      String   @map("event_type") // started | paused | resumed | finished | proof_submitted | proof_rejected | completed | cancelled | reopened
+  previousStatus String?  @map("previous_status")
+  newStatus      String   @map("new_status")
+  reason         String?
+  metadata       String?  // JSON metadata
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  run   OrderRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  actor User?    @relation("RunEventActor", fields: [actorId], references: [discordId], onDelete: SetNull)
+
+  @@index([runId, createdAt])
+  @@index([actorId])
+  @@map("run_events")
+}
+
+// ─── ۱۹. مدارک و شواهد اتمام ران (Completion Evidence) ───────────────────────
+model RunProof {
+  id            Int       @id @default(autoincrement())
+  runId         Int       @map("run_id")
+  submittedById String    @map("submitted_by_id")
+  proofType     String    @default("screenshot") @map("proof_type") // screenshot | stream_vod | logs | other
+  evidenceUrl   String    @map("evidence_url") // Private file reference or external evidence URL
+  description   String?
+  status        String    @default("pending") @map("status") // pending | approved | rejected
+  reviewedById  String?   @map("reviewed_by_id")
+  reviewNotes   String?   @map("review_notes")
+  submittedAt   DateTime  @default(now()) @map("submitted_at")
+  reviewedAt    DateTime? @map("reviewed_at")
+
+  run         OrderRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  submittedBy User     @relation("ProofSubmitter", fields: [submittedById], references: [discordId], onDelete: Cascade)
+  reviewedBy  User?    @relation("ProofReviewer", fields: [reviewedById], references: [discordId], onDelete: SetNull)
+
+  @@index([runId, status])
+  @@index([submittedById])
+  @@map("run_proofs")
+}
+
+// ─── ۲۰. اختلافات و شکایات سفارشات (Order Disputes) ─────────────────────────
+model OrderDispute {
+  id                 Int       @id @default(autoincrement())
+  orderId            Int       @map("order_id")
+  runId              Int?      @map("run_id")
+  openedById         String    @map("opened_by_id")
+  disputeType        String    @map("dispute_type") // completion | quality | misconduct | key_failure | payment | other
+  description        String
+  status             String    @default("open") @map("status") // open | under_review | waiting_for_evidence | resolved | rejected | cancelled
+  assignedReviewerId String?   @map("assigned_reviewer_id")
+  resolutionNotes    String?   @map("resolution_notes")
+  resolvedById       String?   @map("resolved_by_id")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  resolvedAt         DateTime? @map("resolved_at")
+
+  order            Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  run              OrderRun?    @relation(fields: [runId], references: [id], onDelete: SetNull)
+  openedBy         User         @relation("DisputeOpener", fields: [openedById], references: [discordId], onDelete: Cascade)
+  assignedReviewer User?        @relation("DisputeReviewer", fields: [assignedReviewerId], references: [discordId], onDelete: SetNull)
+  resolver         User?        @relation("DisputeResolver", fields: [resolvedById], references: [discordId], onDelete: SetNull)
+  escrowHolds      EscrowHold[]
+
+  @@index([orderId, status])
+  @@index([openedById])
+  @@index([assignedReviewerId])
+  @@map("order_disputes")
+}
+
+// ─── ۲۱. توقیف مالی و مسدودی اسکرو (Escrow Financial Holds) ─────────────────
+model EscrowHold {
+  id                  Int       @id @default(autoincrement())
+  disputeId           Int?      @map("dispute_id")
+  orderId             Int       @map("order_id")
+  ledgerTransactionId Int?      @map("ledger_transaction_id")
+  currency            String    // USD | GOLD | USDT | IRT
+  amountMinor         Int?      @map("amount_minor") // nullable when amount not determined yet
+  status              String    @default("pending") @map("status") // pending | active | released | cancelled
+  createdById         String    @map("created_by_id")
+  releasedById        String?   @map("released_by_id")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  releasedAt          DateTime? @map("released_at")
+  reason              String
+
+  dispute           OrderDispute?      @relation(fields: [disputeId], references: [id], onDelete: SetNull)
+  order             Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  ledgerTransaction LedgerTransaction? @relation(fields: [ledgerTransactionId], references: [id], onDelete: SetNull)
+  creator           User               @relation("HoldCreator", fields: [createdById], references: [discordId], onDelete: Cascade)
+  releaser          User?              @relation("HoldReleaser", fields: [releasedById], references: [discordId], onDelete: SetNull)
+
+  @@index([orderId, status])
+  @@index([disputeId])
+  @@index([ledgerTransactionId])
+  @@map("escrow_holds")
+}
+
+// ─── ۲۲. لاگ‌های امنیتی و ممیزی سیستم (Centralized Audit Logs) ───────────────
+model AuditLog {
+  id             Int      @id @default(autoincrement())
+  actorId        String?  @map("actor_id") // nullable for system-generated events
+  action         String
+  entityType     String   @map("entity_type")
+  entityId       String   @map("entity_id")
+  previousValues String?  @map("previous_values") // JSON
+  newValues      String?  @map("new_values")      // JSON
+  reason         String?
+  isSuccess      Boolean  @default(true) @map("is_success")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [discordId], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ─── ۲۳. صف خروجی و صف پایدار اعلانات (Persistent Notification Outbox) ───────
+model NotificationOutbox {
+  id               Int       @id @default(autoincrement())
+  eventKey         String    @unique @map("event_key")
+  recipientId      String    @map("recipient_id")
+  notificationType String    @map("notification_type")
+  deliveryChannel  String    @map("delivery_channel") // discord_dm | discord_channel | web
+  payload          String    // JSON payload
+  status           String    @default("pending") @map("status") // pending | processing | sent | failed
+  attemptCount     Int       @default(0) @map("attempt_count")
+  nextAttemptAt    DateTime? @map("next_attempt_at")
+  sentAt           DateTime? @map("sent_at")
+  errorDetails     String?   @map("error_details")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  recipient User @relation("NotificationRecipient", fields: [recipientId], references: [discordId], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([recipientId])
+  @@map("notification_outbox")
+}
+
+// ─── ۲۴. نشست‌های احراز هویت وب (Secure Web Sessions) ────────────────────────
+model Session {
+  id        String   @id @default(uuid())
+  sid       String   @unique
+  data      String
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ─── ۲۵. درخواست‌های ثبت‌نام اعضا (Registration Applications) ─────────────────
+model RegistrationApplication {
+  id                Int       @id @default(autoincrement())
+  userId            String    @map("user_id")
+  category          String    // booster | pilot | advertiser | exchanger
+  gameSlug          String?   @map("game_slug")
+  serviceId         Int?      @map("service_id")
+  preferredLanguage String    @default("en") @map("preferred_language")
+  qualifications    String    @map("qualifications") // JSON payload
+  status            String    @default("pending") @map("status")
+  // pending | info_requested | awaiting_identity_verification | under_review | approved | rejected | cancelled
+  rejectionReason   String?   @map("rejection_reason")
+  reviewNotes       String?   @map("review_notes")
+  supplementalInfo  String?   @map("supplemental_info")
+  reviewChannelId   String?   @map("review_channel_id")
+  reviewMessageId   String?   @map("review_message_id")
+  roleSyncStatus    String    @default("pending") @map("role_sync_status") // pending | synced | failed | skipped
+  roleSyncError     String?   @map("role_sync_error")
+  identityStatus    String    @default("none") @map("identity_status") // none | awaiting_submission | verified | rejected
+  reviewedById      String?   @map("reviewed_by_id")
+  submittedAt       DateTime  @default(now()) @map("submitted_at")
+  infoRequestedAt   DateTime? @map("info_requested_at")
+  infoRespondedAt   DateTime? @map("info_responded_at")
+  reviewedAt        DateTime? @map("reviewed_at")
+
+  user       User         @relation("UserRegistrationApplications", fields: [userId], references: [discordId], onDelete: Cascade)
+  game       Game?        @relation(fields: [gameSlug], references: [slug], onDelete: SetNull)
+  service    GameService? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  reviewedBy User?        @relation("ReviewedRegistrationApplications", fields: [reviewedById], references: [discordId], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([category, status])
+  @@index([status, submittedAt])
+  @@index([roleSyncStatus])
+  @@map("registration_applications")
+}
+
+// ─── ۲۶. سیاست‌ها و نرخ‌های کارمزد پلتفرم‌ها (Versioned Platform Fee Policies) ──
+model PlatformFeePolicy {
+  id                 Int       @id @default(autoincrement())
+  platform           String    // g2g | skycoach | eldorado | website | advertiser
+  gameSlug           String?   @map("game_slug")
+  listingCategory    String?   @map("listing_category") // currency | top_ups | items | accounts | boosting
+  feeType            String    @map("fee_type") // sale_commission | withdrawal_fee | transfer_fee | g4x_fee | advertiser_commission
+  chargingEvent      String    @map("charging_event") // sale | withdrawal
+  percentageRate     Float?    @map("percentage_rate")
+  fixedMinor         Int?      @map("fixed_minor")
+  feeBasis           String?   @map("fee_basis") // gross_sale | platform_net | batch_total | external_net
+  currency           String    @default("USD")
+  minThresholdMinor  Int?      @map("min_threshold_minor")
+  payoutRouteScope   String?   @map("payout_route_scope") // e.g. toobit_bnb | bep20_bnb | default
+  effectiveFrom      DateTime  @default(now()) @map("effective_from")
+  effectiveTo        DateTime? @map("effective_to")
+  version            Int       @default(1)
+  isApproved         Boolean   @default(true) @map("is_approved")
+  approvedBy         String?   @map("approved_by")
+  changeReason       String?   @map("change_reason")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([platform, gameSlug, listingCategory])
+  @@index([platform, feeType, isApproved])
+  @@map("platform_fee_policies")
+}
+
+// ─── ۲۷. دسته‌های برداشت از پلتفرم‌ها (Platform Withdrawal Batches) ───────────
+model PlatformWithdrawalBatch {
+  id                      Int       @id @default(autoincrement())
+  batchRef                String    @unique @map("batch_ref")
+  platform                String    // g2g | skycoach | eldorado
+  platformAccountId       Int?      @map("platform_account_id")
+  accountRef              String?   @map("account_ref")
+  currency                String    @default("USD")
+  status                  String    @default("draft") // draft | ready | submitted | processing | received | reconciled | cancelled | failed | review_required
+  totalContributionsMinor Int       @map("total_contributions_minor")
+  actualBatchFeeMinor     Int       @default(0) @map("actual_batch_fee_minor")
+  actualTransferFeeMinor  Int       @default(0) @map("actual_transfer_fee_minor")
+  expectedNetMinor        Int       @default(0) @map("expected_net_minor")
+  netReceivedMinor        Int       @default(0) @map("net_received_minor")
+  actualReceivedMinor     Int?      @map("actual_received_minor")
+  destinationAccountRef   String?   @map("destination_account_ref")
+  externalReceiptRef      String?   @map("external_receipt_ref")
+  externalReceiptNotes    String?   @map("external_receipt_notes")
+  safeEvidenceRef         String?   @map("safe_evidence_ref")
+  failureReason           String?   @map("failure_reason")
+  reviewNotes             String?   @map("review_notes")
+  submittedAt             DateTime? @map("submitted_at")
+  submittedBy             String?   @map("submitted_by")
+  receiptConfirmedAt      DateTime? @map("receipt_confirmed_at")
+  receiptConfirmedBy      String?   @map("receipt_confirmed_by")
+  withdrawnAt             DateTime? @map("withdrawn_at")
+  reconciledAt            DateTime? @map("reconciled_at")
+  reconciledBy            String?   @map("reconciled_by")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  platformAccount PlatformAccount?             @relation(fields: [platformAccountId], references: [id], onDelete: SetNull)
+  allocations     OrderWithdrawalAllocation[]
+  transactions    PlatformAccountTransaction[]
+  reconciler      User?                        @relation("BatchReconciledBy", fields: [reconciledBy], references: [discordId], onDelete: SetNull)
+
+  @@index([platform, status])
+  @@index([platformAccountId])
+  @@map("platform_withdrawal_batches")
+}
+
+// ─── ۲۸. سهم سفارشات در دسته برداشت (Order Withdrawal Allocations) ───────────
+model OrderWithdrawalAllocation {
+  id                       Int      @id @default(autoincrement())
+  batchId                  Int      @map("batch_id")
+  orderId                  Int      @map("order_id")
+  contributionAmountMinor  Int      @map("contribution_amount_minor")
+  allocatedBatchFeeMinor   Int      @map("allocated_batch_fee_minor")
+  allocatedTransferFeeMinor Int     @default(0) @map("allocated_transfer_fee_minor")
+  netContributionMinor     Int      @map("net_contribution_minor")
+  createdAt                DateTime @default(now()) @map("created_at")
+
+  batch PlatformWithdrawalBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  order Order                   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, orderId])
+  @@index([orderId])
+  @@map("order_withdrawal_allocations")
+}
+
+// ─── ۲۹. اسنپ‌شات محاسبات مالی سفارشات (Order Financial Snapshots) ────────────
+model OrderFinancialSnapshot {
+  id                          Int       @id @default(autoincrement())
+  orderId                     Int       @unique @map("order_id")
+  sourcePlatform              String    @map("source_platform") // g2g | skycoach | eldorado | website | direct
+  sourceAmountType            String    @map("source_amount_type") // gross_sale | platform_net
+  sourceAmountMinor           Int       @map("source_amount_minor")
+  grossSaleMinor              Int?      @map("gross_sale_minor")
+  platformSaleCommissionMinor Int       @default(0) @map("platform_sale_commission_minor")
+  platformOrderNetMinor       Int       @map("platform_order_net_minor")
+  allocatedWithdrawalFeeMinor Int       @default(0) @map("allocated_withdrawal_fee_minor")
+  allocatedTransferFeeMinor   Int       @default(0) @map("allocated_transfer_fee_minor")
+  otherExternalFeesMinor      Int       @default(0) @map("other_external_fees_minor")
+  externalNetBaseMinor        Int       @map("external_net_base_minor")
+  g4xFeeRate                  Float?    @map("g4x_fee_rate")
+  g4xFeeMinor                 Int       @default(0) @map("g4x_fee_minor")
+  advertiserFeeMinor          Int       @default(0) @map("advertiser_fee_minor")
+  boosterPoolMinor            Int       @map("booster_pool_minor")
+  currency                    String    @default("USD")
+  advertiserId                String?   @map("advertiser_id")
+  advertiserRank              String?   @map("advertiser_rank")
+  rankFeeBasisPoints          Int?      @map("rank_fee_basis_points")
+  remainingAmountMinor        Int?      @map("remaining_amount_minor")
+  snapshotTimestamp           DateTime? @map("snapshot_timestamp")
+  calculationStatus           String    @default("provisional") @map("calculation_status") // provisional | reconciled | finalized
+  policyVersion               Int?      @map("policy_version")
+  listingCategory             String?   @map("listing_category")
+  platformAccountId           Int?      @map("platform_account_id")
+  finalizedBy                 String?   @map("finalized_by")
+  finalizedAt                 DateTime? @map("finalized_at")
+  notes                       String?
+  createdAt                   DateTime  @default(now()) @map("created_at")
+  updatedAt                   DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  order           Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  finalizer       User?            @relation("SnapshotFinalizedBy", fields: [finalizedBy], references: [discordId], onDelete: SetNull)
+  platformAccount PlatformAccount? @relation("SnapshotPlatformAccount", fields: [platformAccountId], references: [id], onDelete: SetNull)
+
+  @@index([sourcePlatform, calculationStatus])
+  @@index([platformAccountId])
+  @@index([advertiserRank])
+  @@map("order_financial_snapshots")
+}
+
+// ─── ۳۰. تسهیم استخری سهم بوسترها (Booster Payout Allocations) ────────────────
+model BoosterPayoutAllocation {
+  id             Int      @id @default(autoincrement())
+  orderId        Int      @map("order_id")
+  boosterId      String   @map("booster_id")
+  runId          Int?     @map("run_id")
+  allocatedMinor Int      @map("allocated_minor")
+  currency       String   @default("USD")
+  payoutRole     String?  @default("team_member") @map("payout_role") // solo | team_member
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  order   Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  booster User      @relation("BoosterAllocations", fields: [boosterId], references: [discordId], onDelete: Cascade)
+  run     OrderRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@unique([orderId, boosterId])
+  @@index([boosterId])
+  @@map("booster_payout_allocations")
+}
+
+// ─── ۳۱. حساب‌های کاربری پلتفرم‌های خارجی (External Platform Accounts) ───────
+model PlatformAccount {
+  id                   Int       @id @default(autoincrement())
+  accountRef           String    @unique @map("account_ref") // e.g. g2g_main, skycoach_main, eldorado_main
+  platform             String    // g2g | skycoach | eldorado
+  displayName          String    @map("display_name")
+  currency             String    @default("USD")
+  salesCreditedMinor   Int       @default(0) @map("sales_credited_minor")
+  pendingReleaseMinor  Int       @default(0) @map("pending_release_minor")
+  eligibleBalanceMinor Int       @default(0) @map("eligible_balance_minor")
+  reservedBatchMinor   Int       @default(0) @map("reserved_batch_minor")
+  withdrawnTotalMinor  Int       @default(0) @map("withdrawn_total_minor")
+  receivedTotalMinor   Int       @default(0) @map("received_total_minor")
+  isActive             Boolean   @default(true) @map("is_active")
+  notes                String?
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  batches              PlatformWithdrawalBatch[]
+  transactions         PlatformAccountTransaction[]
+  orders               Order[]                      @relation("OrderPlatformAccount")
+  snapshots            OrderFinancialSnapshot[]     @relation("SnapshotPlatformAccount")
+
+  @@index([platform, isActive])
+  @@map("platform_accounts")
+}
+
+// ─── ۳۲. تراکنش‌های مالی حساب‌های پلتفرم (Platform Account Transactions) ──────
+model PlatformAccountTransaction {
+  id                   Int       @id @default(autoincrement())
+  transactionRef       String    @unique @map("transaction_ref")
+  accountId            Int       @map("account_id")
+  entryType            String    @map("entry_type")
+  // sale_credit | platform_hold | platform_release | batch_reserve | batch_release | withdrawal_executed | funds_received | manual_adjustment | platform_fee | refund_chargeback
+  amountMinor          Int       @map("amount_minor")
+  currency             String    @default("USD")
+  orderId              Int?      @map("order_id")
+  orderRef             String?   @map("order_ref")
+  batchId              Int?      @map("batch_id")
+  externalTxRef        String?   @map("external_tx_ref")
+  reason               String?
+  balanceSnapshotMinor Int?      @map("balance_snapshot_minor")
+  createdBy            String?   @map("created_by")
+  createdAt            DateTime  @default(now()) @map("created_at")
+
+  account PlatformAccount          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  order   Order?                   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  batch   PlatformWithdrawalBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  creator User?                    @relation("PlatformTxCreator", fields: [createdBy], references: [discordId], onDelete: SetNull)
+
+  @@index([accountId, entryType])
+  @@index([orderId])
+  @@index([batchId])
+  @@index([createdAt])
+  @@map("platform_account_transactions")
+}
+
+// ─── ۳۳. والت مالی نسل دوم (Unified USD Cents Wallet V2) ─────────────────────
+model WalletV2 {
+  userId                 String   @id @map("user_id")
+  availableCents         Int      @default(0) @map("available_cents")
+  reservedCents          Int      @default(0) @map("reserved_cents")
+  pendingEarningsCents   Int      @default(0) @map("pending_earnings_cents")
+  confirmedEarningsCents Int      @default(0) @map("confirmed_earnings_cents")
+  paidCents              Int      @default(0) @map("paid_cents")
+  refundedCents          Int      @default(0) @map("refunded_cents")
+  customCommissionRate   Float?   @map("custom_commission_rate")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [discordId], onDelete: Cascade)
+
+  @@map("wallets_v2")
+}
+
+// ─── ۳۴. دفتر کل مالی نسل دوم (Finance V2 Ledger Entries) ────────────────────
+model LedgerEntryV2 {
+  id                         Int      @id @default(autoincrement())
+  entryRef                   String   @unique @map("entry_ref")
+  postingGroupId             String?  @map("posting_group_id")
+  accountType                String?  @default("USER_WALLET") @map("account_type")
+  userId                     String?  @map("user_id")
+  orderId                    Int?     @map("order_id")
+  fundingRequestId           Int?     @map("funding_request_id")
+  withdrawalRequestId        Int?     @map("withdrawal_request_id")
+  goldTradeId                Int?     @map("gold_trade_id")
+  amountCents                Int      @map("amount_cents")
+  entryType                  String   @map("entry_type")
+  // EARNING_PENDING | EARNING_CONFIRMED | AVAILABLE_RELEASE | WITHDRAWAL_RESERVE | WITHDRAWAL_SETTLE | WITHDRAWAL_REVERSE | ADVERTISER_DEPOSIT | MANUAL_ADJUSTMENT | GOLD_TRADE_SETTLE | P2P_FUNDING_SETTLE
+  direction                  String   @map("direction") // CREDIT | DEBIT
+  balanceAfterAvailableCents Int?     @map("balance_after_available_cents")
+  balanceAfterReservedCents  Int?     @map("balance_after_reserved_cents")
+  reversalOfEntryRef         String?  @map("reversal_of_entry_ref")
+  idempotencyKey             String?  @unique @map("idempotency_key")
+  description                String?
+  metadata                   String?
+  createdBy                  String?  @map("created_by")
+  createdAt                  DateTime @default(now()) @map("created_at")
+
+  user              User?                      @relation("UserLedgerV2", fields: [userId], references: [discordId], onDelete: SetNull)
+  order             Order?                     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  fundingRequest    AdvertiserFundingRequest?  @relation(fields: [fundingRequestId], references: [id], onDelete: SetNull)
+  withdrawalRequest BoosterWithdrawalRequest?  @relation(fields: [withdrawalRequestId], references: [id], onDelete: SetNull)
+  goldTrade         GoldTrade?                 @relation(fields: [goldTradeId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([orderId])
+  @@index([entryType])
+  @@index([postingGroupId])
+  @@index([goldTradeId])
+  @@index([createdAt])
+  @@map("ledger_entries_v2")
+}
+
+// ─── ۳۵. درخواست‌های شارژ کیف‌پول ادورتایزر (Advertiser Funding Requests) ─────────
+model AdvertiserFundingRequest {
+  id                      Int       @id @default(autoincrement())
+  fundingRef              String    @unique @map("funding_ref")
+  quoteRef                String?   @unique @map("quote_ref")
+  advertiserId            String    @map("advertiser_id")
+  fundingMethod           String    @map("funding_method") // USDT | IRT | GOLD_EXCHANGE
+  status                  String    @default("PENDING_VERIFICATION") @map("status")
+  // DRAFT | QUOTED | AWAITING_PAYMENT | PAYMENT_SUBMITTED | PENDING_ADMIN_VERIFICATION | CONFIRMED_CREDITED | REJECTED | CANCELLED | PENDING_BUSINESS_CONFIRMATION
+  targetUsdCents          Int       @map("target_usd_cents")
+  externalCurrency        String    @map("external_currency") // USDT | IRT | GOLD
+  externalAmountUnits     String    @map("external_amount_units")
+  network                 String?
+  exchangeRate            Float?    @map("exchange_rate")
+  currencyPurchaseFeeRate Float?    @map("currency_purchase_fee_rate")
+  feeAmountUnits          String?   @map("fee_amount_units")
+  evidenceRef             String?   @map("evidence_ref")
+  legacyEvidenceResolution String?  @map("legacy_evidence_resolution")
+  payerIdentifier         String?   @map("payer_identifier")
+  adminNotes              String?   @map("admin_notes")
+  verifiedBy              String?   @map("verified_by")
+  verifiedAt              DateTime? @map("verified_at")
+  creditedAt              DateTime? @map("credited_at")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  advertiser      User                     @relation("AdvertiserFunding", fields: [advertiserId], references: [discordId], onDelete: Cascade)
+  verifier        User?                    @relation("VerifiedFunding", fields: [verifiedBy], references: [discordId], onDelete: SetNull)
+  goldTradeOrders GoldExchangeTradeOrder[]
+  ledgerEntries   LedgerEntryV2[]
+  paymentRequests PaymentRequest[]
+
+  @@index([advertiserId])
+  @@index([status])
+  @@map("advertiser_funding_requests")
+}
+
+// ─── ۳۶. سفارشات مبادله طلا برای شارژ ادورتایزر (Gold Exchange Trade Orders) ───────
+model GoldExchangeTradeOrder {
+  id                         Int       @id @default(autoincrement())
+  tradeRef                   String    @unique @map("trade_ref")
+  advertiserId               String    @map("advertiser_id")
+  exchangerId                String    @map("exchanger_id")
+  fundingRequestId           Int?      @map("funding_request_id")
+  gameSlug                   String    @default("wow_midnight") @map("game_slug")
+  goldQuantity               Int       @map("gold_quantity")
+  status                     String    @default("TRADE_PENDING") @map("status")
+  // TRADE_PENDING | TRADE_COMPLETED_IN_GAME | TRADE_VERIFIED | PAYMENT_PENDING | PAYMENT_CONFIRMED | PENDING_BUSINESS_CONFIRMATION | RECONCILED | CANCELLED | REJECTED
+  tradeEvidenceRef           String?   @map("trade_evidence_ref")
+  externalPaymentMethod      String?   @map("external_payment_method") // USDT | IRT
+  externalPaymentAmount      String?   @map("external_payment_amount")
+  externalPaymentRef         String?   @map("external_payment_ref")
+  externalPaymentConfirmedAt DateTime? @map("external_payment_confirmed_at")
+  resultingUsdCents          Int?      @map("resulting_usd_cents")
+  walletCreditStatus         String    @default("BLOCKED_PENDING_DIRECTION_CONFIRMATION") @map("wallet_credit_status")
+  rejectionReason            String?   @map("rejection_reason")
+  verifiedBy                 String?   @map("verified_by")
+  verifiedAt                 DateTime? @map("verified_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  advertiser     User                      @relation("AdvertiserGoldTrades", fields: [advertiserId], references: [discordId], onDelete: Cascade)
+  exchanger      User                      @relation("ExchangerGoldTrades", fields: [exchangerId], references: [discordId], onDelete: Cascade)
+  verifier       User?                     @relation("VerifiedGoldTrades", fields: [verifiedBy], references: [discordId], onDelete: SetNull)
+  fundingRequest AdvertiserFundingRequest? @relation(fields: [fundingRequestId], references: [id], onDelete: SetNull)
+
+  @@index([advertiserId])
+  @@index([exchangerId])
+  @@index([status])
+  @@map("gold_exchange_trade_orders")
+}
+
+// ─── ۳۷. درخواست‌های تسویه و برداشت بوسترها (Booster Withdrawal Requests) ───────────
+model BoosterWithdrawalRequest {
+  id                       Int       @id @default(autoincrement())
+  withdrawalRef            String    @unique @map("withdrawal_ref")
+  boosterId                String    @map("booster_id")
+  payoutMethod             String    @map("payout_method") // USDT_BEP20 | IRT_BANK
+  status                   String    @default("DRAFT") @map("status")
+  // DRAFT | QUOTED | USER_CONFIRMED | REQUESTED | RESERVED | UNDER_ADMIN_REVIEW | PROCESSING | PAID | REJECTED | CANCELLED | FAILED
+  requestedUsdCents        Int       @map("requested_usd_cents")
+  fixedFeeUsdCents         Int       @map("fixed_fee_usd_cents")
+  netUsdCents              Int       @map("net_usd_cents")
+  quoteRate                Float?    @map("quote_rate")
+  effectiveRate            Float?    @map("effective_rate")
+  rateDiscount             Int?      @default(0) @map("rate_discount")
+  quotedNetPayoutAmount    String    @map("quoted_net_payout_amount")
+  quotedCurrency           String    @map("quoted_currency")
+  quoteExpiresAt           DateTime? @map("quote_expires_at")
+  quoteVersion             Int       @default(1) @map("quote_version")
+  quoteHash                String?   @map("quote_hash")
+  policyVersion            Int?      @map("policy_version")
+  revalidatedAt            DateTime? @map("revalidated_at")
+  userConfirmedAt          DateTime? @map("user_confirmed_at")
+  destinationAddress       String    @map("destination_address")
+  destinationAccountHolder String?   @map("destination_account_holder")
+  scheduledCycleDay        String?   @map("scheduled_cycle_day") // WEDNESDAY | SATURDAY | MANUAL
+  scheduledCycleDate       DateTime? @map("scheduled_cycle_date")
+  schedulingStatus         String    @default("PENDING_SCHEDULE") @map("scheduling_status")
+  approvedBy               String?   @map("approved_by")
+  approvedAt               DateTime? @map("approved_at")
+  processedBy              String?   @map("processed_by")
+  processedAt              DateTime? @map("processed_at")
+  externalTxHash           String?   @map("external_tx_hash")
+  bankReceiptRef           String?   @map("bank_receipt_ref")
+  rejectionReason          String?   @map("rejection_reason")
+  cancelReason             String?   @map("cancel_reason")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  booster       User            @relation("BoosterWithdrawals", fields: [boosterId], references: [discordId], onDelete: Cascade)
+  approver      User?           @relation("ApprovedWithdrawals", fields: [approvedBy], references: [discordId], onDelete: SetNull)
+  processor     User?           @relation("ProcessedWithdrawals", fields: [processedBy], references: [discordId], onDelete: SetNull)
+  ledgerEntries LedgerEntryV2[]
+
+  @@index([boosterId])
+  @@index([status])
+  @@index([scheduledCycleDay])
+  @@map("booster_withdrawal_requests")
+}
+
+// ─── ۳۸. پیگیری مراحل آزادسازی بوست‌های G4X (G4X Boost Release Tracker) ────────────
+model G4XBoostReleaseTracker {
+  id                     Int       @id @default(autoincrement())
+  orderId                Int       @unique @map("order_id")
+  stage                  String    @default("RUN_COMPLETED") @map("stage")
+  // RUN_COMPLETED | PROOF_SUBMITTED | STAFF_REVIEW | ADMIN_FINAL_APPROVED | HOLD_24_HOURS | ELIGIBLE_FOR_RELEASE | AVAILABLE
+  proofSubmittedAt       DateTime? @map("proof_submitted_at")
+  staffReviewedAt        DateTime? @map("staff_reviewed_at")
+  staffReviewedBy        String?   @map("staff_reviewed_by")
+  adminFinalApprovedAt   DateTime? @map("admin_final_approved_at")
+  adminFinalApprovedBy   String?   @map("admin_final_approved_by")
+  holdDurationHours      Int       @default(24) @map("hold_duration_hours")
+  holdExpiresAt          DateTime? @map("hold_expires_at")
+  isFundsReconciled      Boolean   @default(false) @map("is_funds_reconciled")
+  isCalculationFinalized Boolean   @default(false) @map("is_calculation_finalized")
+  hasActiveDispute       Boolean   @default(false) @map("has_active_dispute")
+  hasActiveHold          Boolean   @default(false) @map("has_active_hold")
+  isReleased             Boolean   @default(false) @map("is_released")
+  releasedAt             DateTime? @map("released_at")
+  notes                  String?
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  order              Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  staffReviewerUser  User? @relation("StaffReviewedReleases", fields: [staffReviewedBy], references: [discordId], onDelete: SetNull)
+  adminApproverUser  User? @relation("AdminApprovedReleases", fields: [adminFinalApprovedBy], references: [discordId], onDelete: SetNull)
+
+  @@index([stage])
+  @@map("g4x_boost_release_trackers")
+}
+
+// ─── ۳۹. تنظیمات مالی متمرکز سیستم (System Financial Configurations) ───────────────
+model SystemFinancialConfig {
+  key         String   @id @map("config_key")
+  value       String   @map("config_value")
+  description String?
+  updatedBy   String?  @map("updated_by")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("system_financial_configs")
+}
+
+// ─── ۴۰. پیشنهادات کارمزد و خدمات صراف (Exchanger Fee Offers) ───────────────────
+model ExchangerFeeOffer {
+  id                   Int         @id @default(autoincrement())
+  offerRef             String      @unique @map("offer_ref")
+  exchangerId          String      @map("exchanger_id")
+  serviceType          String      @map("service_type")
+  // IRT_TO_USD_FUNDING | GOLD_PURCHASE_IRT | GOLD_PURCHASE_USDT | GOLD_PURCHASE_WALLET
+  settlementCurrency   String      @map("settlement_currency") // IRT | USDT | USD
+  commissionPercentage Float       @map("commission_percentage") // e.g. 0.035 for 3.5%
+  feeCalculationBasis  String      @default("GROSS_INPUT") @map("fee_calculation_basis") // GROSS_INPUT | NET_OUTPUT | AGREED_VALUATION
+  feePayer             String      @default("ADVERTISER") @map("fee_payer") // ADVERTISER | EXCHANGER
+  referenceFxPolicy    String?     @default("ADMIN_USD_IRT_REFERENCE") @map("reference_fx_policy")
+  minAmount            Float?      @map("min_amount")
+  maxAmount            Float?      @map("max_amount")
+  offerVersion         Int         @default(1) @map("offer_version")
+  status               String      @default("ACTIVE") @map("status") // DRAFT | ACTIVE | PAUSED | REVOKED
+  terms                String?     @map("terms")
+  effectiveDate        DateTime    @default(now()) @map("effective_date")
+  suspendedReason      String?     @map("suspended_reason")
+  suspendedBy          String?     @map("suspended_by")
+  suspendedAt          DateTime?   @map("suspended_at")
+  createdAt            DateTime    @default(now()) @map("created_at")
+  updatedAt            DateTime    @updatedAt @map("updated_at")
+
+  exchanger            User        @relation("ExchangerOffers", fields: [exchangerId], references: [discordId], onDelete: Cascade)
+  goldTrades           GoldTrade[]
+
+  @@index([exchangerId])
+  @@index([serviceType, status])
+  @@map("exchanger_fee_offers")
+}
+
+// ─── ۴۱. معاملات بازار طلا (Marketplace Gold Trades) ───────────────────────────
+model GoldTrade {
+  id                         Int                @id @default(autoincrement())
+  tradeRef                   String             @unique @map("trade_ref")
+  sellerId                   String             @map("seller_id") // Advertiser selling Gold
+  buyerId                    String             @map("buyer_id") // Exchanger buying Gold
+  gameSlug                   String             @default("wow_midnight") @map("game_slug")
+  region                     String?            @default("EU") @map("region")
+  realm                      String?            @map("realm")
+  faction                    String?            @map("faction")
+  goldQuantity               Int                @map("gold_quantity")
+  goldUnit                   String             @default("RAW_GOLD") @map("gold_unit")
+  agreedValuationUsdCents    Int                @map("agreed_valuation_usd_cents")
+  settlementMethod           String             @map("settlement_method")
+  // IRT_DIRECT | USDT_DIRECT | USD_WALLET
+  commissionPercentage       Float?             @map("commission_percentage")
+  commissionAmountUnits      String?            @map("commission_amount_units")
+  feePayer                   String?            @map("fee_payer")
+  referenceFxRate            Float?             @map("reference_fx_rate")
+  quotedPayableAmount        String?            @map("quoted_payable_amount")
+  quotedPayableCurrency      String?            @map("quoted_payable_currency")
+  acceptedOfferId            Int?               @map("accepted_offer_id")
+  acceptedOfferVersion       Int?               @map("accepted_offer_version")
+  quoteExpiresAt             DateTime?          @map("quote_expires_at")
+  quoteHash                  String?            @map("quote_hash")
+  goldDeliveryStatus         String             @default("PENDING") @map("gold_delivery_status")
+  // PENDING | DELIVERED | VERIFIED | DISPUTED
+  paymentStatus              String             @default("PENDING") @map("payment_status")
+  // PENDING | SUBMITTED | VERIFIED | CONFIRMED | DISPUTED
+  tradeStatus                String             @default("DRAFT") @map("trade_status")
+  // DRAFT | QUOTED | ACCEPTED | FUNDS_RESERVED | GOLD_DELIVERY_PENDING | GOLD_DELIVERED | DELIVERY_VERIFIED | PAYMENT_PENDING | PAYMENT_VERIFIED | READY_TO_SETTLE | SETTLED | DISPUTED | CANCELLED | REJECTED
+  walletReservationId        String?            @map("wallet_reservation_id")
+  deliveryEvidenceRef        String?            @map("delivery_evidence_ref")
+  deliveryReportedAt         DateTime?          @map("delivery_reported_at")
+  deliveryVerifiedBy         String?            @map("delivery_verified_by")
+  deliveryVerifiedAt         DateTime?          @map("delivery_verified_at")
+  externalPaymentMethod      String?            @map("external_payment_method")
+  externalPaymentRef         String?            @map("external_payment_ref")
+  externalPaymentAmount      String?            @map("external_payment_amount")
+  paymentSubmittedAt         DateTime?          @map("payment_submitted_at")
+  paymentVerifiedBy          String?            @map("payment_verified_by")
+  paymentVerifiedAt          DateTime?          @map("payment_verified_at")
+  advertiserConfirmedReceiptAt DateTime?        @map("advertiser_confirmed_receipt_at")
+  actualSettlementRef        String?            @map("actual_settlement_ref")
+  settledAt                  DateTime?          @map("settled_at")
+  settledBy                  String?            @map("settled_by")
+  disputeReason              String?            @map("dispute_reason")
+  disputedBy                 String?            @map("disputed_by")
+  disputedAt                 DateTime?          @map("disputed_at")
+  cancellationReason         String?            @map("cancellation_reason")
+  cancelledBy                String?            @map("cancelled_by")
+  cancelledAt                DateTime?          @map("cancelled_at")
+  legacyOrderId              Int?               @map("legacy_order_id")
+  notes                      String?            @map("notes")
+  createdAt                  DateTime           @default(now()) @map("created_at")
+  updatedAt                  DateTime           @updatedAt @map("updated_at")
+
+  seller                     User               @relation("SellerGoldTrades", fields: [sellerId], references: [discordId], onDelete: Cascade)
+  buyer                      User               @relation("BuyerGoldTrades", fields: [buyerId], references: [discordId], onDelete: Cascade)
+  deliveryVerifier           User?              @relation("VerifiedGoldTradesV2", fields: [deliveryVerifiedBy], references: [discordId], onDelete: SetNull)
+  acceptedOffer              ExchangerFeeOffer? @relation(fields: [acceptedOfferId], references: [id], onDelete: SetNull)
+  ledgerEntries              LedgerEntryV2[]
+
+  @@index([sellerId])
+  @@index([buyerId])
+  @@index([tradeStatus])
+  @@index([settlementMethod])
+  @@index([createdAt])
+  @@map("gold_trades")
+}
+
+// ─── ۴۲. درخواست‌های پرداخت و اعتبارسنجی (Payment Requests) ───────────────────
+model PaymentRequest {
+  id               Int       @id @default(autoincrement())
+  requestRef       String    @unique @map("request_ref")
+  businessType     String    @map("business_type") // ORDER | WALLET_FUNDING
+  orderId          Int?      @map("order_id")
+  fundingRequestId Int?      @map("funding_request_id")
+  userId           String    @map("user_id")
+  amountUsdCents   Int       @map("amount_usd_cents")
+  currency         String    @default("USD")
+  status           String    @default("pending") // pending | processing | verified | cancelled | expired
+  activeReceiptId  Int?      @map("active_receipt_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  order            Order?                    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fundingRequest   AdvertiserFundingRequest? @relation(fields: [fundingRequestId], references: [id], onDelete: SetNull)
+  user             User                      @relation("UserPaymentRequests", fields: [userId], references: [discordId], onDelete: Cascade)
+  attempts         PaymentAttempt[]
+  receipts         PaymentReceipt[]
+
+  @@index([userId])
+  @@index([orderId])
+  @@index([fundingRequestId])
+  @@index([status])
+  @@map("payment_requests")
+}
+
+// ─── ۴۳. تلاش‌های پرداخت (Payment Attempts) ───────────────────────────────────
+model PaymentAttempt {
+  id                      Int       @id @default(autoincrement())
+  attemptRef              String    @unique @map("attempt_ref")
+  paymentRequestId        Int       @map("payment_request_id")
+  method                  String    // CARD_TO_CARD_IRT | NOWPAYMENTS_CRYPTO
+  provider                String    // MANUAL_BANK | NOWPAYMENTS
+  status                  String    @default("pending")
+  // pending | confirming | confirmed | sending | partially_paid | finished | failed | expired | refunded | rejected | manual_review
+  providerPaymentId       String?   @unique @map("provider_payment_id")
+  providerPurchaseId      String?   @map("provider_purchase_id")
+  providerParentPaymentId String?   @map("provider_parent_payment_id")
+  payCurrency             String?   @map("pay_currency")
+  payNetwork              String?   @map("pay_network")
+  payAddress              String?   @map("pay_address")
+  payExtraId              String?   @map("pay_extra_id")
+  expectedAmount          String    @map("expected_amount")
+  expectedCurrency        String    @map("expected_currency")
+  exchangeRate            Float?    @map("exchange_rate")
+  quoteExpiresAt          DateTime? @map("quote_expires_at")
+  quoteSnapshot           String?   @map("quote_snapshot")
+  trackingNumber          String?   @map("tracking_number")
+  legacyEvidenceResolution String?  @map("legacy_evidence_resolution")
+  paidAmountIrt           String?   @map("paid_amount_irt")
+  senderCardLast4         String?   @map("sender_card_last4")
+  receiptScreenshotUrl    String?   @map("receipt_screenshot_url")
+  actualAmountReceived    String?   @map("actual_amount_received")
+  actualCurrencyReceived  String?   @map("actual_currency_received")
+  outcomeAmount           String?   @map("outcome_amount")
+  outcomeCurrency         String?   @map("outcome_currency")
+  isWrongAsset            Boolean   @default(false) @map("is_wrong_asset")
+  isReDeposit             Boolean   @default(false) @map("is_re_deposit")
+  reviewReason            String?   @map("review_reason")
+  reviewedBy              String?   @map("reviewed_by")
+  reviewedAt              DateTime? @map("reviewed_at")
+  reconciledAt            DateTime? @map("reconciled_at")
+  reconciliationNotes     String?   @map("reconciliation_notes")
+  rawCallbackPayload      String?   @map("raw_callback_payload")
+  createdAt               DateTime  @default(now()) @map("created_at")
+  updatedAt               DateTime  @updatedAt @map("updated_at")
+
+  paymentRequest          PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+  reviewer                User?          @relation("ReviewedPaymentAttempts", fields: [reviewedBy], references: [discordId], onDelete: SetNull)
+  receipts                PaymentReceipt[]
+
+  @@index([paymentRequestId, status])
+  @@index([trackingNumber])
+  @@index([providerPaymentId])
+  @@index([status])
+  @@map("payment_attempts")
+}
+
+// ─── ۴۴. رسیدهای تاییدشده پرداخت (Verified Payment Receipts) ────────────────
+model PaymentReceipt {
+  id                  Int       @id @default(autoincrement())
+  receiptRef          String    @unique @map("receipt_ref")
+  paymentRequestId    Int       @map("payment_request_id")
+  paymentAttemptId    Int       @map("payment_attempt_id")
+  amountUsdCents      Int       @map("amount_usd_cents")
+  paymentMethod       String    @map("payment_method")
+  providerReference   String    @map("provider_reference")
+  verifiedBy          String    @map("verified_by")
+  verifiedAt          DateTime  @default(now()) @map("verified_at")
+  status              String    @default("ACTIVE") // ACTIVE | CONSUMED | VOIDED
+  consumedAction      String?   @map("consumed_action") // ORDER_FUNDING | WALLET_CREDIT
+  consumedReferenceId String?   @map("consumed_reference_id")
+  consumedAt          DateTime? @map("consumed_at")
+  auditLogId          Int?      @map("audit_log_id")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  paymentRequest      PaymentRequest @relation(fields: [paymentRequestId], references: [id], onDelete: Cascade)
+  paymentAttempt      PaymentAttempt @relation(fields: [paymentAttemptId], references: [id], onDelete: Cascade)
+
+  @@index([paymentRequestId])
+  @@index([paymentAttemptId])
+  @@index([providerReference])
+  @@index([status])
+  @@map("payment_receipts")
+}
+
+// ─── ۴۰. تنظیمات مقصد تسویه حساب کاربری (User Payout Preferences) ─────────────
+model UserPayoutPreference {
+  id                 Int      @id @default(autoincrement())
+  userId             String   @unique @map("user_id")
+  bankAccountHolder  String?  @map("bank_account_holder")
+  bankIban           String?  @map("bank_iban")
+  cryptoAddress      String?  @map("crypto_address")
+  cryptoNetwork      String?  @default("BNB_SMART_CHAIN_BEP20") @map("crypto_network")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [discordId], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_payout_preferences")
+}
