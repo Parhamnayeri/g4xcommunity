@@ -135,6 +135,12 @@ if (!combined) {
   check('combined Admin page retains order tab initialization and native navigation', () => {
     const source=two('frontend/src/pages/AdminPage.tsx');assert(source.includes('setActiveTab(defaultTab)'));assert(source.includes('<AdminModuleNavigation />'));
   });
+  check('actual combined order endpoint guards and bodies remain identical to merged PR1', () => {
+    for (const key of ['GET /management/orders/:id', 'POST /management/orders/:id/assign', 'POST /management/orders/:id/refresh-discord', 'POST /management/orders/:id/approve', 'POST /management/orders/:id/publish']) assert.equal(api2.get(key), api1.get(key), key);
+  });
+  check('combined tree retains PR1 order client, renderer, types and corrected KYC fixture', () => {
+    for (const file of ['frontend/src/components/orders/OrderManagementWorkspace.tsx', 'frontend/src/services/operations.ts', 'frontend/src/types/operations.ts', 'src/test/website_phase7_operations_suite.ts']) assert.equal(two(file), one(file), file);
+  });
   check('combined tree retains all four test scripts and both guarded API families', () => {
     const scripts=JSON.parse(two('package.json')).scripts;for(const name of [...orderScripts,...adminScripts])assert(scripts[name]);
     for(const key of ['GET /management/orders/:id','POST /management/orders/:id/assign','POST /management/orders/:id/refresh-discord','GET /management/applications/:id'])assert(api2.has(key),key);

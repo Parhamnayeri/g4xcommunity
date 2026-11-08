@@ -1,6 +1,57 @@
-# PR #2 after PR #1: owner-gated integration plan
+# PR #2 after PR #1: integration record and validation plan
 
-## Status and limits — 2026-11-08 UTC
+
+## Completed integration — 2026-11-08 UTC
+
+The owner merged PR #1 as `3099ac6a4948f32d985a7e590fc39b922cdd014d`. That exact main commit is now an ancestor of PR #2 through local integration merge `7dbc2a9`. PR #2 still targets main; PR #2 has not been merged or deployed. This section supersedes the historical unmerged/preparation status below.
+
+All three actual conflicts were resolved according to the seven-file table:
+
+- `App.tsx`: retain both route families once, with existing error boundaries.
+- `ManagementPage.tsx`: retain order workspace, native applications workspace/navigation and dispute deep links; remove both obsolete data loaders, states, handlers and imports. Its tab-loading effect now handles disputes only.
+- `package.json`: retain all four order/native-admin test commands and the shared test dependency.
+
+The remaining four shared files were reviewed after automatic resolution. Admin retains defaultTab order deep links and native navigation. HTTP client and lockfile remain identical to updated main. Operations routes preserve both endpoint families with their live permissions, CSRF and audit protections. The actual order endpoint bodies/guards, order renderer/client/types, corrected Phase 7 KYC fixture, OwnerGate and schema match the merged PR #1/main versions; new combined checker assertions verify this directly.
+
+### Actual combined validation
+
+`node scripts/test-pr-integration.cjs --combined`: **17 passed**, including no duplicate routes, both workspaces/navigation, no obsolete loaders and byte-preservation of critical PR #1 code/fixture.
+
+`node scripts/run-combined-regressions.cjs`: completed using new per-suite disposable SQLite databases under `/tmp/g4x-combined-regression-LGPkeu`, with all five live financial gates false. All required steps passed; the runner returned **2** solely for the standalone frontend typecheck observation. That is not claimed as a fully green runner. Updated-main comparison below completes the required baseline review.
+
+| Actual combined command | Result |
+| --- | --- |
+| `npm run test:order-workspace` | 16 passed |
+| `npm run test:order-workspace:api` | 40 passed |
+| `npm run test:native-admin:react` | 12 passed |
+| `npm run test:native-admin` | 53 passed; includes applications, game/service references, mappings, RBAC/CSRF/audit, KYC access/symlinks and 28 synthetic reconciliation records with unchanged order/wallet/ledger snapshots |
+| `npm run test:registration` | 22 passed |
+| `npm run test:provisioning` | 45 passed, mock Discord |
+| `npm run test:phase7` | All eight sections passed, including PR #1's corrected effective-symlink fixture |
+| `npm run test:ownergate` | 12 passed with an owner fixture only in its disposable DB |
+| `npm run build` | Backend TypeScript and Vite production builds passed |
+| `git diff --check` | Passed |
+
+There are zero required functional failures in the runner's `results.json`. The strengthened checker was run separately after adding the two direct preservation assertions; the original runner invocation checked the preceding 15 contracts as well.
+
+### Fresh comparison against updated main `3099ac6`
+
+An archive of the exact updated main was tested at `/tmp/g4x-updated-main-3099ac6`, using the same verified dependency tree/schema and independently copied canonical seed databases. Six separate older-suite databases and current-run logs/results are retained under `/tmp/g4x-updated-main-comparison-DW8NOt`.
+
+| Command, executed on both updated main and combined tree | Updated main | Combined |
+| --- | --- | --- |
+| `npx tsc -p frontend/tsconfig.json --noEmit` (local pinned TypeScript executable) | 86 diagnostics, exit 2 | Same 86 complete normalized diagnostics, zero added/removed, exit 2 |
+| `npm run test:games` | 63 passed / 4 failed, exit 1 | Identical result and failure assertions/fixture exception |
+| `npm run test:routing` | 20 passed / 1 failed, exit 1 | Identical outdated button-layout assertion |
+| `WEB_BASE_URL=http://localhost:3000 npm run test:security` | 15 passed / 2 failed, exit 1 | Identical old error-string and staff/admin-access expectations |
+
+The older game suite on this fresh seed has no canonical production-order references: its keystone-setting/reference assumptions fail and a later missing-record fixture exception is counted as the fourth failure. This differs from the earlier preparation's non-pristine 66/2 result; the **fresh updated-main and combined results match**. No tests, permissions, financial controls or fixtures were weakened to turn these checks green. Comparison preserves full diagnostic messages and counts while normalizing file prefixes/line offsets. No new integration regression was found.
+
+### Final scope and readiness
+
+Ready for **owner-controlled integration review/merge with the disclosed existing baseline failures**. It is not a claim that every check is green or that deployment is approved; repositories requiring all these older checks green still have those baseline blockers. Actual live Discord/OAuth/browser end-to-end checks were not performed. No Linode connection, production secrets/data access, reset, new schema migration, financial-gate activation or reconciliation resolution occurred. Production's historical records were not touched; the 28-record preservation evidence is synthetic and isolated.
+
+## Historical preparation status before owner merge
 
 PR #1 is **open/unmerged**, head `02337ae4ee8f36593abd07964549aa2bd465b18b`.
 PR #2 is **open/unmerged**, implementation head `a8c1c28957194aa27790407c6c6b51b27b77520a` before this preparation commit. Both target `main`, baseline `41ea88efe2a86c7159faf748cd0fc72ef448f3e2`.
@@ -80,6 +131,6 @@ The PR #1 archive uses the identical verified lockfile/dependency tree and schem
 
 Runner exit 2 is a blocked prerequisite or a failed frontend baseline-review observation, **not** a passing suite. Required functional test failures return 1. The older-suite/main comparisons remain an explicit review step; the runner does not silently bless them.
 
-## Readiness
+## Historical pre-merge readiness
 
 Prepared for integration after owner merge of PR #1; **not yet approved as an integrated PR #2 merge**. No real combined conflict has been applied/resolved while the prerequisite remains open. No migration, secret change, live financial gate activation, automatic reconciliation, Linode connection or deployment is part of this preparation.
