@@ -22,12 +22,14 @@ import { OrderManagementWorkspace } from '../components/orders/OrderManagementWo
 import { AdminDepositItem } from '../types/adminPortal';
 import { fetchAdminDeposits, reviewAdminDeposit } from '../services/adminPortal';
 
-export const OwnerPage: React.FC = () => {
+export const OwnerPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ defaultTab = 'overview' }) => {
   const { user, hasRole } = useAuth();
   const isOwner = hasRole('owner');
 
   // Navigation tab
-  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'deposits' | 'config' | 'ledgers' | 'gates' | 'audit' | 'security'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'deposits' | 'config' | 'ledgers' | 'gates' | 'audit' | 'security'>(defaultTab);
+
+  useEffect(() => { setActiveTab(defaultTab); }, [defaultTab]);
 
   // Overview state
   const [overview, setOverview] = useState<OwnerOverviewResponse | null>(null);

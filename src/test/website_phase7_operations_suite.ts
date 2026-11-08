@@ -27,6 +27,7 @@ import fs from 'fs';
 import prisma from '../database/db';
 import { app, sessionStore } from '../web/server';
 import { Permission } from '../services/permissionTypes';
+import { validateKycDocumentReference } from '../services/kycDocumentSecurity';
 
 const KYC_DOCS_DIR = path.join(process.cwd(), 'storage', 'kyc_documents');
 if (!fs.existsSync(KYC_DOCS_DIR)) {
@@ -227,7 +228,7 @@ async function runPhase7OperationsSuite() {
       },
     });
 
-    await prisma.pilotVerification.create({
+    const pilotVerification = await prisma.pilotVerification.create({
       data: {
         userId: testBoosterId,
         gameSlug: 'wow_midnight',
@@ -306,11 +307,25 @@ async function runPhase7OperationsSuite() {
             qualifications: JSON.stringify({ identityDocumentRef: path.basename(symlinkPath) }),
           },
         });
+        // A per-user verification record takes precedence over application qualifications.
+        // Previously this fixture only changed qualifications, so it served docA (not the symlink).
+        const precedenceRes = await managerAgent.agent.get(`/api/management/kyc/applications/${symlinkApp.id}/documents/identityDoc`);
+        assert.strictEqual(precedenceRes.status, 200);
+        assert.strictEqual(Buffer.from(precedenceRes.body).toString(), 'VALID_KYC_DOCUMENT_A_PAYLOAD', 'Only the authorized verification document is served');
+        assert.strictEqual(validateKycDocumentReference(path.basename(symlinkPath)).error, 'ILLEGAL_LINK_DETECTED');
+
+        // Make the effective, higher-priority reference point to the actual escaping symlink.
+        await prisma.pilotVerification.update({ where: { id: pilotVerification.id }, data: { identityDocumentRef: path.basename(symlinkPath) } });
         const symlinkRes = await managerAgent.agent.get(`/api/management/kyc/applications/${symlinkApp.id}/documents/identityDoc`);
         assert.strictEqual(symlinkRes.status, 403, 'Symlink escaping storage directory must be rejected with 403');
         assert.ok(['ILLEGAL_LINK_DETECTED', 'PATH_TRAVERSAL_DETECTED'].includes(symlinkRes.body.error));
+        assert.ok(!JSON.stringify(symlinkRes.body).includes('dependencies'), 'Outside file bytes must never be returned');
+        const directSymlinkRes = await managerAgent.agent.get(`/api/management/kyc/documents/${path.basename(symlinkPath)}`).query({ applicationId: symlinkApp.id });
+        assert.strictEqual(directSymlinkRes.status, 403, 'Application-bound direct reference must also reject the effective symlink');
+        assert.strictEqual(directSymlinkRes.body.error, 'ILLEGAL_LINK_DETECTED');
         await prisma.registrationApplication.delete({ where: { id: symlinkApp.id } });
       } finally {
+        await prisma.pilotVerification.update({ where: { id: pilotVerification.id }, data: { identityDocumentRef: docAName } });
         fs.unlinkSync(symlinkPath);
       }
     }

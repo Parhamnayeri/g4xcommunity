@@ -25,12 +25,14 @@ import {
   reviewAdminWithdrawal,
 } from '../services/adminPortal';
 
-export const AdminPage: React.FC = () => {
+export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ defaultTab = 'overview' }) => {
   const { user, hasRole } = useAuth();
   const isAdminOrOwner = hasRole('owner', 'manager', 'admin');
 
   // Navigation tab
-  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'users' | 'deposits' | 'withdrawals' | 'exchange' | 'audit' | 'roles'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'users' | 'deposits' | 'withdrawals' | 'exchange' | 'audit' | 'roles'>(defaultTab);
+
+  useEffect(() => { setActiveTab(defaultTab); }, [defaultTab]);
 
   // Overview state
   const [overview, setOverview] = useState<AdminOverviewResponse | null>(null);

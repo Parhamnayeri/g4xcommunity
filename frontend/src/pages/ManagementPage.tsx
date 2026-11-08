@@ -1,18 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   ManagementOverviewResponse,
-  OrderItem,
   RegistrationApplicationItem,
   DisputeItem,
   PaginationMeta,
 } from '../types/operations';
 import {
   fetchManagementOverview,
-  fetchManagementOrders,
-  approveOrderAdmin,
-  publishOrderCard,
   fetchRegistrationApplications,
   reviewRegistrationApplication,
   fetchManagementDisputes,
@@ -27,6 +23,7 @@ interface ManagementPageProps {
 
 export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'orders' }) => {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
 
   // Overview State
   const [overview, setOverview] = useState<ManagementOverviewResponse | null>(null);
@@ -36,13 +33,10 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
   // Tabs
   const [activeTab, setActiveTab] = useState<'orders' | 'applications' | 'disputes' | 'audit'>(defaultTab);
 
-  // Orders State
-  const [orders, setOrders] = useState<OrderItem[]>([]);
-  const [ordersPagination, setOrdersPagination] = useState<PaginationMeta>({ page: 1, limit: 10, total: 0, totalPages: 0 });
-  const [ordersLoading, setOrdersLoading] = useState(false);
-  const [orderSourceFilter, setOrderSourceFilter] = useState<'all' | 'advertiser' | 'external_g4x'>('all');
-  const [orderStatusFilter, setOrderStatusFilter] = useState('');
-  const [orderSearch, setOrderSearch] = useState('');
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    setActiveTab(tab === 'disputes' ? 'disputes' : defaultTab);
+  }, [defaultTab, searchParams]);
 
   // Applications State
   const [applications, setApplications] = useState<RegistrationApplicationItem[]>([]);
@@ -70,10 +64,6 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
   const [submittingDispute, setSubmittingDispute] = useState(false);
   const [disputeMessage, setDisputeMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  // Order Action State
-  const [actionInProgressOrderId, setActionInProgressOrderId] = useState<number | null>(null);
-  const [orderActionFeedback, setOrderActionFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-
   // Load Overview
   const loadOverview = useCallback(async () => {
     setLoadingOverview(true);
@@ -87,26 +77,6 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
       setLoadingOverview(false);
     }
   }, []);
-
-  // Load Orders
-  const loadOrders = useCallback(async (page: number = 1) => {
-    setOrdersLoading(true);
-    try {
-      const res = await fetchManagementOrders({
-        source: orderSourceFilter === 'all' ? undefined : orderSourceFilter,
-        status: orderStatusFilter || undefined,
-        search: orderSearch || undefined,
-        page,
-        limit: 10,
-      });
-      setOrders(Array.isArray(res?.orders) ? res.orders : []);
-      setOrdersPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
-    } catch (err: any) {
-      console.error('Failed to load management orders:', err);
-    } finally {
-      setOrdersLoading(false);
-    }
-  }, [orderSourceFilter, orderStatusFilter, orderSearch]);
 
   // Load Applications
   const loadApplications = useCallback(async (page: number = 1) => {
@@ -146,45 +116,12 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
   }, [loadOverview]);
 
   useEffect(() => {
-    if (activeTab === 'orders') {
-      loadOrders(1);
-    } else if (activeTab === 'applications') {
+    if (activeTab === 'applications') {
       loadApplications(1);
     } else if (activeTab === 'disputes') {
       loadDisputes(1);
     }
-  }, [activeTab, loadOrders, loadApplications, loadDisputes]);
-
-  // Order Admin Final Approval Handler
-  const handleApproveOrder = async (orderId: number) => {
-    setActionInProgressOrderId(orderId);
-    setOrderActionFeedback(null);
-    try {
-      const res = await approveOrderAdmin(orderId, 'Operational final approval by Manager console');
-      setOrderActionFeedback({ text: res.message || `Order #${orderId} approved successfully.`, type: 'success' });
-      loadOrders(ordersPagination?.page ?? 1);
-      loadOverview();
-    } catch (err: any) {
-      setOrderActionFeedback({ text: err.message || `Failed to approve order #${orderId}`, type: 'error' });
-    } finally {
-      setActionInProgressOrderId(null);
-    }
-  };
-
-  // Order Discord Publish Handler
-  const handlePublishOrder = async (orderId: number) => {
-    setActionInProgressOrderId(orderId);
-    setOrderActionFeedback(null);
-    try {
-      const res = await publishOrderCard(orderId);
-      setOrderActionFeedback({ text: res.message || `Order #${orderId} published to Discord.`, type: 'success' });
-      loadOrders(ordersPagination?.page ?? 1);
-    } catch (err: any) {
-      setOrderActionFeedback({ text: err.message || `Failed to publish order #${orderId}`, type: 'error' });
-    } finally {
-      setActionInProgressOrderId(null);
-    }
-  };
+  }, [activeTab, loadApplications, loadDisputes]);
 
   // Submit Application Review
   const handleSubmitAppReview = async (e: React.FormEvent) => {
@@ -440,22 +377,6 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
           Platform Audit Trail
         </button>
       </div>
-
-      {/* Global Feedback Banner */}
-      {orderActionFeedback && (
-        <div
-          style={{
-            padding: '0.85rem 1.25rem',
-            borderRadius: 'var(--radius-xs)',
-            fontSize: '0.85rem',
-            backgroundColor: orderActionFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-            color: orderActionFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
-            border: `1px solid ${orderActionFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)'}`,
-          }}
-        >
-          {orderActionFeedback.text}
-        </div>
-      )}
 
       {/* Tab 1: Unified Order Management Pipeline Workspace */}
       {activeTab === 'orders' && (
