@@ -3,17 +3,15 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   ManagementOverviewResponse,
-  RegistrationApplicationItem,
   DisputeItem,
   PaginationMeta,
 } from '../types/operations';
 import {
   fetchManagementOverview,
-  fetchRegistrationApplications,
-  reviewRegistrationApplication,
   fetchManagementDisputes,
   resolveManagementDispute,
 } from '../services/operations';
+import { ApplicationsWorkspace, AdminModuleNavigation } from '../components/admin/NativeAdminModules';
 import { LoadingState } from '../components/ui/LoadingState';
 import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
 
@@ -37,20 +35,6 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
     const tab = searchParams.get('tab');
     setActiveTab(tab === 'disputes' ? 'disputes' : defaultTab);
   }, [defaultTab, searchParams]);
-
-  // Applications State
-  const [applications, setApplications] = useState<RegistrationApplicationItem[]>([]);
-  const [appsPagination, setAppsPagination] = useState<PaginationMeta>({ page: 1, limit: 10, total: 0, totalPages: 0 });
-  const [appsLoading, setAppsLoading] = useState(false);
-  const [appCategoryFilter, setAppCategoryFilter] = useState('');
-  const [appStatusFilter, setAppStatusFilter] = useState('pending');
-
-  // Application Review Modal
-  const [selectedApp, setSelectedApp] = useState<RegistrationApplicationItem | null>(null);
-  const [appDecision, setAppDecision] = useState<'approve' | 'reject' | 'request_info'>('approve');
-  const [appReviewNotes, setAppReviewNotes] = useState('');
-  const [submittingAppReview, setSubmittingAppReview] = useState(false);
-  const [appReviewMessage, setAppReviewMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Disputes State
   const [disputes, setDisputes] = useState<DisputeItem[]>([]);
@@ -78,24 +62,6 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
     }
   }, []);
 
-  // Load Applications
-  const loadApplications = useCallback(async (page: number = 1) => {
-    setAppsLoading(true);
-    try {
-      const res = await fetchRegistrationApplications({
-        category: appCategoryFilter || undefined,
-        status: appStatusFilter || undefined,
-        page,
-        limit: 10,
-      });
-      setApplications(Array.isArray(res?.applications) ? res.applications : []);
-      setAppsPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
-    } catch (err: any) {
-      console.error('Failed to load applications:', err);
-    } finally {
-      setAppsLoading(false);
-    }
-  }, [appCategoryFilter, appStatusFilter]);
 
   // Load Disputes
   const loadDisputes = useCallback(async (page: number = 1) => {
@@ -116,39 +82,10 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
   }, [loadOverview]);
 
   useEffect(() => {
-    if (activeTab === 'applications') {
-      loadApplications(1);
-    } else if (activeTab === 'disputes') {
+    if (activeTab === 'disputes') {
       loadDisputes(1);
     }
-  }, [activeTab, loadApplications, loadDisputes]);
-
-  // Submit Application Review
-  const handleSubmitAppReview = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedApp) return;
-    setSubmittingAppReview(true);
-    setAppReviewMessage(null);
-    try {
-      await reviewRegistrationApplication(selectedApp.id, appDecision, appReviewNotes);
-      setAppReviewMessage({
-        text: `Application #${selectedApp.id} updated with decision: ${appDecision}`,
-        type: 'success',
-      });
-      setTimeout(() => {
-        setSelectedApp(null);
-        loadApplications(appsPagination?.page ?? 1);
-        loadOverview();
-      }, 1200);
-    } catch (err: any) {
-      setAppReviewMessage({
-        text: err.message || 'Failed to submit application review',
-        type: 'error',
-      });
-    } finally {
-      setSubmittingAppReview(false);
-    }
-  };
+  }, [activeTab, loadDisputes]);
 
   // Submit Dispute Resolution
   const handleSubmitDisputeResolution = async (e: React.FormEvent) => {
@@ -199,6 +136,7 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+      <AdminModuleNavigation />
       {/* Header Banner */}
       <div
         className="card-surface"
@@ -386,166 +324,7 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
         />
       )}
 
-      {/* Tab 2: Registration Applications Queue */}
-      {activeTab === 'applications' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-            <select
-              value={appCategoryFilter}
-              onChange={(e) => setAppCategoryFilter(e.target.value)}
-              style={{
-                backgroundColor: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-primary)',
-                padding: '0.4rem 0.8rem',
-                borderRadius: 'var(--radius-xs)',
-                fontSize: '0.85rem',
-              }}
-            >
-              <option value="">All Categories</option>
-              <option value="booster">Booster</option>
-              <option value="pilot">Account Pilot</option>
-              <option value="advertiser">Advertiser</option>
-              <option value="exchanger">Exchanger</option>
-            </select>
-
-            <select
-              value={appStatusFilter}
-              onChange={(e) => setAppStatusFilter(e.target.value)}
-              style={{
-                backgroundColor: 'var(--bg-surface)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-primary)',
-                padding: '0.4rem 0.8rem',
-                borderRadius: 'var(--radius-xs)',
-                fontSize: '0.85rem',
-              }}
-            >
-              <option value="pending">Pending</option>
-              <option value="info_requested">Info Requested</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="">All Statuses</option>
-            </select>
-          </div>
-
-          <div className="card-surface" style={{ padding: 0, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
-            {appsLoading ? (
-              <div style={{ padding: '3rem' }}>
-                <LoadingState message="Fetching registration applications..." />
-              </div>
-            ) : applications.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                No registration applications found.
-              </div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>App ID</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>User</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Category</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Status</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Identity</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Submitted</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600, textAlign: 'right' }}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {applications.map((app) => (
-                      <tr key={app.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                        <td style={{ padding: '0.9rem 1.25rem', fontWeight: 700 }}>#{app.id}</td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
-                          <div style={{ fontWeight: 600 }}>{app.username}</div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{app.userId}</div>
-                        </td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
-                          <span
-                            style={{
-                              backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                              padding: '0.2rem 0.5rem',
-                              borderRadius: 'var(--radius-xs)',
-                              fontSize: '0.75rem',
-                              textTransform: 'uppercase',
-                              fontWeight: 600,
-                            }}
-                          >
-                            {app.category}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
-                          <span
-                            style={{
-                              padding: '0.2rem 0.6rem',
-                              borderRadius: 'var(--radius-xs)',
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              textTransform: 'capitalize',
-                              backgroundColor:
-                                app.status === 'approved'
-                                  ? 'rgba(16, 185, 129, 0.15)'
-                                  : app.status === 'rejected'
-                                  ? 'rgba(239, 68, 68, 0.15)'
-                                  : 'rgba(245, 158, 11, 0.15)',
-                              color:
-                                app.status === 'approved'
-                                  ? 'var(--status-success)'
-                                  : app.status === 'rejected'
-                                  ? 'var(--status-danger)'
-                                  : 'var(--status-warning)',
-                            }}
-                          >
-                            {app.status}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
-                          <span
-                            style={{
-                              fontSize: '0.75rem',
-                              color: app.identityStatus === 'verified' ? 'var(--status-success)' : 'var(--text-muted)',
-                            }}
-                          >
-                            {app.identityStatus}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                          {new Date(app.createdAt).toLocaleDateString()}
-                        </td>
-                        <td style={{ padding: '0.9rem 1.25rem', textAlign: 'right' }}>
-                          {user?.discordId === app.userId ? (
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                              Self-review blocked
-                            </span>
-                          ) : (
-                            <button
-                              onClick={() => {
-                                setSelectedApp(app);
-                                setAppDecision('approve');
-                                setAppReviewNotes('');
-                                setAppReviewMessage(null);
-                              }}
-                              className="btn btn-sm"
-                              style={{
-                                backgroundColor: 'var(--primary-purple)',
-                                color: '#ffffff',
-                                fontSize: '0.75rem',
-                                padding: '0.3rem 0.65rem',
-                              }}
-                            >
-                              Review
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      {activeTab === 'applications' && <ApplicationsWorkspace />}
 
       {/* Tab 3: Disputes Escalation */}
       {activeTab === 'disputes' && (
@@ -682,161 +461,6 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      )}
-
-      {/* Application Review Modal */}
-      {selectedApp && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '1rem',
-          }}
-        >
-          <div
-            className="card-surface"
-            style={{
-              maxWidth: '540px',
-              width: '100%',
-              padding: '2rem',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-subtle)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>Review Application #{selectedApp.id}</h3>
-              <button
-                onClick={() => setSelectedApp(null)}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '1.2rem', cursor: 'pointer' }}
-              >
-                &times;
-              </button>
-            </div>
-
-            <div
-              style={{
-                backgroundColor: 'var(--bg-main)',
-                padding: '1rem',
-                borderRadius: 'var(--radius-xs)',
-                fontSize: '0.85rem',
-                marginBottom: '1.5rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.5rem',
-              }}
-            >
-              <div><strong>Applicant:</strong> {selectedApp.username} ({selectedApp.userId})</div>
-              <div><strong>Role Category:</strong> {selectedApp.category.toUpperCase()}</div>
-              <div><strong>Qualifications:</strong> {selectedApp.qualifications || 'None provided'}</div>
-              <div><strong>Identity Status:</strong> {selectedApp.identityStatus}</div>
-            </div>
-
-            <form onSubmit={handleSubmitAppReview} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>Decision</label>
-                <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.85rem' }}>
-                    <input
-                      type="radio"
-                      name="appDecision"
-                      value="approve"
-                      checked={appDecision === 'approve'}
-                      onChange={() => setAppDecision('approve')}
-                    />
-                    <span style={{ color: 'var(--status-success)', fontWeight: 600 }}>Approve</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.85rem' }}>
-                    <input
-                      type="radio"
-                      name="appDecision"
-                      value="request_info"
-                      checked={appDecision === 'request_info'}
-                      onChange={() => setAppDecision('request_info')}
-                    />
-                    <span style={{ color: 'var(--status-warning)', fontWeight: 600 }}>Request Info</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontSize: '0.85rem' }}>
-                    <input
-                      type="radio"
-                      name="appDecision"
-                      value="reject"
-                      checked={appDecision === 'reject'}
-                      onChange={() => setAppDecision('reject')}
-                    />
-                    <span style={{ color: 'var(--status-danger)', fontWeight: 600 }}>Reject</span>
-                  </label>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-                  Audit Review Notes
-                </label>
-                <textarea
-                  value={appReviewNotes}
-                  onChange={(e) => setAppReviewNotes(e.target.value)}
-                  placeholder="Review notes or feedback for applicant..."
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    backgroundColor: 'var(--bg-main)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-xs)',
-                    color: 'var(--text-primary)',
-                    padding: '0.75rem',
-                    fontSize: '0.85rem',
-                  }}
-                />
-              </div>
-
-              {appReviewMessage && (
-                <div
-                  style={{
-                    padding: '0.75rem',
-                    borderRadius: 'var(--radius-xs)',
-                    fontSize: '0.85rem',
-                    backgroundColor: appReviewMessage.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                    color: appReviewMessage.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
-                  }}
-                >
-                  {appReviewMessage.text}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedApp(null)}
-                  disabled={submittingAppReview}
-                  className="btn btn-sm"
-                  style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submittingAppReview}
-                  className="btn btn-sm"
-                  style={{
-                    backgroundColor: appDecision === 'approve' ? 'var(--status-success)' : 'var(--status-danger)',
-                    color: '#ffffff',
-                    fontWeight: 700,
-                  }}
-                >
-                  {submittingAppReview ? 'Submitting...' : 'Confirm Decision'}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

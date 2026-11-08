@@ -26,6 +26,9 @@ import { reviewApplication } from '../services/registrationService';
 import { publishOrRefreshOrderCard, getGlobalDiscordClient } from '../services/orderDiscordService';
 import { KYC_DOCS_DIR, validateKycDocumentReference } from '../services/kycDocumentSecurity';
 
+import { configureChannelMapping, inspectMappingConnectivity } from '../services/channelMappingConfigurationService';
+import { listChannelMappings } from '../services/discordProvisioningService';
+
 export const operationsRouter = Router();
 
 // ─── Middleware Guards ────────────────────────────────────────────────────────
@@ -663,6 +666,21 @@ operationsRouter.post('/management/orders/:id/publish', requireAuth, requireLive
   }
 });
 
+const applicationPermissions: Record<string, Permission> = {
+  booster: Permission.BOOSTER_APPLICATION_REVIEW, pilot: Permission.PILOT_APPLICATION_REVIEW,
+  advertiser: Permission.ADVERTISER_APPLICATION_REVIEW, exchanger: Permission.EXCHANGER_APPLICATION_REVIEW,
+};
+function applicationSummary(application: any) {
+  // General application review does not expose identity document references or document bytes.
+  return { id: application.id, userId: application.userId, username: application.user.username,
+    displayName: application.user.displayName, category: application.category, status: application.status,
+    identityStatus: application.identityStatus, game: application.game, service: application.service,
+    submittedAt: application.submittedAt, createdAt: application.submittedAt,
+    reviewedAt: application.reviewedAt, reviewedBy: application.reviewedBy,
+    reviewerNotes: application.reviewNotes, rejectionReason: application.rejectionReason,
+    supplementalInfo: application.supplementalInfo, roleSyncStatus: application.roleSyncStatus };
+}
+
 /**
  * GET /management/applications — Registration applications queue (booster, pilot, advertiser, exchanger)
  */
@@ -673,18 +691,28 @@ operationsRouter.get('/management/applications', requireAuth, requireLivePermiss
   Permission.EXCHANGER_APPLICATION_REVIEW,
 ]), async (req: Request, res: Response): Promise<void> => {
   try {
-    const category = req.query.category ? String(req.query.category) : undefined;
-    const status = req.query.status ? String(req.query.status) : undefined;
-    const page = Math.max(1, Number(req.query.page) || 1);
-    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 15));
+    const actorId = (req as AuthenticatedRequest).user.discordId;
+    const categories = [];
+    for (const [category, permission] of Object.entries(applicationPermissions)) {
+      if ((await authorize(actorId, permission)).allowed) categories.push(category);
+    }
+    const category = typeof req.query.category === 'string' ? req.query.category : '';
+    if (category && !categories.includes(category)) { res.status(403).json({ error: 'UNAUTHORIZED_REVIEWER' }); return; }
+    const page = Number.isSafeInteger(Number(req.query.page)) ? Math.max(1, Number(req.query.page)) : 1;
+    const limit = Number.isSafeInteger(Number(req.query.limit)) ? Math.min(50, Math.max(1, Number(req.query.limit))) : 15;
     const skip = (page - 1) * limit;
-
-    const where: any = {};
-    if (category) where.category = category;
-    if (status) {
-      where.status = status;
-    } else {
-      where.status = { in: ['pending', 'under_review', 'info_requested', 'awaiting_identity_verification'] };
+    const where: any = { category: category || { in: categories } };
+    const status = typeof req.query.status === 'string' ? req.query.status : '';
+    if (status && status !== 'all') where.status = status;
+    else if (!status) where.status = { in: ['pending', 'under_review', 'info_requested', 'awaiting_identity_verification'] };
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    if (search) where.OR = [{ userId: { contains: search } }, { user: { username: { contains: search } } }, { user: { displayName: { contains: search } } }];
+    for (const [key, bound] of [['startDate', 'gte'], ['endDate', 'lte']] as const) {
+      if (!req.query[key]) continue;
+      const value = new Date(String(req.query[key]));
+      if (isNaN(value.getTime())) { res.status(400).json({ error: 'INVALID_DATE' }); return; }
+      value.setUTCHours(bound === 'gte' ? 0 : 23, bound === 'gte' ? 0 : 59, bound === 'gte' ? 0 : 59, bound === 'gte' ? 0 : 999);
+      where.submittedAt = { ...where.submittedAt, [bound]: value };
     }
 
     const [total, applications] = await Promise.all([
@@ -699,7 +727,7 @@ operationsRouter.get('/management/applications', requireAuth, requireLivePermiss
           service: { select: { id: true, displayName: true } },
           reviewedBy: { select: { discordId: true, username: true, displayName: true } },
         },
-        orderBy: { submittedAt: 'desc' },
+        orderBy: [{ submittedAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit,
       }),
@@ -718,12 +746,34 @@ operationsRouter.get('/management/applications', requireAuth, requireLivePermiss
         total,
         totalPages,
       },
-      applications,
+      applications: applications.map(applicationSummary),
     });
   } catch (err: any) {
     console.error('[Operations] Management applications error:', err);
     res.status(500).json({ error: 'Failed to fetch registration applications' });
   }
+});
+
+operationsRouter.get('/management/applications/:id', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) { res.status(400).json({ error: 'INVALID_APPLICATION_ID' }); return; }
+  try {
+    const application = await prisma.registrationApplication.findUnique({ where: { id }, include: {
+      user: { select: { username: true, displayName: true } }, game: { select: { displayName: true } },
+      service: { select: { displayName: true } }, reviewedBy: { select: { username: true } },
+    } });
+    if (!application) { res.status(404).json({ error: 'APPLICATION_NOT_FOUND' }); return; }
+    const actorId = (req as AuthenticatedRequest).user.discordId;
+    const permission = applicationPermissions[application.category];
+    if (!permission || !(await authorize(actorId, permission)).allowed) { res.status(403).json({ error: 'UNAUTHORIZED_REVIEWER' }); return; }
+    const history = await prisma.auditLog.findMany({ where: { entityType: 'RegistrationApplication', entityId: String(id) },
+      select: { id: true, action: true, reason: true, newValues: true, createdAt: true, actor: { select: { username: true } } }, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }] });
+    let qualifications: Record<string, unknown> = {};
+    try { const raw = JSON.parse(application.qualifications); if (raw && typeof raw === 'object' && !Array.isArray(raw)) qualifications = Object.fromEntries(Object.entries(raw).filter(([key]) => !/identity|passport|selfie|document|file|receipt/i.test(key))); } catch {}
+    const actions = actorId === application.userId || ['approved', 'rejected', 'cancelled'].includes(application.status) ? [] : ['approve', 'reject', 'request_info'];
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, application: { ...applicationSummary(application), qualifications, actions }, history: history.map(({ newValues, ...event }) => { let notes: string | null = null; try { const values = JSON.parse(newValues || '{}'); notes = typeof values.reviewNotes === 'string' ? values.reviewNotes : typeof values.notes === 'string' ? values.notes : typeof values.reason === 'string' ? values.reason : null; } catch {} return { ...event, notes }; }) });
+  } catch { res.status(500).json({ error: 'APPLICATION_DETAILS_FAILED' }); }
 });
 
 /**
@@ -1338,4 +1388,17 @@ operationsRouter.get('/management/kyc/documents/:docRef', requireAuth, requireKy
   } catch (err: any) {
     res.status(500).json({ error: 'DOC_RETRIEVAL_FAILED', message: 'Failed to retrieve document' });
   }
+});
+
+operationsRouter.get('/management/channel-mappings', requireAuth, requireManagementAccess, async (_req: Request, res: Response) => {
+  try { res.json({ success: true, mappings: await listChannelMappings() }); } catch { res.status(500).json({ error: 'MAPPINGS_UNAVAILABLE' }); }
+});
+for (const method of ['post', 'put', 'delete'] as const) {
+  operationsRouter[method]('/management/channel-mappings/:key', requireAuth, requireLivePermission(Permission.SERVICE_CONFIG_MANAGE), requireCsrf, async (req: Request, res: Response) => {
+    try { res.json(await configureChannelMapping((req as AuthenticatedRequest).user.discordId, req.params.key, req.body, method === 'post' ? 'create' : method === 'put' ? 'update' : 'remove')); }
+    catch (error: any) { res.status(400).json({ error: error.message }); }
+  });
+}
+operationsRouter.post('/management/channel-mappings/:key/verify', requireAuth, requireLivePermission(Permission.SERVICE_CONFIG_MANAGE), requireCsrf, async (req: Request, res: Response) => {
+  try { res.json(await inspectMappingConnectivity(req.params.key)); } catch (error: any) { res.status(400).json({ error: error.message }); }
 });

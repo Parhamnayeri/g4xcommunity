@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { AdminModuleNavigation } from '../components/admin/NativeAdminModules';
 import { LoadingState } from '../components/ui/LoadingState';
 import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
 import {
@@ -243,6 +244,7 @@ export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      <AdminModuleNavigation />
       {/* Portal Header */}
       <div
         className="card-surface"
