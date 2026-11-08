@@ -18,7 +18,7 @@ import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 import { reviewRunProof, resolveOrderDispute, getDisputesForUser } from '../services/orderDisputeService';
 import { recordStaffReview, recordAdminFinalApproval } from '../services/financeV2/g4xBoostReleaseService';
-import { getSeparatedOrdersList, getCategorizedOrders, publishOrder, getOrderDiagnostics, getOrderAuditHistory } from '../services/orderLifecycleService';
+import { getSeparatedOrdersList, getCategorizedOrders, publishOrder, getOrderDiagnostics, getOrderAuditHistory, updateOrderOperationalFields } from '../services/orderLifecycleService';
 import { assignOrderBoosters } from '../services/assignmentService';
 import { parsePresignRoles } from '../services/presignReviewService';
 import { orderWorkspaceActions } from '../services/orderWorkspacePolicy';
@@ -567,6 +567,31 @@ operationsRouter.get('/management/orders/:id', requireAuth, requireLivePermissio
     res.status(500).json({ error: 'ORDER_DETAILS_FAILED', message: err.message });
   }
 });
+
+/**
+ * PATCH & POST /management/orders/:id/operational — Edit permitted operational order fields with immutable audit history
+ */
+const handleOperationalOrderEdit = async (req: Request, res: Response): Promise<void> => {
+  const orderId = Number(req.params.id);
+  const { notes, externalOrderId, reason } = req.body;
+  const actorId = (req as AuthenticatedRequest).user.discordId;
+
+  try {
+    const result = await updateOrderOperationalFields({
+      orderId,
+      actorId,
+      fields: { notes, externalOrderId },
+      reason,
+    });
+    res.json(result);
+  } catch (err: any) {
+    const status = err.code === 'NOT_FOUND' ? 404 : 400;
+    res.status(status).json({ error: err.message || 'Failed to update order operational fields' });
+  }
+};
+
+operationsRouter.patch('/management/orders/:id/operational', requireAuth, requireLivePermission(Permission.ORDER_EDIT_OPERATIONAL), requireCsrf, handleOperationalOrderEdit);
+operationsRouter.post('/management/orders/:id/operational', requireAuth, requireLivePermission(Permission.ORDER_EDIT_OPERATIONAL), requireCsrf, handleOperationalOrderEdit);
 
 /** Select registered applicants; existing assignment engine owns approvals, reservations and Discord updates. */
 operationsRouter.post('/management/orders/:id/assign', requireAuth, requireLivePermission(Permission.ORDER_ASSIGN), requireCsrf, async (req: Request, res: Response): Promise<void> => {

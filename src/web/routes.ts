@@ -72,6 +72,8 @@ import {
   boosterCancelWithdrawal,
   adminExecuteManualPayout,
   adminRejectWithdrawal,
+  updateWithdrawalMetadata,
+  getWithdrawalAuditHistory,
 } from '../services/financeV2/boosterWithdrawalService';
 import {
   serializeUserWithdrawal,
@@ -1693,6 +1695,66 @@ router.post(
     } catch (err: any) {
       const status = err.message?.includes('LIVE_PAYOUTS_DISABLED') ? 403 : 400;
       res.status(status).json({ error: err.message || 'Withdrawal review failed' });
+    }
+  }
+);
+
+// ویرایش متادیتای درخواست برداشت توسط ادمین یا مالک (با ثبت سوابق قبلی و جدید در ممیزی)
+const handleWithdrawalMetadataEdit = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const id = Number(req.params.id);
+    const { notes, adminNotes, reason } = req.body;
+
+    const result = await updateWithdrawalMetadata({
+      requestId: id,
+      actorId: user.discordId,
+      notes,
+      adminNotes,
+      reason,
+    });
+
+    res.json({
+      success: true,
+      request: serializeAdminWithdrawal(result.request),
+      changedFields: result.changedFields,
+      previousValues: result.previousValues,
+      newValues: result.newValues,
+      reason: result.reason,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to update withdrawal metadata' });
+  }
+};
+
+router.patch(
+  '/admin/withdrawals/:id/metadata',
+  requireAuth,
+  requireRole('owner', 'admin'),
+  requireCsrf,
+  handleWithdrawalMetadataEdit
+);
+
+router.post(
+  '/admin/withdrawals/:id/metadata',
+  requireAuth,
+  requireRole('owner', 'admin'),
+  requireCsrf,
+  handleWithdrawalMetadataEdit
+);
+
+// تاریخچه ممیزی یک درخواست برداشت
+router.get(
+  '/admin/withdrawals/:id/audit-history',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const id = Number(req.params.id);
+      const logs = await getWithdrawalAuditHistory(id);
+      res.json({ success: true, logs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch withdrawal audit history' });
     }
   }
 );
