@@ -79,6 +79,31 @@ app.get(['/legacy', '/legacy/*'], (_req, res) => {
 // ─── روت‌های API و احراز هویت ──────────────────────────────────────────────
 // روت‌های اصلی API
 app.use('/api', router);
+// Unknown API paths must remain JSON errors, never the React entry point.
+app.use('/api', (_req, res) => {
+  res.status(404).json({ error: 'NOT_FOUND' });
+});
+
+function sendReactEntry(_req: express.Request, res: express.Response): void {
+  const frontendIndex = path.join(frontendDist, 'index.html');
+  res.sendFile(fs.existsSync(frontendIndex) ? frontendIndex : path.join(process.cwd(), 'public', 'index.html'));
+}
+
+// Reserve actual React pages before the backward-compatible root API aliases.
+// HTML navigation (including refresh) must reach React without an API session.
+// Explicit JSON clients retain the old aliases and all their authorization checks.
+const reactPages = [
+  '/', '/rules', '/privacy', '/dashboard', '/wallet', '/withdraw', '/profile',
+  '/booster/settings', '/settings', '/advertiser', '/exchange', '/exchanger',
+  '/orders', '/staff', '/management', '/management/orders', '/management/kyc',
+  '/admin', '/management/applications', '/admin/applications', '/admin/games',
+  '/admin/discord', '/admin/orders', '/owner', '/owner/orders', '/owner/finance',
+  '/owner/games', '/owner/discord', '/owner/users', '/owner/website',
+];
+app.get(reactPages, (req, res, next) => {
+  if (!req.accepts('html')) return next();
+  sendReactEntry(req, res);
+});
 // روت‌های احراز هویت بدون پیشوند /api (جهت انطباق با DISCORD_REDIRECT_URI=/auth/callback)
 app.use('/', router);
 
@@ -86,17 +111,12 @@ app.use('/', router);
 app.get('*', (req, res, next) => {
   // اگر روت متعلق به API، احراز هویت یا دروازه مالک بود و یافت نشد، نباید فایل HTML پس دهد
   if (
-    req.path.startsWith('/api/') ||
-    req.path.startsWith('/auth/') ||
+    /^\/(api|auth)(\/|$)/i.test(req.path) ||
     req.path.toLowerCase().startsWith('/ownergate')
   ) {
     return next();
   }
-  const frontendIndex = path.join(process.cwd(), 'frontend', 'dist', 'index.html');
-  if (fs.existsSync(frontendIndex)) {
-    return res.sendFile(frontendIndex);
-  }
-  return res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+  sendReactEntry(req, res);
 });
 
 // ─── مدیریت خطاهای Express ────────────────────────────────────────────────
