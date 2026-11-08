@@ -2,14 +2,13 @@
  * schema.ts — مقداردهی اولیه Prisma Client و اعتبارسنجی اتصال
  */
 import prisma from './db';
-import { seed } from './seed';
 
 export async function initializeDatabase(): Promise<void> {
   try {
     await prisma.$connect();
     console.log('[DB] ✅ Connected to SQLite database via Prisma.');
-    // اجرای seed برای اطمینان از وجود داده‌های پایه (roles, games, services)
-    await seed();
+    // Connectivity only. Fresh installations run the explicit, additive db:seed command.
+    // Startup must never rewrite administrator configuration or historical references.
   } catch (error) {
     console.error('[DB] ❌ Failed to initialize database:', error);
     throw error;
