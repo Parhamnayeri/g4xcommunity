@@ -212,7 +212,7 @@ export interface OrderItem {
   };
   discordMessageId?: string | null;
   discordChannelId?: string | null;
-  simplifiedStatus?: string;
+  simplifiedStatus?: string | { label: string; colorClass: string; rawStatus: string };
   runsCount?: number;
   assignedCount?: number;
   assignedBooster?: string | null;
@@ -233,69 +233,43 @@ export interface OrderItem {
 }
 
 export interface OrderDiagnosticsData {
-  orderId: number;
-  orderRef: string;
-  gameSlug: string;
-  gameName: string;
-  serviceId: number;
-  serviceName: string;
-  orderMode: string;
-  status: string;
-  paymentStatus: string;
-  grossAmountMinor: number;
-  grossAmountUsd: string;
-  boosterPoolMinor: number;
-  boosterPoolUsd: string;
-  platformFeeMinor: number;
-  platformFeeUsd: string;
-  advertiserFeeMinor: number;
-  advertiserFeeUsd: string;
-  currency: string;
-  customerId: string;
-  creatorId: string;
-  advertiserId: string | null;
-  discordMessageId: string | null;
-  discordChannelId: string | null;
-  executionChannelId: string | null;
-  reviewChannelId: string | null;
-  isPublishable: boolean;
-  publicationBlockReasons: string[];
-  explanationEnglish: string;
-  requiredNextActionEnglish: string;
-  assignments?: Array<{
-    userId: string;
-    assignedRole: string;
-    status: string;
-    assignedAt: string;
-    user?: { username: string; displayName: string | null };
-  }>;
-  runs?: Array<{
-    id: number;
-    runNumber: number;
-    status: string;
-    completedAt: string | null;
-  }>;
-  boostReleaseTracker?: {
-    stage: string;
-    proofSubmittedAt: string | null;
-    staffReviewedAt: string | null;
-    adminApprovedAt: string | null;
-    holdExpiresAt?: string | null;
-    payoutReleasedAt?: string | null;
-  } | null;
-  createdAt: string;
-  updatedAt: string;
+  orderId: number; orderRef: string; gameName: string; serviceName: string;
+  gameSlug: string; orderMode: string; status: string; paymentStatus: string;
+  grossAmountUsd: string; boosterPoolUsd: string; platformFeeUsd: string; advertiserFeeUsd: string; currency: string;
+  customerId: string | null; creatorId: string | null; advertiserId: string | null;
+  notes: string | null; externalOrderId: string | null;
+  discordMessageId: string | null; discordChannelId: string | null;
+  executionChannelId: string | null; reviewChannelId: string | null;
+  isPublishable: boolean; publicationBlockReasons: string[];
+  explanationEnglish: string; requiredNextActionEnglish: string;
+  activeReceiptRef: string | null; creatorWalletAvailableCents: number;
+  authorizedActions: string[]; auditAvailable: boolean; auditLogs: OrderAuditLogItem[];
+  requiredRoles: Array<{ roleName: string; quantity: number }>;
+  assignments: Array<{ id: number; userId: string; assignedRole: string; status: string; assignedAt: string;
+    replacementReason: string | null; user: { username: string; displayName: string | null } }>;
+  presigns: Array<{ id: number; userId: string; registeredRole: string; squadId: number | null;
+    user: { username: string; displayName: string | null } }>;
+  runs: Array<{ id: number; runNumber: number; status: string; completedAt: string | null;
+    proofs: Array<{ id: number; status: string; proofType: string; evidenceUrl: string; description: string | null;
+      reviewNotes: string | null; submittedAt: string; reviewedAt: string | null;
+      submittedBy: { username: string }; reviewedBy: { username: string } | null }> }>;
+  disputes: Array<{ id: number; status: string; disputeType: string; description: string;
+    openedById: string; resolutionNotes: string | null; resolvedById: string | null; createdAt: string }>;
+  escrowHolds: Array<{ id: number; status: string; reason: string }>;
+  boostReleaseTracker: { stage: string; proofSubmittedAt: string | null; staffReviewedAt: string | null;
+    adminFinalApprovedAt: string | null; holdExpiresAt: string | null } | null;
 }
 
 export interface OrderAuditLogItem {
   id: number;
-  actorId: string;
+  actorId: string | null;
+  actor?: { username: string; displayName: string | null } | null;
   actorUsername?: string;
   action: string;
   entityType: string;
   entityId: string;
   reason: string | null;
-  oldValues: string | null;
+  previousValues: string | null;
   newValues: string | null;
   isSuccess: boolean;
   createdAt: string;

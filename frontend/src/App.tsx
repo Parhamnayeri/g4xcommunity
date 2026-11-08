@@ -63,8 +63,11 @@ export const App: React.FC = () => {
             <Route path="/admin/applications" element={<RouteErrorBoundary routeName="Member Applications"><ApplicationsWorkspace /></RouteErrorBoundary>} />
             <Route path="/admin/games" element={<RouteErrorBoundary routeName="Game Registry"><GamesWorkspace /></RouteErrorBoundary>} />
             <Route path="/admin/discord" element={<RouteErrorBoundary routeName="Discord Channels"><ChannelsWorkspace /></RouteErrorBoundary>} />
+            <Route path="/admin/orders" element={<RouteErrorBoundary routeName="Admin Orders"><AdminPage defaultTab="orders" /></RouteErrorBoundary>} />
+
             {/* Owner Executive Portal — Website Phase 8 */}
             <Route path="/owner" element={<RouteErrorBoundary routeName="Owner Portal"><OwnerPage /></RouteErrorBoundary>} />
+            <Route path="/owner/orders" element={<RouteErrorBoundary routeName="Owner Orders"><OwnerPage defaultTab="orders" /></RouteErrorBoundary>} />
             <Route path="/owner/finance" element={<RouteErrorBoundary routeName="Owner Finance"><OwnerPage /></RouteErrorBoundary>} />
             <Route
               path="/owner/games"

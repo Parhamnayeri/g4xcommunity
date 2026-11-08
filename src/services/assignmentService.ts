@@ -22,6 +22,7 @@ export interface AssignOrderInput {
   candidates?: AssignCandidate[];
   squadId?: number | null;
   discordClient?: any;
+  requireCompleteRegisteredRoster?: boolean;
 }
 
 /**
@@ -75,7 +76,7 @@ export async function assignOrderBoosters(
       include: {
         requiredRoles: true,
         assignments: {
-          where: { status: 'assigned' },
+          where: { status: input.requireCompleteRegisteredRoster ? { in: ['assigned', 'accepted'] } : 'assigned' },
         },
       },
     });
@@ -119,6 +120,25 @@ export async function assignOrderBoosters(
         DomainErrorCode.ASSIGNMENT_CONFLICT,
         'No booster candidates or valid squad provided for assignment',
       );
+    }
+
+    if (input.requireCompleteRegisteredRoster) {
+      if (!['open_presign', 'presign_closed'].includes(order.status) || !['verified', 'unneeded'].includes(order.paymentStatus)) {
+        throw new Error('ORDER_NOT_ASSIGNABLE');
+      }
+      if (new Set(effectiveCandidates.map(c => c.userId)).size !== effectiveCandidates.length) throw new Error('DUPLICATE_BOOSTER');
+      for (const candidate of effectiveCandidates) {
+        const claim = candidate.claimId ? await tx.orderPresign.findFirst({ where: {
+          id: candidate.claimId, orderId: order.id, userId: candidate.userId, status: 'registered',
+        } }) : null;
+        if (!claim || !claim.registeredRole.split(',').map(r => r.trim().toLowerCase()).includes(candidate.assignedRole)) throw new Error('INVALID_REGISTERED_ROLE');
+      }
+      const service = await tx.gameService.findUniqueOrThrow({ where: { id: order.serviceId } });
+      const required = order.requiredRoles.length ? order.requiredRoles : service.serviceKey === 'mythic_plus' ?
+        [{ roleName: 'tank', quantity: 1 }, { roleName: 'healer', quantity: 1 }, { roleName: 'dps', quantity: 2 }] :
+        [{ roleName: order.orderMode === 'pilot' ? 'pilot' : 'booster', quantity: 1 }];
+      const roster = [...order.assignments, ...effectiveCandidates];
+      if (roster.length !== required.reduce((n, r) => n + r.quantity, 0) || required.some(r => roster.filter(c => c.assignedRole === r.roleName).length !== r.quantity)) throw new Error('COMPLETE_ROSTER_REQUIRED');
     }
 
     // ۴. اعتبارسنجی ظرفیت و نقش‌های مورد نیاز (Role Capacity Validation)

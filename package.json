@@ -68,7 +68,9 @@
     "test:schema-repair": "ts-node src/test/schema_drift_repair_suite.ts",
     "test:pagination-contract": "ts-node src/test/react_pagination_contract_regression_suite.ts",
     "test:native-admin": "ts-node src/test/native_admin_migration_suite.ts",
-    "test:native-admin:react": "node scripts/test-native-admin.cjs"
+    "test:native-admin:react": "node scripts/test-native-admin.cjs",
+    "test:order-workspace": "node scripts/test-order-workspace.cjs",
+    "test:order-workspace:api": "ts-node src/test/order_workspace_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"
