@@ -201,6 +201,7 @@ import { adminPortalRouter } from './adminPortalRoutes';
 import { ownerPortalRouter } from './ownerPortalRoutes';
 import { profileSettingsRouter } from './profileSettingsRoutes';
 import { policyRouter } from './policyRoutes';
+import { discordCommandsRouter } from './discordCommandsRoutes';
 
 export const router = Router();
 
@@ -212,6 +213,7 @@ router.use('/ownergate', ownerGateRouter);
 router.use('/', adminPortalRouter);
 router.use('/', ownerPortalRouter);
 router.use('/', policyRouter);
+router.use('/', discordCommandsRouter);
 
 // ─── روت‌های پروفایل کاربر، تنظیمات و پورتال بوستر (Website Phase 9) ─────────
 router.use('/', profileSettingsRouter);
