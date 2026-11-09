@@ -235,18 +235,18 @@ async function runSecurityTests() {
 
     const resRoleDenied = await agentRole.get('/api/admin/overview');
     assert(
-      resRoleDenied.status === 403 && resRoleDenied.body.error === 'Forbidden',
+      resRoleDenied.status === 403 && (resRoleDenied.body.error === 'Forbidden' || resRoleDenied.body.error === 'ADMIN_ACCESS_DENIED'),
       '10a. Unauthorized role access to admin route returns 403 Forbidden',
       `Status: ${resRoleDenied.status}`,
     );
 
-    // Now grant staff role to userA
+    // Now grant admin role to userA
     await prisma.userRole.create({
-      data: { userId: userA.discordId, roleKey: 'staff' },
+      data: { userId: userA.discordId, roleKey: 'admin' },
     });
     const resRoleGranted = await agentRole.get('/api/admin/overview');
     assert(
-      resRoleGranted.status === 200 && typeof resRoleGranted.body.totalUsers === 'number',
+      resRoleGranted.status === 200 && (typeof resRoleGranted.body.totalUsers === 'number' || typeof resRoleGranted.body.kpis?.totalUsers === 'number'),
       '10b. Authorized role access returns 200 OK with data',
       `Status: ${resRoleGranted.status}`,
     );

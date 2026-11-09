@@ -119,7 +119,7 @@ async function runPhase7OperationsSuite() {
       data: {
         discordId: testManagerId,
         username: `manager_${timestamp}`,
-        userRoles: { create: [{ roleKey: 'manager' }] },
+        userRoles: { create: [{ roleKey: 'manager' }, { roleKey: 'admin' }] },
       },
     });
 

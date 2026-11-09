@@ -78,7 +78,7 @@ import {
   calculateOrderFinancialSnapshot,
   splitPoolEquallyWithRemainder,
 } from '../services/financialCalculationEngine';
-import { getAdvertiserCommissionRate } from '../services/financialPolicyService';
+import { getAdvertiserCommissionRate, seedStandardFeePolicies } from '../services/financialPolicyService';
 import {
   LedgerV2AccountType,
   LedgerV2EntryType,
@@ -117,6 +117,8 @@ async function runFinanceV21HardeningSuite() {
   let g4xOrderId = 0;
 
   try {
+    await seedStandardFeePolicies();
+
     // ─── Setup test users & permissions ───────────────────────────────────
     for (const uid of [
       testAdvId,

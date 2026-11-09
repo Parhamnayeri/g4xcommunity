@@ -5,7 +5,15 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'g4x-release-blockers-'));
 fs.writeFileSync(path.join(directory, 'release_fixture.db'), '', { flag: 'wx' });
-const env = { ...process.env, DATABASE_URL: `file:${directory.replace(/\\/g, '/')}/release_fixture.db`, NODE_ENV: 'test', COOKIE_SECURE: 'false', WEB_BASE_URL: 'http://localhost:3000' };
+const env = {
+  ...process.env,
+  DATABASE_URL: `file:${directory.replace(/\\/g, '/')}/release_fixture.db`,
+  NODE_ENV: 'test',
+  COOKIE_SECURE: 'false',
+  WEB_BASE_URL: 'http://localhost:3000',
+  WITHDRAWAL_QUOTE_SIGNING_SECRET: process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET || 'test_withdrawal_quote_signing_secret_min_32_characters_high_entropy_safe',
+  EXCHANGE_QUOTE_SIGNING_SECRET: process.env.EXCHANGE_QUOTE_SIGNING_SECRET || 'test_exchange_quote_signing_secret_min_32_characters_high_entropy_safe',
+};
 for (const name of ['ESCROW_RELEASE_ENABLED', 'FINANCE_V2_LIVE_CREDITS_ENABLED', 'FINANCE_V2_LIVE_PAYOUTS_ENABLED', 'FINANCE_V2_P2P_SETTLEMENT_ENABLED', 'NOWPAYMENTS_LIVE_COLLECTION_ENABLED']) env[name] = 'false';
 env.NOWPAYMENTS_MODE = 'disabled';
 function run(args) {
