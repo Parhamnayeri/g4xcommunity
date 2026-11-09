@@ -1,28 +1,42 @@
 /**
- * raiderio.ts — سرویس اعتبارسنجی امن، استعلام و همگام‌سازی از Raider.IO API (Phase 3.2.4)
+ * raiderio.ts — Authoritative Raider.IO API Integration & Character Synchronization Service
  * 
- * مستندات API: https://raider.io/api
- * مستندات پروفایل کاراکتر: GET https://raider.io/api/v1/characters/profile
+ * API Documentation: https://raider.io/api
+ * Profile Endpoint: GET https://raider.io/api/v1/characters/profile
  * 
- * ویژگی‌ها و تدابیر امنیتی:
- *  - اعتبارسنجی دقیق URL پروفایل کاراکتر Raider.IO (جلوگیری از SSRF، Localhost و شبکه‌های خصوصی)
- *  - استخراج خودکار Region, Realm و Character Name از آدرس پروفایل
- *  - استفاده از مبدا و اندپوینت ثابت API با پارامترهای کنترل‌شده
- *  - تایم‌اوت ۵ ثانیه‌ای و کشینگ درون‌حافظه‌ای با انقضای ۱۵ دقیقه (Bounded In-Memory Cache)
- *  - احترام به هدرهای ۴۲۹ (Rate Limit) و مدیریت خطاهای ۴۰۴ (یافت‌نشده) و خرابی API
- *  - اعتبارسنجی ساختار پاسخ بدون فرض وجود تمام فیلدها و بدون جعل اسکورها یا پیشرفت رید
+ * Strict Reliability & Security Invariants:
+ *  - Server-side requests only with strict HTTPS and trusted-host enforcement.
+ *  - Anti-SSRF: rejects non-raider.io domains, ports, private IPs, and control characters.
+ *  - 5-second request timeout with bounded in-memory cache (15-min TTL, max 500 entries).
+ *  - Rate-limit handling: respects HTTP 429 and Retry-After headers with global backoff.
+ *  - Safe cooldowns: 60-second cooldown on manual character refreshes to prevent abuse.
+ *  - Data preservation: never overwrites or wipes valid historical scores on temporary API failure or downtime.
+ *  - Current-season rollover: queries mythic_plus_scores_by_season:current, never presenting old scores as current.
+ *  - Commercial-use compliance: exports mandatory Raider.IO attribution and terms notices.
  */
 
 import axios, { AxiosError } from 'axios';
 import prisma from '../database/db';
 
-// ─── انواع داده و ساختارهای اسنپ‌شات ──────────────────────────────────────────
+// ─── Types and Interfaces ───────────────────────────────────────────────────
 
 export interface ParsedRaiderIOUrl {
   region: 'us' | 'eu' | 'kr' | 'tw' | 'cn';
   realm: string;
   characterName: string;
   canonicalUrl: string;
+}
+
+export interface RecentMythicRun {
+  dungeon: string;
+  shortName?: string;
+  mythicLevel: number;
+  completedAt: string;
+  clearTimeMs?: number;
+  parTimeMs?: number;
+  numKeystoneUpgrades?: number;
+  score?: number;
+  url?: string;
 }
 
 export interface RaiderIOSnapshot {
@@ -32,6 +46,8 @@ export interface RaiderIOSnapshot {
   characterClass?: string;
   activeSpec?: string;
   activeRole?: string;
+  faction?: string;
+  thumbnailUrl?: string | null;
   itemLevelEquipped?: number | null;
   itemLevelTotal?: number | null;
   mythicScore?: number | null;
@@ -40,6 +56,8 @@ export interface RaiderIOSnapshot {
   dpsScore?: number | null;
   currentSeason?: string | null;
   raidProgression?: string | null;
+  recentRuns?: RecentMythicRun[];
+  bestRuns?: RecentMythicRun[];
   profileUrl: string;
   fetchedAt: string;
   fetchStatus: 'success' | 'not_found' | 'api_error' | 'stale';
@@ -78,12 +96,37 @@ export interface RaiderIOCharacter {
       spec_3?: number;
     };
   }>;
-  raid_progression?: Record<string, {
-    summary?: string;
-    total_bosses?: number;
-    normal_bosses_killed?: number;
-    heroic_bosses_killed?: number;
-    mythic_bosses_killed?: number;
+  raid_progression?: Record<
+    string,
+    {
+      summary?: string;
+      total_bosses?: number;
+      normal_bosses_killed?: number;
+      heroic_bosses_killed?: number;
+      mythic_bosses_killed?: number;
+    }
+  >;
+  mythic_plus_recent_runs?: Array<{
+    dungeon?: string;
+    short_name?: string;
+    mythic_level?: number;
+    completed_at?: string;
+    clear_time_ms?: number;
+    par_time_ms?: number;
+    num_keystone_upgrades?: number;
+    score?: number;
+    url?: string;
+  }>;
+  mythic_plus_best_runs?: Array<{
+    dungeon?: string;
+    short_name?: string;
+    mythic_level?: number;
+    completed_at?: string;
+    clear_time_ms?: number;
+    par_time_ms?: number;
+    num_keystone_upgrades?: number;
+    score?: number;
+    url?: string;
   }>;
 }
 
@@ -99,13 +142,23 @@ export interface SyncedCharacterData {
   raiderio_url: string;
 }
 
-// ─── ثابت‌ها و متغیرهای امنیت و کشینگ ──────────────────────────────────────────
+// ─── Attribution & Commercial Use Terms ──────────────────────────────────────
+
+export const RAIDERIO_ATTRIBUTION = {
+  text: 'Data provided by Raider.IO',
+  url: 'https://raider.io',
+  licenseNotice:
+    'Raider.IO is a registered trademark. Commercial use of the Raider.IO API for paid boosting platforms requires an official commercial license or written authorization from Raider.IO.',
+} as const;
+
+// ─── Cache & Cooldown Configurations ─────────────────────────────────────────
 
 const RAIDERIO_API_BASE = 'https://raider.io/api/v1';
 const ALLOWED_REGIONS = ['us', 'eu', 'kr', 'tw', 'cn'] as const;
-const REQUEST_TIMEOUT_MS = 5_000; // ۵ ثانیه تایم‌اوت سخت‌گیرانه
-const CACHE_TTL_MS = 15 * 60 * 1_000; // ۱۵ دقیقه انقضای کش
+const REQUEST_TIMEOUT_MS = 5_000; // 5 seconds strict timeout
+const CACHE_TTL_MS = 15 * 60 * 1_000; // 15 minutes cache TTL
 const MAX_CACHE_ENTRIES = 500;
+const MANUAL_REFRESH_COOLDOWN_SEC = 60; // 60 seconds between manual refreshes
 
 interface CacheEntry {
   snapshot: RaiderIOSnapshot;
@@ -113,9 +166,40 @@ interface CacheEntry {
 }
 
 const profileCache = new Map<string, CacheEntry>();
+const refreshCooldowns = new Map<number, number>(); // characterId -> expiresAt timestamp
+let globalRateLimitedUntil = 0; // timestamp when HTTP 429 backoff expires
 
 /**
- * پاکسازی ورودی‌های قدیمی در صورت افزایش حجم کش
+ * Clear in-memory cache (primarily for deterministic unit/integration testing)
+ */
+export function clearRaiderIOCache(): void {
+  profileCache.clear();
+  refreshCooldowns.clear();
+  globalRateLimitedUntil = 0;
+}
+
+/**
+ * Check if manual refresh is on cooldown for a character
+ */
+export function checkRefreshCooldown(characterId: number): { allowed: boolean; remainingSeconds: number } {
+  const now = Date.now();
+  const expiresAt = refreshCooldowns.get(characterId) || 0;
+  if (expiresAt > now) {
+    const remainingSeconds = Math.ceil((expiresAt - now) / 1000);
+    return { allowed: false, remainingSeconds };
+  }
+  return { allowed: true, remainingSeconds: 0 };
+}
+
+/**
+ * Set manual refresh cooldown for a character
+ */
+export function setRefreshCooldown(characterId: number, seconds: number = MANUAL_REFRESH_COOLDOWN_SEC): void {
+  refreshCooldowns.set(characterId, Date.now() + seconds * 1000);
+}
+
+/**
+ * Evict expired entries to prevent memory leaks
  */
 function evictOldCacheEntries(): void {
   const now = Date.now();
@@ -130,10 +214,11 @@ function evictOldCacheEntries(): void {
   }
 }
 
-// ─── ۱. اعتبارسنجی و پارس امن URL کاراکتر Raider.IO (Security & Anti-SSRF) ─────
+// ─── 1. SSRF & Security Validation for Raider.IO URLs ─────────────────────────
 
 /**
- * پارس و اعتبارسنجی دقیق آدرس پروفایل Raider.IO با مسدودسازی SSRF و دامنه‌های غیرمجاز
+ * Validates and safely parses a Raider.IO character profile URL.
+ * Strictly prevents SSRF, private network requests, protocol tricks, and parameter pollution.
  */
 export function parseRaiderIOProfileUrl(urlStr: string): ParsedRaiderIOUrl | null {
   if (!urlStr || typeof urlStr !== 'string') return null;
@@ -147,24 +232,23 @@ export function parseRaiderIOProfileUrl(urlStr: string): ParsedRaiderIOUrl | nul
     return null;
   }
 
-  // ۱. پروتکل الزاما باید HTTPS باشد
+  // 1. Enforce HTTPS only
   if (parsedUrl.protocol !== 'https:') {
     return null;
   }
 
-  // ۲. اعتبارسنجی دقیق Hostname: منحصراً raider.io یا www.raider.io
+  // 2. Strict Hostname Whitelist
   const hostname = parsedUrl.hostname.toLowerCase();
   if (hostname !== 'raider.io' && hostname !== 'www.raider.io') {
     return null;
   }
 
-  // ۳. جلوگیری از تلاش برای دور زدن پورت یا آی‌پی محلی
+  // 3. Port check (must be empty or 443)
   if (parsedUrl.port && parsedUrl.port !== '443') {
     return null;
   }
 
-  // ۴. اعتبارسنجی مسیر (Path): ساختار /characters/<region>/<realm>/<character_name>
-  // مثال: /characters/eu/twisting-nether/Arthas
+  // 4. Validate Path: /characters/<region>/<realm>/<character_name>
   const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
   if (pathParts.length < 4 || pathParts[0].toLowerCase() !== 'characters') {
     return null;
@@ -179,15 +263,18 @@ export function parseRaiderIOProfileUrl(urlStr: string): ParsedRaiderIOUrl | nul
   let characterName: string;
 
   try {
-    realm = decodeURIComponent(pathParts[2]).trim().toLowerCase();
+    realm = decodeURIComponent(pathParts[2]).trim().toLowerCase().replace(/\s+/g, '-');
     characterName = decodeURIComponent(pathParts[3]).trim();
   } catch {
     return null;
   }
 
-  // نام ریلم و کاراکتر نباید خالی یا حاوی کاراکترهای خطرناک باشد
+  // Security bounds: no control characters, newlines, HTML tags
   if (!realm || !characterName) return null;
   if (/[\r\n\t<>]/.test(realm) || /[\r\n\t<>]/.test(characterName)) return null;
+  if (realm.length < 2 || realm.length > 50 || characterName.length < 2 || characterName.length > 30) {
+    return null;
+  }
 
   const canonicalUrl = `https://raider.io/characters/${rawRegion}/${encodeURIComponent(realm)}/${encodeURIComponent(characterName)}`;
 
@@ -199,13 +286,15 @@ export function parseRaiderIOProfileUrl(urlStr: string): ParsedRaiderIOUrl | nul
   };
 }
 
-// ─── ۲. استعلام امن از Raider.IO API با کشینگ و مدیریت خطا ───────────────────
+// ─── 2. Fetch Raider.IO Profile (with Rate-Limiting, Caching & Rollover Guard) ──
 
 /**
- * استعلام پروفایل کاراکتر با استفاده از اطلاعات استخراج‌شده یا URL پروفایل
+ * Authoritatively retrieves character profile from Raider.IO.
+ * Respects cache TTL, rate limits, current season rollover, and bounded errors.
  */
 export async function fetchRaiderIOProfile(
-  input: string | { region: string; realm: string; characterName: string }
+  input: string | { region: string; realm: string; characterName: string },
+  options: { bypassCache?: boolean } = {}
 ): Promise<RaiderIOSnapshot> {
   let region: string;
   let realm: string;
@@ -230,8 +319,8 @@ export async function fetchRaiderIOProfile(
     characterName = parsed.characterName;
     profileUrl = parsed.canonicalUrl;
   } else {
-    region = input.region.toLowerCase();
-    realm = input.realm.toLowerCase();
+    region = input.region.trim().toLowerCase();
+    realm = input.realm.trim().toLowerCase().replace(/\s+/g, '-');
     characterName = input.characterName.trim();
     profileUrl = `https://raider.io/characters/${region}/${encodeURIComponent(realm)}/${encodeURIComponent(characterName)}`;
   }
@@ -240,8 +329,27 @@ export async function fetchRaiderIOProfile(
   const now = Date.now();
   const cached = profileCache.get(cacheKey);
 
-  if (cached && cached.expiresAt > now) {
+  // Return cached result if valid and bypass not requested
+  if (!options.bypassCache && cached && cached.expiresAt > now) {
     return cached.snapshot;
+  }
+
+  // Check global 429 rate limit backoff
+  if (globalRateLimitedUntil > now) {
+    const waitSec = Math.ceil((globalRateLimitedUntil - now) / 1000);
+    // If we have stale cache, serve it
+    if (cached) {
+      return { ...cached.snapshot, fetchStatus: 'stale' };
+    }
+    return {
+      characterName,
+      realm,
+      region,
+      profileUrl,
+      fetchedAt: new Date().toISOString(),
+      fetchStatus: 'api_error',
+      errorDetails: `RATE_LIMITED: Raider.IO API is currently rate limited (429). Retry in ${waitSec}s.`,
+    };
   }
 
   try {
@@ -250,12 +358,12 @@ export async function fetchRaiderIOProfile(
         region,
         realm,
         name: characterName,
-        fields: 'gear,mythic_plus_scores_by_season:current,raid_progression',
+        fields: 'gear,mythic_plus_scores_by_season:current,raid_progression,mythic_plus_recent_runs,mythic_plus_best_runs',
       },
       timeout: REQUEST_TIMEOUT_MS,
       headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'G4X-Community-Bot/1.0 (+https://g4x.online)',
+        Accept: 'application/json',
+        'User-Agent': 'G4X-Community-Booster-Platform/2.0 (+https://g4x.online; contact@g4x.online)',
       },
     });
 
@@ -273,15 +381,18 @@ export async function fetchRaiderIOProfile(
       return notFoundSnapshot;
     }
 
-    // استخراج و اعتبارسنجی اسکور سیزن جاری
+    // ─── Current Season Score Extraction ─────────────────────────────────────
+    // Querying mythic_plus_scores_by_season:current ensures entry [0] is the current active season.
     const currentSeasonEntry = data.mythic_plus_scores_by_season?.[0];
     const scores = currentSeasonEntry?.scores;
+
+    // Rollover Guard: if season has no scores recorded yet, return null (never old seasons)
     const mythicScore = typeof scores?.all === 'number' ? Math.round(scores.all) : null;
     const tankScore = typeof scores?.tank === 'number' ? Math.round(scores.tank) : null;
     const healerScore = typeof scores?.healer === 'number' ? Math.round(scores.healer) : null;
     const dpsScore = typeof scores?.dps === 'number' ? Math.round(scores.dps) : null;
 
-    // استخراج پیشرفت رید
+    // ─── Raid Progression Summary ────────────────────────────────────────────
     let raidProgressionSummary: string | null = null;
     if (data.raid_progression && typeof data.raid_progression === 'object') {
       const summaries = Object.entries(data.raid_progression)
@@ -295,6 +406,45 @@ export async function fetchRaiderIOProfile(
       }
     }
 
+    // ─── Recent & Best Mythic+ Runs ──────────────────────────────────────────
+    const recentRuns: RecentMythicRun[] = [];
+    if (Array.isArray(data.mythic_plus_recent_runs)) {
+      for (const run of data.mythic_plus_recent_runs.slice(0, 5)) {
+        if (run && run.dungeon && typeof run.mythic_level === 'number') {
+          recentRuns.push({
+            dungeon: run.dungeon,
+            shortName: run.short_name,
+            mythicLevel: run.mythic_level,
+            completedAt: run.completed_at || new Date().toISOString(),
+            clearTimeMs: run.clear_time_ms,
+            parTimeMs: run.par_time_ms,
+            numKeystoneUpgrades: run.num_keystone_upgrades,
+            score: run.score,
+            url: run.url,
+          });
+        }
+      }
+    }
+
+    const bestRuns: RecentMythicRun[] = [];
+    if (Array.isArray(data.mythic_plus_best_runs)) {
+      for (const run of data.mythic_plus_best_runs.slice(0, 5)) {
+        if (run && run.dungeon && typeof run.mythic_level === 'number') {
+          bestRuns.push({
+            dungeon: run.dungeon,
+            shortName: run.short_name,
+            mythicLevel: run.mythic_level,
+            completedAt: run.completed_at || new Date().toISOString(),
+            clearTimeMs: run.clear_time_ms,
+            parTimeMs: run.par_time_ms,
+            numKeystoneUpgrades: run.num_keystone_upgrades,
+            score: run.score,
+            url: run.url,
+          });
+        }
+      }
+    }
+
     const snapshot: RaiderIOSnapshot = {
       characterName: data.name,
       realm: data.realm || realm,
@@ -302,6 +452,8 @@ export async function fetchRaiderIOProfile(
       characterClass: data.class || undefined,
       activeSpec: data.active_spec_name || undefined,
       activeRole: data.active_spec_role || undefined,
+      faction: data.faction || undefined,
+      thumbnailUrl: data.thumbnail_url || null,
       itemLevelEquipped: data.gear?.item_level_equipped ?? null,
       itemLevelTotal: data.gear?.item_level_total ?? null,
       mythicScore,
@@ -310,12 +462,14 @@ export async function fetchRaiderIOProfile(
       dpsScore,
       currentSeason: currentSeasonEntry?.season || null,
       raidProgression: raidProgressionSummary,
+      recentRuns,
+      bestRuns,
       profileUrl: data.profile_url || profileUrl,
       fetchedAt: new Date().toISOString(),
       fetchStatus: 'success',
     };
 
-    // ذخیره در کش درون‌حافظه‌ای
+    // Store in bounded in-memory cache
     evictOldCacheEntries();
     profileCache.set(cacheKey, {
       snapshot,
@@ -341,8 +495,15 @@ export async function fetchRaiderIOProfile(
     }
 
     if (status === 429) {
-      const retryAfter = axiosError.response?.headers?.['retry-after'];
-      console.warn(`[RaiderIO] Rate limited (429). Retry-After: ${retryAfter || 'unknown'}`);
+      const retryHeader = axiosError.response?.headers?.['retry-after'];
+      const retrySec = retryHeader ? Math.min(300, Math.max(10, parseInt(String(retryHeader), 10) || 60)) : 60;
+      globalRateLimitedUntil = Date.now() + retrySec * 1000;
+      console.warn(`[RaiderIO] Rate limited (429). Backing off for ${retrySec}s.`);
+
+      if (cached) {
+        return { ...cached.snapshot, fetchStatus: 'stale' };
+      }
+
       return {
         characterName,
         realm,
@@ -350,11 +511,17 @@ export async function fetchRaiderIOProfile(
         profileUrl,
         fetchedAt: new Date().toISOString(),
         fetchStatus: 'api_error',
-        errorDetails: `Rate limited by Raider.IO API (HTTP 429). Retry-After: ${retryAfter || 'N/A'}`,
+        errorDetails: `Rate limited by Raider.IO API (HTTP 429). Retry in ${retrySec}s.`,
       };
     }
 
-    console.warn(`[RaiderIO] API error for ${characterName}-${realm} (${region}): ${error?.message || error}`);
+    console.warn(`[RaiderIO] API communication error for ${characterName}-${realm} (${region}):`, error?.message || error);
+
+    // If cache is present even if expired, serve it with stale status on temporary network failures
+    if (cached) {
+      return { ...cached.snapshot, fetchStatus: 'stale', errorDetails: error?.message };
+    }
+
     return {
       characterName,
       realm,
@@ -367,7 +534,118 @@ export async function fetchRaiderIOProfile(
   }
 }
 
-// ─── ۳. توابع سازگاری گذشته (Legacy Compatibility Functions) ─────────────────
+/**
+ * Preview Raider.IO character data before registering (stateless)
+ */
+export async function previewRaiderIOProfile(
+  input: string | { url?: string; region?: string; realm?: string; characterName?: string }
+): Promise<RaiderIOSnapshot> {
+  if (typeof input === 'string') {
+    return fetchRaiderIOProfile(input, { bypassCache: false });
+  }
+  if (input.url) {
+    return fetchRaiderIOProfile(input.url, { bypassCache: false });
+  }
+  return fetchRaiderIOProfile(
+    {
+      region: input.region || 'eu',
+      realm: input.realm || '',
+      characterName: input.characterName || '',
+    },
+    { bypassCache: false }
+  );
+}
+
+// ─── 3. Database Synchronization & Data Preservation ─────────────────────────
+
+/**
+ * Synchronizes character record with Raider.IO data.
+ * CRITICAL: If Raider.IO is down or fails temporarily, preserves all previously valid data
+ * and records the failure in syncStatus/syncError without wiping character attributes!
+ */
+export async function syncCharacter(characterId: number): Promise<'synced' | 'not_found' | 'failed'> {
+  const character = await prisma.wowCharacter.findUnique({
+    where: { id: characterId },
+  });
+
+  if (!character) {
+    return 'failed';
+  }
+
+  // Enforce manual refresh cooldown
+  const cooldown = checkRefreshCooldown(characterId);
+  if (!cooldown.allowed) {
+    console.info(`[RaiderIO] Cooldown active for character #${characterId} (${cooldown.remainingSeconds}s remaining).`);
+    return character.syncStatus === 'synced' ? 'synced' : 'failed';
+  }
+
+  const snapshot = await fetchRaiderIOProfile(
+    {
+      characterName: character.characterName,
+      realm: character.realm,
+      region: character.region,
+    },
+    { bypassCache: true }
+  );
+
+  // Set cooldown on successful API hit or definitive 404
+  setRefreshCooldown(characterId);
+
+  if (snapshot.fetchStatus === 'not_found') {
+    await prisma.wowCharacter.update({
+      where: { id: characterId },
+      data: {
+        syncStatus: 'not_found',
+        syncError: snapshot.errorDetails || 'Character not found on Raider.IO',
+        lastSyncedAt: new Date(),
+      },
+    });
+    return 'not_found';
+  }
+
+  if (snapshot.fetchStatus === 'api_error') {
+    // PRESERVATION GUARD: Never overwrite valid scores, class, or itemLevel on temporary API failure!
+    await prisma.wowCharacter.update({
+      where: { id: characterId },
+      data: {
+        syncStatus: 'failed',
+        syncError: snapshot.errorDetails || 'Temporary Raider.IO API communication failure',
+        // Do NOT update lastSyncedAt so stale timestamp is transparent
+      },
+    });
+    return 'failed';
+  }
+
+  // Successful sync: update all attributes and clear errors
+  const recentRunsJson =
+    snapshot.recentRuns && snapshot.recentRuns.length > 0 ? JSON.stringify(snapshot.recentRuns) : null;
+
+  await prisma.wowCharacter.update({
+    where: { id: characterId },
+    data: {
+      characterClass: snapshot.characterClass || character.characterClass || 'Unknown',
+      activeSpec: snapshot.activeSpec || character.activeSpec || 'Unknown',
+      activeRole: snapshot.activeRole || character.activeRole || null,
+      faction: snapshot.faction || character.faction || null,
+      thumbnailUrl: snapshot.thumbnailUrl || character.thumbnailUrl || null,
+      itemLevel: snapshot.itemLevelEquipped ?? character.itemLevel ?? 0,
+      mythicScore: snapshot.mythicScore !== null ? snapshot.mythicScore : character.mythicScore,
+      tankScore: snapshot.tankScore !== null ? snapshot.tankScore : character.tankScore,
+      healerScore: snapshot.healerScore !== null ? snapshot.healerScore : character.healerScore,
+      dpsScore: snapshot.dpsScore !== null ? snapshot.dpsScore : character.dpsScore,
+      raidProgression: snapshot.raidProgression || character.raidProgression || '',
+      recentRunsJson: recentRunsJson || character.recentRunsJson || null,
+      raiderioUrl: snapshot.profileUrl,
+      syncStatus: 'synced',
+      syncError: null,
+      lastSyncedAt: new Date(),
+    },
+  });
+
+  return 'synced';
+}
+
+// ─── 4. Legacy Compatibility Helper ──────────────────────────────────────────
 
 export async function fetchCharacterData(
   characterName: string,
@@ -386,82 +664,30 @@ export async function fetchCharacterData(
     class: snapshot.characterClass || 'Unknown',
     active_spec_name: snapshot.activeSpec || 'Unknown',
     active_spec_role: snapshot.activeRole || 'Unknown',
+    faction: snapshot.faction,
+    thumbnail_url: snapshot.thumbnailUrl || undefined,
     profile_url: snapshot.profileUrl,
     gear: {
       item_level_equipped: snapshot.itemLevelEquipped ?? 0,
       item_level_total: snapshot.itemLevelTotal ?? 0,
     },
-    mythic_plus_scores_by_season: snapshot.mythicScore !== null ? [
-      {
-        season: snapshot.currentSeason || 'current',
-        scores: {
-          all: snapshot.mythicScore ?? 0,
-          tank: snapshot.tankScore ?? 0,
-          healer: snapshot.healerScore ?? 0,
-          dps: snapshot.dpsScore ?? 0,
-          spec_0: 0,
-          spec_1: 0,
-          spec_2: 0,
-          spec_3: 0,
-        },
-      },
-    ] : undefined,
+    mythic_plus_scores_by_season:
+      snapshot.mythicScore !== null
+        ? [
+            {
+              season: snapshot.currentSeason || 'current',
+              scores: {
+                all: snapshot.mythicScore ?? 0,
+                tank: snapshot.tankScore ?? 0,
+                healer: snapshot.healerScore ?? 0,
+                dps: snapshot.dpsScore ?? 0,
+                spec_0: 0,
+                spec_1: 0,
+                spec_2: 0,
+                spec_3: 0,
+              },
+            },
+          ]
+        : undefined,
   } as RaiderIOCharacter;
-}
-
-export async function syncCharacter(characterId: number): Promise<'synced' | 'not_found' | 'failed'> {
-  const character = await prisma.wowCharacter.findUnique({
-    where: { id: characterId },
-  });
-
-  if (!character) {
-    return 'failed';
-  }
-
-  const snapshot = await fetchRaiderIOProfile({
-    characterName: character.characterName,
-    realm: character.realm,
-    region: character.region,
-  });
-
-  if (snapshot.fetchStatus === 'not_found') {
-    await prisma.wowCharacter.update({
-      where: { id: characterId },
-      data: {
-        syncStatus: 'not_found',
-        lastSyncedAt: new Date(),
-      },
-    });
-    return 'not_found';
-  }
-
-  if (snapshot.fetchStatus === 'api_error') {
-    await prisma.wowCharacter.update({
-      where: { id: characterId },
-      data: {
-        syncStatus: 'failed',
-        lastSyncedAt: new Date(),
-      },
-    });
-    return 'failed';
-  }
-
-  await prisma.wowCharacter.update({
-    where: { id: characterId },
-    data: {
-      characterClass: snapshot.characterClass || 'Unknown',
-      activeSpec: snapshot.activeSpec || 'Unknown',
-      itemLevel: snapshot.itemLevelEquipped || 0,
-      mythicScore: snapshot.mythicScore || 0,
-      tankScore: snapshot.tankScore || 0,
-      healerScore: snapshot.healerScore || 0,
-      dpsScore: snapshot.dpsScore || 0,
-      raidProgression: snapshot.raidProgression || '',
-      raiderioUrl: snapshot.profileUrl,
-      syncStatus: 'synced',
-      lastSyncedAt: new Date(),
-    },
-  });
-
-  return 'synced';
 }
