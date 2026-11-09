@@ -476,8 +476,8 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
           {!orders.length ? (
             <p>No orders match these filters.</p>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', textAlign: 'left', borderSpacing: '0 1rem' }}>
+            <div className="table-responsive-container" style={{ overflowX: 'auto' }}>
+              <table className="data-table" style={{ width: '100%', textAlign: 'left', borderSpacing: '0 1rem' }}>
                 <thead>
                   <tr>
                     {[

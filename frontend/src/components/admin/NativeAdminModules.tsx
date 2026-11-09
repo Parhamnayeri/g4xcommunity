@@ -359,8 +359,8 @@ export function ApplicationsWorkspace({ embedded = false }: { embedded?: boolean
       ) : !applications.length ? (
         <p style={{ color: 'var(--text-muted)' }}>No matching applications.</p>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <div className="table-responsive-container" style={{ overflowX: 'auto' }}>
+          <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
                 <th style={{ padding: '0.75rem 0.5rem' }}>Applicant</th>
@@ -375,7 +375,7 @@ export function ApplicationsWorkspace({ embedded = false }: { embedded?: boolean
                 <tr key={a.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
                   <td style={{ padding: '0.75rem 0.5rem' }}>
                     <div style={{ fontWeight: 600 }}>{a.displayName || a.username}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{a.userId}</div>
+                    <div className="break-all font-mono-code" style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{a.userId}</div>
                   </td>
                   <td style={{ padding: '0.75rem 0.5rem' }}>
                     <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>{a.category}</span>

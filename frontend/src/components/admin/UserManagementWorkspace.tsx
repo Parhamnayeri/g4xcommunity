@@ -171,8 +171,8 @@ export const UserManagementWorkspace: React.FC<Props> = ({
           No accounts matched the query criteria.
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <div className="table-responsive-container" style={{ overflowX: 'auto' }}>
+          <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
                 <th style={{ padding: '0.75rem 0.5rem' }}>User Profile</th>
@@ -190,7 +190,7 @@ export const UserManagementWorkspace: React.FC<Props> = ({
                     <div style={{ fontWeight: 600 }}>{u.displayName || u.username}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>@{u.username}</div>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                  <td className="break-all font-mono-code" style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
                     {u.discordId}
                   </td>
                   <td style={{ padding: '0.75rem 0.5rem' }}>
