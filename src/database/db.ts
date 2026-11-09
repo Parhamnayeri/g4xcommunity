@@ -19,6 +19,11 @@ export { prisma };
  */
 export async function ensureWithdrawalEvidenceUniqueIndexes(client: PrismaClient = prisma): Promise<void> {
   try {
+    const tables: Array<{ name: string }> = await client.$queryRawUnsafe(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='booster_withdrawal_requests';"
+    );
+    if (!tables || tables.length === 0) return;
+
     await client.$executeRawUnsafe(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_bwr_settled_tx_hash_unique
       ON booster_withdrawal_requests(external_tx_hash)
@@ -30,9 +35,8 @@ export async function ensureWithdrawalEvidenceUniqueIndexes(client: PrismaClient
       WHERE bank_receipt_ref IS NOT NULL AND status IN ('PAID', 'PROCESSING');
     `);
   } catch (err: any) {
-    if (!err.message?.includes('no such table')) {
-      console.warn('[DB] Warning creating partial unique indexes on withdrawal requests:', err.message);
-    }
+    console.error('[DB FATAL] Failed to ensure withdrawal evidence unique indexes:', err.message);
+    throw err;
   }
 }
 
@@ -42,19 +46,61 @@ export async function ensureWithdrawalEvidenceUniqueIndexes(client: PrismaClient
  */
 export async function ensureOrderChannelUniqueIndexes(client: PrismaClient = prisma): Promise<void> {
   try {
+    const tables: Array<{ name: string }> = await client.$queryRawUnsafe(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='order_channels';"
+    );
+    if (!tables || tables.length === 0) return;
+
     await client.$executeRawUnsafe(`
       CREATE UNIQUE INDEX IF NOT EXISTS idx_order_channels_active_execution
       ON order_channels(order_id)
       WHERE channel_type = 'execution' AND status = 'active';
     `);
   } catch (err: any) {
-    if (!err.message?.includes('no such table')) {
-      console.warn('[DB] Warning creating partial unique index on order_channels:', err.message);
-    }
+    console.error('[DB FATAL] Failed to ensure order channel unique indexes:', err.message);
+    throw err;
   }
 }
 
-// مقداردهی اولیه ایندکس‌های امنیتی تسویه و کانال‌های اجرا در پس‌زمینه
-ensureWithdrawalEvidenceUniqueIndexes().catch(() => {});
-ensureOrderChannelUniqueIndexes().catch(() => {});
+/**
+ * اعتبارسنجی قطعی یکپارچگی کلیدهای خارجی و تضمین حضور ایندکس‌های امنیتی یکتا در SQLite
+ */
+export async function ensureSecurityAndIntegrityIndexes(client: PrismaClient = prisma): Promise<void> {
+  // 1. Foreign key constraint verification
+  const fkViolations: any[] = await client.$queryRawUnsafe('PRAGMA foreign_key_check;');
+  if (fkViolations && fkViolations.length > 0) {
+    const errorMsg = `[DB FATAL] Foreign key constraint violations detected: ${JSON.stringify(fkViolations)}`;
+    console.error(errorMsg);
+    throw new Error(errorMsg);
+  }
+
+  // 2. Partial unique indexes
+  await ensureWithdrawalEvidenceUniqueIndexes(client);
+  await ensureOrderChannelUniqueIndexes(client);
+
+  // 3. Verify presence of indexes in sqlite_master
+  const tables: Array<{ name: string }> = await client.$queryRawUnsafe(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('booster_withdrawal_requests', 'order_channels');"
+  );
+  const tableNames = new Set(tables.map((t) => t.name));
+
+  if (tableNames.has('booster_withdrawal_requests')) {
+    const indexes: Array<{ name: string }> = await client.$queryRawUnsafe(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_bwr_settled_tx_hash_unique', 'idx_bwr_settled_bank_receipt_unique');"
+    );
+    const indexNames = new Set(indexes.map((i) => i.name));
+    if (!indexNames.has('idx_bwr_settled_tx_hash_unique') || !indexNames.has('idx_bwr_settled_bank_receipt_unique')) {
+      throw new Error('[DB FATAL] Failed to verify booster_withdrawal_requests partial unique indexes in SQLite schema');
+    }
+  }
+
+  if (tableNames.has('order_channels')) {
+    const indexes: Array<{ name: string }> = await client.$queryRawUnsafe(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_order_channels_active_execution';"
+    );
+    if (!indexes || indexes.length === 0) {
+      throw new Error('[DB FATAL] Failed to verify idx_order_channels_active_execution partial unique index in SQLite schema');
+    }
+  }
+}
 

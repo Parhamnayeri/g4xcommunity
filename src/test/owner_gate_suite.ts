@@ -53,10 +53,31 @@ async function runOwnerGateTests() {
 
   try {
     // ─── اطمینان از وجود مالک ثبت‌شده در دیتابیس ────────────────────────────
-    const registeredOwner = await prisma.userRole.findFirst({
+    let registeredOwner = await prisma.userRole.findFirst({
       where: { roleKey: 'owner' },
       include: { user: true },
     });
+    if (!registeredOwner || !registeredOwner.user) {
+      const createdOwnerUser = await prisma.user.upsert({
+        where: { discordId: '999000111222333444' },
+        create: {
+          discordId: '999000111222333444',
+          username: 'TestOwner',
+          displayName: 'Test Owner',
+          isActive: true,
+        },
+        update: { isActive: true },
+      });
+      await prisma.userRole.upsert({
+        where: { userId_roleKey: { userId: createdOwnerUser.discordId, roleKey: 'owner' } },
+        create: { userId: createdOwnerUser.discordId, roleKey: 'owner' },
+        update: {},
+      });
+      registeredOwner = await prisma.userRole.findFirst({
+        where: { roleKey: 'owner' },
+        include: { user: true },
+      });
+    }
     if (!registeredOwner || !registeredOwner.user) {
       throw new Error('Database prerequisite failed: No established owner found in database.');
     }

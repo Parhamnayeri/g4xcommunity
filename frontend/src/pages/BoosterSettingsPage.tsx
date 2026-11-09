@@ -882,9 +882,14 @@ export const BoosterSettingsPage: React.FC = () => {
                 </span>
               </div>
             </div>
-            <div className="pt-2 text-[11px] text-gray-500 border-t border-gray-800/60">
-              Notice: Raider.IO data is used for non-commercial community verification. Commercial deployment requires
-              a formal commercial licensing agreement with Raider.IO.
+            <div className="pt-2 text-[11px] text-gray-400 border-t border-gray-800/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+              <span>
+                Notice: Raider.IO data is used for non-commercial community verification. Commercial deployment requires
+                a formal commercial licensing agreement with Raider.IO.
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-amber-950/40 text-amber-300 border border-amber-800/50 whitespace-nowrap">
+                Live Sync Gated (Pending Commercial Agreement)
+              </span>
             </div>
           </div>
 

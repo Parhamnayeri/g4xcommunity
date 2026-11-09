@@ -71,7 +71,7 @@ async function runPhase8AdminOwnerSuite() {
   const testBoosterId = `phase8_booster_${timestamp}`;
   const testBooster2Id = `phase8_booster2_${timestamp}`;
   const testAdminId = `phase8_admin_${timestamp}`;
-  const testOwnerId = `phase8_owner_${timestamp}`;
+  const testOwnerId = `98765${timestamp}`;
   const fakeOwnerId = `phase8_fake_owner_${timestamp}`;
 
   const kycDocApp1 = `kyc_app1_${timestamp}.png`;

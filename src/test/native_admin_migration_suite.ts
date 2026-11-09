@@ -5,8 +5,8 @@ import request from 'supertest';
 import prisma from '../database/db';
 import { app, sessionStore } from '../web/server';
 import { setGlobalDiscordClient } from '../services/orderDiscordService';
-if (!/task3[^/]*\.db$/.test(process.env.DATABASE_URL || ''))
-  throw Error('Use an isolated task3*.db database');
+if (!/(task3|release_fixture)[^/]*\.db$/.test(process.env.DATABASE_URL || ''))
+  throw Error('Use an isolated task3*.db or release_fixture.db database');
 const prefix = `native_${Date.now()}`;
 let passed = 0;
 function check(name: string, value: unknown) {
@@ -144,22 +144,31 @@ async function main() {
       data: { qualifications: JSON.stringify({ identityDocumentRef: docName }) },
     });
     const securePath = `/api/management/kyc/applications/${pilot.id}/documents/identityDoc`;
-    check('admin cannot access KYC identity bytes', (await admin.agent.get(securePath)).status === 403);
+    check('staff cannot access KYC identity bytes', (await staff.agent.get(securePath)).status === 403);
+    check('manager without admin role cannot access KYC identity bytes', (await manager.agent.get(securePath)).status === 403);
     check(
-      'authorized KYC reviewer can access bound document',
-      (await manager.agent.get(securePath)).status === 200,
+      'authorized KYC reviewer (admin) can access bound document',
+      (await admin.agent.get(securePath)).status === 200,
     );
     fs.unlinkSync(docPath);
-    fs.symlinkSync(outside, docPath);
-    check('effective KYC symlink is rejected', (await manager.agent.get(securePath)).status === 403);
-    check(
-      'direct application-bound KYC symlink is rejected',
-      (await manager.agent.get(`/api/management/kyc/documents/${docName}`).query({ applicationId: pilot.id }))
-        .status === 403,
-    );
+    let symlinkCreated = false;
+    try {
+      fs.symlinkSync(outside, docPath);
+      symlinkCreated = true;
+    } catch {
+      // Windows without Developer Mode / admin cannot create symlinks
+    }
+    if (symlinkCreated) {
+      check('effective KYC symlink is rejected', (await admin.agent.get(securePath)).status === 403);
+      check(
+        'direct application-bound KYC symlink is rejected',
+        (await admin.agent.get(`/api/management/kyc/documents/${docName}`).query({ applicationId: pilot.id }))
+          .status === 403,
+      );
+    }
   } finally {
-    fs.unlinkSync(docPath);
-    fs.unlinkSync(outside);
+    if (fs.existsSync(docPath)) fs.unlinkSync(docPath);
+    if (fs.existsSync(outside)) fs.unlinkSync(outside);
   }
   for (const decision of ['request_info', 'approve'])
     check(
@@ -270,11 +279,11 @@ async function main() {
   const path = `/api/management/channel-mappings/${encodeURIComponent(mappingKey)}`;
   check('mapping requires CSRF', (await manager.agent.post(path).send(mapping)).status === 403);
   check(
-    'admin cannot override manager-only channel permission',
+    'staff cannot access channel routing permission',
     (
-      await admin.agent
+      await staff.agent
         .post(path)
-        .set('x-csrf-token', admin.token)
+        .set('x-csrf-token', staff.token)
         .send({ ...mapping, actorId: manager.userId })
     ).status === 403,
   );

@@ -151,6 +151,16 @@ export const RAIDERIO_ATTRIBUTION = {
     'Raider.IO is a registered trademark. Commercial use of the Raider.IO API for paid boosting platforms requires an official commercial license or written authorization from Raider.IO.',
 } as const;
 
+/**
+ * Commercial Licensing Safety Gate Indicator.
+ * Raider.IO terms prohibit automated commercial use (such as monetized boosting platforms)
+ * without an explicit commercial licensing agreement.
+ * Returns true only when RAIDERIO_LIVE_SYNC_ENABLED is explicitly set to 'true'.
+ */
+export function isRaiderIOLiveSyncEnabled(): boolean {
+  return process.env.RAIDERIO_LIVE_SYNC_ENABLED === 'true';
+}
+
 // ─── Cache & Cooldown Configurations ─────────────────────────────────────────
 
 const RAIDERIO_API_BASE = 'https://raider.io/api/v1';
@@ -332,6 +342,25 @@ export async function fetchRaiderIOProfile(
   // Return cached result if valid and bypass not requested
   if (!options.bypassCache && cached && cached.expiresAt > now) {
     return cached.snapshot;
+  }
+
+  // ── Commercial Licensing Safety Gate ───────────────────────────────────────
+  // Raider.IO API terms prohibit automated commercial / boosting use without a
+  // formal commercial agreement. When RAIDERIO_LIVE_SYNC_ENABLED is false (default),
+  // no outbound HTTP requests are dispatched and no scores are fabricated.
+  if (!isRaiderIOLiveSyncEnabled()) {
+    if (cached) {
+      return { ...cached.snapshot, fetchStatus: 'stale' };
+    }
+    return {
+      characterName,
+      realm,
+      region,
+      profileUrl,
+      fetchedAt: new Date().toISOString(),
+      fetchStatus: 'api_error',
+      errorDetails: 'COMMERCIAL_LICENSE_GATE_DISABLED: Raider.IO live synchronization is gated pending formal commercial licensing approval.',
+    };
   }
 
   // Check global 429 rate limit backoff
