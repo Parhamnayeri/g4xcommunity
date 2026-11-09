@@ -61,6 +61,7 @@
     "test:wallet": "ts-node src/test/wallet_phase5_suite.ts",
     "test:manual-deposit": "ts-node src/test/manual_irt_deposit_workflow_suite.ts",
     "test:discord-order-workflow": "ts-node src/test/discord_order_workflow_suite.ts",
+    "test:booster-hub": "ts-node src/test/discord_booster_hub_suite.ts",
     "test:migration": "ts-node src/test/migration_evidence_preservation_suite.ts",
     "test:phase6": "ts-node src/test/phase6_exchange_marketplace_suite.ts",
     "test:phase6:security": "ts-node src/test/phase6_exchange_security_hardening_suite.ts",
