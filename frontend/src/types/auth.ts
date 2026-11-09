@@ -13,6 +13,7 @@ export interface User {
   isActive: boolean;
   advertiserRank?: string | null;
   roles: string[];
+  permissions?: string[];
 }
 
 export interface AuthContextType {
@@ -23,4 +24,5 @@ export interface AuthContextType {
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   hasRole: (...roles: string[]) => boolean;
+  hasPermission: (...permissions: string[]) => boolean;
 }

@@ -34,6 +34,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return roles.some((role) => user.roles.includes(role));
   }, [user]);
 
+  const hasPermission = useCallback((...perms: string[]): boolean => {
+    if (!user || !user.permissions) return false;
+    return perms.some((p) => user.permissions?.includes(p));
+  }, [user]);
+
   const value: AuthContextType = {
     user,
     status,
@@ -42,6 +47,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     logout: logoutUser,
     refreshUser,
     hasRole,
+    hasPermission,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

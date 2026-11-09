@@ -72,6 +72,8 @@ import {
   boosterCancelWithdrawal,
   adminExecuteManualPayout,
   adminRejectWithdrawal,
+  updateWithdrawalMetadata,
+  getWithdrawalAuditHistory,
 } from '../services/financeV2/boosterWithdrawalService';
 import {
   serializeUserWithdrawal,
@@ -182,6 +184,7 @@ import {
   assignOrRevokeUserRole,
   deleteUserSafely,
   getUserAuditLogs,
+  getUserBanHistory,
 } from '../services/adminUserService';
 import { validateIranianIban, maskIban, maskCryptoAddress } from '../services/financeV2/iranianIbanValidator';
 import { validateBep20Address } from '../services/financeV2/bep20Validator';
@@ -1644,11 +1647,17 @@ router.get(
 router.post(
   '/admin/withdrawals/:id/review',
   requireAuth,
-  requireRole('owner', 'manager', 'admin'),
+  requireRole('owner', 'admin'),
   requireCsrf,
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { user } = req as AuthenticatedRequest;
+      const auth = await authorize(user.discordId, Permission.WITHDRAWAL_REVIEW);
+      if (!auth.allowed) {
+        res.status(403).json({ error: 'PERMISSION_DENIED', message: 'Withdrawal review requires Admin or Owner permission' });
+        return;
+      }
+
       const id = Number(req.params.id);
       const { decision, txHash, bankReceiptRef, reason, secondReviewerId } = req.body;
 
@@ -1686,6 +1695,66 @@ router.post(
     } catch (err: any) {
       const status = err.message?.includes('LIVE_PAYOUTS_DISABLED') ? 403 : 400;
       res.status(status).json({ error: err.message || 'Withdrawal review failed' });
+    }
+  }
+);
+
+// ویرایش متادیتای درخواست برداشت توسط ادمین یا مالک (با ثبت سوابق قبلی و جدید در ممیزی)
+const handleWithdrawalMetadataEdit = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const id = Number(req.params.id);
+    const { notes, adminNotes, reason } = req.body;
+
+    const result = await updateWithdrawalMetadata({
+      requestId: id,
+      actorId: user.discordId,
+      notes,
+      adminNotes,
+      reason,
+    });
+
+    res.json({
+      success: true,
+      request: serializeAdminWithdrawal(result.request),
+      changedFields: result.changedFields,
+      previousValues: result.previousValues,
+      newValues: result.newValues,
+      reason: result.reason,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || 'Failed to update withdrawal metadata' });
+  }
+};
+
+router.patch(
+  '/admin/withdrawals/:id/metadata',
+  requireAuth,
+  requireRole('owner', 'admin'),
+  requireCsrf,
+  handleWithdrawalMetadataEdit
+);
+
+router.post(
+  '/admin/withdrawals/:id/metadata',
+  requireAuth,
+  requireRole('owner', 'admin'),
+  requireCsrf,
+  handleWithdrawalMetadataEdit
+);
+
+// تاریخچه ممیزی یک درخواست برداشت
+router.get(
+  '/admin/withdrawals/:id/audit-history',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const id = Number(req.params.id);
+      const logs = await getWithdrawalAuditHistory(id);
+      res.json({ success: true, logs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch withdrawal audit history' });
     }
   }
 );
@@ -4680,7 +4749,7 @@ router.patch(
 router.get(
   '/admin/users',
   requireAuth,
-  requireRole('owner', 'manager', 'admin'),
+  requireRole('owner', 'manager', 'admin', 'staff'),
   async (req: Request, res: Response): Promise<void> => {
     try {
       const page = parseInt(req.query.page as string) || 1;
@@ -4711,7 +4780,7 @@ router.get(
 router.get(
   '/admin/users/:discordId',
   requireAuth,
-  requireRole('owner', 'manager', 'admin'),
+  requireRole('owner', 'manager', 'admin', 'staff'),
   async (req: Request, res: Response): Promise<void> => {
     try {
       const discordId = req.params.discordId;
@@ -4720,6 +4789,23 @@ router.get(
     } catch (err: any) {
       const status = err instanceof DomainError ? 400 : 500;
       res.status(status).json({ error: err.message || 'Failed to fetch user profile' });
+    }
+  }
+);
+
+// ۲.۱. تاریخچه تغییر وضعیت و مسدودسازی کاربر
+router.get(
+  '/admin/users/:discordId/ban-history',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin', 'staff'),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const discordId = req.params.discordId;
+      const history = await getUserBanHistory(discordId);
+      res.json({ success: true, history });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to fetch user ban history' });
     }
   }
 );
@@ -4760,11 +4846,11 @@ router.post(
   }
 );
 
-// ۴. تخصیص یا سلب رول
+// ۴. تخصیص یا سلب رول (فقط ادمین و مالک؛ منیجر فاقد دسترسی انتساب نقش است)
 router.post(
   '/admin/users/:discordId/roles',
   requireAuth,
-  requireRole('owner', 'manager', 'admin'),
+  requireRole('owner', 'admin'),
   requireCsrf,
   async (req: Request, res: Response): Promise<void> => {
     try {

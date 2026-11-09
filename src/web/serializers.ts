@@ -12,6 +12,8 @@ import {
 import { mapWithdrawalStatus, SimplifiedStatusResult } from '../services/statusSimplifier';
 import { maskCryptoAddress, maskIban } from '../services/financeV2/iranianIbanValidator';
 
+import { getEffectivePermissions, Permission } from '../services/permissionTypes';
+
 export interface SerializedUser {
   discordId: string;
   username: string;
@@ -19,6 +21,7 @@ export interface SerializedUser {
   isActive: boolean;
   createdAt: Date;
   roles: string[];
+  permissions: Permission[];
   advertiserRank?: string | null;
   advertiserCommissionBps?: number | null;
   advertiserCommissionRateFormatted?: string | null;
@@ -27,7 +30,9 @@ export interface SerializedUser {
 export function serializeUser(
   user: User & { userRoles?: { roleKey: string }[] },
 ): SerializedUser {
-  const isAdv = user.userRoles ? user.userRoles.some((r) => r.roleKey === 'advertiser') : false;
+  const roleKeys = user.userRoles ? user.userRoles.map((r) => r.roleKey) : [];
+  const permissions = getEffectivePermissions(roleKeys);
+  const isAdv = roleKeys.includes('advertiser');
   const rank = isAdv && user.advertiserRank && isValidAdvertiserRank(user.advertiserRank) ? (user.advertiserRank as AdvertiserRank) : null;
   const bps = rank ? getRankBasisPoints(rank) : null;
 
@@ -37,7 +42,8 @@ export function serializeUser(
     displayName: user.displayName,
     isActive: user.isActive,
     createdAt: user.createdAt,
-    roles: user.userRoles ? user.userRoles.map((r) => r.roleKey) : [],
+    roles: roleKeys,
+    permissions,
     advertiserRank: rank,
     advertiserCommissionBps: bps,
     advertiserCommissionRateFormatted: bps !== null ? formatBasisPoints(bps) : null,

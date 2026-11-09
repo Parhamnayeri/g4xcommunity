@@ -11,17 +11,41 @@ import {
   fetchManagementDisputes,
   resolveManagementDispute,
 } from '../services/operations';
-import { ApplicationsWorkspace, AdminModuleNavigation } from '../components/admin/NativeAdminModules';
+import { ApplicationsWorkspace, ChannelsWorkspace } from '../components/admin/NativeAdminModules';
+import { UserManagementWorkspace } from '../components/admin/UserManagementWorkspace';
+import { WithdrawalQueueWorkspace } from '../components/admin/WithdrawalQueueWorkspace';
 import { LoadingState } from '../components/ui/LoadingState';
 import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
 
+export type ManagementTab =
+  | 'overview'
+  | 'orders'
+  | 'users'
+  | 'applications'
+  | 'withdrawals'
+  | 'disputes'
+  | 'channels'
+  | 'audit';
+
+const VALID_MANAGEMENT_TABS: ManagementTab[] = [
+  'overview',
+  'orders',
+  'users',
+  'applications',
+  'withdrawals',
+  'disputes',
+  'channels',
+  'audit',
+];
+
 interface ManagementPageProps {
-  defaultTab?: 'orders' | 'applications' | 'disputes' | 'audit';
+  defaultTab?: ManagementTab;
 }
 
-export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'orders' }) => {
+export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'overview' }) => {
   const { user } = useAuth();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab') as ManagementTab | null;
 
   // Overview State
   const [overview, setOverview] = useState<ManagementOverviewResponse | null>(null);
@@ -29,12 +53,14 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
   const [overviewError, setOverviewError] = useState<string | null>(null);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<'orders' | 'applications' | 'disputes' | 'audit'>(defaultTab);
+  const [activeTab, setActiveTab] = useState<ManagementTab>(
+    tabParam && VALID_MANAGEMENT_TABS.includes(tabParam) ? tabParam : defaultTab
+  );
 
-  useEffect(() => {
-    const tab = searchParams.get('tab');
-    setActiveTab(tab === 'disputes' ? 'disputes' : defaultTab);
-  }, [defaultTab, searchParams]);
+  const handleTabChange = (newTab: ManagementTab) => {
+    setActiveTab(newTab);
+    setSearchParams({ tab: newTab });
+  };
 
   // Disputes State
   const [disputes, setDisputes] = useState<DisputeItem[]>([]);
@@ -135,8 +161,7 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      <AdminModuleNavigation />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Header Banner */}
       <div
         className="card-surface"
@@ -200,123 +225,107 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
         </Link>
       </div>
 
-      {/* KPI Cards Grid */}
+      {/* Tabs */}
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
-          gap: '1rem',
+          display: 'flex',
+          borderBottom: '1px solid var(--border-subtle)',
+          gap: '0.5rem',
+          overflowX: 'auto',
+          paddingBottom: '0.25rem',
         }}
       >
-        <div className="card-surface" style={{ padding: '1.25rem', border: '1px solid var(--border-subtle)' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Active Orders</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--accent-lime)', marginTop: '0.25rem' }}>
-            {overview?.kpis.activeOrdersCount ?? 0}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-            G4X Marketplace: {overview?.kpis.externalOrdersCount ?? 0} | Advertiser: {overview?.kpis.advertiserOrdersCount ?? 0}
-          </div>
-        </div>
-
-        <div className="card-surface" style={{ padding: '1.25rem', border: '1px solid var(--border-subtle)' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Active Booster Pool</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '0.25rem' }}>
-            {overview?.kpis.totalActiveBoosters ?? 0}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--status-info)', marginTop: '0.5rem' }}>
-            Verified &amp; active roster capacity
-          </div>
-        </div>
-
-        <div className="card-surface" style={{ padding: '1.25rem', border: '1px solid var(--border-subtle)' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Pending Applications</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--status-warning)', marginTop: '0.25rem' }}>
-            {overview?.kpis.pendingApplicationsCount ?? 0}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-            Boosters, Pilots, Advertisers, Exchangers
-          </div>
-        </div>
-
-        <div className="card-surface" style={{ padding: '1.25rem', border: '1px solid var(--border-subtle)' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Open Disputes</div>
-          <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--status-danger)', marginTop: '0.25rem' }}>
-            {overview?.kpis.openDisputesCount ?? 0}
-          </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
-            Unresolved customer/booster claims
-          </div>
-        </div>
+        {[
+          { key: 'overview', label: 'Overview & KPIs', icon: '📊' },
+          { key: 'orders', label: `Order Pipeline (${overview?.kpis.activeOrdersCount ?? 0})`, icon: '📦' },
+          { key: 'users', label: 'User Management', icon: '👥' },
+          { key: 'applications', label: `Applications (${overview?.kpis.pendingApplicationsCount ?? 0})`, icon: '📝' },
+          { key: 'withdrawals', label: 'Withdrawal Queue', icon: '💸' },
+          { key: 'disputes', label: `Disputes (${overview?.kpis.openDisputesCount ?? 0})`, icon: '⚖️' },
+          { key: 'channels', label: 'Discord Channels', icon: '💬' },
+          { key: 'audit', label: 'Platform Audit', icon: '📜' },
+        ].map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => handleTabChange(t.key as ManagementTab)}
+            style={{
+              background: 'none',
+              border: 'none',
+              borderBottom: activeTab === t.key ? '2px solid var(--accent-lime)' : '2px solid transparent',
+              color: activeTab === t.key ? 'var(--accent-lime)' : 'var(--text-muted)',
+              fontWeight: 700,
+              fontSize: '0.9rem',
+              padding: '0.65rem 0.95rem',
+              cursor: 'pointer',
+              whiteSpace: 'nowrap',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.4rem',
+              transition: 'var(--transition-fast)',
+            }}
+          >
+            <span>{t.icon}</span>
+            <span>{t.label}</span>
+          </button>
+        ))}
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', borderBottom: '1px solid var(--border-subtle)', gap: '1rem', overflowX: 'auto' }}>
-        <button
-          onClick={() => setActiveTab('orders')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'orders' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'orders' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.95rem',
-            padding: '0.75rem 1.25rem',
-            cursor: 'pointer',
-          }}
-        >
-          Order Pipeline ({overview?.kpis.activeOrdersCount ?? 0})
-        </button>
+      {/* Tab: Overview & KPIs */}
+      {activeTab === 'overview' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* KPI Cards Grid */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+              gap: '1rem',
+            }}
+          >
+            <div className="card-surface" style={{ padding: '1.25rem', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Active Orders</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--accent-lime)', marginTop: '0.25rem' }}>
+                {overview?.kpis.activeOrdersCount ?? 0}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                G4X Marketplace: {overview?.kpis.externalOrdersCount ?? 0} | Advertiser: {overview?.kpis.advertiserOrdersCount ?? 0}
+              </div>
+            </div>
 
-        <button
-          onClick={() => setActiveTab('applications')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'applications' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'applications' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.95rem',
-            padding: '0.75rem 1.25rem',
-            cursor: 'pointer',
-          }}
-        >
-          Registration Applications ({overview?.kpis.pendingApplicationsCount ?? 0})
-        </button>
+            <div className="card-surface" style={{ padding: '1.25rem', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Active Booster Pool</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--text-primary)', marginTop: '0.25rem' }}>
+                {overview?.kpis.totalActiveBoosters ?? 0}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--status-info)', marginTop: '0.5rem' }}>
+                Verified &amp; active roster capacity
+              </div>
+            </div>
 
-        <button
-          onClick={() => setActiveTab('disputes')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'disputes' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'disputes' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.95rem',
-            padding: '0.75rem 1.25rem',
-            cursor: 'pointer',
-          }}
-        >
-          Dispute Escalations ({overview?.kpis.openDisputesCount ?? 0})
-        </button>
+            <div className="card-surface" style={{ padding: '1.25rem', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Pending Applications</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--status-warning)', marginTop: '0.25rem' }}>
+                {overview?.kpis.pendingApplicationsCount ?? 0}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                Boosters, Pilots, Advertisers, Exchangers
+              </div>
+            </div>
 
-        <button
-          onClick={() => setActiveTab('audit')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'audit' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'audit' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.95rem',
-            padding: '0.75rem 1.25rem',
-            cursor: 'pointer',
-          }}
-        >
-          Platform Audit Trail
-        </button>
-      </div>
+            <div className="card-surface" style={{ padding: '1.25rem', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Open Disputes</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: 800, color: 'var(--status-danger)', marginTop: '0.25rem' }}>
+                {overview?.kpis.openDisputesCount ?? 0}
+              </div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                Unresolved customer/booster claims
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
-      {/* Tab 1: Unified Order Management Pipeline Workspace */}
+      {/* Tab: Orders Workspace */}
       {activeTab === 'orders' && (
         <OrderManagementWorkspace
           title="Management Order Pipeline Oversight"
@@ -324,7 +333,31 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'or
         />
       )}
 
-      {activeTab === 'applications' && <ApplicationsWorkspace />}
+      {/* Tab: User Management */}
+      {activeTab === 'users' && (
+        <UserManagementWorkspace
+          canBan={true}
+          canManageRoles={false}
+          title="Management User Registry"
+          subtitle="Search and inspect user accounts, ban/unban with mandatory reason, and view ban history."
+        />
+      )}
+
+      {/* Tab: Applications */}
+      {activeTab === 'applications' && <ApplicationsWorkspace embedded={true} />}
+
+      {/* Tab: Withdrawal Queue (Strictly Read-Only for Management) */}
+      {activeTab === 'withdrawals' && (
+        <WithdrawalQueueWorkspace
+          canReview={false}
+          canEditMetadata={false}
+          title="Booster Withdrawal Queue (Read-Only)"
+          subtitle="View-only list of withdrawal requests and status. Approvals and payouts require Admin privilege."
+        />
+      )}
+
+      {/* Tab: Channels Workspace */}
+      {activeTab === 'channels' && <ChannelsWorkspace embedded={true} />}
 
       {/* Tab 3: Disputes Escalation */}
       {activeTab === 'disputes' && (
