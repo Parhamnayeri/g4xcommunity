@@ -11,8 +11,7 @@
  *  This module guarantees that all pre-migration gates, inspection scripts,
  *  reconcilers, and Prisma CLI commands ALWAYS target the exact same canonical
  *  physical SQLite database file, properly handling:
- *   - `DATABASE_URL` environment variables
- *   - `--database <path>` CLI arguments
+ *   - Rejection of conflicting DATABASE_URL and --database values
  *   - Relative vs. absolute paths
  *   - Schema-relative resolution for Prisma compatibility
  *   - Operating system symlinks (via fs.realpathSync)
@@ -25,17 +24,15 @@ import path from 'path';
 export interface CanonicalDatabaseTarget {
   canonicalPath: string;
   canonicalUrl: string;
-  source: 'cli_arg' | 'env_var';
+  source: 'cli_arg' | 'env_var' | 'matched_both';
   rawInput: string;
 }
 
 export function findPrismaSchemaDir(): string {
-  // Standard location in G4X Community is <repoRoot>/prisma
   const candidate = path.resolve(process.cwd(), 'prisma');
   if (fs.existsSync(path.join(candidate, 'schema.prisma'))) {
     return candidate;
   }
-  // Fallback: search upward if running from a subfolder
   let current = process.cwd();
   for (let i = 0; i < 4; i++) {
     const check = path.join(current, 'prisma', 'schema.prisma');
@@ -49,78 +46,38 @@ export function findPrismaSchemaDir(): string {
   return path.resolve(process.cwd(), 'prisma');
 }
 
-/**
- * Resolves a raw database URL or file path to its canonical physical location.
- *
- * @param options.databaseUrl - Optional database URL string
- * @param options.args - Optional CLI argument array (defaults to process.argv.slice(2))
- * @param options.allowMissingFile - If true, does not fail if file doesn't exist yet (for fresh DB tests)
- */
-export function resolveCanonicalDatabaseTarget(options?: {
-  databaseUrl?: string;
-  args?: string[];
-  allowMissingFile?: boolean;
-}): CanonicalDatabaseTarget {
-  const args = options?.args || process.argv.slice(2);
-  let rawInput: string | undefined = options?.databaseUrl;
-  let source: 'cli_arg' | 'env_var' = 'env_var';
-
-  // 1. Check CLI argument: --database <path>
-  const dbIndex = args.indexOf('--database');
-  if (dbIndex !== -1 && args[dbIndex + 1]) {
-    rawInput = args[dbIndex + 1].trim();
-    source = 'cli_arg';
-  }
-
-  // 2. Check environment variable: DATABASE_URL
-  if (!rawInput && process.env.DATABASE_URL) {
-    rawInput = process.env.DATABASE_URL.trim();
-    source = 'env_var';
-  }
-
-  // 3. Strict guard: Fail closed if no configuration was supplied
-  if (!rawInput) {
-    throw new Error(
-      '[CRITICAL SAFETY ERROR] Missing database configuration. Explicit DATABASE_URL environment variable or --database <path> argument is REQUIRED. Default path guessing is strictly prohibited.'
-    );
-  }
-
-  // 4. Strip `file:` protocol if present
+function resolveSinglePath(
+  rawInput: string,
+  source: 'cli_arg' | 'env_var',
+  schemaDir: string,
+  allowMissingFile?: boolean
+): CanonicalDatabaseTarget {
   let cleanPath = rawInput;
   if (cleanPath.startsWith('file:')) {
     cleanPath = cleanPath.slice(5);
   }
 
-  // 5. Schema-relative vs. CWD-relative resolution
-  const schemaDir = findPrismaSchemaDir();
   let resolvedPath: string;
-
   if (path.isAbsolute(cleanPath)) {
     resolvedPath = path.normalize(cleanPath);
   } else {
     if (source === 'env_var') {
-      // Prisma interprets relative paths in DATABASE_URL relative to schema.prisma directory!
       resolvedPath = path.normalize(path.resolve(schemaDir, cleanPath));
     } else {
-      // CLI arguments are interpreted relative to the operator's current working directory
       resolvedPath = path.normalize(path.resolve(process.cwd(), cleanPath));
     }
   }
 
-  // 6. Existence and canonical symlink resolution
   if (fs.existsSync(resolvedPath)) {
     try {
       resolvedPath = fs.realpathSync(resolvedPath);
-    } catch {
-      // If realpath fails (e.g. permission or special device), keep normalized resolvedPath
-    }
-  } else if (!options?.allowMissingFile) {
+    } catch {}
+  } else if (!allowMissingFile) {
     throw new Error(
       `[CRITICAL SAFETY ERROR] Resolved target SQLite database file does not exist at '${resolvedPath}' (Source: ${source}, Raw: '${rawInput}'). Refusing to operate on non-existent database.`
     );
   }
 
-  // Standardize SQLite file URL format (forward slashes for Prisma client compatibility)
   const canonicalUrl = `file:${resolvedPath.replace(/\\/g, '/')}`;
 
   return {
@@ -129,4 +86,55 @@ export function resolveCanonicalDatabaseTarget(options?: {
     source,
     rawInput,
   };
+}
+
+/**
+ * Resolves database configuration, rejecting conflicting CLI and ENV configurations.
+ */
+export function resolveCanonicalDatabaseTarget(options?: {
+  databaseUrl?: string;
+  args?: string[];
+  allowMissingFile?: boolean;
+}): CanonicalDatabaseTarget {
+  const args = options?.args || process.argv.slice(2);
+  const schemaDir = findPrismaSchemaDir();
+
+  let cliInput: string | undefined;
+  const dbIndex = args.indexOf('--database');
+  if (dbIndex !== -1 && args[dbIndex + 1]) {
+    cliInput = args[dbIndex + 1].trim();
+  }
+
+  const envInput: string | undefined = options?.databaseUrl || process.env.DATABASE_URL?.trim();
+
+  // If both are provided, verify they resolve to the exact same canonical file
+  if (cliInput && envInput) {
+    const cliTarget = resolveSinglePath(cliInput, 'cli_arg', schemaDir, options?.allowMissingFile);
+    const envTarget = resolveSinglePath(envInput, 'env_var', schemaDir, options?.allowMissingFile);
+
+    if (cliTarget.canonicalPath.toLowerCase() !== envTarget.canonicalPath.toLowerCase()) {
+      throw new Error(
+        `[CRITICAL SAFETY ERROR] Conflicting database configurations detected: CLI argument '--database' resolves to '${cliTarget.canonicalPath}' while environment variable DATABASE_URL resolves to '${envTarget.canonicalPath}'. Both sources must point to the exact same canonical target or only one must be provided.`
+      );
+    }
+
+    return {
+      canonicalPath: cliTarget.canonicalPath,
+      canonicalUrl: cliTarget.canonicalUrl,
+      source: 'matched_both',
+      rawInput: `cli:${cliInput} | env:${envInput}`,
+    };
+  }
+
+  if (cliInput) {
+    return resolveSinglePath(cliInput, 'cli_arg', schemaDir, options?.allowMissingFile);
+  }
+
+  if (envInput) {
+    return resolveSinglePath(envInput, 'env_var', schemaDir, options?.allowMissingFile);
+  }
+
+  throw new Error(
+    '[CRITICAL SAFETY ERROR] Missing database configuration. Explicit DATABASE_URL environment variable or --database <path> argument is REQUIRED. Default path guessing is strictly prohibited.'
+  );
 }

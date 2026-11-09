@@ -67,7 +67,7 @@
     "test:migration": "ts-node src/test/migration_evidence_preservation_suite.ts",
     "test:migration:safety": "ts-node src/test/migration_reconciliation_safety_suite.ts",
     "pre-migration-gate": "ts-node scripts/pre-migration-gate.ts",
-    "migrate:safe": "ts-node scripts/pre-migration-gate.ts && prisma migrate deploy",
+    "migrate:safe": "ts-node scripts/safe-migration-runner.ts",
     "inspect:db": "ts-node scripts/inspect-database-safety.ts",
     "reconcile:channels": "ts-node scripts/reconcile-execution-channels.ts",
     "test:phase6": "ts-node src/test/phase6_exchange_marketplace_suite.ts",

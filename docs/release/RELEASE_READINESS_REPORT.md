@@ -21,7 +21,7 @@ To prevent overstating release readiness, the following operational boundaries m
 
 1. **Automated Test Results (VERIFIED ✅):**
    - 100% of internal automated test suites pass cleanly across all modules (CMS, RBAC, Finance V1/V2, Order Execution, Characters, Channels, SPA Routing, and Migration Safety).
-   - 17/17 migration safety tests verified: canonical path resolution, foreign-key blocking, global preflight validation, atomic batch rollback, concurrency validation, and backup header verification.
+   - 28/28 migration safety tests verified: canonical path resolution, conflicting input rejection, foreign-key blocking, global preflight validation, atomic batch rollback, concurrency validation, backup header verification, and safe Prisma child process execution.
 2. **Tests Using Mocks (VERIFIED WITH SYNTHETIC FIXTURES ⚠️):**
    - Discord API interactions (guild channels, role updates, interaction buttons, webhooks) are validated using in-memory mock clients and harness fixtures.
    - External crypto/fiat payment gateways (NOWPayments, Zarinpal) are verified using deterministic mock webhooks and signature validators.
@@ -107,9 +107,16 @@ To prevent overstating release readiness, the following operational boundaries m
   - Exact active channel record IDs, Discord channel IDs, and statuses.
   - Any drift triggers `CONCURRENT_MUTATION_DETECTED` and immediately rolls back.
 
-### 4. Direct Prisma Invocation Policy
-- Running `npx prisma migrate deploy` directly in production is **STRICTLY PROHIBITED**.
-- While an npm script wrapper (`npm run migrate:safe`) cannot technically prevent an operator typing raw commands in a shell, production deployment policy mandates executing `scripts/pre-migration-gate.ts` before applying any migrations.
+### 4. Dedicated Safe Migration Runner (`scripts/safe-migration-runner.ts`)
+- Powering `npm run migrate:safe`, this dedicated runner resolves a single canonical target and strictly rejects conflicting `DATABASE_URL` and `--database` inputs.
+- Executes `runPreMigrationGate` against the exact resolved target. If ANY safety check fails (foreign keys, duplicates, incomplete migrations), execution halts with zero writes and Prisma is NEVER spawned.
+- Re-verifies file identity immediately before execution.
+- Spawns `prisma migrate deploy` as an isolated child process with `DATABASE_URL` explicitly bound to the verified canonical target and passes the explicit `--schema` flag.
+- Captures and cleanly propagates Prisma CLI exit codes.
+
+### 5. Direct Prisma Invocation Policy
+- Running `npx prisma migrate deploy` directly in production without the safety runner is **STRICTLY PROHIBITED**.
+- While an npm script wrapper cannot technically prevent an operator executing raw shell commands, operational policy mandates `npm run migrate:safe` as the sole authorized migration command.
 
 ---
 

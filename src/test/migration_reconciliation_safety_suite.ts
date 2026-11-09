@@ -41,6 +41,7 @@ const {
   resolveCanonicalDatabaseTarget,
   findPrismaSchemaDir,
 } = require(path.resolve(process.cwd(), 'scripts/canonical-db-path'));
+const { runSafeMigration } = require(path.resolve(process.cwd(), 'scripts/safe-migration-runner'));
 
 async function runTest(name: string, fn: () => Promise<void>) {
   try {
@@ -594,8 +595,210 @@ async function main() {
       assert.strictEqual(inspection.isReadyForSafeMigration, true);
     });
 
+    // ------------------------------------------------------------------------
+    // TEST 18: SafeMigrationRunner with DATABASE_URL only
+    // ------------------------------------------------------------------------
+    await runTest('18. SafeMigrationRunner resolves DATABASE_URL only target', async () => {
+      const runnerTarget = resolveCanonicalDatabaseTarget({
+        databaseUrl: testDbUrl,
+        args: [],
+      });
+      assert.strictEqual(path.normalize(runnerTarget.canonicalPath), path.normalize(testDbPath));
+      assert.strictEqual(runnerTarget.source, 'env_var');
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST 19: SafeMigrationRunner with --database only
+    // ------------------------------------------------------------------------
+    await runTest('19. SafeMigrationRunner resolves --database CLI argument only target', async () => {
+      const oldEnv = process.env.DATABASE_URL;
+      delete process.env.DATABASE_URL;
+      try {
+        const runnerTarget = resolveCanonicalDatabaseTarget({
+          databaseUrl: undefined,
+          args: ['--database', testDbPath],
+        });
+        assert.strictEqual(path.normalize(runnerTarget.canonicalPath), path.normalize(testDbPath));
+        assert.strictEqual(runnerTarget.source, 'cli_arg');
+      } finally {
+        process.env.DATABASE_URL = oldEnv;
+      }
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST 20: Both pointing to the exact same file (Matched both)
+    // ------------------------------------------------------------------------
+    await runTest('20. Both DATABASE_URL and --database pointing to the same file are accepted', async () => {
+      const runnerTarget = resolveCanonicalDatabaseTarget({
+        databaseUrl: testDbUrl,
+        args: ['--database', testDbPath],
+      });
+      assert.strictEqual(path.normalize(runnerTarget.canonicalPath), path.normalize(testDbPath));
+      assert.strictEqual(runnerTarget.source, 'matched_both');
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST 21: Conflicting DATABASE_URL and --database values rejected
+    // ------------------------------------------------------------------------
+    await runTest('21. Conflicting DATABASE_URL and --database values are strictly rejected', async () => {
+      const otherDb = path.resolve(fixtureDir, `other_${Date.now()}.db`);
+      fs.writeFileSync(otherDb, 'placeholder');
+
+      let caughtConflict = false;
+      try {
+        resolveCanonicalDatabaseTarget({
+          databaseUrl: testDbUrl,
+          args: ['--database', otherDb],
+        });
+      } catch (err: any) {
+        if (err.message.includes('Conflicting database configurations detected')) {
+          caughtConflict = true;
+        }
+      } finally {
+        if (fs.existsSync(otherDb)) fs.unlinkSync(otherDb);
+      }
+      assert.strictEqual(caughtConflict, true);
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST 22: Relative Prisma schema path resolution
+    // ------------------------------------------------------------------------
+    await runTest('22. Relative path in DATABASE_URL resolves schema-relative, not CWD-relative', async () => {
+      const schemaDir = findPrismaSchemaDir();
+      const relTarget = resolveCanonicalDatabaseTarget({
+        databaseUrl: 'file:./fixtures/schema_rel_test.db',
+        allowMissingFile: true,
+      });
+      const expected = path.normalize(path.resolve(schemaDir, './fixtures/schema_rel_test.db'));
+      assert.strictEqual(relTarget.canonicalPath, expected);
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST 23: Absolute path resolution
+    // ------------------------------------------------------------------------
+    await runTest('23. Absolute path in DATABASE_URL is preserved canonically', async () => {
+      const absPath = path.resolve(fixtureDir, 'abs_test.db');
+      const absTarget = resolveCanonicalDatabaseTarget({
+        databaseUrl: `file:${absPath}`,
+        allowMissingFile: true,
+      });
+      assert.strictEqual(path.normalize(absTarget.canonicalPath), path.normalize(absPath));
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST 24: Symlink canonicalization
+    // ------------------------------------------------------------------------
+    await runTest('24. Symlink resolves to physical canonical target file', async () => {
+      const linkPath = path.resolve(fixtureDir, `link_test_${Date.now()}.db`);
+      let symlinkSupported = true;
+      try {
+        fs.symlinkSync(testDbPath, linkPath);
+      } catch {
+        symlinkSupported = false;
+      }
+
+      if (symlinkSupported) {
+        try {
+          const symTarget = resolveCanonicalDatabaseTarget({
+            databaseUrl: `file:${linkPath}`,
+          });
+          assert.strictEqual(path.normalize(symTarget.canonicalPath), path.normalize(testDbPath));
+        } finally {
+          try {
+            fs.unlinkSync(linkPath);
+          } catch {}
+        }
+      }
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST 25: Failing safety gate guarantees NO Prisma migration runs
+    // ------------------------------------------------------------------------
+    await runTest('25. Failing safety gate halts and guarantees NO Prisma migration process runs', async () => {
+      // Create a duplicate active channel in the database to fail the pre-migration gate
+      await prisma.$executeRawUnsafe("INSERT INTO orders (id, status, execution_channel_id) VALUES (501, 'in_progress', 'ch_501_a');");
+      await prisma.$executeRawUnsafe("INSERT INTO order_channels (id, order_id, discord_channel_id, channel_type, status) VALUES (601, 501, 'ch_501_a', 'execution', 'active');");
+      await prisma.$executeRawUnsafe("INSERT INTO order_channels (id, order_id, discord_channel_id, channel_type, status) VALUES (602, 501, 'ch_501_b', 'execution', 'active');");
+
+      // Temporarily remove migration from _prisma_migrations so 20261109150000 is marked pending
+      await prisma.$executeRawUnsafe("DELETE FROM _prisma_migrations WHERE migration_name = '20261109150000_order_channel_active_execution_uniqueness';");
+
+      const runnerResult = await runSafeMigration({
+        databaseUrl: testDbUrl,
+        silent: true,
+      });
+
+      assert.strictEqual(runnerResult.success, false);
+      assert.strictEqual(runnerResult.gatePassed, false);
+      assert.strictEqual(runnerResult.prismaExecuted, false, 'Prisma CLI must NEVER execute if safety gate fails');
+      assert.strictEqual(runnerResult.prismaExitCode, -1);
+
+      // Clean up test order 501
+      await prisma.$executeRawUnsafe('DELETE FROM order_channels WHERE order_id = 501;');
+      await prisma.$executeRawUnsafe('DELETE FROM orders WHERE id = 501;');
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST 26: Missing database configuration fails closed
+    // ------------------------------------------------------------------------
+    await runTest('26. Missing database configuration rejects execution without guessing path', async () => {
+      const oldEnv = process.env.DATABASE_URL;
+      delete process.env.DATABASE_URL;
+      let caught = false;
+      try {
+        await runSafeMigration({ databaseUrl: undefined, args: [], silent: true });
+      } catch (err: any) {
+        if (err.message.includes('Missing database configuration')) {
+          caught = true;
+        }
+      } finally {
+        process.env.DATABASE_URL = oldEnv;
+      }
+      assert.strictEqual(caught, true);
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST 27: Failing Prisma migration process propagates exit code
+    // ------------------------------------------------------------------------
+    await runTest('27. Failing Prisma migration process correctly propagates non-zero exit code', async () => {
+      // testDbPath has raw custom tables that conflict with initial migrations, so Prisma will fail
+      const runnerResult = await runSafeMigration({
+        databaseUrl: testDbUrl,
+        silent: true,
+      });
+
+      assert.strictEqual(runnerResult.gatePassed, true);
+      assert.strictEqual(runnerResult.prismaExecuted, true);
+      assert.strictEqual(runnerResult.success, false);
+      assert.ok(runnerResult.prismaExitCode > 0, 'Must propagate non-zero exit code from Prisma');
+    });
+
+    // ------------------------------------------------------------------------
+    // TEST 28: Prisma migrate deploy successful invocation on fresh disposable DB
+    // ------------------------------------------------------------------------
+    await runTest('28. Prisma migrate deploy runs cleanly through safe-migration-runner on fresh disposable target', async () => {
+      const freshDbPath = path.resolve(fixtureDir, `fresh_runner_${Date.now()}.db`);
+      fs.writeFileSync(freshDbPath, ''); // empty file
+
+      try {
+        const runnerResult = await runSafeMigration({
+          databaseUrl: `file:${freshDbPath}`,
+          silent: true,
+        });
+
+        assert.strictEqual(runnerResult.gatePassed, true);
+        assert.strictEqual(runnerResult.prismaExecuted, true);
+        assert.strictEqual(runnerResult.prismaExitCode, 0);
+        assert.strictEqual(runnerResult.success, true);
+      } finally {
+        if (fs.existsSync(freshDbPath)) {
+          fs.unlinkSync(freshDbPath);
+        }
+      }
+    });
+
     console.log('\n================================================================');
-    console.log(' All 17 Migration & Reconciliation Safety Tests Passed! (100%)');
+    console.log(' All 28 Migration & Reconciliation Safety Tests Passed! (100%)');
     console.log('================================================================');
   } finally {
     await prisma.$disconnect().catch(() => {});
