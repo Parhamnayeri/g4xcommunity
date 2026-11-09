@@ -26,6 +26,12 @@ export async function handleModalSubmit(interaction: ModalSubmitInteraction): Pr
     return;
   }
 
+  if (customId.startsWith('modal_order_proof:')) {
+    const { handleDiscordProofModalSubmit } = await import('../services/discordProofSubmissionService');
+    await handleDiscordProofModalSubmit(interaction);
+    return;
+  }
+
   if (
     customId.startsWith('reg_modal:') ||
     customId.startsWith('app_modal_reject:') ||

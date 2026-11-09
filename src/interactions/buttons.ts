@@ -10,7 +10,13 @@
  *  order_decline:<orderId>      — رد تخصیص توسط بوستر
  */
 
-import { ButtonInteraction } from 'discord.js';
+import {
+  ButtonInteraction,
+  ModalBuilder,
+  ActionRowBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+} from 'discord.js';
 import {
   handleRegistrationButton,
   handleAdminReviewButton,
@@ -249,14 +255,82 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
     }
     case 'order_chan_proof': {
       const orderId = Number(params[0]);
-      const webBaseUrl = process.env.WEB_BASE_URL || 'https://g4x.online';
-      await interaction.reply({
-        content:
-          `📸 **Submit Completion Evidence for Order #${orderId}**\n` +
-          `• Option 1: Upload and verify screenshot directly on the [Web Dashboard](${webBaseUrl}/#booster).\n` +
-          `• Option 2: Post your screenshot directly in this coordination channel for Staff review.`,
-        ephemeral: true,
-      });
+      if (isNaN(orderId) || orderId <= 0) {
+        await interaction.reply({ content: '❌ Invalid order ID parameter.', ephemeral: true });
+        return;
+      }
+
+      try {
+        const prismaClient = (await import('../database/db')).default;
+        const order = await prismaClient.order.findUnique({
+          where: { id: orderId },
+          include: {
+            orderChannels: { where: { channelType: 'execution', status: 'active' } },
+            assignments: { where: { status: 'assigned' } },
+          },
+        });
+
+        if (!order) {
+          await interaction.reply({ content: `❌ Order #${orderId} not found.`, ephemeral: true });
+          return;
+        }
+
+        const activeChan = order.orderChannels.find((c) => c.discordChannelId === interaction.channelId);
+        if (!activeChan) {
+          await interaction.reply({
+            content: `❌ **Wrong Channel:** Proof must be submitted directly inside the private execution channel for Order #${orderId}.`,
+            ephemeral: true,
+          });
+          return;
+        }
+
+        const isAssigned = order.assignments.some((a) => a.userId === interaction.user.id);
+        if (!isAssigned) {
+          await interaction.reply({
+            content: `❌ **Unauthorized:** Only assigned boosters for Order #${orderId} can submit completion proof.`,
+            ephemeral: true,
+          });
+          return;
+        }
+
+        if (typeof interaction.showModal === 'function') {
+          const modal = new ModalBuilder()
+            .setCustomId(`modal_order_proof:${orderId}`)
+            .setTitle(`Submit Proof — Order #${orderId}`)
+            .addComponents(
+              new ActionRowBuilder<TextInputBuilder>().addComponents(
+                new TextInputBuilder()
+                  .setCustomId('evidence_url')
+                  .setLabel('Screenshot / Evidence Image URL')
+                  .setStyle(TextInputStyle.Short)
+                  .setPlaceholder('https://cdn.discordapp.com/... or image link')
+                  .setRequired(true)
+              ),
+              new ActionRowBuilder<TextInputBuilder>().addComponents(
+                new TextInputBuilder()
+                  .setCustomId('description')
+                  .setLabel('Completion Notes / Score / Time')
+                  .setStyle(TextInputStyle.Paragraph)
+                  .setPlaceholder('Enter dungeon time, key level, or completion details...')
+                  .setRequired(false)
+              )
+            );
+          await interaction.showModal(modal);
+        } else {
+          await interaction.reply({
+            content:
+              `📸 **Submit Completion Evidence for Order #${orderId}**\n` +
+              `• Attach your screenshot directly in this channel with \`G4!proof [notes]\`.\n` +
+              `• All proofs are registered for Staff review and escrow protection.`,
+            ephemeral: true,
+          });
+        }
+      } catch (err: any) {
+        await interaction.reply({
+          content: `❌ Could not initiate proof submission: ${err?.message || err}`,
+          ephemeral: true,
+        });
+      }
       break;
     }
     case 'order_status_badge': {
