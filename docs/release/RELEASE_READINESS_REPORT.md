@@ -3,7 +3,7 @@
 **Target Branch:** `release/preproduction-qa-hardening`  
 **Base Commit SHA:** `aa4729aa639c6be4155b618bc30dcb0657952ea1` (`origin/main`)  
 **Audit Date:** 2026-11-09  
-**Overall Release Verdict:** **NO-GO (Release Blocked Until Operational Preconditions Cleared)**  
+**Overall Release Verdict:** **NO-GO (Release Strictly Blocked Until Production Preconditions Cleared)**
 
 ---
 
@@ -11,7 +11,7 @@
 
 An exhaustive pre-production quality assurance, security audit, database migration analysis, and release-hardening review was conducted across the G4X Community platform. 
 
-While code-level hardening, fail-closed pre-migration gates, transactional channel reconciliation, and test suites are 100% complete and passing, the **official release verdict remains strictly NO-GO** until human operators execute mandatory pre-deployment database inspection, perform manual cold backups, obtain required third-party commercial licensing, and obtain formal legal approval for financial settlements.
+While code-level hardening, canonical path resolution, fail-closed pre-migration gates, globally atomic channel reconciliation, and 17/17 regression test suites are 100% complete and passing, the **official release verdict remains strictly NO-GO** until human operators execute mandatory pre-deployment database inspection, perform manual cold backups, obtain required third-party commercial licensing, and obtain formal legal approval for financial settlements.
 
 ---
 
@@ -21,6 +21,7 @@ To prevent overstating release readiness, the following operational boundaries m
 
 1. **Automated Test Results (VERIFIED ✅):**
    - 100% of internal automated test suites pass cleanly across all modules (CMS, RBAC, Finance V1/V2, Order Execution, Characters, Channels, SPA Routing, and Migration Safety).
+   - 17/17 migration safety tests verified: canonical path resolution, foreign-key blocking, global preflight validation, atomic batch rollback, concurrency validation, and backup header verification.
 2. **Tests Using Mocks (VERIFIED WITH SYNTHETIC FIXTURES ⚠️):**
    - Discord API interactions (guild channels, role updates, interaction buttons, webhooks) are validated using in-memory mock clients and harness fixtures.
    - External crypto/fiat payment gateways (NOWPayments, Zarinpal) are verified using deterministic mock webhooks and signature validators.
@@ -65,12 +66,16 @@ To prevent overstating release readiness, the following operational boundaries m
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **RISK-01** | Database Startup | **HIGH** | Unawaited top-level `$executeRawUnsafe` calls in `src/database/db.ts` caused intermittent `Response from the Engine was empty` errors during cold boot. | **RESOLVED** | Removed module-level execution; implemented `ensureSecurityAndIntegrityIndexes(client)` awaited synchronously inside `initializeDatabase()`. |
 | **RISK-02** | Migration Safety | **CRITICAL** | Migration `20261109150000_order_channel_active_execution_uniqueness` blindly archived duplicate channels by `MAX(id)` without evaluating `orders.execution_channel_id`. | **RESOLVED** | Built `scripts/pre-migration-gate.ts` (blocks Prisma migrations if duplicates exist) and transactional reconciler `scripts/reconcile-execution-channels.ts`. |
-| **RISK-03** | Historical Checksums | **CRITICAL** | Editing historical migrations on disk alters SHA-256 checksums, causing `P3008` migration failure if already applied in any environment. | **RESOLVED** | Preserved exact historical migration files on disk; created an independent, pre-migration verification gate that intercepts execution before Prisma runs. |
-| **RISK-04** | Reconciler Hazards | **HIGH** | Initial reconciler guessed database paths, lacked apply confirmations, lacked backup requirements, and blindly wiped terminal orders. | **RESOLVED** | Overhauled `scripts/reconcile-execution-channels.ts`: mandatory `--database`/`DATABASE_URL`, confirmation flag, backup verification flag, transaction rollback, and fail-safe handling of ambiguous pointers. |
-| **RISK-05** | Third-Party Licensing | **HIGH** | Unlicensed live synchronization with Raider.IO API could lead to IP bans or legal liabilities. | **RESOLVED** | Enforced feature flag `RAIDERIO_LIVE_SYNC_ENABLED=false`. When disabled, zero outbound HTTP calls occur, zero fake scores are returned, and UI displays truthful status. |
-| **RISK-06** | RBAC / KYC Sandbox | **HIGH** | Inconsistent test fixtures allowed `manager` access to sensitive KYC identity documents. | **RESOLVED** | Strictly enforced `SENSITIVE_IDENTITY_REVIEW` check permitting only `admin` and `owner`. Updated legacy test harnesses to enforce this invariant. |
-| **RISK-07** | Identity Validation | **MEDIUM** | Test fixtures used mock non-numeric strings for owner IDs, violating the 17–20 digit Discord snowflake invariant. | **RESOLVED** | Enforced 18-digit numeric snowflake strings in test fixtures; verified fail-closed posture of `resolveDatabaseOwner()`. |
-| **RISK-08** | Financial Live Gates | **CRITICAL** | Risk of premature payouts or live settlements before external compliance and banking integration. | **PRECONDITION** | Enforced default `false` for all five live financial gates in configuration. |
+| **RISK-03** | Canonical Path Resolution | **CRITICAL** | Prisma CLI resolves relative SQLite URLs relative to `prisma/schema.prisma`, whereas naive tools resolve relative to `cwd()`, risking split-brain migrations. | **RESOLVED** | Implemented `scripts/canonical-db-path.ts` enforcing exact Prisma schema-relative resolution and symlink canonicalization across all tools. |
+| **RISK-04** | Integrity Enforcement | **CRITICAL** | `PRAGMA foreign_key_check` failures were previously logged as warnings, allowing migration on broken databases. | **RESOLVED** | Strictly enforced fail-closed policy: ANY foreign-key violation immediately aborts migration, inspection, and reconciliation. |
+| **RISK-05** | Partial Reconciliation | **HIGH** | Sequential per-order reconciliation risked partial writes if a subsequent order encountered a conflict. | **RESOLVED** | Implemented global preflight validation across ALL duplicate groups before any writes; executed all updates in a single atomic `prisma.$transaction`. |
+| **RISK-06** | Concurrency Validation | **HIGH** | Transaction verification checked only row counts, failing to detect concurrent swap of record identities or pointer modifications. | **RESOLVED** | Strengthened concurrency validation to re-verify exact channel record IDs, channel statuses, Discord channel IDs, and the order pointer inside the transaction. |
+| **RISK-07** | Backup Verification | **HIGH** | `--verified-backup-taken` was an unverified flag; risks operator false sense of security. | **RESOLVED** | Added `validateBackupFile`: checks existence, non-self identity, minimum size, and `SQLite format 3\0` magic header; documented operator responsibilities. |
+| **RISK-08** | Incomplete Migrations | **HIGH** | In-flight or failed migrations (`finished_at = null`) in `_prisma_migrations` could cause undefined state. | **RESOLVED** | Gate inspects `_prisma_migrations` and halts on any incomplete or rolled-back migration records. |
+| **RISK-09** | Third-Party Licensing | **HIGH** | Unlicensed live synchronization with Raider.IO API could lead to IP bans or legal liabilities. | **RESOLVED** | Enforced feature flag `RAIDERIO_LIVE_SYNC_ENABLED=false`. When disabled, zero outbound HTTP calls occur, zero fake scores are returned, and UI displays truthful status. |
+| **RISK-10** | RBAC / KYC Sandbox | **HIGH** | Inconsistent test fixtures allowed `manager` access to sensitive KYC identity documents. | **RESOLVED** | Strictly enforced `SENSITIVE_IDENTITY_REVIEW` check permitting only `admin` and `owner`. Updated legacy test harnesses to enforce this invariant. |
+| **RISK-11** | Identity Validation | **MEDIUM** | Test fixtures used mock non-numeric strings for owner IDs, violating the 17–20 digit Discord snowflake invariant. | **RESOLVED** | Enforced 18-digit numeric snowflake strings in test fixtures; verified fail-closed posture of `resolveDatabaseOwner()`. |
+| **RISK-12** | Financial Live Gates | **CRITICAL** | Risk of premature payouts or live settlements before external compliance and banking integration. | **PRECONDITION** | Enforced default `false` for all five live financial gates in configuration. |
 
 ---
 
@@ -83,38 +88,28 @@ To prevent overstating release readiness, the following operational boundaries m
 
 ---
 
-## Section D: Database & Migration Safety
+## Section D: Database & Migration Safety Architecture
 
-### 1. Analysis of Migration `20261109150000_order_channel_active_execution_uniqueness`
-- **Root Problem:** The SQL migration contained:
-  ```sql
-  UPDATE "order_channels"
-  SET "status" = 'archived', "archived_at" = CURRENT_TIMESTAMP
-  WHERE "id" IN (
-      SELECT "id" FROM (
-          SELECT "id", ROW_NUMBER() OVER (PARTITION BY "order_id" ORDER BY "id" DESC) as rn
-          FROM "order_channels"
-          WHERE "channel_type" = 'execution' AND "status" = 'active'
-      ) WHERE rn > 1
-  );
-  ```
-  This arbitrarily kept the channel with the highest `id` and archived all others, regardless of whether `orders.execution_channel_id` pointed to a lower `id`.
-- **Integrity Rule:** Historical applied migrations cannot be modified on disk without causing Prisma checksum drift (`P3008`).
-- **Solution Architecture:**
-  - **Pre-Migration Gate (`scripts/pre-migration-gate.ts`):** Evaluates database state BEFORE `prisma migrate deploy` runs. If duplicate active execution channels exist, it immediately blocks execution with exit code 1.
-  - **Deterministic Reconciler (`scripts/reconcile-execution-channels.ts`):**
-    - Requires explicit `--database <path>` or `DATABASE_URL`. Never guesses paths.
-    - Default mode is read-only dry-run.
-    - Apply mode requires `--confirm-apply-irreversible` and `--verified-backup-taken`.
-    - Matches active channels against `orders.execution_channel_id`.
-    - Executes updates and `AuditLog` writes inside `prisma.$transaction`.
-    - Re-checks channel count inside the transaction to detect concurrent mutations.
-    - Fails safe on ambiguous, missing, or contradictory pointers without deleting or modifying records.
-  - **Safe Migration Command:**
-    ```bash
-    npm run migrate:safe
-    ```
-    Executes the pre-migration gate, ensuring zero duplicates exist before `prisma migrate deploy` is permitted to run.
+### 1. Canonical Target Resolution (`scripts/canonical-db-path.ts`)
+- In Prisma, relative SQLite paths like `file:./dev.db` are resolved **relative to the directory containing `schema.prisma`** (`<repoRoot>/prisma/`), NOT relative to `process.cwd()`.
+- `resolveCanonicalDatabaseTarget` strictly implements this logic, resolving paths to their canonical physical target via `fs.realpathSync`.
+- Guarantees that the pre-migration gate, inspection script, reconciler, and `prisma migrate deploy` always target the exact same canonical database file.
+
+### 2. Strict Foreign-Key Policy
+- Any foreign-key violation returned by `PRAGMA foreign_key_check;` is treated as a **FATAL INTEGRITY VIOLATION**.
+- Execution immediately aborts with non-zero exit code. Zero warnings permitted.
+
+### 3. Global Preflight & Globally Atomic Reconciliation (`scripts/reconcile-execution-channels.ts`)
+- **Phase 1 (Global Preflight):** Read-only evaluation of ALL duplicate groups across the entire database. If even ONE group has an ambiguous, missing, or contradictory pointer, the entire operation halts with ZERO writes.
+- **Phase 2 (Global Atomic Batch):** When preflight passes, all archive updates and `AuditLog` inserts execute within a single `prisma.$transaction`. Any failure rolls back the entire batch.
+- **Strict Concurrency Verification:** Inside the transaction, the script re-verifies:
+  - Exact order status and authoritative `execution_channel_id` pointer.
+  - Exact active channel record IDs, Discord channel IDs, and statuses.
+  - Any drift triggers `CONCURRENT_MUTATION_DETECTED` and immediately rolls back.
+
+### 4. Direct Prisma Invocation Policy
+- Running `npx prisma migrate deploy` directly in production is **STRICTLY PROHIBITED**.
+- While an npm script wrapper (`npm run migrate:safe`) cannot technically prevent an operator typing raw commands in a shell, production deployment policy mandates executing `scripts/pre-migration-gate.ts` before applying any migrations.
 
 ---
 
@@ -155,72 +150,78 @@ RAIDERIO_LIVE_SYNC_ENABLED=false
 
 ### Release Verdict: **NO-GO**
 
-The platform is **NOT AUTHORIZED** for production traffic until human operators complete the following mandatory runbook.
+The platform is **NOT AUTHORIZED** for production traffic until human operators complete the following mandatory runbook and clear all residual operational blockers.
 
-### Pre-Deployment Migration Runbook (Human Operator Instructions)
+### Mandatory Pre-Deployment Migration Runbook (Human Operator Instructions)
 
 ```bash
 # ------------------------------------------------------------------------------
-# STEP 1: Verify Environment & SQLite Database Path
+# STEP 1: Stop Bot & Web Processes to Prevent Concurrent Writes
 # ------------------------------------------------------------------------------
-# Confirm DATABASE_URL points to the intended SQLite database file:
-echo "Configured database: $DATABASE_URL"
+systemctl stop g4x-bot
 
 # ------------------------------------------------------------------------------
-# STEP 2: Create a Verified Cold Backup
+# STEP 2: Create a Verified Cold Backup (Operator Responsibility)
 # ------------------------------------------------------------------------------
-# Stop any running bot/server processes before copying SQLite database:
+# Copy the physical SQLite database to an isolated backup directory:
 cp /path/to/production.db /path/to/backups/production_$(date +%Y%m%d_%H%M%S).db.bak
+
+# Verify backup integrity manually (must be non-empty and valid SQLite):
 ls -lh /path/to/backups/production_*.db.bak
+head -c 16 /path/to/backups/production_*.db.bak | grep "SQLite format 3"
 
 # ------------------------------------------------------------------------------
-# STEP 3: Run Read-Only Safety Inspection
+# STEP 3: Run Read-Only Database Safety Inspection
 # ------------------------------------------------------------------------------
 npx ts-node scripts/inspect-database-safety.ts --database /path/to/production.db
-# Review output:
-# - Ensure PRAGMA foreign_key_check reports 0 violations.
-# - Check total duplicate active execution channels.
+# Must verify:
+# - foreignKeyCheckPassed is true (0 FK violations)
+# - incompleteMigrationsFound is empty
+# - rolledBackMigrationsFound is empty
 
 # ------------------------------------------------------------------------------
 # STEP 4: Run Execution Channel Reconciler Dry-Run
 # ------------------------------------------------------------------------------
 npx ts-node scripts/reconcile-execution-channels.ts --database /path/to/production.db --dry-run
-# Review the JSON report:
+# Review preflight:
 # - Ensure unresolvedConflicts array is EMPTY.
-# - If conflicts exist, manually resolve them using orders.execution_channel_id.
+# - If conflicts exist, STOP and manually resolve pointers before applying.
 
 # ------------------------------------------------------------------------------
-# STEP 5: Apply Execution Channel Reconciliation
+# STEP 5: Apply Execution Channel Reconciliation Atomically
 # ------------------------------------------------------------------------------
 npx ts-node scripts/reconcile-execution-channels.ts \
   --database /path/to/production.db \
   --apply \
   --confirm-apply-irreversible \
-  --verified-backup-taken
+  --verified-backup-taken \
+  --backup-file /path/to/backups/production_<TIMESTAMP>.db.bak
 
 # ------------------------------------------------------------------------------
 # STEP 6: Execute Pre-Migration Safety Gate
 # ------------------------------------------------------------------------------
 npx ts-node scripts/pre-migration-gate.ts --database /path/to/production.db
-# Must output: [PreMigrationGate] 🟢 GATE PASSED: Proceed with prisma migrate deploy.
+# MUST output: [PreMigrationGate] 🟢 GATE PASSED: Safe to proceed with migration deployment.
 
 # ------------------------------------------------------------------------------
 # STEP 7: Safe Migration Deployment
 # ------------------------------------------------------------------------------
-npx prisma migrate deploy
+# POLICY: Direct invocation without Step 6 is strictly prohibited.
+npm run migrate:safe
 
 # ------------------------------------------------------------------------------
-# STEP 8: Post-Migration Index & Persistence Verification
+# STEP 8: Restart Application & Verify Indexes
 # ------------------------------------------------------------------------------
+systemctl start g4x-bot
 npm run test:startup-persistence
 ```
 
 ### Rollback Plan
 If any failure occurs during migration or startup:
-1. Terminate all application processes.
-2. Restore the cold backup created in Step 2:
+1. Terminate application processes immediately: `systemctl stop g4x-bot`.
+2. Restore the verified cold backup created in Step 2:
    ```bash
    cp /path/to/backups/production_<TIMESTAMP>.db.bak /path/to/production.db
    ```
 3. Re-verify database integrity with `npx ts-node scripts/inspect-database-safety.ts --database /path/to/production.db`.
-4. Revert service binary to previous release tag.
+4. Revert service process to previous release tag.

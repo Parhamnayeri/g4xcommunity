@@ -5,28 +5,32 @@
  *
  * Safety Invariants:
  *  1. Purely read-only: performs zero writes, zero schema alterations, and zero deletes.
- *  2. Refuses to guess SQLite database path. Explicit DATABASE_URL or --database <path> is mandatory.
+ *  2. Canonical Target Resolution: strictly matches Prisma CLI schema-relative path rules.
  *  3. Reports comprehensive migration status, foreign key health, execution channel duplication,
  *     and pointer discrepancy analysis.
+ *  4. Identifies failed, incomplete, or rolled-back migration records.
  *
  * Usage:
  *   npx ts-node scripts/inspect-database-safety.ts --database /path/to/db.sqlite
  */
 
 import fs from 'fs';
-import path from 'path';
 import dotenv from 'dotenv';
 import { PrismaClient } from '@prisma/client';
+import { resolveCanonicalDatabaseTarget } from './canonical-db-path';
 
 dotenv.config();
 
 export interface InspectionReport {
   databasePath: string;
+  databaseUrl: string;
   databaseSizeBytes: number;
   foreignKeyCheckPassed: boolean;
   foreignKeyViolations: any[];
   migrationsTableFound: boolean;
   totalMigrationsApplied: number;
+  incompleteMigrationsFound: Array<{ id: string; migration_name: string }>;
+  rolledBackMigrationsFound: Array<{ id: string; migration_name: string }>;
   lastMigrationName: string | null;
   targetMigrationApplied: boolean;
   orderChannelsTableFound: boolean;
@@ -55,67 +59,34 @@ export interface InspectionReport {
   verdict: 'CLEAN' | 'RECONCILIATION_REQUIRED' | 'BLOCKED_BY_AMBIGUOUS_CONFLICTS' | 'DATABASE_ERROR';
 }
 
-export function resolveDatabaseTarget(options?: { databaseUrl?: string; args?: string[] }): {
-  databaseUrl: string;
-  sqliteFilePath: string;
-} {
-  const args = options?.args || process.argv.slice(2);
-  let rawUrl: string | undefined = options?.databaseUrl;
-
-  const dbIndex = args.indexOf('--database');
-  if (dbIndex !== -1 && args[dbIndex + 1]) {
-    const rawPath = args[dbIndex + 1];
-    const resolvedPath = path.resolve(process.cwd(), rawPath);
-    rawUrl = `file:${resolvedPath}`;
-  }
-
-  if (!rawUrl && process.env.DATABASE_URL) {
-    rawUrl = process.env.DATABASE_URL.trim();
-  }
-
-  if (!rawUrl) {
-    throw new Error(
-      '[CRITICAL SAFETY ERROR] Missing database configuration. Explicit DATABASE_URL environment variable or --database <path> argument is REQUIRED. Guessed defaults (e.g. dev.db) are strictly forbidden.'
-    );
-  }
-
-  let sqliteFilePath = rawUrl;
-  if (rawUrl.startsWith('file:')) {
-    sqliteFilePath = rawUrl.replace(/^file:/, '');
-  }
-  sqliteFilePath = path.resolve(process.cwd(), sqliteFilePath);
-
-  if (!fs.existsSync(sqliteFilePath)) {
-    throw new Error(
-      `[CRITICAL SAFETY ERROR] Target SQLite database file does not exist at '${sqliteFilePath}'. Refusing to operate on non-existent database.`
-    );
-  }
-
-  return { databaseUrl: rawUrl, sqliteFilePath };
-}
-
 export async function inspectDatabaseSafety(options: {
   databaseUrl?: string;
   prismaClient?: PrismaClient;
+  args?: string[];
 } = {}): Promise<InspectionReport> {
-  const { databaseUrl, sqliteFilePath } = resolveDatabaseTarget({
+  const args = options.args || process.argv.slice(2);
+  const target = resolveCanonicalDatabaseTarget({
     databaseUrl: options.databaseUrl,
+    args,
   });
 
-  const stats = fs.statSync(sqliteFilePath);
+  const stats = fs.statSync(target.canonicalPath);
   const prisma =
     options.prismaClient ||
     new PrismaClient({
-      datasources: { db: { url: databaseUrl } },
+      datasources: { db: { url: target.canonicalUrl } },
     });
 
   const report: InspectionReport = {
-    databasePath: sqliteFilePath,
+    databasePath: target.canonicalPath,
+    databaseUrl: target.canonicalUrl,
     databaseSizeBytes: stats.size,
     foreignKeyCheckPassed: true,
     foreignKeyViolations: [],
     migrationsTableFound: false,
     totalMigrationsApplied: 0,
+    incompleteMigrationsFound: [],
+    rolledBackMigrationsFound: [],
     lastMigrationName: null,
     targetMigrationApplied: false,
     orderChannelsTableFound: false,
@@ -130,7 +101,7 @@ export async function inspectDatabaseSafety(options: {
   };
 
   try {
-    // 1. Foreign Key Integrity Check
+    // 1. Strict Foreign Key Integrity Check
     const fkViolations: any[] = await prisma.$queryRawUnsafe('PRAGMA foreign_key_check;');
     if (fkViolations && fkViolations.length > 0) {
       report.foreignKeyCheckPassed = false;
@@ -148,15 +119,31 @@ export async function inspectDatabaseSafety(options: {
     report.ordersTableFound = tableNames.has('orders');
 
     if (report.migrationsTableFound) {
-      const migrations: Array<{ migration_name: string; finished_at: string | null }> = await prisma.$queryRawUnsafe(
-        'SELECT migration_name, finished_at FROM _prisma_migrations ORDER BY finished_at ASC;'
+      const migrations: Array<{
+        id: string;
+        migration_name: string;
+        finished_at: string | null;
+        rolled_back_at: string | null;
+      }> = await prisma.$queryRawUnsafe(
+        'SELECT id, migration_name, finished_at, rolled_back_at FROM _prisma_migrations ORDER BY finished_at ASC;'
       );
-      report.totalMigrationsApplied = migrations.filter((m) => m.finished_at !== null).length;
-      if (migrations.length > 0) {
-        report.lastMigrationName = migrations[migrations.length - 1].migration_name;
+
+      const completed = migrations.filter((m) => m.finished_at !== null && m.rolled_back_at === null);
+      report.totalMigrationsApplied = completed.length;
+      if (completed.length > 0) {
+        report.lastMigrationName = completed[completed.length - 1].migration_name;
       }
-      report.targetMigrationApplied = migrations.some(
-        (m) => m.migration_name === '20261109150000_order_channel_active_execution_uniqueness' && m.finished_at !== null
+
+      report.incompleteMigrationsFound = migrations
+        .filter((m) => m.finished_at === null)
+        .map((m) => ({ id: m.id, migration_name: m.migration_name }));
+
+      report.rolledBackMigrationsFound = migrations
+        .filter((m) => m.rolled_back_at !== null)
+        .map((m) => ({ id: m.id, migration_name: m.migration_name }));
+
+      report.targetMigrationApplied = completed.some(
+        (m) => m.migration_name === '20261109150000_order_channel_active_execution_uniqueness'
       );
     }
 
@@ -249,7 +236,10 @@ export async function inspectDatabaseSafety(options: {
     }
 
     // Determine overall verdict
-    if (report.duplicateActiveOrderCount === 0) {
+    if (!report.foreignKeyCheckPassed || report.incompleteMigrationsFound.length > 0 || report.rolledBackMigrationsFound.length > 0) {
+      report.isReadyForSafeMigration = false;
+      report.verdict = 'DATABASE_ERROR';
+    } else if (report.duplicateActiveOrderCount === 0) {
       report.isReadyForSafeMigration = true;
       report.verdict = 'CLEAN';
     } else {
@@ -277,6 +267,9 @@ if (require.main === module) {
       console.log('\n--- Database Safety Inspection Report ---');
       console.log(JSON.stringify(report, null, 2));
       console.log(`\nVerdict: ${report.verdict} (Ready for Migration: ${report.isReadyForSafeMigration})`);
+      if (report.verdict === 'DATABASE_ERROR' || report.verdict === 'BLOCKED_BY_AMBIGUOUS_CONFLICTS') {
+        process.exit(1);
+      }
       process.exit(0);
     })
     .catch((err) => {
