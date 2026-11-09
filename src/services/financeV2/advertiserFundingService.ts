@@ -413,7 +413,7 @@ export async function adminVerifyAndCreditIrtFunding(
 
   assertLiveCreditsEnabled();
 
-  const auth = await authorize(actorId, Permission.FINANCE_ADJUST);
+  const auth = await authorize(actorId, Permission.MANUAL_DEPOSIT_REVIEW);
   if (!auth.allowed) {
     throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions to verify funding'}`);
   }
@@ -501,18 +501,41 @@ export async function adminVerifyAndCreditIrtFunding(
       data: { availableCents: newAvailable },
     });
 
+    // به‌روزرسانی رکوردهای پیگیری پرداخت مرتبط
+    const pReq = await tx.paymentRequest.findFirst({
+      where: { fundingRequestId: fundingId },
+      include: { attempts: true },
+    });
+    if (pReq) {
+      await tx.paymentRequest.update({
+        where: { id: pReq.id },
+        data: { status: 'confirmed' },
+      });
+      await tx.paymentAttempt.updateMany({
+        where: { paymentRequestId: pReq.id, status: 'pending' },
+        data: {
+          status: 'confirmed',
+          reviewedBy: actorId,
+          reviewedAt: new Date(),
+          reviewReason: adminNotes || 'Admin approved',
+        },
+      });
+    }
+
     await tx.auditLog.create({
       data: {
         actorId,
         action: 'ADVERTISER_IRT_FUNDING_CREDITED',
         entityType: 'AdvertiserFundingRequest',
         entityId: String(fundingId),
+        previousValues: JSON.stringify({ status: fundingRequest.status }),
         newValues: JSON.stringify({
           fundingRef: fundingRequest.fundingRef,
           targetUsdCents: fundingRequest.targetUsdCents,
           totalIrtUnits: fundingRequest.externalAmountUnits,
           exchangeRate: fundingRequest.exchangeRate,
           postingGroupId,
+          status: AdvertiserFundingStatus.CONFIRMED_CREDITED,
         }),
       },
     });

@@ -11,11 +11,10 @@ interface IrtDepositFormProps {
 
 export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
   bankDetails,
-  ratesAndPolicies,
+  ratesAndPolicies: _ratesAndPolicies,
   onSuccess,
 }) => {
   // Input fields
-  const [tomanAmount, setTomanAmount] = useState<string>('');
   const [targetUsd, setTargetUsd] = useState<string>('10');
   const [payerIdentifier, setPayerIdentifier] = useState<string>('');
   const [senderCardLast4, setSenderCardLast4] = useState<string>('');
@@ -38,6 +37,7 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<string | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
 
   // Copy status
   const [copiedCard, setCopiedCard] = useState<boolean>(false);
@@ -56,7 +56,6 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
       const res = await fetchIrtQuote({ amountCents: cents });
       if (res.success && res.quote) {
         setQuote(res.quote);
-        setTomanAmount(String(res.quote.totalIrtAmount));
       } else {
         setQuoteError(res.error || 'Failed to generate authoritative quote.');
       }
@@ -115,7 +114,7 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
     setTimeout(() => setCopiedCard(false), 2000);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
     setSubmitSuccess(null);
@@ -145,7 +144,15 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
       return;
     }
 
+    // Open Pre-submission Review Modal
+    setShowConfirmModal(true);
+  };
+
+  const handleConfirmSubmit = async () => {
+    if (!quote || submitting) return;
+
     setSubmitting(true);
+    setSubmitError(null);
 
     try {
       let fileKey = uploadedFileKey;
@@ -162,7 +169,7 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
         setUploadingReceipt(false);
       }
 
-      // 2. Submit IRT Deposit Request
+      // 2. Submit IRT Deposit Request with Authoritative Quote Protection
       const depositRes = await submitIrtDepositRequest({
         targetUsdCents: quote.targetUsdCents,
         evidenceRef: evidenceRef.trim(),
@@ -171,6 +178,10 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
         receiptFileKey: fileKey || undefined,
         paymentDate: paymentDate || undefined,
         adminNotes: adminNotes.trim() || undefined,
+        expectedExchangeRate: quote.adminUsdIrtRate,
+        expectedTotalIrt: quote.totalIrtAmount,
+        quoteExpiresAt: quote.quoteExpiresAt,
+        quoteHash: quote.quoteHash,
       });
 
       if (!depositRes.success) {
@@ -181,7 +192,8 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
         `Deposit request #${depositRes.fundingRequest?.fundingRef || ''} submitted successfully! Status: PENDING_ADMIN_VERIFICATION.`
       );
 
-      // Reset form fields
+      // Close modal and reset form fields
+      setShowConfirmModal(false);
       setEvidenceRef('');
       setSenderCardLast4('');
       setAdminNotes('');
@@ -193,6 +205,7 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
       onSuccess();
     } catch (err: any) {
       setSubmitError(err.message || 'An error occurred while submitting your deposit request.');
+      setShowConfirmModal(false);
     } finally {
       setSubmitting(false);
       setUploadingReceipt(false);
@@ -606,12 +619,198 @@ export const IrtDepositForm: React.FC<IrtDepositFormProps> = ({
             type="submit"
             disabled={submitting || uploadingReceipt || !quote}
             className="btn btn-primary"
-            style={{ minWidth: '180px' }}
+            style={{ minWidth: '200px' }}
           >
-            {submitting || uploadingReceipt ? 'Submitting Evidence...' : 'Submit Deposit Request'}
+            {submitting || uploadingReceipt ? 'Processing...' : 'Review & Submit Deposit'}
           </button>
         </div>
       </form>
+
+      {/* Pre-submission Review Modal */}
+      {showConfirmModal && quote && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: '1rem',
+          }}
+        >
+          <div
+            className="card-surface"
+            style={{
+              maxWidth: '560px',
+              width: '100%',
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              padding: '1.75rem',
+              borderRadius: '12px',
+              border: '1px solid var(--border-subtle)',
+              backgroundColor: 'var(--bg-surface)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem', marginBottom: '1.25rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                  Confirm Payment Details
+                </h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
+                  Please review your transfer evidence before final administrative submission.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !submitting && setShowConfirmModal(false)}
+                disabled={submitting}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  fontSize: '1.3rem',
+                  cursor: 'pointer',
+                  padding: '0.2rem 0.5rem',
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Transfer Summary Details */}
+            <div
+              style={{
+                backgroundColor: 'var(--bg-main)',
+                padding: '1rem',
+                borderRadius: '8px',
+                border: '1px solid var(--border-subtle)',
+                marginBottom: '1.25rem',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gap: '0.75rem',
+                fontSize: '0.85rem',
+              }}
+            >
+              <div>
+                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Funding Amount:</span>
+                <strong style={{ fontSize: '1.1rem', color: 'var(--accent-lime)' }}>
+                  ${(quote.targetUsdCents / 100).toFixed(2)} USD
+                </strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Toman Transferred:</span>
+                <strong style={{ fontSize: '1.1rem', color: 'var(--primary-purple)' }}>
+                  {quote.totalIrtAmount.toLocaleString()} تومان
+                </strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Official Rate:</span>
+                <span>{quote.adminUsdIrtRate.toLocaleString()} Toman / USD</span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Bank Tracking Ref:</span>
+                <strong style={{ fontFamily: 'monospace' }}>{evidenceRef}</strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Depositor Name / Card:</span>
+                <span>{payerIdentifier}</span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Sender Card Suffix:</span>
+                <span>{senderCardLast4 ? `•••• ${senderCardLast4}` : '—'}</span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Recipient Bank Card:</span>
+                <span>{bankDetails.cardNumber || 'Official Bank Card'}</span>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Payment Date:</span>
+                <span>{paymentDate}</span>
+              </div>
+              {adminNotes && (
+                <div style={{ gridColumn: '1 / -1', borderTop: '1px solid rgba(45, 38, 69, 0.4)', paddingTop: '0.5rem' }}>
+                  <span style={{ color: 'var(--text-muted)', display: 'block', fontSize: '0.75rem' }}>Notes / Remarks:</span>
+                  <span>{adminNotes}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Receipt Preview in Modal */}
+            {filePreview && (
+              <div
+                style={{
+                  backgroundColor: 'var(--bg-main)',
+                  padding: '0.75rem',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-subtle)',
+                  marginBottom: '1.25rem',
+                  textAlign: 'center',
+                }}
+              >
+                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
+                  Attached Payment Receipt Slip
+                </div>
+                <img
+                  src={filePreview}
+                  alt="Receipt Preview"
+                  style={{
+                    maxHeight: '140px',
+                    maxWidth: '100%',
+                    borderRadius: '4px',
+                    border: '1px solid var(--border-subtle)',
+                    objectFit: 'contain',
+                  }}
+                />
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                  {selectedFile?.name} ({(selectedFile ? selectedFile.size / 1024 : 0).toFixed(1)} KB)
+                </div>
+              </div>
+            )}
+
+            {/* Duplicate submission warning */}
+            <div
+              style={{
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                border: '1px solid rgba(59, 130, 246, 0.25)',
+                padding: '0.65rem 0.85rem',
+                borderRadius: '6px',
+                fontSize: '0.78rem',
+                color: '#93c5fd',
+                marginBottom: '1.25rem',
+                lineHeight: '1.4',
+              }}
+            >
+              ℹ️ Your request will be securely submitted to the administrative verification queue. Live balance settlement is governed by system policy.
+            </div>
+
+            {/* Modal Actions */}
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setShowConfirmModal(false)}
+                disabled={submitting}
+              >
+                Edit Details
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={handleConfirmSubmit}
+                disabled={submitting}
+                style={{ minWidth: '160px' }}
+              >
+                {submitting ? 'Submitting Request...' : 'Confirm & Submit Deposit'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 };

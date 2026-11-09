@@ -28,8 +28,7 @@ import {
   ChannelsWorkspace,
 } from '../components/admin/NativeAdminModules';
 import { KycManagementPage } from './KycManagementPage';
-import { AdminDepositItem } from '../types/adminPortal';
-import { fetchAdminDeposits, reviewAdminDeposit } from '../services/adminPortal';
+import { DepositQueueWorkspace } from '../components/admin/DepositQueueWorkspace';
 
 export type OwnerTab =
   | 'overview'
@@ -65,7 +64,7 @@ const VALID_OWNER_TABS: OwnerTab[] = [
 ];
 
 export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'overview' }) => {
-  const { user, hasRole } = useAuth();
+  const { hasRole } = useAuth();
   const isOwner = hasRole('owner');
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab') as OwnerTab | null;
@@ -121,34 +120,6 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
   const [securityHealth, setSecurityHealth] = useState<SecurityHealthResponse | null>(null);
   const [securityLoading, setSecurityLoading] = useState(false);
 
-  // Manual Deposits Review state
-  const [deposits, setDeposits] = useState<AdminDepositItem[]>([]);
-  const [depositsPagination, setDepositsPagination] = useState({ page: 1, limit: 15, total: 0, totalPages: 0 });
-  const [depositsLoading, setDepositsLoading] = useState(false);
-  const [depositStatusFilter, setDepositStatusFilter] = useState('PENDING_ADMIN_VERIFICATION');
-  const [selectedDeposit, setSelectedDeposit] = useState<AdminDepositItem | null>(null);
-  const [depositAction, setDepositAction] = useState<'APPROVE' | 'REJECT'>('APPROVE');
-  const [depositNotes, setDepositNotes] = useState('');
-  const [submittingDeposit, setSubmittingDeposit] = useState(false);
-  const [depositReviewMsg, setDepositReviewMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-
-  // Load Deposits
-  const loadDeposits = useCallback(async (page = 1) => {
-    setDepositsLoading(true);
-    try {
-      const data = await fetchAdminDeposits({
-        page,
-        limit: depositsPagination.limit,
-        status: depositStatusFilter !== 'all' ? depositStatusFilter : undefined,
-      });
-      setDeposits(data.deposits);
-      setDepositsPagination(data.pagination);
-    } catch (err) {
-      console.error('Failed to load owner deposits queue:', err);
-    } finally {
-      setDepositsLoading(false);
-    }
-  }, [depositsPagination.limit, depositStatusFilter]);
 
   // Load Overview
   const loadOverview = useCallback(async () => {
@@ -254,12 +225,11 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
   useEffect(() => {
     if (!isOwner) return;
     if (activeTab === 'config') loadConfig();
-    if (activeTab === 'deposits') loadDeposits(1);
     if (activeTab === 'ledgers') loadLedgers(1);
     if (activeTab === 'gates') loadGates();
     if (activeTab === 'audit') loadAudit(1);
     if (activeTab === 'security') loadSecurity();
-  }, [activeTab, isOwner, loadConfig, loadDeposits, loadLedgers, loadGates, loadAudit, loadSecurity]);
+  }, [activeTab, isOwner, loadConfig, loadLedgers, loadGates, loadAudit, loadSecurity]);
 
   if (!isOwner) {
     return (
@@ -323,7 +293,6 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
             onClick={() => {
               if (activeTab === 'overview') loadOverview();
               if (activeTab === 'config') loadConfig();
-              if (activeTab === 'deposits') loadDeposits(depositsPagination.page);
               if (activeTab === 'ledgers') loadLedgers(ledgerPage);
               if (activeTab === 'gates') loadGates();
               if (activeTab === 'audit') loadAudit(auditPagination.page);
@@ -596,395 +565,11 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
       {/* TAB: MANUAL IRT DEPOSITS REVIEW QUEUE                                         */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'deposits' && (
-        <div className="card-surface" style={{ padding: '1.75rem' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-            <div>
-              <h2 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>Executive IRT Deposit Administration</h2>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0.25rem 0 0' }}>
-                Authoritative review and verification of incoming card-to-card IRT payment slips and bank tracking evidence.
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
-              <select
-                value={depositStatusFilter}
-                onChange={(e) => setDepositStatusFilter(e.target.value)}
-                style={{
-                  padding: '0.45rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--bg-main)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem',
-                }}
-              >
-                <option value="PENDING_ADMIN_VERIFICATION">Pending Verification</option>
-                <option value="CONFIRMED_CREDITED">Confirmed &amp; Credited</option>
-                <option value="REJECTED">Rejected</option>
-                <option value="all">All Statuses</option>
-              </select>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => loadDeposits(1)}
-              >
-                Refresh
-              </button>
-            </div>
-          </div>
-
-          {depositsLoading ? (
-            <LoadingState message="Loading deposit requests..." />
-          ) : deposits.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-              No deposit requests currently pending verification.
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Ref / Date</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Advertiser</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Method / Currency</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Target USD</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Payer Evidence</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
-                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deposits.map((d) => (
-                    <tr key={d.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>{d.fundingRef}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                          {new Date(d.createdAt).toLocaleDateString()}
-                        </div>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div>{d.advertiserName}</div>
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{d.advertiserId}</div>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
-                          {d.fundingMethod} ({d.externalAmountUnits} {d.externalCurrency})
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', fontWeight: 700, color: 'var(--accent-lime)' }}>
-                        {d.targetUsdFormatted}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div style={{ fontSize: '0.8rem' }}>Card: {d.payerIdentifier || '—'}</div>
-                        {d.evidenceRef && (
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Doc: {d.evidenceRef}</div>
-                        )}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <span
-                          className={`badge ${
-                            d.status === 'CONFIRMED_CREDITED'
-                              ? 'badge-success'
-                              : d.status === 'REJECTED'
-                              ? 'badge-danger'
-                              : 'badge-warning'
-                          }`}
-                          style={{ fontSize: '0.75rem' }}
-                        >
-                          {d.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
-                        {d.status === 'PENDING_ADMIN_VERIFICATION' && (
-                          <button
-                            type="button"
-                            className="btn btn-cta btn-sm"
-                            style={{ fontSize: '0.78rem', padding: '0.3rem 0.65rem' }}
-                            onClick={() => {
-                              setSelectedDeposit(d);
-                              setDepositAction('APPROVE');
-                              setDepositNotes('');
-                              setDepositReviewMsg(null);
-                            }}
-                          >
-                            Review Slip
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* Enhanced Deposit Review Modal */}
-          {selectedDeposit && (() => {
-            const isSelfReview = Boolean(user && user.discordId === selectedDeposit.advertiserId);
-            const isRejectionInvalid = depositAction === 'REJECT' && (!depositNotes || depositNotes.trim().length < 5);
-
-            return (
-              <div
-                style={{
-                  position: 'fixed',
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  zIndex: 1000,
-                  padding: '1rem',
-                }}
-              >
-                <div className="card-surface" style={{ maxWidth: '580px', width: '100%', maxHeight: '90vh', overflowY: 'auto', padding: '1.75rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem', marginBottom: '1rem' }}>
-                    <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0 }}>
-                      Review Manual Deposit #{selectedDeposit.id}
-                    </h3>
-                    <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                      {selectedDeposit.fundingRef}
-                    </span>
-                  </div>
-
-                  {/* Anti-Self-Approval Guard Alert */}
-                  {isSelfReview && (
-                    <div
-                      style={{
-                        backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                        border: '1px solid var(--status-danger)',
-                        borderRadius: 'var(--radius-sm)',
-                        padding: '0.75rem 1rem',
-                        fontSize: '0.82rem',
-                        color: 'var(--status-danger)',
-                        marginBottom: '1rem',
-                        fontWeight: 600,
-                      }}
-                    >
-                      ⚠️ <strong>Anti-Self-Approval Guard:</strong> You are the depositor of this funding request. An independent administrator or owner must perform this review.
-                    </div>
-                  )}
-
-                  {/* Deposit Information Box */}
-                  <div
-                    style={{
-                      backgroundColor: 'var(--bg-main)',
-                      padding: '1rem',
-                      borderRadius: 'var(--radius-sm)',
-                      marginBottom: '1rem',
-                      fontSize: '0.84rem',
-                      display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-                      gap: '0.6rem',
-                    }}
-                  >
-                    <div>
-                      <span style={{ color: 'var(--text-muted)' }}>Advertiser: </span>
-                      <strong>{selectedDeposit.advertiserName}</strong>
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>{selectedDeposit.advertiserId}</span>
-                    </div>
-                    <div>
-                      <span style={{ color: 'var(--text-muted)' }}>Requested IRT: </span>
-                      <strong style={{ color: 'var(--accent-lime)' }}>
-                        {Number(selectedDeposit.externalAmountUnits).toLocaleString()} {selectedDeposit.externalCurrency}
-                      </strong>
-                    </div>
-                    <div>
-                      <span style={{ color: 'var(--text-muted)' }}>Quoted USD Credit: </span>
-                      <strong>{selectedDeposit.targetUsdFormatted}</strong>
-                      {selectedDeposit.exchangeRate && (
-                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>
-                          Rate: {selectedDeposit.exchangeRate.toLocaleString()} IRT/USD
-                        </span>
-                      )}
-                    </div>
-                    <div>
-                      <span style={{ color: 'var(--text-muted)' }}>Depositor Name / Card: </span>
-                      <strong>{selectedDeposit.rawPayerIdentifier || selectedDeposit.payerIdentifier}</strong>
-                      {selectedDeposit.senderCardLast4 && (
-                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>
-                          Card Last 4: {selectedDeposit.senderCardLast4}
-                        </span>
-                      )}
-                    </div>
-                    <div>
-                      <span style={{ color: 'var(--text-muted)' }}>Bank Tracking Reference: </span>
-                      <strong style={{ fontFamily: 'monospace' }}>{selectedDeposit.evidenceRef || 'None'}</strong>
-                    </div>
-                    <div>
-                      <span style={{ color: 'var(--text-muted)' }}>Payment Date: </span>
-                      <strong>{selectedDeposit.paymentDate || new Date(selectedDeposit.createdAt).toLocaleDateString()}</strong>
-                    </div>
-                    {selectedDeposit.payerDescription && (
-                      <div style={{ gridColumn: '1 / -1', borderTop: '1px solid rgba(45, 38, 69, 0.4)', paddingTop: '0.4rem' }}>
-                        <span style={{ color: 'var(--text-muted)' }}>Payer Description / Remarks: </span>
-                        <span>{selectedDeposit.payerDescription}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Secure Receipt Screenshot Preview */}
-                  {selectedDeposit.receiptUrl ? (
-                    <div
-                      style={{
-                        backgroundColor: 'var(--bg-main)',
-                        padding: '0.85rem',
-                        borderRadius: 'var(--radius-sm)',
-                        marginBottom: '1rem',
-                        textAlign: 'center',
-                      }}
-                    >
-                      <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
-                        Payment Receipt Screenshot Evidence
-                      </div>
-                      <a href={selectedDeposit.receiptUrl} target="_blank" rel="noopener noreferrer" title="Click to view full image in a new tab">
-                        <img
-                          src={selectedDeposit.receiptUrl}
-                          alt="Payment Receipt Slip"
-                          style={{
-                            maxHeight: '180px',
-                            maxWidth: '100%',
-                            borderRadius: '6px',
-                            border: '1px solid var(--border-subtle)',
-                            objectFit: 'contain',
-                            cursor: 'pointer',
-                          }}
-                        />
-                      </a>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
-                        Click screenshot to inspect original in new browser tab
-                      </div>
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        backgroundColor: 'var(--bg-main)',
-                        padding: '0.75rem',
-                        borderRadius: 'var(--radius-sm)',
-                        marginBottom: '1rem',
-                        textAlign: 'center',
-                        fontSize: '0.8rem',
-                        color: 'var(--text-muted)',
-                      }}
-                    >
-                      📎 No receipt screenshot attached (Historical deposit submission)
-                    </div>
-                  )}
-
-                  {/* Gate Notice Warning */}
-                  <div
-                    style={{
-                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                      border: '1px solid rgba(239, 68, 68, 0.25)',
-                      padding: '0.75rem 1rem',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '0.8rem',
-                      color: '#fca5a5',
-                      marginBottom: '1rem',
-                    }}
-                  >
-                    ⚠️ <strong>Live Credits Feature Gate Notice:</strong> Live balance crediting is currently disabled by system policy (FINANCE_V2_LIVE_CREDITS_ENABLED=false). Approving will record verified status without injecting live balances.
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.88rem' }}>
-                      <input
-                        type="radio"
-                        name="ownerDepAction"
-                        checked={depositAction === 'APPROVE'}
-                        onChange={() => setDepositAction('APPROVE')}
-                      />
-                      Approve &amp; Record Verification
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.88rem' }}>
-                      <input
-                        type="radio"
-                        name="ownerDepAction"
-                        checked={depositAction === 'REJECT'}
-                        onChange={() => setDepositAction('REJECT')}
-                      />
-                      Reject Deposit
-                    </label>
-                  </div>
-
-                  <div style={{ marginBottom: '1.25rem' }}>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                      Reviewer Notes / Verification Reference {depositAction === 'REJECT' && <span style={{ color: 'var(--status-danger)' }}>* (Min 5 chars required)</span>}
-                    </label>
-                    <textarea
-                      rows={2}
-                      placeholder={
-                        depositAction === 'REJECT'
-                          ? 'Please provide a clear reason for rejecting this deposit (min 5 chars)...'
-                          : 'E.g. Bank tracking number verified via online banking statement'
-                      }
-                      value={depositNotes}
-                      onChange={(e) => setDepositNotes(e.target.value)}
-                      style={{
-                        width: '100%',
-                        padding: '0.6rem',
-                        borderRadius: 'var(--radius-sm)',
-                        backgroundColor: 'var(--bg-main)',
-                        border: '1px solid var(--border-subtle)',
-                        color: 'var(--text-primary)',
-                        fontSize: '0.85rem',
-                      }}
-                    />
-                  </div>
-
-                  {depositReviewMsg && (
-                    <div
-                      style={{
-                        padding: '0.65rem 0.85rem',
-                        borderRadius: 'var(--radius-sm)',
-                        fontSize: '0.82rem',
-                        marginBottom: '1rem',
-                        backgroundColor: depositReviewMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                        color: depositReviewMsg.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
-                      }}
-                    >
-                      {depositReviewMsg.text}
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => setSelectedDeposit(null)}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      disabled={submittingDeposit || isSelfReview || isRejectionInvalid}
-                      className="btn btn-cta btn-sm"
-                      onClick={async () => {
-                        setSubmittingDeposit(true);
-                        setDepositReviewMsg(null);
-                        try {
-                          await reviewAdminDeposit(selectedDeposit.id, depositAction, depositNotes);
-                          setDepositReviewMsg({ text: 'Decision successfully processed.', type: 'success' });
-                          setTimeout(() => {
-                            setSelectedDeposit(null);
-                            loadDeposits(depositsPagination.page);
-                          }, 800);
-                        } catch (err: any) {
-                          setDepositReviewMsg({ text: err.message || 'Operation failed', type: 'error' });
-                        } finally {
-                          setSubmittingDeposit(false);
-                        }
-                      }}
-                    >
-                      {submittingDeposit ? 'Processing...' : 'Confirm Decision'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
-        </div>
+        <DepositQueueWorkspace
+          isExecutive={true}
+          title="Executive IRT Deposit Administration"
+          subtitle="Authoritative review and verification of incoming card-to-card IRT payment slips and bank tracking evidence."
+        />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
