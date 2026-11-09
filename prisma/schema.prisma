@@ -204,6 +204,11 @@ model WowCharacter {
   dpsScore       Float?   @map("dps_score")
   raidProgression String? @map("raid_progression")
   raiderioUrl    String?  @map("raiderio_url")
+  thumbnailUrl   String?  @map("thumbnail_url")
+  activeRole     String?  @map("active_role")
+  faction        String?  @map("faction")
+  syncError      String?  @map("sync_error")
+  recentRunsJson String?  @map("recent_runs_json")
   isMain         Boolean  @default(false) @map("is_main")
   isActive       Boolean  @default(true) @map("is_active")
   syncStatus     String   @default("pending") @map("sync_status") // pending | synced | failed | not_found

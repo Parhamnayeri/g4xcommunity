@@ -11,14 +11,53 @@ import {
   AvailableQueueOrder,
   BoosterRunProof,
   BoosterActivityItem,
+  WowCharacter,
+  RaiderIOPreviewData,
+  CharacterDetailsResponse,
 } from '../types/profileSettings';
 import {
   fetchUserSettings,
   updateUserSettings,
   fetchBoosterPortalData,
+  fetchUserCharacters,
+  fetchCharacterDetails,
+  previewRaiderIOCharacter,
+  addWowCharacter,
+  setMainCharacter,
+  syncWowCharacter,
+  removeCharacter,
+  reactivateCharacter,
 } from '../services/profileSettings';
 
-type TabKey = 'overview' | 'available' | 'orders' | 'proofs' | 'history' | 'settings';
+type TabKey = 'overview' | 'characters' | 'available' | 'orders' | 'proofs' | 'history' | 'settings';
+
+const CLASS_COLORS: Record<string, string> = {
+  'Death Knight': '#C41E3A',
+  'Demon Hunter': '#A330C9',
+  'Druid': '#FF7C0A',
+  'Evoker': '#33937F',
+  'Hunter': '#AAD372',
+  'Mage': '#3FC7EB',
+  'Monk': '#00FF98',
+  'Paladin': '#F48CBA',
+  'Priest': '#FFFFFF',
+  'Rogue': '#FFF468',
+  'Shaman': '#0070DD',
+  'Warlock': '#8788EE',
+  'Warrior': '#C69B6D',
+};
+
+function formatRelativeTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return 'Never';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
 
 export const BoosterSettingsPage: React.FC = () => {
   const { user } = useAuth();
@@ -52,6 +91,28 @@ export const BoosterSettingsPage: React.FC = () => {
   // Booster Portal Data
   const [portalData, setPortalData] = useState<BoosterPortalDataResponse | null>(null);
 
+  // Character Roster State
+  const [characters, setCharacters] = useState<WowCharacter[]>([]);
+  const [cooldowns, setCooldowns] = useState<Record<number, number>>({});
+  const [syncingId, setSyncingId] = useState<number | null>(null);
+  const [actionLoadingId, setActionLoadingId] = useState<number | null>(null);
+
+  // Add Character State
+  const [addMode, setAddMode] = useState<'url' | 'manual'>('url');
+  const [urlInput, setUrlInput] = useState<string>('');
+  const [regionInput, setRegionInput] = useState<string>('eu');
+  const [realmInput, setRealmInput] = useState<string>('');
+  const [nameInput, setNameInput] = useState<string>('');
+  const [previewData, setPreviewData] = useState<RaiderIOPreviewData | null>(null);
+  const [previewLoading, setPreviewLoading] = useState<boolean>(false);
+  const [addingCharacter, setAddingCharacter] = useState<boolean>(false);
+
+  // Character Details Modal State
+  const [selectedCharDetails, setSelectedCharDetails] = useState<CharacterDetailsResponse | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState<boolean>(false);
+  const [detailsModalOpen, setDetailsModalOpen] = useState<boolean>(false);
+  const [showArchived, setShowArchived] = useState<boolean>(false);
+
   // Filters
   const [availableSearch, setAvailableSearch] = useState<string>('');
   const [availableGameFilter, setAvailableGameFilter] = useState<string>('ALL');
@@ -64,9 +125,10 @@ export const BoosterSettingsPage: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [settingsRes, portalRes] = await Promise.all([
+      const [settingsRes, portalRes, charsRes] = await Promise.all([
         fetchUserSettings(),
         fetchBoosterPortalData().catch(() => null),
+        fetchUserCharacters(true).catch(() => []),
       ]);
 
       if (settingsRes.success) {
@@ -76,12 +138,53 @@ export const BoosterSettingsPage: React.FC = () => {
       if (portalRes && portalRes.success) {
         setPortalData(portalRes);
       }
+      if (charsRes && Array.isArray(charsRes)) {
+        setCharacters(charsRes);
+      }
     } catch (err: any) {
       setError(err.message || 'Error loading booster hub and order queues.');
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const refreshCharacters = useCallback(async () => {
+    try {
+      const [chars, portal] = await Promise.all([
+        fetchUserCharacters(true).catch(() => []),
+        fetchBoosterPortalData().catch(() => null),
+      ]);
+      if (chars && Array.isArray(chars)) {
+        setCharacters(chars);
+      }
+      if (portal && portal.success) {
+        setPortalData(portal);
+      }
+    } catch (err: any) {
+      console.error('Failed to refresh characters:', err);
+    }
+  }, []);
+
+  // Cooldown countdown timer
+  useEffect(() => {
+    const hasActiveCooldown = Object.values(cooldowns).some((cd) => cd > 0);
+    if (!hasActiveCooldown) return;
+
+    const timer = setInterval(() => {
+      setCooldowns((prev) => {
+        const next: Record<number, number> = {};
+        for (const [idStr, val] of Object.entries(prev)) {
+          const id = Number(idStr);
+          if (val > 1) {
+            next[id] = val - 1;
+          }
+        }
+        return next;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [cooldowns]);
 
   useEffect(() => {
     loadAll();
@@ -113,6 +216,165 @@ export const BoosterSettingsPage: React.FC = () => {
   const myOrders: BoosterOrder[] = portalData?.myOrders || [];
   const myRunsAndProofs: BoosterRunProof[] = portalData?.myRunsAndProofs || [];
   const activityHistory: BoosterActivityItem[] = portalData?.activityHistory || [];
+
+  const activeCharacters = useMemo(
+    () => characters.filter((c) => c.isActive !== false),
+    [characters]
+  );
+  const inactiveCharacters = useMemo(
+    () => characters.filter((c) => c.isActive === false),
+    [characters]
+  );
+  const mainCharacter = useMemo(
+    () => activeCharacters.find((c) => c.isMain) || activeCharacters[0] || null,
+    [activeCharacters]
+  );
+
+  const handlePreviewCharacter = async () => {
+    setPreviewLoading(true);
+    setError(null);
+    try {
+      const payload =
+        addMode === 'url'
+          ? { url: urlInput.trim() }
+          : { region: regionInput, realm: realmInput.trim(), characterName: nameInput.trim() };
+      const res = await previewRaiderIOCharacter(payload);
+      if (res.success && res.preview) {
+        setPreviewData(res.preview);
+      } else {
+        setError('Character profile could not be found or verified on Raider.IO.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to preview Raider.IO profile.');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleAddCharacter = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setAddingCharacter(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const payload =
+        addMode === 'url'
+          ? { raiderioUrl: urlInput.trim() }
+          : { region: regionInput, realm: realmInput.trim(), characterName: nameInput.trim() };
+
+      const res = await addWowCharacter(payload);
+      if (res.success) {
+        setSuccessMsg(`Character ${res.character.characterName} registered successfully.`);
+        setUrlInput('');
+        setNameInput('');
+        setRealmInput('');
+        setPreviewData(null);
+        await refreshCharacters();
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to add character.');
+    } finally {
+      setAddingCharacter(false);
+    }
+  };
+
+  const handleSetMain = async (charId: number) => {
+    setActionLoadingId(charId);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const res = await setMainCharacter(charId);
+      if (res.success) {
+        setSuccessMsg(`${res.character.characterName} is now set as your Main character.`);
+        await refreshCharacters();
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to set main character.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleSyncCharacter = async (charId: number) => {
+    if ((cooldowns[charId] || 0) > 0) return;
+    setSyncingId(charId);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const res = await syncWowCharacter(charId);
+      if (res.success) {
+        setSuccessMsg(`Raider.IO stats refreshed for ${res.character.characterName}.`);
+        setCooldowns((prev) => ({ ...prev, [charId]: 60 }));
+        await refreshCharacters();
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to sync character.');
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+  const handleRemoveCharacter = async (charId: number, charName: string) => {
+    if (
+      !window.confirm(
+        `Deactivate ${charName}? Historical orders, teams, and run references will be safely preserved.`
+      )
+    ) {
+      return;
+    }
+    setActionLoadingId(charId);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const res = await removeCharacter(charId);
+      if (res.success) {
+        setSuccessMsg(`Character ${charName} deactivated.`);
+        await refreshCharacters();
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to deactivate character.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleReactivateCharacter = async (charId: number, charName: string) => {
+    setActionLoadingId(charId);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const res = await reactivateCharacter(charId);
+      if (res.success) {
+        setSuccessMsg(`Character ${charName} reactivated and restored to roster.`);
+        await refreshCharacters();
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to reactivate character.');
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleOpenDetails = async (charId: number) => {
+    setDetailsLoading(true);
+    setDetailsModalOpen(true);
+    setSelectedCharDetails(null);
+    setError(null);
+    try {
+      const res = await fetchCharacterDetails(charId);
+      if (res.success) {
+        setSelectedCharDetails(res);
+        if (res.cooldownRemainingSeconds > 0) {
+          setCooldowns((prev) => ({ ...prev, [charId]: res.cooldownRemainingSeconds }));
+        }
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to load character details.');
+      setDetailsModalOpen(false);
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
 
   // Filtered available orders
   const filteredAvailable = useMemo(() => {
@@ -249,6 +511,22 @@ export const BoosterSettingsPage: React.FC = () => {
         </button>
 
         <button
+          onClick={() => setActiveTab('characters')}
+          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
+            activeTab === 'characters'
+              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
+              : 'text-gray-400 hover:text-white'
+          }`}
+        >
+          <span>⚔️</span> My Characters
+          {activeCharacters.length > 0 && (
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-900 text-emerald-200">
+              {activeCharacters.length}
+            </span>
+          )}
+        </button>
+
+        <button
           onClick={() => setActiveTab('available')}
           className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
             activeTab === 'available'
@@ -357,6 +635,130 @@ export const BoosterSettingsPage: React.FC = () => {
             </div>
           </div>
 
+          {/* Main Character & Raider.IO Profile Showcase */}
+          <div className="card-surface p-5 rounded-xl border border-[var(--border-subtle)] bg-gradient-to-r from-[#171427] via-[#1b1730] to-[#171427]">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="relative">
+                  {mainCharacter?.thumbnailUrl ? (
+                    <img
+                      src={mainCharacter.thumbnailUrl}
+                      alt={mainCharacter.characterName}
+                      className="w-14 h-14 rounded-full border-2 border-[var(--accent-lime)] object-cover shadow-lg"
+                    />
+                  ) : (
+                    <div className="w-14 h-14 rounded-full border-2 border-gray-700 bg-gray-800 flex items-center justify-center text-xl">
+                      🛡️
+                    </div>
+                  )}
+                  {mainCharacter?.isMain && (
+                    <span className="absolute -bottom-1 -right-1 text-xs bg-amber-500 text-black px-1 rounded-full font-bold">
+                      ★
+                    </span>
+                  )}
+                </div>
+
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg font-bold text-white">
+                      {mainCharacter ? (
+                        <>
+                          <span style={{ color: CLASS_COLORS[mainCharacter.characterClass || ''] || '#fff' }}>
+                            {mainCharacter.characterName}
+                          </span>
+                          <span className="text-gray-400 font-normal text-sm ml-1.5">
+                            — {mainCharacter.realm} ({mainCharacter.region?.toUpperCase()})
+                          </span>
+                        </>
+                      ) : (
+                        <span className="text-gray-300">No Main Character Linked</span>
+                      )}
+                    </span>
+                    {mainCharacter?.isMain && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
+                        ⭐ Main Roster
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {mainCharacter ? (
+                      <>
+                        <span>
+                          {mainCharacter.activeSpec || mainCharacter.characterClass || 'World of Warcraft'}
+                        </span>
+                        {mainCharacter.itemLevel ? (
+                          <span className="ml-2 font-mono text-gray-300">ilvl {mainCharacter.itemLevel}</span>
+                        ) : null}
+                        {mainCharacter.raidProgression ? (
+                          <span className="ml-2 text-purple-300">({mainCharacter.raidProgression})</span>
+                        ) : null}
+                      </>
+                    ) : (
+                      'Link your World of Warcraft character with Raider.IO to verify rating and unlock high-tier carries.'
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 pt-3 md:pt-0 border-gray-800">
+                {mainCharacter ? (
+                  <div className="text-right">
+                    <div className="text-xs text-gray-400">Current-Season M+ Rating</div>
+                    <div className="text-2xl font-mono font-bold text-[var(--accent-lime)]">
+                      {mainCharacter.mythicScore && mainCharacter.mythicScore > 0 ? (
+                        mainCharacter.mythicScore
+                      ) : (
+                        <span className="text-xs font-normal text-gray-400">Not available</span>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setActiveTab('characters')}
+                    className="btn btn-secondary text-xs px-3 py-2 flex items-center gap-1.5"
+                  >
+                    <span>⚔️</span> {mainCharacter ? 'Manage Characters' : 'Add Character'}
+                  </button>
+                  {mainCharacter && (
+                    <button
+                      onClick={() => handleSyncCharacter(mainCharacter.id)}
+                      disabled={syncingId === mainCharacter.id || (cooldowns[mainCharacter.id] || 0) > 0}
+                      className="btn btn-cta text-xs px-3 py-2 flex items-center gap-1.5 disabled:opacity-50"
+                      title="Refresh current season scores from Raider.IO (60s cooldown)"
+                    >
+                      <span>🔄</span>
+                      {syncingId === mainCharacter.id
+                        ? 'Syncing...'
+                        : (cooldowns[mainCharacter.id] || 0) > 0
+                        ? `${cooldowns[mainCharacter.id]}s`
+                        : 'Sync Raider.IO'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 pt-2.5 border-t border-gray-800/60 flex items-center justify-between text-[11px] text-gray-500">
+              <span className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                Scores reflect the active season from Raider.IO. Missing scores show as Not available.
+              </span>
+              <span className="text-[10px] text-gray-400">
+                Data provided by{' '}
+                <a
+                  href="https://raider.io"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-purple-400 hover:underline"
+                >
+                  Raider.IO
+                </a>
+              </span>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Active Assignments Quick List */}
             <div className="lg:col-span-2 card-surface p-6 rounded-xl border border-[var(--border-subtle)] space-y-4">
@@ -456,6 +858,494 @@ export const BoosterSettingsPage: React.FC = () => {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ─── TAB: My Characters (WoW & Raider.IO Roster) ────────────────── */}
+      {activeTab === 'characters' && (
+        <div className="space-y-6">
+          {/* Header & Attribution Card */}
+          <div className="card-surface p-5 rounded-xl border border-[var(--border-subtle)] space-y-2">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>⚔️</span> World of Warcraft Character Roster
+                </h2>
+                <p className="text-xs text-gray-400 mt-1">
+                  Manage your characters, sync current-season Mythic+ scores from Raider.IO, and designate one Main
+                  Character for team composition and roster priority.
+                </p>
+              </div>
+              <div className="text-right">
+                <span className="text-[10px] px-2.5 py-1 rounded-full bg-purple-900/40 text-purple-300 border border-purple-500/30">
+                  Data provided by Raider.IO API
+                </span>
+              </div>
+            </div>
+            <div className="pt-2 text-[11px] text-gray-500 border-t border-gray-800/60">
+              Notice: Raider.IO data is used for non-commercial community verification. Commercial deployment requires
+              a formal commercial licensing agreement with Raider.IO.
+            </div>
+          </div>
+
+          {/* Add Character Section */}
+          <div className="card-surface p-6 rounded-xl border border-[var(--border-subtle)] space-y-5">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <span>➕</span> Add World of Warcraft Character
+                </h3>
+                <p className="text-xs text-gray-400">
+                  Register a character via Raider.IO URL or standard realm credentials.
+                </p>
+              </div>
+
+              {/* Mode Toggle */}
+              <div className="flex items-center gap-1 bg-[#13111e] p-1 rounded-lg border border-gray-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddMode('url');
+                    setPreviewData(null);
+                  }}
+                  className={`px-3 py-1 text-xs rounded-md font-medium transition-colors ${
+                    addMode === 'url' ? 'bg-[var(--accent-lime)] text-black font-bold' : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  🔗 Raider.IO URL
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddMode('manual');
+                    setPreviewData(null);
+                  }}
+                  className={`px-3 py-1 text-xs rounded-md font-medium transition-colors ${
+                    addMode === 'manual'
+                      ? 'bg-[var(--accent-lime)] text-black font-bold'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                >
+                  ✍️ Manual Entry
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleAddCharacter} className="space-y-4">
+              {addMode === 'url' ? (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1">
+                    Raider.IO Profile URL <span className="text-[var(--accent-lime)]">*</span>
+                  </label>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <input
+                      type="url"
+                      value={urlInput}
+                      onChange={(e) => setUrlInput(e.target.value)}
+                      placeholder="https://raider.io/characters/eu/tarren-mill/CharacterName"
+                      className="input-field flex-1 text-xs"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={handlePreviewCharacter}
+                      disabled={previewLoading || !urlInput.trim()}
+                      className="btn btn-secondary text-xs px-4 py-2 flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+                    >
+                      {previewLoading ? 'Inspecting...' : '🔍 Preview Profile'}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Only HTTPS URLs on raider.io are accepted. URLs are sanitized against SSRF and host whitelists.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">Region</label>
+                    <select
+                      value={regionInput}
+                      onChange={(e) => setRegionInput(e.target.value)}
+                      className="input-field text-xs w-full"
+                    >
+                      <option value="eu">Europe (EU)</option>
+                      <option value="us">Americas &amp; Oceania (US)</option>
+                      <option value="kr">Korea (KR)</option>
+                      <option value="tw">Taiwan (TW)</option>
+                    </select>
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                      Realm Name <span className="text-[var(--accent-lime)]">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={realmInput}
+                      onChange={(e) => setRealmInput(e.target.value)}
+                      placeholder="e.g. Tarren Mill, Kazzak, Twisting Nether"
+                      className="input-field text-xs w-full"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-300 mb-1">
+                      Character Name <span className="text-[var(--accent-lime)]">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={nameInput}
+                      onChange={(e) => setNameInput(e.target.value)}
+                      placeholder="e.g. Frostblade"
+                      className="input-field text-xs w-full"
+                      required
+                    />
+                  </div>
+
+                  <div className="sm:col-span-4 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handlePreviewCharacter}
+                      disabled={previewLoading || !realmInput.trim() || !nameInput.trim()}
+                      className="btn btn-secondary text-xs px-4 py-2 flex items-center gap-1.5 disabled:opacity-50"
+                    >
+                      {previewLoading ? 'Inspecting...' : '🔍 Preview Profile'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Preview Card */}
+              {previewData && (
+                <div className="p-4 rounded-xl border border-[var(--accent-lime)]/40 bg-[#161324] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[var(--accent-lime)] flex items-center gap-1.5">
+                      <span>✓</span> Raider.IO Profile Verified
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewData(null)}
+                      className="text-xs text-gray-500 hover:text-white"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      {previewData.thumbnailUrl ? (
+                        <img
+                          src={previewData.thumbnailUrl}
+                          alt={previewData.name}
+                          className="w-12 h-12 rounded-full border border-gray-700 object-cover"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center text-lg">
+                          🛡️
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-sm font-bold text-white flex items-center gap-2">
+                          <span style={{ color: CLASS_COLORS[previewData.class] || '#fff' }}>{previewData.name}</span>
+                          <span className="text-xs text-gray-400 font-normal">
+                            — {previewData.realm} ({previewData.region.toUpperCase()})
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-400">
+                          {previewData.activeSpec || previewData.class}
+                          {previewData.itemLevel ? ` · ilvl ${previewData.itemLevel}` : ''}
+                          {previewData.faction ? ` · ${previewData.faction}` : ''}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <span className="text-[10px] text-gray-400">Current Season M+</span>
+                        <div className="text-lg font-mono font-bold text-[var(--accent-lime)]">
+                          {previewData.mythicScore && previewData.mythicScore > 0 ? (
+                            previewData.mythicScore
+                          ) : (
+                            <span className="text-xs font-normal text-gray-400">Not available</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        type="submit"
+                        disabled={addingCharacter}
+                        className="btn btn-cta text-xs px-4 py-2 font-bold disabled:opacity-50"
+                      >
+                        {addingCharacter ? 'Adding...' : 'Confirm & Add Character'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {!previewData && (
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={
+                      addingCharacter ||
+                      (addMode === 'url' ? !urlInput.trim() : !realmInput.trim() || !nameInput.trim())
+                    }
+                    className="btn btn-cta text-xs px-5 py-2 font-bold disabled:opacity-50 flex items-center gap-2"
+                  >
+                    <span>➕</span> {addingCharacter ? 'Adding Character...' : 'Add Character to Roster'}
+                  </button>
+                </div>
+              )}
+            </form>
+          </div>
+
+          {/* Active Characters Roster */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <span>🛡️</span> Active Characters ({activeCharacters.length})
+              </h3>
+              <span className="text-xs text-gray-400">
+                ⭐ One character serves as your active Main for boost carries.
+              </span>
+            </div>
+
+            {activeCharacters.length === 0 ? (
+              <div className="card-surface p-8 rounded-xl border border-dashed border-gray-800 text-center space-y-2">
+                <p className="text-sm font-semibold text-gray-300">No active WoW characters registered.</p>
+                <p className="text-xs text-gray-500">
+                  Add your primary character above to enable Mythic+ verification and unlock order execution.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {activeCharacters.map((char) => {
+                  const cooldownSec = cooldowns[char.id] || 0;
+                  const isSyncing = syncingId === char.id;
+                  const isLoadingAction = actionLoadingId === char.id;
+
+                  return (
+                    <div
+                      key={char.id}
+                      className={`card-surface p-5 rounded-xl border transition-all flex flex-col justify-between gap-4 ${
+                        char.isMain
+                          ? 'border-[var(--accent-lime)]/60 bg-[#19152b]'
+                          : 'border-[var(--border-subtle)] hover:border-gray-700'
+                      }`}
+                    >
+                      <div className="space-y-3">
+                        {/* Top: Avatar + Name + Main Badge */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-3">
+                            {char.thumbnailUrl ? (
+                              <img
+                                src={char.thumbnailUrl}
+                                alt={char.characterName}
+                                className="w-12 h-12 rounded-full border border-gray-700 object-cover shadow-md"
+                              />
+                            ) : (
+                              <div className="w-12 h-12 rounded-full bg-gray-800 border border-gray-700 flex items-center justify-center text-lg">
+                                🛡️
+                              </div>
+                            )}
+                            <div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span
+                                  className="text-sm font-bold"
+                                  style={{ color: CLASS_COLORS[char.characterClass || ''] || '#fff' }}
+                                >
+                                  {char.characterName}
+                                </span>
+                                {char.isMain && (
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+                                    ⭐ Main
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-400">
+                                {char.realm} ({char.region?.toUpperCase()})
+                              </p>
+                            </div>
+                          </div>
+
+                          {/* Role Badge */}
+                          {char.activeRole && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-gray-800 text-gray-300 font-medium">
+                              {char.activeRole}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Middle: Class, Spec, Ilvl */}
+                        <div className="flex items-center justify-between text-xs border-y border-gray-800/60 py-2">
+                          <div>
+                            <span className="text-gray-400">Spec: </span>
+                            <span className="text-white font-medium">
+                              {char.activeSpec || char.characterClass || 'WoW'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-400">Item Level: </span>
+                            <span className="font-mono text-[var(--accent-lime)] font-bold">
+                              {char.itemLevel ? char.itemLevel : 'N/A'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Scores Breakdown */}
+                        <div className="space-y-1">
+                          <div className="flex items-baseline justify-between">
+                            <span className="text-xs text-gray-400">Current M+ Score:</span>
+                            <span className="text-base font-mono font-bold text-[var(--accent-lime)]">
+                              {char.mythicScore && char.mythicScore > 0 ? (
+                                char.mythicScore
+                              ) : (
+                                <span className="text-xs font-normal text-gray-400">Not available</span>
+                              )}
+                            </span>
+                          </div>
+
+                          {(char.tankScore || char.healerScore || char.dpsScore) && (
+                            <div className="flex items-center justify-between text-[11px] text-gray-500 font-mono">
+                              <span>Tank: {char.tankScore ?? 0}</span>
+                              <span>Healer: {char.healerScore ?? 0}</span>
+                              <span>DPS: {char.dpsScore ?? 0}</span>
+                            </div>
+                          )}
+
+                          {char.raidProgression && (
+                            <div className="text-[11px] text-purple-300/80 truncate pt-0.5">
+                              🏰 {char.raidProgression}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Sync Status Alert */}
+                        {char.syncStatus === 'failed' ? (
+                          <div className="p-2 rounded bg-red-950/30 border border-red-500/30 text-red-300 text-[11px] space-y-0.5">
+                            <div className="font-semibold flex items-center gap-1">
+                              <span>⚠️</span> Sync Failed
+                            </div>
+                            <p className="text-[10px] text-red-400">{char.syncError || 'Temporary API error.'}</p>
+                          </div>
+                        ) : (
+                          <div className="text-[10px] text-gray-500 flex items-center justify-between">
+                            <span>Status: Verified</span>
+                            <span>{formatRelativeTime(char.lastSyncedAt)}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Bottom Actions */}
+                      <div className="border-t border-gray-800/60 pt-3 space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          {!char.isMain ? (
+                            <button
+                              type="button"
+                              onClick={() => handleSetMain(char.id)}
+                              disabled={isLoadingAction}
+                              className="btn btn-secondary text-xs py-1.5 flex items-center justify-center gap-1 disabled:opacity-50"
+                            >
+                              <span>⭐</span> Set Main
+                            </button>
+                          ) : (
+                            <span className="text-xs py-1.5 flex items-center justify-center gap-1 text-amber-400 font-medium">
+                              <span>★</span> Active Main
+                            </span>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleSyncCharacter(char.id)}
+                            disabled={isSyncing || cooldownSec > 0}
+                            className="btn btn-cta text-xs py-1.5 flex items-center justify-center gap-1 disabled:opacity-50"
+                            title="Refresh character scores from Raider.IO (60s cooldown)"
+                          >
+                            <span>🔄</span>
+                            {isSyncing ? 'Syncing...' : cooldownSec > 0 ? `${cooldownSec}s` : 'Sync RIO'}
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDetails(char.id)}
+                            className="text-xs text-[var(--accent-lime)] hover:underline flex items-center gap-1"
+                          >
+                            <span>📋</span> View Details &amp; Runs
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCharacter(char.id, char.characterName)}
+                            disabled={isLoadingAction}
+                            className="text-xs text-red-400 hover:text-red-300"
+                            title="Deactivate character (preserves order history)"
+                          >
+                            Deactivate
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Archived / Inactive Characters Section */}
+          {inactiveCharacters.length > 0 && (
+            <div className="card-surface p-5 rounded-xl border border-[var(--border-subtle)] space-y-3">
+              <button
+                type="button"
+                onClick={() => setShowArchived((prev) => !prev)}
+                className="w-full flex items-center justify-between text-xs font-bold text-gray-300 hover:text-white"
+              >
+                <span className="flex items-center gap-2">
+                  <span>📦</span> Archived &amp; Deactivated Characters ({inactiveCharacters.length})
+                </span>
+                <span>{showArchived ? '▲ Collapse' : '▼ Expand'}</span>
+              </button>
+
+              {showArchived && (
+                <div className="space-y-2 pt-2 border-t border-gray-800">
+                  <p className="text-[11px] text-gray-400 mb-2">
+                    Deactivated characters are kept for historical order, squad, and dispute integrity. You can
+                    reactivate any character at any time.
+                  </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {inactiveCharacters.map((char) => (
+                      <div
+                        key={char.id}
+                        className="p-3 rounded-lg border border-gray-800 bg-[#12101d] flex items-center justify-between gap-3"
+                      >
+                        <div>
+                          <div className="text-xs font-bold text-gray-300">
+                            {char.characterName} — {char.realm} ({char.region?.toUpperCase()})
+                          </div>
+                          <p className="text-[11px] text-gray-500">
+                            {char.activeSpec || char.characterClass} · Score:{' '}
+                            {char.mythicScore && char.mythicScore > 0 ? char.mythicScore : 'N/A'}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleReactivateCharacter(char.id, char.characterName)}
+                          disabled={actionLoadingId === char.id}
+                          className="btn btn-secondary text-xs px-3 py-1 flex items-center gap-1 disabled:opacity-50"
+                        >
+                          <span>↺</span> Reactivate
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1100,6 +1990,184 @@ export const BoosterSettingsPage: React.FC = () => {
             </div>
           </div>
         </form>
+      )}
+
+      {/* ─── Character Details Modal ────────────────────────────────────── */}
+      {detailsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <div className="card-surface w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl border border-gray-700 p-6 space-y-5 shadow-2xl">
+            {detailsLoading ? (
+              <div className="py-12 text-center">
+                <LoadingState message="Loading character details and dungeon runs..." />
+              </div>
+            ) : selectedCharDetails ? (
+              <>
+                {/* Modal Header */}
+                <div className="flex items-start justify-between gap-4 border-b border-gray-800 pb-4">
+                  <div className="flex items-center gap-3">
+                    {selectedCharDetails.character.thumbnailUrl ? (
+                      <img
+                        src={selectedCharDetails.character.thumbnailUrl}
+                        alt={selectedCharDetails.character.characterName}
+                        className="w-14 h-14 rounded-full border-2 border-[var(--accent-lime)] object-cover"
+                      />
+                    ) : (
+                      <div className="w-14 h-14 rounded-full bg-gray-800 border-2 border-gray-700 flex items-center justify-center text-xl">
+                        🛡️
+                      </div>
+                    )}
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span
+                          className="text-lg font-bold"
+                          style={{
+                            color:
+                              CLASS_COLORS[selectedCharDetails.character.characterClass || ''] || '#fff',
+                          }}
+                        >
+                          {selectedCharDetails.character.characterName}
+                        </span>
+                        {selectedCharDetails.character.isMain && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold">
+                            ⭐ Main Character
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-gray-400">
+                        {selectedCharDetails.character.realm} ({selectedCharDetails.character.region?.toUpperCase()}) ·{' '}
+                        {selectedCharDetails.character.activeSpec || selectedCharDetails.character.characterClass}
+                        {selectedCharDetails.character.itemLevel
+                          ? ` · ilvl ${selectedCharDetails.character.itemLevel}`
+                          : ''}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setDetailsModalOpen(false)}
+                    className="text-gray-400 hover:text-white text-lg p-1"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                {/* Score & Progression Highlights */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3 rounded-lg bg-[#141221] border border-gray-800">
+                    <span className="text-[10px] text-gray-400">Current Season M+</span>
+                    <p className="text-xl font-mono font-bold text-[var(--accent-lime)]">
+                      {selectedCharDetails.character.mythicScore && selectedCharDetails.character.mythicScore > 0 ? (
+                        selectedCharDetails.character.mythicScore
+                      ) : (
+                        <span className="text-xs font-normal text-gray-400">Not available</span>
+                      )}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-[#141221] border border-gray-800">
+                    <span className="text-[10px] text-gray-400">Tank Rating</span>
+                    <p className="text-xl font-mono font-bold text-blue-400">
+                      {selectedCharDetails.character.tankScore ?? 0}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-[#141221] border border-gray-800">
+                    <span className="text-[10px] text-gray-400">Healer Rating</span>
+                    <p className="text-xl font-mono font-bold text-emerald-400">
+                      {selectedCharDetails.character.healerScore ?? 0}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-[#141221] border border-gray-800">
+                    <span className="text-[10px] text-gray-400">DPS Rating</span>
+                    <p className="text-xl font-mono font-bold text-purple-400">
+                      {selectedCharDetails.character.dpsScore ?? 0}
+                    </p>
+                  </div>
+                </div>
+
+                {selectedCharDetails.character.raidProgression && (
+                  <div className="p-3 rounded-lg bg-[#141221] border border-gray-800 text-xs">
+                    <span className="text-gray-400">Raid Progression: </span>
+                    <span className="text-white font-medium">
+                      🏰 {selectedCharDetails.character.raidProgression}
+                    </span>
+                  </div>
+                )}
+
+                {/* Recent Dungeon Runs */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-bold text-white flex items-center justify-between">
+                    <span>Recent Mythic+ Runs (Active Season)</span>
+                    <span className="text-[10px] text-gray-400">
+                      {selectedCharDetails.recentRuns?.length ?? 0} runs recorded
+                    </span>
+                  </h4>
+
+                  {!selectedCharDetails.recentRuns || selectedCharDetails.recentRuns.length === 0 ? (
+                    <p className="text-xs text-gray-500 py-3 text-center border border-dashed border-gray-800 rounded-lg">
+                      No recent dungeon runs recorded in the active season.
+                    </p>
+                  ) : (
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {selectedCharDetails.recentRuns.map((run, idx) => (
+                        <div
+                          key={idx}
+                          className="p-2.5 rounded-lg border border-gray-800 bg-[#12101e] flex items-center justify-between text-xs"
+                        >
+                          <div>
+                            <span className="font-semibold text-white">{run.dungeon}</span>
+                            <span className="ml-2 font-mono text-[var(--accent-lime)] font-bold">
+                              +{run.mythicLevel}
+                            </span>
+                            {run.numKeystoneUpgrades && run.numKeystoneUpgrades > 0 ? (
+                              <span className="ml-1.5 text-[10px] text-amber-300">
+                                {'★'.repeat(run.numKeystoneUpgrades)}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="text-right text-[11px] text-gray-400">
+                            {run.score ? <span className="mr-3 font-mono text-purple-300">{run.score} pts</span> : null}
+                            <span>{new Date(run.completedAt).toLocaleDateString()}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer / Attribution & Links */}
+                <div className="border-t border-gray-800 pt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+                  <div className="text-[11px] text-gray-500">
+                    {selectedCharDetails.attribution?.notice || 'Data provided by Raider.IO'}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {selectedCharDetails.character.raiderioUrl && (
+                      <a
+                        href={selectedCharDetails.character.raiderioUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn-secondary text-xs px-3 py-1.5 flex items-center gap-1"
+                      >
+                        <span>↗️</span> View on Raider.IO
+                      </a>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setDetailsModalOpen(false)}
+                      className="btn btn-cta text-xs px-4 py-1.5"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="py-6 text-center text-xs text-red-400">
+                Failed to load character details.
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

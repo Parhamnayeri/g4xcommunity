@@ -77,7 +77,11 @@
     "test:startup-persistence": "node scripts/test-release-blockers.cjs startup",
     "test:spa-routing": "node scripts/test-release-blockers.cjs spa",
     "test:dependency-compatibility": "node scripts/test-dependency-compatibility.cjs",
-    "test:overhaul": "ts-node src/test/role_hierarchy_and_portal_overhaul_suite.ts"
+    "test:characters": "node scripts/test-release-blockers.cjs characters",
+    "test:booster-hub": "node scripts/test-release-blockers.cjs booster-hub",
+    "test:discord-order-workflow": "node scripts/test-release-blockers.cjs discord-order-workflow",
+    "test:manual-deposit": "node scripts/test-release-blockers.cjs manual-deposit",
+    "test:overhaul": "node scripts/test-release-blockers.cjs src/test/role_hierarchy_and_portal_overhaul_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"

@@ -1,17 +1,25 @@
 /**
- * characterService.ts — مدیریت کاراکترهای WoW بوسترها (Phase 2)
+ * characterService.ts — Authoritative WoW Character & Raider.IO Profile Service (Task 4)
  *
- * قابلیت‌ها:
- *  - ثبت چندین کاراکتر WoW با اعتبارسنجی صلاحیت بوستر
- *  - استعلام و همگام‌سازی اطلاعات از Raider.IO
- *  - انتخاب کاراکتر اصلی (Main Character)
- *  - حذف / غیرفعال‌سازی ایمن کاراکتر
- *  - انتخاب کاراکتر مناسب برای کلیم سفارشات
+ * Rules:
+ *  - Approved WoW Boosters manage their own WoW characters.
+ *  - Region/Realm/Name normalization with duplicate prevention.
+ *  - Optional Raider.IO URL support with anti-SSRF validation.
+ *  - One Main Character per booster with safe atomic selection.
+ *  - Soft-delete: historical references in orders/teams are preserved (isActive: false).
+ *  - Reactivation of previously deactivated characters.
+ *  - Rate-limit cooldown (60s) on manual sync requests.
+ *  - Never automatically approve Booster or Pilot based solely on character existence.
  */
 
 import prisma from '../database/db';
 import { DomainError, DomainErrorCode } from './domainErrors';
-import { fetchRaiderIOProfile, syncCharacter } from './raiderio';
+import {
+  fetchRaiderIOProfile,
+  parseRaiderIOProfileUrl,
+  syncCharacter,
+  checkRefreshCooldown,
+} from './raiderio';
 import { Prisma } from '@prisma/client';
 
 export const SUPPORTED_REGIONS = ['eu', 'us', 'kr', 'tw', 'cn'] as const;
@@ -19,18 +27,22 @@ export type SupportedRegion = typeof SUPPORTED_REGIONS[number];
 
 export interface AddCharacterInput {
   userId: string;
-  characterName: string;
-  realm: string;
+  characterName?: string;
+  realm?: string;
   region?: string;
+  raiderioUrl?: string;
   gameSlug?: string;
   actorId?: string;
   requireVerified?: boolean;
 }
 
 /**
- * بررسی اینکه آیا کاربر مدیر یا ادمین است
+ * Check if actor is an Admin, Manager, Owner, or Staff member
  */
-export async function isUserAdminOrManager(userId: string, client: Prisma.TransactionClient | typeof prisma = prisma): Promise<boolean> {
+export async function isUserAdminOrManager(
+  userId: string,
+  client: Prisma.TransactionClient | typeof prisma = prisma
+): Promise<boolean> {
   const roles = await client.userRole.findMany({
     where: { userId },
   });
@@ -38,11 +50,12 @@ export async function isUserAdminOrManager(userId: string, client: Prisma.Transa
 }
 
 /**
- * اعتبارسنجی صلاحیت بوستر برای بازی WoW
+ * Ensures user is an active approved booster for World of Warcraft.
+ * Staff/Admins retain operational bypass for administrative setup.
  */
 export async function ensureApprovedBooster(
   userId: string,
-  gameSlug: string = 'wow_midnight',
+  gameSlug: string = 'wow',
   client: Prisma.TransactionClient | typeof prisma = prisma
 ): Promise<void> {
   const user = await client.user.findUnique({
@@ -57,16 +70,16 @@ export async function ensureApprovedBooster(
     );
   }
 
-  // مدیران همواره مجاز هستند
+  // Managers and Admins are always authorized
   const isAdmin = user.userRoles.some((r) => ['owner', 'manager', 'admin', 'staff'].includes(r.roleKey));
   if (isAdmin) return;
 
-  // بررسی تاییدیه بوستر برای WoW
+  // Check WoW game approval
   const approval = await client.userGameApproval.findFirst({
     where: {
       userId,
       gameSlug: { in: [gameSlug, 'wow', 'wow_midnight'] },
-      approvalType: 'booster',
+      approvalType: { in: ['booster', 'non_pilot'] },
       status: 'approved',
     },
   });
@@ -80,7 +93,7 @@ export async function ensureApprovedBooster(
 }
 
 /**
- * افزودن کاراکتر جدید برای بوستر
+ * Adds or reactivates a WoW Character for an approved booster.
  */
 export async function addCharacter(
   input: AddCharacterInput,
@@ -97,19 +110,39 @@ export async function addCharacter(
     }
   }
 
-  const gameSlug = input.gameSlug || 'wow_midnight';
+  const gameSlug = input.gameSlug || 'wow';
   await ensureApprovedBooster(input.userId, gameSlug, client);
 
-  const region = (input.region || 'eu').trim().toLowerCase();
+  let region = (input.region || '').trim().toLowerCase();
+  let realm = (input.realm || '').trim().toLowerCase();
+  let characterName = (input.characterName || '').trim();
+
+  // If Raider.IO URL is supplied, parse and extract authoritative fields
+  if (input.raiderioUrl) {
+    const parsed = parseRaiderIOProfileUrl(input.raiderioUrl);
+    if (!parsed) {
+      throw new DomainError(
+        DomainErrorCode.INVALID_EVIDENCE_URL,
+        'Invalid Raider.IO profile URL format. Must be an official https://raider.io/characters/... link.'
+      );
+    }
+    region = parsed.region;
+    realm = parsed.realm;
+    characterName = parsed.characterName;
+  }
+
+  // Default region to 'eu' if not provided
+  if (!region) region = 'eu';
+
   if (!SUPPORTED_REGIONS.includes(region as SupportedRegion)) {
     throw new DomainError(
       DomainErrorCode.INVALID_CHARACTER_REGION,
-      `Invalid region '${input.region}'. Supported regions: ${SUPPORTED_REGIONS.join(', ')}`
+      `Invalid region '${region}'. Supported regions: ${SUPPORTED_REGIONS.join(', ')}`
     );
   }
 
-  const characterName = input.characterName.trim();
-  const realm = input.realm.trim().toLowerCase();
+  // Normalize realm and character name
+  realm = realm.replace(/\s+/g, '-');
 
   if (!characterName || characterName.length < 2 || characterName.length > 30) {
     throw new DomainError(
@@ -125,7 +158,33 @@ export async function addCharacter(
     );
   }
 
-  // بررسی وجود کاراکتر تکراری برای همین کاربر
+  // Resolve authoritative game record in database
+  const game =
+    (await client.game.findUnique({ where: { slug: gameSlug } })) ||
+    (await client.game.findFirst({ where: { slug: { in: ['wow', 'wow_midnight'] } } })) ||
+    (await client.game.findFirst({ where: { isActive: true } }));
+  const finalGameSlug = game ? game.slug : gameSlug;
+
+  // 1. Cross-Booster Duplicate Prevention: Character cannot be actively claimed by another booster
+  const activeOnOtherUser = await client.wowCharacter.findFirst({
+    where: {
+      gameSlug: finalGameSlug,
+      region,
+      realm,
+      characterName: { equals: characterName },
+      isActive: true,
+      userId: { not: input.userId },
+    },
+  });
+
+  if (activeOnOtherUser) {
+    throw new DomainError(
+      DomainErrorCode.CHARACTER_ALREADY_EXISTS,
+      `Character '${characterName}' on realm '${realm}' (${region.toUpperCase()}) is already actively registered by another booster.`
+    );
+  }
+
+  // 2. Self Duplicate / Reactivation Check
   const existing = await client.wowCharacter.findFirst({
     where: {
       userId: input.userId,
@@ -142,7 +201,7 @@ export async function addCharacter(
     );
   }
 
-  // استعلام از Raider.IO
+  // Query Raider.IO profile for initial stats and metadata
   const rioSnapshot = await fetchRaiderIOProfile({
     region,
     realm,
@@ -157,18 +216,21 @@ export async function addCharacter(
   }
 
   const syncStatus = rioSnapshot.fetchStatus === 'success' ? 'synced' : rioSnapshot.fetchStatus;
+  const canonicalUrl =
+    rioSnapshot.profileUrl ||
+    `https://raider.io/characters/${region}/${encodeURIComponent(realm)}/${encodeURIComponent(characterName)}`;
+  const recentRunsJson =
+    rioSnapshot.recentRuns && rioSnapshot.recentRuns.length > 0 ? JSON.stringify(rioSnapshot.recentRuns) : null;
 
-  // بررسی وضعیت مین بودن
+  // Determine if this should be the Main Character (first active character is automatically Main)
   const activeCharCount = await client.wowCharacter.count({
     where: { userId: input.userId, isActive: true },
   });
   const shouldBeMain = activeCharCount === 0;
 
-  // ایجاد یا فعال‌سازی مجدد کاراکتر
-  const canonicalUrl = rioSnapshot.profileUrl || `https://raider.io/characters/${region}/${encodeURIComponent(realm)}/${encodeURIComponent(characterName)}`;
-
   let character;
   if (existing) {
+    // Reactivate previously saved/deactivated character
     character = await client.wowCharacter.update({
       where: { id: existing.id },
       data: {
@@ -176,26 +238,24 @@ export async function addCharacter(
         isMain: shouldBeMain ? true : existing.isMain,
         characterClass: rioSnapshot.characterClass || existing.characterClass,
         activeSpec: rioSnapshot.activeSpec || existing.activeSpec,
+        activeRole: rioSnapshot.activeRole || existing.activeRole,
+        faction: rioSnapshot.faction || existing.faction,
+        thumbnailUrl: rioSnapshot.thumbnailUrl || existing.thumbnailUrl,
         itemLevel: rioSnapshot.itemLevelEquipped ?? existing.itemLevel,
         mythicScore: rioSnapshot.mythicScore ?? existing.mythicScore,
         tankScore: rioSnapshot.tankScore ?? existing.tankScore,
         healerScore: rioSnapshot.healerScore ?? existing.healerScore,
         dpsScore: rioSnapshot.dpsScore ?? existing.dpsScore,
         raidProgression: rioSnapshot.raidProgression ?? existing.raidProgression,
+        recentRunsJson: recentRunsJson || existing.recentRunsJson,
         raiderioUrl: canonicalUrl,
         syncStatus,
+        syncError: rioSnapshot.errorDetails || null,
         lastSyncedAt: new Date(),
       },
     });
   } else {
-    // اطمینان از وجود بازی در دیتابیس
-    const game = await client.game.findUnique({
-      where: { slug: gameSlug },
-    }) || await client.game.findFirst({
-      where: { slug: { in: ['wow_midnight', 'wow'] } },
-    });
-    const finalGameSlug = game ? game.slug : gameSlug;
-
+    // Create fresh character record
     character = await client.wowCharacter.create({
       data: {
         userId: input.userId,
@@ -205,16 +265,21 @@ export async function addCharacter(
         region,
         characterClass: rioSnapshot.characterClass || null,
         activeSpec: rioSnapshot.activeSpec || null,
+        activeRole: rioSnapshot.activeRole || null,
+        faction: rioSnapshot.faction || null,
+        thumbnailUrl: rioSnapshot.thumbnailUrl || null,
         itemLevel: rioSnapshot.itemLevelEquipped ?? null,
         mythicScore: rioSnapshot.mythicScore ?? null,
         tankScore: rioSnapshot.tankScore ?? null,
         healerScore: rioSnapshot.healerScore ?? null,
         dpsScore: rioSnapshot.dpsScore ?? null,
         raidProgression: rioSnapshot.raidProgression ?? null,
+        recentRunsJson,
         raiderioUrl: canonicalUrl,
         isMain: shouldBeMain,
         isActive: true,
         syncStatus,
+        syncError: rioSnapshot.errorDetails || null,
         lastSyncedAt: new Date(),
       },
     });
@@ -224,24 +289,26 @@ export async function addCharacter(
 }
 
 /**
- * دریافت لیست کاراکترهای فعال بوستر
+ * List registered characters for a user
  */
 export async function listUserCharacters(
   userId: string,
+  options: { includeInactive?: boolean } = {},
   client: Prisma.TransactionClient | typeof prisma = prisma
 ) {
+  const where: any = { userId };
+  if (!options.includeInactive) {
+    where.isActive = true;
+  }
+
   return client.wowCharacter.findMany({
-    where: { userId, isActive: true },
-    orderBy: [
-      { isMain: 'desc' },
-      { mythicScore: 'desc' },
-      { createdAt: 'desc' },
-    ],
+    where,
+    orderBy: [{ isMain: 'desc' }, { mythicScore: 'desc' }, { createdAt: 'desc' }],
   });
 }
 
 /**
- * پیدا کردن یک کاراکتر با ID یا نام
+ * Find a specific character by ID or Name
  */
 export async function findUserCharacter(
   userId: string,
@@ -263,7 +330,48 @@ export async function findUserCharacter(
 }
 
 /**
- * تنظیم کاراکتر اصلی (Main Character)
+ * Retrieve comprehensive character details including parsed recent runs
+ */
+export async function getCharacterDetails(
+  identifier: number | string,
+  userId: string,
+  actorId?: string,
+  client: Prisma.TransactionClient | typeof prisma = prisma
+) {
+  const effectiveActor = actorId || userId;
+  if (effectiveActor !== userId) {
+    const authorized = await isUserAdminOrManager(effectiveActor, client);
+    if (!authorized) {
+      throw new DomainError(
+        DomainErrorCode.PERMISSION_DENIED,
+        `Actor '${effectiveActor}' is not authorized to inspect characters for user '${userId}'.`
+      );
+    }
+  }
+
+  const char = await findUserCharacter(userId, identifier, client);
+  if (!char) {
+    throw new DomainError(DomainErrorCode.CHARACTER_NOT_FOUND, `Character '${identifier}' not found.`);
+  }
+
+  let recentRuns = [];
+  try {
+    if (char.recentRunsJson) {
+      recentRuns = JSON.parse(char.recentRunsJson);
+    }
+  } catch {}
+
+  const cooldown = checkRefreshCooldown(char.id);
+
+  return {
+    ...char,
+    recentRuns,
+    refreshCooldown: cooldown,
+  };
+}
+
+/**
+ * Sets a character as the booster's Main Character
  */
 export async function setMainCharacter(
   userId: string,
@@ -291,13 +399,13 @@ export async function setMainCharacter(
   }
 
   return (client as typeof prisma).$transaction(async (tx) => {
-    // بازنشانی تمام کاراکترها به غیر اصلی
+    // Reset all characters of this user to isMain: false
     await tx.wowCharacter.updateMany({
       where: { userId, isMain: true },
       data: { isMain: false },
     });
 
-    // تنظیم کاراکتر مورد نظر به عنوان اصلی
+    // Set target character as Main
     const updated = await tx.wowCharacter.update({
       where: { id: char.id },
       data: { isMain: true },
@@ -308,7 +416,8 @@ export async function setMainCharacter(
 }
 
 /**
- * همگام‌سازی مجدد کاراکتر از طریق Raider.IO
+ * Synchronizes character profile with fresh data from Raider.IO.
+ * Enforces a 60-second cooldown per character.
  */
 export async function syncCharacterProfile(
   identifier: number | string,
@@ -335,6 +444,15 @@ export async function syncCharacterProfile(
     );
   }
 
+  // Enforce manual refresh cooldown
+  const cooldown = checkRefreshCooldown(char.id);
+  if (!cooldown.allowed) {
+    throw new DomainError(
+      DomainErrorCode.VALIDATION_ERROR,
+      `Rate limit cooldown: Please wait ${cooldown.remainingSeconds} seconds before refreshing this character again.`
+    );
+  }
+
   const result = await syncCharacter(char.id);
   const updated = await client.wowCharacter.findUnique({
     where: { id: char.id },
@@ -344,7 +462,8 @@ export async function syncCharacterProfile(
 }
 
 /**
- * حذف / غیرفعال‌سازی کاراکتر
+ * Safely removes (deactivates) a character from active roster.
+ * Historic references in orders, runs, and teams are strictly preserved.
  */
 export async function removeCharacter(
   identifier: number | string,
@@ -372,6 +491,7 @@ export async function removeCharacter(
   }
 
   return (client as typeof prisma).$transaction(async (tx) => {
+    // Soft-deactivate character
     const updated = await tx.wowCharacter.update({
       where: { id: char.id },
       data: {
@@ -380,7 +500,7 @@ export async function removeCharacter(
       },
     });
 
-    // اگر کاراکتر حذف‌شده کاراکتر اصلی بود، یک کاراکتر فعال دیگر را به عنوان اصلی برمی‌گزینیم
+    // If removed character was Main, elect the highest-scoring active character as Main
     if (char.isMain) {
       const nextChar = await tx.wowCharacter.findFirst({
         where: { userId, isActive: true },
@@ -396,4 +516,55 @@ export async function removeCharacter(
 
     return updated;
   });
+}
+
+/**
+ * Reactivates a previously deactivated character
+ */
+export async function reactivateCharacter(
+  identifier: number | string,
+  userId: string,
+  actorId?: string,
+  client: Prisma.TransactionClient | typeof prisma = prisma
+) {
+  const effectiveActor = actorId || userId;
+  if (effectiveActor !== userId) {
+    const authorized = await isUserAdminOrManager(effectiveActor, client);
+    if (!authorized) {
+      throw new DomainError(
+        DomainErrorCode.PERMISSION_DENIED,
+        `Actor '${effectiveActor}' is not authorized to reactivate characters for user '${userId}'.`
+      );
+    }
+  }
+
+  const char = await findUserCharacter(userId, identifier, client);
+  if (!char) {
+    throw new DomainError(DomainErrorCode.CHARACTER_NOT_FOUND, `Character '${identifier}' not found for user '${userId}'.`);
+  }
+
+  if (char.isActive) {
+    return char; // Already active
+  }
+
+  // Check if user currently has an active Main
+  const activeMain = await client.wowCharacter.findFirst({
+    where: { userId, isActive: true, isMain: true },
+  });
+
+  const reactivated = await (client as typeof prisma).$transaction(async (tx) => {
+    const updated = await tx.wowCharacter.update({
+      where: { id: char.id },
+      data: {
+        isActive: true,
+        isMain: !activeMain,
+      },
+    });
+    return updated;
+  });
+
+  // Attempt background sync
+  syncCharacter(char.id).catch(() => {});
+
+  return reactivated;
 }

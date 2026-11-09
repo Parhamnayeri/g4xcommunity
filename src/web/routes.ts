@@ -35,7 +35,13 @@ import {
   setMainCharacter,
   syncCharacterProfile,
   removeCharacter,
+  reactivateCharacter,
+  getCharacterDetails,
 } from '../services/characterService';
+import {
+  previewRaiderIOProfile,
+  RAIDERIO_ATTRIBUTION,
+} from '../services/raiderio';
 import {
   createTeam,
   listTeams,
@@ -819,20 +825,6 @@ router.get('/dashboard/transactions', requireAuth, async (req: Request, res: Res
   }
 });
 
-// ─── کاراکترهای WoW کاربر جاری ───────────────────────────────────────────────
-router.get('/characters', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  const { user } = req as AuthenticatedRequest;
-
-  const characters = await prisma.wowCharacter.findMany({
-    where: { userId: user.discordId },
-    orderBy: [
-      { isMain: 'desc' },
-      { mythicScore: 'desc' },
-    ],
-  });
-
-  res.json(characters.map(serializeCharacter));
-});
 
 // ─── تاریخچه بوست‌های کاربر جاری ─────────────────────────────────────────────
 router.get('/boosts/history', requireAuth, async (req: Request, res: Response): Promise<void> => {
@@ -898,12 +890,57 @@ router.get(
 router.get('/characters', requireAuth, async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
-    const characters = await listUserCharacters(user.discordId);
+    const includeInactive = req.query.includeInactive === 'true';
+    const characters = await listUserCharacters(user.discordId, { includeInactive });
     res.json(characters.map(serializeCharacter));
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to list characters' });
   }
 });
+
+router.get('/characters/:id', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const characterId = req.params.id;
+    if (!characterId) {
+      res.status(400).json({ error: 'Valid characterId required.' });
+      return;
+    }
+
+    const details = await getCharacterDetails(characterId, user.discordId, user.discordId);
+    res.json({
+      success: true,
+      character: serializeCharacter(details),
+      cooldownRemainingSeconds: details.refreshCooldown.remainingSeconds,
+      canRefresh: details.refreshCooldown.allowed,
+      recentRuns: details.recentRuns,
+      attribution: RAIDERIO_ATTRIBUTION,
+    });
+  } catch (err: any) {
+    const status = err instanceof DomainError ? 400 : 500;
+    res.status(status).json({ error: err.message || 'Failed to get character details' });
+  }
+});
+
+router.post(
+  '/characters/preview',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { url, region, realm, characterName } = req.body;
+      const preview = await previewRaiderIOProfile({ url, region, realm, characterName });
+      res.json({
+        success: true,
+        preview,
+        attribution: RAIDERIO_ATTRIBUTION,
+      });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to preview Raider.IO profile' });
+    }
+  }
+);
 
 router.post(
   '/characters/add',
@@ -912,18 +949,19 @@ router.post(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { user } = req as AuthenticatedRequest;
-      const { characterName, realm, region } = req.body;
+      const { characterName, realm, region, raiderioUrl } = req.body;
 
-      if (!characterName || !realm) {
-        res.status(400).json({ error: 'characterName and realm are required.' });
+      if (!raiderioUrl && (!characterName || !realm)) {
+        res.status(400).json({ error: 'Either raiderioUrl or both characterName and realm are required.' });
         return;
       }
 
       const character = await addCharacter({
         userId: user.discordId,
-        characterName,
-        realm,
+        characterName: characterName || '',
+        realm: realm || '',
         region,
+        raiderioUrl,
         actorId: user.discordId,
       });
 
@@ -977,6 +1015,29 @@ router.post(
     } catch (err: any) {
       const status = err instanceof DomainError ? 400 : 500;
       res.status(status).json({ error: err.message || 'Failed to sync character' });
+    }
+  }
+);
+
+router.post(
+  '/characters/reactivate',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const { characterId } = req.body;
+
+      if (!characterId) {
+        res.status(400).json({ error: 'Valid characterId required.' });
+        return;
+      }
+
+      const reactivated = await reactivateCharacter(characterId, user.discordId, user.discordId);
+      res.json({ success: true, character: serializeCharacter(reactivated) });
+    } catch (err: any) {
+      const status = err instanceof DomainError ? 400 : 500;
+      res.status(status).json({ error: err.message || 'Failed to reactivate character' });
     }
   }
 );
