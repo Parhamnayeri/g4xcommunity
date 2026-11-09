@@ -1,196 +1,327 @@
 /**
  * scripts/reconcile-execution-channels.ts
  *
- * Deterministic Reconciliation Tool for Duplicate Active Execution Channels.
- * 
- * Safety Guarantees:
- *  - Non-destructive: never physically deletes records (no SQL DELETE).
- *  - Prioritizes authoritative pointer `orders.execution_channel_id`.
- *  - Fails safe: unresolved / ambiguous conflicts are flagged for operator review.
- *  - Preserves complete audit trail via AuditLog table.
- *  - Supports --dry-run (default) and --apply modes.
+ * Deterministic, Transactional Reconciliation Tool for Duplicate Active Execution Channels.
+ *
+ * Safety Invariants:
+ *  1. Refuses to guess SQLite database path. Explicit DATABASE_URL or --database <path> is mandatory.
+ *  2. Default mode is read-only dry-run.
+ *  3. Apply mode requires explicit confirmation (--confirm-apply-irreversible) AND backup verification (--verified-backup-taken).
+ *  4. Transactional: updates and AuditLog writes happen inside prisma.$transaction.
+ *  5. Concurrency-safe: re-verifies channel state inside the transaction; aborts if concurrent mutations occur.
+ *  6. Non-destructive: never physically deletes records (no SQL DELETE).
+ *  7. Pointer-authoritative: prioritizes orders.execution_channel_id.
+ *  8. Fail-safe: missing, null, or contradictory pointers are treated as hard blocking conflicts. Never blindly archives terminal orders without pointer verification.
  *
  * Usage:
- *   npx ts-node scripts/reconcile-execution-channels.ts [--dry-run | --apply]
+ *   npx ts-node scripts/reconcile-execution-channels.ts --database ./data.db [--dry-run]
+ *   npx ts-node scripts/reconcile-execution-channels.ts --database ./data.db --apply --confirm-apply-irreversible --verified-backup-taken
  */
 
+import fs from 'fs';
+import path from 'path';
 import dotenv from 'dotenv';
+import { PrismaClient } from '@prisma/client';
+
 dotenv.config();
-if (!process.env.DATABASE_URL) {
-  process.env.DATABASE_URL = 'file:./prisma/dev.db';
+
+export interface ReconciliationOptions {
+  databaseUrl?: string;
+  apply?: boolean;
+  confirmApply?: boolean;
+  verifiedBackupTaken?: boolean;
+  prismaClient?: PrismaClient;
 }
-import prisma from '../src/database/db';
+
+export interface UnresolvedConflict {
+  orderId: number;
+  orderStatus: string;
+  executionChannelId: string | null;
+  channelIds: string[];
+  reason: string;
+}
 
 export interface ReconciliationReport {
+  databasePath: string;
+  mode: 'dry-run' | 'apply';
   scannedOrders: number;
   ordersWithDuplicates: number;
   channelsArchived: number;
   channelsRetained: number;
-  unresolvedConflicts: Array<{
-    orderId: number;
-    orderStatus: string;
-    executionChannelId: string | null;
-    channelIds: string[];
-    reason: string;
-  }>;
-  mode: 'dry-run' | 'apply';
+  unresolvedConflicts: UnresolvedConflict[];
+  success: boolean;
+  error?: string;
 }
 
-export async function reconcileExecutionChannels(options: { apply?: boolean } = {}): Promise<ReconciliationReport> {
-  const isApply = options.apply === true;
-  const mode = isApply ? 'apply' : 'dry-run';
+export function resolveDatabaseTarget(options?: { databaseUrl?: string; args?: string[] }): {
+  databaseUrl: string;
+  sqliteFilePath: string;
+} {
+  const args = options?.args || process.argv.slice(2);
+  let rawUrl: string | undefined = options?.databaseUrl;
 
-  console.log(`[ReconcileExecutionChannels] Starting execution channel audit (mode: ${mode.toUpperCase()})...`);
+  // 1. Check CLI argument --database <path>
+  const dbIndex = args.indexOf('--database');
+  if (dbIndex !== -1 && args[dbIndex + 1]) {
+    const rawPath = args[dbIndex + 1];
+    const resolvedPath = path.resolve(process.cwd(), rawPath);
+    rawUrl = `file:${resolvedPath}`;
+  }
 
-  // 1. Group active execution channels by order_id
-  const duplicateGroups: Array<{ orderId: number }> = await prisma.$queryRawUnsafe(`
-    SELECT order_id as orderId
-    FROM order_channels
-    WHERE channel_type = 'execution' AND status = 'active'
-    GROUP BY order_id
-    HAVING COUNT(*) > 1;
-  `);
+  // 2. Fall back to process.env.DATABASE_URL
+  if (!rawUrl && process.env.DATABASE_URL) {
+    rawUrl = process.env.DATABASE_URL.trim();
+  }
+
+  // 3. Strict guard: NEVER guess default SQLite path
+  if (!rawUrl) {
+    throw new Error(
+      '[CRITICAL SAFETY ERROR] Missing database configuration. Explicit DATABASE_URL environment variable or --database <path> argument is REQUIRED. Guessed defaults (e.g. dev.db) are strictly forbidden.'
+    );
+  }
+
+  let sqliteFilePath = rawUrl;
+  if (rawUrl.startsWith('file:')) {
+    sqliteFilePath = rawUrl.replace(/^file:/, '');
+  }
+  sqliteFilePath = path.resolve(process.cwd(), sqliteFilePath);
+
+  if (!fs.existsSync(sqliteFilePath)) {
+    throw new Error(
+      `[CRITICAL SAFETY ERROR] Target SQLite database file does not exist at '${sqliteFilePath}'. Refusing to operate on non-existent database.`
+    );
+  }
+
+  return { databaseUrl: rawUrl, sqliteFilePath };
+}
+
+export async function reconcileExecutionChannels(options: ReconciliationOptions = {}): Promise<ReconciliationReport> {
+  const args = process.argv.slice(2);
+  const isApply = options.apply === true || args.includes('--apply');
+  const confirmApply =
+    options.confirmApply === true ||
+    args.includes('--confirm-apply-irreversible') ||
+    process.env.CONFIRM_RECONCILIATION === 'yes';
+  const verifiedBackup =
+    options.verifiedBackupTaken === true ||
+    args.includes('--verified-backup-taken') ||
+    process.env.VERIFIED_BACKUP_TAKEN === 'yes';
+
+  const mode: 'dry-run' | 'apply' = isApply ? 'apply' : 'dry-run';
+
+  if (isApply) {
+    if (!confirmApply) {
+      throw new Error(
+        '[CRITICAL SAFETY ERROR] Apply mode requested without explicit confirmation. You MUST pass --confirm-apply-irreversible or set CONFIRM_RECONCILIATION=yes to execute state-altering reconciliation.'
+      );
+    }
+    if (!verifiedBackup) {
+      throw new Error(
+        '[CRITICAL SAFETY ERROR] Backup verification missing. Modifying production or pre-migration SQLite databases requires a verified cold backup. You MUST pass --verified-backup-taken or set VERIFIED_BACKUP_TAKEN=yes.'
+      );
+    }
+  }
+
+  const { databaseUrl, sqliteFilePath } = resolveDatabaseTarget({
+    databaseUrl: options.databaseUrl,
+    args,
+  });
+
+  const prisma =
+    options.prismaClient ||
+    new PrismaClient({
+      datasources: {
+        db: { url: databaseUrl },
+      },
+    });
 
   const report: ReconciliationReport = {
-    scannedOrders: duplicateGroups.length,
-    ordersWithDuplicates: duplicateGroups.length,
+    databasePath: sqliteFilePath,
+    mode,
+    scannedOrders: 0,
+    ordersWithDuplicates: 0,
     channelsArchived: 0,
     channelsRetained: 0,
     unresolvedConflicts: [],
-    mode,
+    success: true,
   };
 
-  if (duplicateGroups.length === 0) {
-    console.log('[ReconcileExecutionChannels] ✅ Zero duplicate active execution channels detected. System is clean.');
-    return report;
-  }
+  try {
+    console.log(`[ReconcileExecutionChannels] Operating on: ${sqliteFilePath} (Mode: ${mode.toUpperCase()})`);
 
-  console.warn(`[ReconcileExecutionChannels] ⚠️ Found ${duplicateGroups.length} orders with multiple active execution channels.`);
+    // 1. Verify foreign key integrity first
+    const fkViolations: any[] = await prisma.$queryRawUnsafe('PRAGMA foreign_key_check;');
+    if (fkViolations && fkViolations.length > 0) {
+      console.warn(`[ReconcileExecutionChannels] WARNING: Detected ${fkViolations.length} foreign key violation(s) in SQLite database!`);
+    }
 
-  for (const group of duplicateGroups) {
-    const orderId = Number(group.orderId);
+    // 2. Check if table order_channels exists
+    const tables: Array<{ name: string }> = await prisma.$queryRawUnsafe(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='order_channels';"
+    );
+    if (!tables || tables.length === 0) {
+      console.log('[ReconcileExecutionChannels] Table order_channels does not exist in target database. Exiting safely.');
+      return report;
+    }
 
-    const [order, activeChannels] = await Promise.all([
-      prisma.order.findUnique({ where: { id: orderId } }),
-      prisma.orderChannel.findMany({
-        where: { orderId, channelType: 'execution', status: 'active' },
-        orderBy: { id: 'asc' },
-      }),
-    ]);
+    // 3. Find order IDs with duplicate active execution channels
+    const duplicateRows: Array<{ order_id: number; count: number }> = await prisma.$queryRawUnsafe(`
+      SELECT order_id, COUNT(*) as count
+      FROM order_channels
+      WHERE channel_type = 'execution' AND status = 'active'
+      GROUP BY order_id
+      HAVING COUNT(*) > 1;
+    `);
 
-    if (!order) {
+    report.scannedOrders = duplicateRows.length;
+    report.ordersWithDuplicates = duplicateRows.length;
+
+    if (duplicateRows.length === 0) {
+      console.log('[ReconcileExecutionChannels] ✅ Zero duplicate active execution channels detected. System is clean.');
+      return report;
+    }
+
+    console.log(`[ReconcileExecutionChannels] Found ${duplicateRows.length} order(s) with duplicate active execution channels.`);
+
+    // 4. Process each duplicate group
+    for (const dup of duplicateRows) {
+      const orderId = dup.order_id;
+
+      // Fetch the order
+      const orders: Array<{ id: number; status: string; execution_channel_id: string | null }> = await prisma.$queryRawUnsafe(
+        'SELECT id, status, execution_channel_id FROM orders WHERE id = ?;',
+        orderId
+      );
+      const order = orders && orders.length > 0 ? orders[0] : null;
+
+      // Fetch active execution channels for this order
+      const activeChannels: Array<{
+        id: number;
+        discord_channel_id: string;
+        channel_type: string;
+        status: string;
+        created_at: string;
+      }> = await prisma.$queryRawUnsafe(
+        "SELECT id, discord_channel_id, channel_type, status, created_at FROM order_channels WHERE order_id = ? AND channel_type = 'execution' AND status = 'active' ORDER BY id ASC;",
+        orderId
+      );
+
+      if (!order) {
+        report.unresolvedConflicts.push({
+          orderId,
+          orderStatus: 'UNKNOWN_ORPHAN_ORDER',
+          executionChannelId: null,
+          channelIds: activeChannels.map((c) => c.discord_channel_id),
+          reason: `Orphan active channels: order #${orderId} does not exist in orders table.`,
+        });
+        continue;
+      }
+
+      const orderExecId = order.execution_channel_id ? order.execution_channel_id.trim() : null;
+      const matchingChannels = activeChannels.filter((c) => orderExecId && c.discord_channel_id === orderExecId);
+
+      // Deterministic Match Case: Authoritative pointer matches EXACTLY ONE active channel record
+      if (orderExecId && matchingChannels.length === 1) {
+        const keeper = matchingChannels[0];
+        const obsolete = activeChannels.filter((c) => c.id !== keeper.id);
+
+        console.log(
+          `[ReconcileExecutionChannels] Order #${orderId}: Retaining channel record #${keeper.id} (${keeper.discord_channel_id}) matching orders.execution_channel_id. Candidate for archiving: ${obsolete.length} duplicate(s).`
+        );
+
+        if (isApply) {
+          // Transactional update with concurrency re-verification
+          await prisma.$transaction(async (tx) => {
+            // Re-verify channel state inside transaction
+            const currentActive: Array<{ id: number }> = await tx.$queryRawUnsafe(
+              "SELECT id FROM order_channels WHERE order_id = ? AND channel_type = 'execution' AND status = 'active';",
+              orderId
+            );
+
+            if (currentActive.length !== activeChannels.length) {
+              throw new Error(
+                `[CONCURRENT MUTATION DETECTED] Order #${orderId} active channel count changed during reconciliation transaction. Aborting.`
+              );
+            }
+
+            for (const obs of obsolete) {
+              await tx.$executeRawUnsafe(
+                "UPDATE order_channels SET status = 'archived', archived_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'active';",
+                obs.id
+              );
+
+              await tx.$executeRawUnsafe(
+                `INSERT INTO audit_logs (action, entity_type, entity_id, new_values, reason, is_success, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);`,
+                'ORDER_CHANNEL_RECONCILE_ARCHIVE',
+                'OrderChannel',
+                obs.id.toString(),
+                JSON.stringify({
+                  orderId,
+                  archivedRecordId: obs.id,
+                  archivedDiscordChannelId: obs.discord_channel_id,
+                  retainedRecordId: keeper.id,
+                  retainedDiscordChannelId: keeper.discord_channel_id,
+                }),
+                `Reconciled duplicate execution channel #${obs.id} in favor of authoritative order pointer #${keeper.id}`,
+                1
+              );
+            }
+          });
+        }
+
+        report.channelsRetained++;
+        report.channelsArchived += obsolete.length;
+        continue;
+      }
+
+      // Hard Blocker: Pointer is missing, null, empty, points to non-matching channel, or matches multiple
+      let failureReason = '';
+      if (!orderExecId) {
+        failureReason = `Missing pointer: orders.execution_channel_id is NULL for order #${orderId} (status: ${order.status}). Cannot determine authoritative Discord channel without manual review.`;
+      } else if (matchingChannels.length === 0) {
+        failureReason = `Pointer mismatch: orders.execution_channel_id '${orderExecId}' does not match any active channel records ([${activeChannels.map((c) => c.discord_channel_id).join(', ')}]).`;
+      } else {
+        failureReason = `Ambiguous multiple matches: orders.execution_channel_id '${orderExecId}' matches multiple channel records ([${matchingChannels.map((c) => c.id).join(', ')}]).`;
+      }
+
+      console.warn(`[ReconcileExecutionChannels] ⚠️ FAIL-SAFE BLOCKER: Order #${orderId} - ${failureReason}`);
       report.unresolvedConflicts.push({
         orderId,
-        orderStatus: 'UNKNOWN',
-        executionChannelId: null,
-        channelIds: activeChannels.map((c) => c.discordChannelId),
-        reason: 'Order record does not exist for order_channels foreign key reference.',
+        orderStatus: order.status,
+        executionChannelId: orderExecId,
+        channelIds: activeChannels.map((c) => c.discord_channel_id),
+        reason: failureReason,
       });
-      continue;
     }
 
-    const orderExecId = order.executionChannelId;
-    const matchingChannels = activeChannels.filter((c) => c.discordChannelId === orderExecId);
-
-    // Case 1: Order is completed or cancelled -> Archive all execution channels
-    if (['completed', 'cancelled', 'refunded'].includes(order.status.toLowerCase())) {
-      console.log(`[Reconcile] Order #${orderId} is terminal (${order.status}). Archiving all ${activeChannels.length} active channels.`);
-      for (const ch of activeChannels) {
-        if (isApply) {
-          await prisma.orderChannel.update({
-            where: { id: ch.id },
-            data: { status: 'archived', archivedAt: new Date() },
-          });
-          await prisma.auditLog.create({
-            data: {
-              actorId: null,
-              action: 'ORDER_CHANNEL_RECONCILE_ARCHIVE',
-              entityType: 'OrderChannel',
-              entityId: ch.id.toString(),
-              newValues: JSON.stringify({
-                orderId,
-                discordChannelId: ch.discordChannelId,
-                reason: `Order is in terminal state '${order.status}'`,
-              }),
-              reason: `Order #${orderId} is in terminal state '${order.status}'`,
-              isSuccess: true,
-            },
-          });
-        }
-        report.channelsArchived++;
-      }
-      continue;
+    if (report.unresolvedConflicts.length > 0) {
+      report.success = false;
+      report.error = `Detected ${report.unresolvedConflicts.length} unresolved ambiguous conflict(s). Human operator review required.`;
     }
 
-    // Case 2: Authoritative pointer matches exactly one active channel
-    if (orderExecId && matchingChannels.length === 1) {
-      const keeper = matchingChannels[0];
-      const obsolete = activeChannels.filter((c) => c.id !== keeper.id);
-
-      console.log(`[Reconcile] Order #${orderId}: Retaining channel #${keeper.id} (${keeper.discordChannelId}) matching orders.execution_channel_id. Archiving ${obsolete.length} duplicate(s).`);
-
-      report.channelsRetained++;
-
-      for (const obs of obsolete) {
-        if (isApply) {
-          await prisma.orderChannel.update({
-            where: { id: obs.id },
-            data: { status: 'archived', archivedAt: new Date() },
-          });
-          await prisma.auditLog.create({
-            data: {
-              actorId: null,
-              action: 'ORDER_CHANNEL_RECONCILE_ARCHIVE',
-              entityType: 'OrderChannel',
-              entityId: obs.id.toString(),
-              newValues: JSON.stringify({
-                orderId,
-                discordChannelId: obs.discordChannelId,
-                retainedChannelId: keeper.discordChannelId,
-                reason: 'Archived duplicate channel in favor of orders.execution_channel_id pointer',
-              }),
-              reason: 'Archived duplicate channel in favor of orders.execution_channel_id pointer',
-              isSuccess: true,
-            },
-          });
-        }
-        report.channelsArchived++;
-      }
-      continue;
+    return report;
+  } finally {
+    if (!options.prismaClient) {
+      await prisma.$disconnect().catch(() => {});
     }
-
-    // Case 3: Ambiguous or missing pointer -> Fail safe! Do not delete or archive arbitrarily!
-    report.unresolvedConflicts.push({
-      orderId,
-      orderStatus: order.status,
-      executionChannelId: orderExecId,
-      channelIds: activeChannels.map((c) => c.discordChannelId),
-      reason: orderExecId
-        ? `Pointer '${orderExecId}' matches ${matchingChannels.length} records in order_channels.`
-        : 'orders.execution_channel_id is null; cannot determine true Discord channel safely.',
-    });
-    console.warn(`[Reconcile] ⚠️ Order #${orderId} conflict cannot be resolved automatically:`, {
-      orderExecId,
-      activeChannels: activeChannels.map((c) => ({ id: c.id, discordChannelId: c.discordChannelId })),
-    });
   }
-
-  console.log(`[ReconcileExecutionChannels] Finished. Retained: ${report.channelsRetained}, Archived: ${report.channelsArchived}, Unresolved: ${report.unresolvedConflicts.length}`);
-  return report;
 }
 
+// Direct CLI Execution
 if (require.main === module) {
-  const args = process.argv.slice(2);
-  const apply = args.includes('--apply');
-
-  reconcileExecutionChannels({ apply })
+  reconcileExecutionChannels()
     .then((report) => {
       console.log('\n--- Final Reconciliation Report ---');
       console.log(JSON.stringify(report, null, 2));
-      process.exit(report.unresolvedConflicts.length > 0 ? 1 : 0);
+      if (!report.success) {
+        console.error('\n[ReconcileExecutionChannels] ❌ Terminated with unresolved conflicts. Aborting.');
+        process.exit(1);
+      }
+      process.exit(0);
     })
     .catch((err) => {
-      console.error('[ReconcileExecutionChannels] Fatal error:', err);
+      console.error('\n[ReconcileExecutionChannels] ❌ Fatal error:', err.message);
       process.exit(1);
     });
 }
