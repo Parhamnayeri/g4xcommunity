@@ -129,9 +129,13 @@ async function bootstrap(): Promise<void> {
     startWebServer(port);
 
     // ۴. لاگین به دیسکورد
-    const token = process.env.DISCORD_TOKEN;
-    if (!token) throw new Error('DISCORD_TOKEN is not set in .env');
-    await client.login(token);
+    if (process.env.STAGING_MODE === 'true' || process.env.MOCK_DISCORD === 'true') {
+      console.log('[Bootstrap] 🧪 STAGING_MODE active: Skipping live Discord bot client.login()');
+    } else {
+      const token = process.env.DISCORD_TOKEN;
+      if (!token) throw new Error('DISCORD_TOKEN is not set in .env');
+      await client.login(token);
+    }
 
   } catch (error) {
     console.error('[Bootstrap] ❌ Fatal error during startup:', error);

@@ -15,6 +15,7 @@ import { Request, Response, Router, NextFunction } from 'express';
 import crypto from 'crypto';
 import prisma from '../database/db';
 import { User } from '@prisma/client';
+import './middleware/auth';
 
 export const OWNER_KEY_ENV_NAME = 'G4X_OWNER_ACCESS_KEY';
 export const OWNER_KEY_FALLBACK_ENV = 'OWNER_ACCESS_KEY';
