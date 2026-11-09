@@ -212,6 +212,7 @@ export const ROLE_PERMISSIONS: Record<SystemRoleKey, Permission[]> = {
     Permission.ORDER_VIEW_PERMITTED,
     Permission.USER_VIEW_PERMITTED,
     Permission.PROOF_REVIEW,
+    Permission.DISPUTE_REVIEW,
     Permission.DISPUTE_CREATE,
     Permission.SUPPORT_TICKET_CREATE,
     Permission.SUPPORT_TICKET_MANAGE,

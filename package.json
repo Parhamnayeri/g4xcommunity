@@ -72,8 +72,8 @@
     "test:order-workspace": "node scripts/test-order-workspace.cjs",
     "test:order-workspace:api": "ts-node src/test/order_workspace_suite.ts",
     "test:startup-persistence": "node scripts/test-release-blockers.cjs startup",
-    "test:spa-routing": "node scripts/test-release-blockers.cjs spa",
-    "test:dependency-compatibility": "node scripts/test-dependency-compatibility.cjs"
+    "test:dependency-compatibility": "node scripts/test-dependency-compatibility.cjs",
+    "test:overhaul": "ts-node src/test/role_hierarchy_and_portal_overhaul_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"
