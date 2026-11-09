@@ -189,3 +189,44 @@ export async function reviewAdminWithdrawal(
     body: JSON.stringify({ decision, ...data }),
   });
 }
+
+export async function fetchUserBanHistory(discordId: string): Promise<{
+  discordId: string;
+  username: string;
+  history: Array<{
+    id: number;
+    action: string;
+    reason: string | null;
+    previousStatus: boolean | null;
+    resultingStatus: boolean | null;
+    createdAt: string;
+    actor: { id: string; username: string; displayName: string | null } | null;
+  }>;
+}> {
+  return apiRequest(`/api/admin/users/${discordId}/ban-history`);
+}
+
+export async function updateWithdrawalMetadata(
+  id: number,
+  data: { notes?: string; adminNotes?: string; reason: string }
+): Promise<{ success: boolean; request: any }> {
+  return apiRequest(`/api/admin/withdrawals/${id}/metadata`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function fetchWithdrawalAuditHistory(id: number): Promise<{
+  id: number;
+  withdrawalRef: string;
+  history: Array<{
+    id: number;
+    action: string;
+    reason: string | null;
+    createdAt: string;
+    details: any;
+    actor: { id: string; username: string; displayName: string | null } | null;
+  }>;
+}> {
+  return apiRequest(`/api/admin/withdrawals/${id}/audit-history`);
+}

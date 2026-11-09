@@ -13,7 +13,7 @@ import {
 } from '../services/operations';
 import { LoadingState } from '../components/ui/LoadingState';
 
-export const KycManagementPage: React.FC = () => {
+export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { user } = useAuth();
 
   // Queue State
@@ -162,17 +162,19 @@ export const KycManagementPage: React.FC = () => {
           </p>
         </div>
 
-        <Link
-          to="/management"
-          className="btn btn-sm"
-          style={{
-            backgroundColor: 'var(--bg-surface-hover)',
-            color: 'var(--text-primary)',
-            border: '1px solid var(--border-subtle)',
-          }}
-        >
-          &larr; Back to Management Overview
-        </Link>
+        {!embedded && (
+          <Link
+            to="/management"
+            className="btn btn-sm"
+            style={{
+              backgroundColor: 'var(--bg-surface-hover)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border-subtle)',
+            }}
+          >
+            &larr; Back to Management Overview
+          </Link>
+        )}
       </div>
 
       {error ? (

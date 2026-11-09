@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   StaffOverviewResponse,
@@ -14,9 +15,13 @@ import {
   reviewOrderStaff,
 } from '../services/operations';
 import { LoadingState } from '../components/ui/LoadingState';
+import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
+import { UserManagementWorkspace } from '../components/admin/UserManagementWorkspace';
 
 export const StaffPage: React.FC = () => {
   const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const currentTabParam = searchParams.get('tab') as 'proofs' | 'orders' | 'users' | 'disputes' | 'activity' | null;
 
   // Overview State
   const [overview, setOverview] = useState<StaffOverviewResponse | null>(null);
@@ -24,7 +29,16 @@ export const StaffPage: React.FC = () => {
   const [overviewError, setOverviewError] = useState<string | null>(null);
 
   // Active Tab
-  const [activeTab, setActiveTab] = useState<'proofs' | 'disputes' | 'activity'>('proofs');
+  const [activeTab, setActiveTab] = useState<'proofs' | 'orders' | 'users' | 'disputes' | 'activity'>(
+    currentTabParam && ['proofs', 'orders', 'users', 'disputes', 'activity'].includes(currentTabParam)
+      ? currentTabParam
+      : 'proofs'
+  );
+
+  const handleTabChange = (newTab: 'proofs' | 'orders' | 'users' | 'disputes' | 'activity') => {
+    setActiveTab(newTab);
+    setSearchParams({ tab: newTab });
+  };
 
   // Proofs State
   const [proofs, setProofs] = useState<PendingProofItem[]>([]);
@@ -266,60 +280,142 @@ export const StaffPage: React.FC = () => {
         style={{
           display: 'flex',
           borderBottom: '1px solid var(--border-subtle)',
-          gap: '1rem',
+          gap: '0.5rem',
+          overflowX: 'auto',
+          paddingBottom: '0.25rem',
         }}
       >
         <button
-          onClick={() => setActiveTab('proofs')}
+          type="button"
+          onClick={() => handleTabChange('proofs')}
           style={{
             background: 'none',
             border: 'none',
             borderBottom: activeTab === 'proofs' ? '2px solid var(--accent-lime)' : '2px solid transparent',
             color: activeTab === 'proofs' ? 'var(--accent-lime)' : 'var(--text-muted)',
             fontWeight: 700,
-            fontSize: '0.95rem',
-            padding: '0.75rem 1.25rem',
+            fontSize: '0.92rem',
+            padding: '0.65rem 1rem',
             cursor: 'pointer',
             transition: 'var(--transition-fast)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            whiteSpace: 'nowrap',
           }}
         >
-          Pending Run Proofs ({overview?.metrics.pendingProofsCount ?? 0})
+          <span>🛡️ Pending Proofs</span>
+          <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>({overview?.metrics.pendingProofsCount ?? 0})</span>
         </button>
 
         <button
-          onClick={() => setActiveTab('disputes')}
+          type="button"
+          onClick={() => handleTabChange('orders')}
+          style={{
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'orders' ? '2px solid var(--accent-lime)' : '2px solid transparent',
+            color: activeTab === 'orders' ? 'var(--accent-lime)' : 'var(--text-muted)',
+            fontWeight: 700,
+            fontSize: '0.92rem',
+            padding: '0.65rem 1rem',
+            cursor: 'pointer',
+            transition: 'var(--transition-fast)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <span>📦 Order Workspace</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleTabChange('users')}
+          style={{
+            background: 'none',
+            border: 'none',
+            borderBottom: activeTab === 'users' ? '2px solid var(--accent-lime)' : '2px solid transparent',
+            color: activeTab === 'users' ? 'var(--accent-lime)' : 'var(--text-muted)',
+            fontWeight: 700,
+            fontSize: '0.92rem',
+            padding: '0.65rem 1rem',
+            cursor: 'pointer',
+            transition: 'var(--transition-fast)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <span>👥 User Directory</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => handleTabChange('disputes')}
           style={{
             background: 'none',
             border: 'none',
             borderBottom: activeTab === 'disputes' ? '2px solid var(--accent-lime)' : '2px solid transparent',
             color: activeTab === 'disputes' ? 'var(--accent-lime)' : 'var(--text-muted)',
             fontWeight: 700,
-            fontSize: '0.95rem',
-            padding: '0.75rem 1.25rem',
+            fontSize: '0.92rem',
+            padding: '0.65rem 1rem',
             cursor: 'pointer',
             transition: 'var(--transition-fast)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            whiteSpace: 'nowrap',
           }}
         >
-          Dispute Queue ({overview?.metrics.activeDisputesCount ?? 0})
+          <span>⚖️ Dispute Queue</span>
+          <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>({overview?.metrics.activeDisputesCount ?? 0})</span>
         </button>
 
         <button
-          onClick={() => setActiveTab('activity')}
+          type="button"
+          onClick={() => handleTabChange('activity')}
           style={{
             background: 'none',
             border: 'none',
             borderBottom: activeTab === 'activity' ? '2px solid var(--accent-lime)' : '2px solid transparent',
             color: activeTab === 'activity' ? 'var(--accent-lime)' : 'var(--text-muted)',
             fontWeight: 700,
-            fontSize: '0.95rem',
-            padding: '0.75rem 1.25rem',
+            fontSize: '0.92rem',
+            padding: '0.65rem 1rem',
             cursor: 'pointer',
             transition: 'var(--transition-fast)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.4rem',
+            whiteSpace: 'nowrap',
           }}
         >
-          My Operational Activity
+          <span>📋 My Operational Activity</span>
         </button>
       </div>
+
+      {/* Tab: Order Workspace (Read-Only) */}
+      {activeTab === 'orders' && (
+        <OrderManagementWorkspace
+          readOnly={true}
+          title="Staff Order Workspace (Read-Only)"
+          subtitle="Inspect permitted orders, assignments, progress, and execution channel references in read-only mode."
+        />
+      )}
+
+      {/* Tab: User Directory (Read-Only) */}
+      {activeTab === 'users' && (
+        <UserManagementWorkspace
+          canBan={false}
+          canManageRoles={false}
+          title="Staff User Directory (Read-Only)"
+          subtitle="Permitted directory of registered community members and verified account status."
+        />
+      )}
 
       {/* Tab 1: Proofs Queue */}
       {activeTab === 'proofs' && (

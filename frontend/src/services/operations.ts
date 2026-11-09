@@ -344,3 +344,13 @@ export async function verifyOrderPayment(orderId: number, receiptRef: string): P
 export async function refreshOrderDiscord(orderId: number): Promise<{ success: boolean; message: string }> {
   return apiRequest(`/api/management/orders/${orderId}/refresh-discord`, { method: 'POST' });
 }
+
+export async function updateOrderOperational(
+  orderId: number,
+  data: { notes?: string; externalOrderId?: string; reason: string }
+): Promise<{ success: boolean; order: any }> {
+  return apiRequest(`/api/management/orders/${orderId}/operational`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+}
