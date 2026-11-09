@@ -59,6 +59,48 @@ function formatRelativeTime(dateStr: string | null | undefined): string {
   return `${days}d ago`;
 }
 
+type FreshnessStatus = 'live' | 'stale' | 'unavailable';
+
+interface CharacterFreshnessInfo {
+  status: FreshnessStatus;
+  label: string;
+  badgeClass: string;
+  details: string;
+}
+
+function getCharacterFreshness(char: WowCharacter): CharacterFreshnessInfo {
+  const hasScores = !!(char.mythicScore && char.mythicScore > 0);
+  const lastSync = char.lastSyncedAt ? new Date(char.lastSyncedAt).getTime() : 0;
+  const isRecent = lastSync > 0 && Date.now() - lastSync <= 24 * 60 * 60 * 1000;
+
+  if (char.syncStatus === 'failed' || (!isRecent && char.lastSyncedAt)) {
+    return {
+      status: 'stale',
+      label: '🟡 Cached / Stale',
+      badgeClass: 'bg-amber-950/40 text-amber-300 border-amber-500/40',
+      details: char.syncError
+        ? `Sync warning: ${char.syncError}. Showing previously cached scores.`
+        : 'Scores cached >24h ago.',
+    };
+  }
+
+  if (!hasScores) {
+    return {
+      status: 'unavailable',
+      label: '⚪ Scores Unavailable',
+      badgeClass: 'bg-gray-800/80 text-gray-400 border-gray-700',
+      details: 'Unranked or season rollover in progress.',
+    };
+  }
+
+  return {
+    status: 'live',
+    label: '🟢 Live Verified',
+    badgeClass: 'bg-emerald-950/40 text-emerald-300 border-emerald-500/40',
+    details: 'Synced and verified via Raider.IO within 24h.',
+  };
+}
+
 export const BoosterSettingsPage: React.FC = () => {
   const { user } = useAuth();
 
@@ -498,25 +540,17 @@ export const BoosterSettingsPage: React.FC = () => {
       )}
 
       {/* ─── Navigation Tabs ─────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 border-b border-gray-800 overflow-x-auto pb-1">
+      <nav className="tabs-nav-bar" aria-label="Booster Hub Tabs">
         <button
           onClick={() => setActiveTab('overview')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'overview'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
+          className={`tab-btn ${activeTab === 'overview' ? 'tab-btn-active active' : ''}`}
         >
           <span>📊</span> Overview
         </button>
 
         <button
           onClick={() => setActiveTab('characters')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'characters'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
+          className={`tab-btn ${activeTab === 'characters' ? 'tab-btn-active active' : ''}`}
         >
           <span>⚔️</span> My Characters
           {activeCharacters.length > 0 && (
@@ -528,11 +562,7 @@ export const BoosterSettingsPage: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('available')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'available'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
+          className={`tab-btn ${activeTab === 'available' ? 'tab-btn-active active' : ''}`}
         >
           <span>📋</span> Available Orders
           {availableQueue.length > 0 && (
@@ -544,11 +574,7 @@ export const BoosterSettingsPage: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('orders')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'orders'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
+          className={`tab-btn ${activeTab === 'orders' ? 'tab-btn-active active' : ''}`}
         >
           <span>🎯</span> My Orders
           {myOrders.length > 0 && (
@@ -560,11 +586,7 @@ export const BoosterSettingsPage: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('proofs')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'proofs'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
+          className={`tab-btn ${activeTab === 'proofs' ? 'tab-btn-active active' : ''}`}
         >
           <span>📸</span> My Runs &amp; Proofs
           {overview?.proofsAwaitingReviewCount ? (
@@ -576,26 +598,18 @@ export const BoosterSettingsPage: React.FC = () => {
 
         <button
           onClick={() => setActiveTab('history')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'history'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
+          className={`tab-btn ${activeTab === 'history' ? 'tab-btn-active active' : ''}`}
         >
           <span>📜</span> Activity History
         </button>
 
         <button
           onClick={() => setActiveTab('settings')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'settings'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
+          className={`tab-btn ${activeTab === 'settings' ? 'tab-btn-active active' : ''}`}
         >
           <span>⚙️</span> Preferences &amp; Specialization
         </button>
-      </div>
+      </nav>
 
       {/* ─── TAB A: Overview ─────────────────────────────────────────────── */}
       {activeTab === 'overview' && (
@@ -679,6 +693,15 @@ export const BoosterSettingsPage: React.FC = () => {
                         ⭐ Main Roster
                       </span>
                     )}
+                    {mainCharacter && (
+                      <span
+                        className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${
+                          getCharacterFreshness(mainCharacter).badgeClass
+                        }`}
+                      >
+                        {getCharacterFreshness(mainCharacter).label}
+                      </span>
+                    )}
                   </div>
                   <p className="text-xs text-gray-400 mt-0.5">
                     {mainCharacter ? (
@@ -740,12 +763,16 @@ export const BoosterSettingsPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="mt-3 pt-2.5 border-t border-gray-800/60 flex items-center justify-between text-[11px] text-gray-500">
-              <span className="flex items-center gap-1.5">
+            <div className="mt-3 pt-2.5 border-t border-gray-800/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-[11px] text-gray-500">
+              <span className="flex items-center gap-1.5 flex-wrap">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                Scores reflect the active season from Raider.IO. Missing scores show as Not available.
+                <span>
+                  {mainCharacter
+                    ? getCharacterFreshness(mainCharacter).details
+                    : 'Scores reflect the active season from Raider.IO. Missing scores show as Not available.'}
+                </span>
               </span>
-              <span className="text-[10px] text-gray-400">
+              <span className="text-[10px] text-gray-400 whitespace-nowrap">
                 Data provided by{' '}
                 <a
                   href="https://raider.io"
@@ -754,7 +781,8 @@ export const BoosterSettingsPage: React.FC = () => {
                   className="text-purple-400 hover:underline"
                 >
                   Raider.IO
-                </a>
+                </a>{' '}
+                (Non-commercial community use)
               </span>
             </div>
           </div>
@@ -1222,20 +1250,34 @@ export const BoosterSettingsPage: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Sync Status Alert */}
-                        {char.syncStatus === 'failed' ? (
-                          <div className="p-2 rounded bg-red-950/30 border border-red-500/30 text-red-300 text-[11px] space-y-0.5">
-                            <div className="font-semibold flex items-center gap-1">
-                              <span>⚠️</span> Sync Failed
+                        {/* Freshness Badge & Sync Status */}
+                        {(() => {
+                          const freshness = getCharacterFreshness(char);
+                          return (
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between text-[11px] gap-2 flex-wrap">
+                                <span
+                                  className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${freshness.badgeClass}`}
+                                >
+                                  {freshness.label}
+                                </span>
+                                <span className="text-[10px] text-gray-500">
+                                  {char.lastSyncedAt ? `Synced ${formatRelativeTime(char.lastSyncedAt)}` : 'Never synced'}
+                                </span>
+                              </div>
+                              {freshness.status === 'stale' && (
+                                <p className="text-[10px] text-amber-400/90 leading-tight">
+                                  {freshness.details}
+                                </p>
+                              )}
+                              {freshness.status === 'unavailable' && (
+                                <p className="text-[10px] text-gray-500 leading-tight">
+                                  {freshness.details}
+                                </p>
+                              )}
                             </div>
-                            <p className="text-[10px] text-red-400">{char.syncError || 'Temporary API error.'}</p>
-                          </div>
-                        ) : (
-                          <div className="text-[10px] text-gray-500 flex items-center justify-between">
-                            <span>Status: Verified</span>
-                            <span>{formatRelativeTime(char.lastSyncedAt)}</span>
-                          </div>
-                        )}
+                          );
+                        })()}
                       </div>
 
                       {/* Bottom Actions */}
@@ -1346,6 +1388,25 @@ export const BoosterSettingsPage: React.FC = () => {
               )}
             </div>
           )}
+
+          {/* Raider.IO Non-Commercial Attribution & Licensing */}
+          <div className="card-surface p-4 rounded-xl border border-[var(--border-subtle)] text-[11px] text-gray-400 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <span>
+              Character scores and profiles are powered by{' '}
+              <a
+                href="https://raider.io"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-purple-400 hover:underline font-semibold"
+              >
+                Raider.IO
+              </a>
+              . G4X Community operates as a non-commercial gaming community platform. All game assets and trademarks are the property of their respective owners.
+            </span>
+            <span className="text-[10px] text-gray-500 whitespace-nowrap">
+              Updated via Raider.IO API
+            </span>
+          </div>
         </div>
       )}
 
