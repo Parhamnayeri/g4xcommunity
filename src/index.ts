@@ -68,6 +68,9 @@ client.on('messageCreate', async (message) => {
       await handleTeamCommand(message, rawArgs);
     } else if (command === 'assign') {
       await handleAssignCommand(message, rawArgs);
+    } else if (command === 'proof') {
+      const { handleDiscordProofMessageUpload } = await import('./services/discordProofSubmissionService');
+      await handleDiscordProofMessageUpload(message, rawArgs);
     }
   } catch (error) {
     console.error(`[Command] Error executing ${command}:`, error);

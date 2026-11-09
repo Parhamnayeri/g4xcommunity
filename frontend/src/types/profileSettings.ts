@@ -144,12 +144,36 @@ export interface BoosterAssignment {
   totalAmountUsdCents: number;
 }
 
+export interface BoosterOverviewData {
+  assignedActiveCount: number;
+  runsInProgressCount: number;
+  proofsAwaitingReviewCount: number;
+  completedOrdersCount: number;
+  recentActivity: Array<{
+    id: string;
+    type: string;
+    title: string;
+    description: string;
+    timestamp: string;
+    status: string;
+  }>;
+}
+
 export interface AvailableQueueOrder {
   id: number;
+  orderRef?: string;
   title: string;
   gameSlug: string;
+  gameName?: string;
+  serviceName?: string;
+  orderMode?: string;
+  modeLabel?: string;
   status: string;
   totalAmountUsdCents: number;
+  boosterPoolUsd?: string;
+  discordChannelId?: string | null;
+  discordMessageId?: string | null;
+  discordLink?: string | null;
   rosterSlotsNeeded: {
     tanks: number;
     healers: number;
@@ -166,8 +190,71 @@ export interface AvailableQueueOrder {
   createdAt: string;
 }
 
+export interface BoosterOrderTeamMember {
+  userId: string;
+  username: string;
+  displayName: string | null;
+  assignedRole: string;
+  status: string;
+}
+
+export interface BoosterOrder {
+  assignmentId: number;
+  orderId: number;
+  orderRef: string;
+  title: string;
+  gameSlug: string;
+  gameName: string;
+  serviceName: string;
+  orderMode: string;
+  modeLabel: string;
+  assignedRole: string;
+  assignmentStatus: string;
+  orderStatus: string;
+  totalAmountUsdCents: number;
+  boosterPoolUsd: string;
+  assignedAt: string;
+  runsCount: number;
+  executionChannelId: string | null;
+  executionChannelUrl: string | null;
+  teamMembers: BoosterOrderTeamMember[];
+}
+
+export interface BoosterRunProof {
+  proofId: number;
+  runId: number;
+  runNumber: number;
+  orderId: number;
+  orderRef: string;
+  gameSlug: string;
+  proofType: string;
+  evidenceUrl: string;
+  description: string | null;
+  status: string;
+  reviewNotes: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  submittedAt: string;
+  executionChannelUrl: string | null;
+}
+
+export interface BoosterActivityItem {
+  id: string;
+  category: string;
+  orderId: number;
+  orderRef: string;
+  title: string;
+  detail: string;
+  status: string;
+  timestamp: string;
+}
+
 export interface BoosterPortalDataResponse {
   success: boolean;
+  overview?: BoosterOverviewData;
+  myOrders?: BoosterOrder[];
+  myRunsAndProofs?: BoosterRunProof[];
+  activityHistory?: BoosterActivityItem[];
   boosterInfo: {
     discordId: string;
     username: string;

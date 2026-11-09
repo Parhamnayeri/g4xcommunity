@@ -20,6 +20,7 @@ import prisma from '../database/db';
 import { requireAuth, requireCsrf, AuthenticatedRequest } from './middleware/auth';
 import { serializeUser } from './serializers';
 import { maskIban, maskCryptoAddress } from '../services/financeV2/iranianIbanValidator';
+import { deriveOrderChannelModeSlug } from '../services/orderExecutionChannelService';
 
 export const profileSettingsRouter = Router();
 
@@ -673,7 +674,7 @@ profileSettingsRouter.put('/api/booster/settings', requireAuth, requireCsrf, han
 // 5. BOOSTER PORTAL DATA & AVAILABLE QUEUE (/api/booster/portal-data)
 // ─────────────────────────────────────────────────────────────────────────────
 
-async function handleGetBoosterPortalData(req: Request, res: Response): Promise<void> {
+export async function handleGetBoosterPortalData(req: Request, res: Response): Promise<void> {
   try {
     const user = (req as AuthenticatedRequest).user;
     const userId = user.discordId;
@@ -723,7 +724,9 @@ async function handleGetBoosterPortalData(req: Request, res: Response): Promise<
       return;
     }
 
-    const [approvals, myAssignments, pilotVerif] = await Promise.all([
+    const guildId = process.env.DISCORD_GUILD_ID || '123456789012345678';
+
+    const [approvals, myAssignments, pilotVerif, myProofs, myDisputes] = await Promise.all([
       prisma.userGameApproval.findMany({
         where: { userId, status: 'approved' },
         include: { game: { select: { slug: true, displayName: true } } },
@@ -734,17 +737,63 @@ async function handleGetBoosterPortalData(req: Request, res: Response): Promise<
           order: {
             include: {
               game: { select: { slug: true, displayName: true } },
-              service: { select: { displayName: true } },
-              runs: true,
+              service: true,
+              runs: {
+                include: { proofs: true },
+                orderBy: { runNumber: 'asc' },
+              },
+              assignments: {
+                include: {
+                  user: { select: { discordId: true, username: true, displayName: true } },
+                },
+              },
+              orderChannels: {
+                where: { channelType: 'execution', status: 'active' },
+              },
             },
           },
         },
         orderBy: { assignedAt: 'desc' },
-        take: 15,
       }),
       prisma.pilotVerification.findFirst({
         where: { userId },
         orderBy: { submittedAt: 'desc' },
+      }),
+      prisma.runProof.findMany({
+        where: { submittedById: userId },
+        include: {
+          run: {
+            include: {
+              order: {
+                select: {
+                  id: true,
+                  orderRef: true,
+                  orderName: true,
+                  gameSlug: true,
+                  status: true,
+                },
+              },
+            },
+          },
+          reviewedBy: {
+            select: { discordId: true, username: true, displayName: true },
+          },
+        },
+        orderBy: { submittedAt: 'desc' },
+        take: 50,
+      }),
+      prisma.orderDispute.findMany({
+        where: {
+          OR: [
+            { openedById: userId },
+            { order: { assignments: { some: { userId } } } },
+          ],
+        },
+        include: {
+          order: { select: { id: true, orderRef: true, gameSlug: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
       }),
     ]);
 
@@ -752,7 +801,7 @@ async function handleGetBoosterPortalData(req: Request, res: Response): Promise<
 
     // Apply game eligibility: regular boosters only see queues for cleared games
     const availableOrdersWhere: any = {
-      status: { in: ['open_presign', 'pending', 'assigned'] },
+      status: { in: ['open_presign', 'pending', 'assigned', 'published'] },
       paymentStatus: { in: ['verified', 'unneeded'] },
     };
 
@@ -768,11 +817,11 @@ async function handleGetBoosterPortalData(req: Request, res: Response): Promise<
       where: availableOrdersWhere,
       include: {
         game: { select: { slug: true, displayName: true } },
-        service: { select: { displayName: true } },
+        service: true,
         assignments: { select: { assignedRole: true, userId: true } },
       },
       orderBy: { createdAt: 'desc' },
-      take: 20,
+      take: 30,
     });
 
     const settings = loadUserSettings(userId);
@@ -799,31 +848,84 @@ async function handleGetBoosterPortalData(req: Request, res: Response): Promise<
       approvedGames: approvals.map((a) => a.gameSlug),
     };
 
-    const assignedOrders = myAssignments.map((a) => ({
-      assignmentId: a.id,
-      orderId: a.orderId,
-      assignedRole: a.assignedRole,
-      assignedAt: a.assignedAt.toISOString(),
-      orderTitle: `${a.order.game.displayName} - ${a.order.service.displayName}`,
-      gameSlug: a.order.game.slug,
-      status: a.order.status,
-      totalAmountUsdCents: a.order.boosterPoolMinor,
-    }));
+    // ─── Section A: Overview Metrics & Activity ────────────────────────────
+    const assignedActiveCount = myAssignments.filter((a) =>
+      ['assigned', 'in_progress', 'open_presign', 'presign_closed'].includes(a.order.status)
+    ).length;
 
-    // Map Mythic+ roster requirements (1 Tank, 1 Healer, 2 DPS, 1 Key Owner)
+    const runsInProgressCount = myAssignments.reduce((acc, a) => {
+      const inProg = a.order.runs.filter((r) => r.status === 'in_progress');
+      return acc + inProg.length;
+    }, 0);
+
+    const proofsAwaitingReviewCount = myProofs.filter((p) => p.status === 'pending').length;
+    const completedOrdersCount = myAssignments.filter((a) => a.order.status === 'completed').length;
+
+    const recentActivity = [
+      ...myAssignments.map((a) => ({
+        id: `assign_${a.id}`,
+        type: 'ASSIGNMENT',
+        title: `Assigned as ${a.assignedRole} on #${a.order.orderRef}`,
+        description: `${a.order.game.displayName} — ${a.order.service.displayName}`,
+        timestamp: a.assignedAt.toISOString(),
+        status: a.status,
+      })),
+      ...myProofs.map((p) => ({
+        id: `proof_${p.id}`,
+        type: 'PROOF_SUBMISSION',
+        title: `Submitted Proof: Run #${p.run.runNumber} (${p.run.order.orderRef})`,
+        description:
+          p.status === 'approved'
+            ? `Approved: ${p.reviewNotes || 'Verified'}`
+            : p.status === 'rejected'
+            ? `Rejected: ${p.reviewNotes || 'Unverified'}`
+            : 'Awaiting Staff Review',
+        timestamp: p.submittedAt.toISOString(),
+        status: p.status,
+      })),
+    ]
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 10);
+
+    const overview = {
+      assignedActiveCount,
+      runsInProgressCount,
+      proofsAwaitingReviewCount,
+      completedOrdersCount,
+      recentActivity,
+    };
+
+    // ─── Section B: Available Orders (Read-Only + Discord Link) ─────────────
     const availableQueue = availableOrdersRaw.map((o) => {
       const assignedRoles = o.assignments.map((a) => a.assignedRole);
-      const tankFilled = assignedRoles.includes('TANK');
-      const healerFilled = assignedRoles.includes('HEALER');
-      const dpsCount = assignedRoles.filter((r) => r === 'DPS').length;
+      const tankFilled = assignedRoles.includes('TANK') || assignedRoles.includes('tank');
+      const healerFilled = assignedRoles.includes('HEALER') || assignedRoles.includes('healer');
+      const dpsCount = assignedRoles.filter((r) => r.toUpperCase() === 'DPS').length;
       const totalFilled = (tankFilled ? 1 : 0) + (healerFilled ? 1 : 0) + dpsCount;
+
+      const modeSlug = deriveOrderChannelModeSlug({ service: o.service, orderMode: o.orderMode });
+      const modeLabel = modeSlug === 'mythicplus' ? 'Mythic+' : modeSlug === 'pilot' ? 'Pilot' : 'Selfplay';
+
+      const discordLink =
+        o.discordChannelId && o.discordMessageId
+          ? `https://discord.com/channels/${guildId}/${o.discordChannelId}/${o.discordMessageId}`
+          : null;
 
       return {
         id: o.id,
+        orderRef: o.orderRef,
         title: `${o.game.displayName} - ${o.service.displayName}`,
         gameSlug: o.game.slug,
+        gameName: o.game.displayName,
+        serviceName: o.service.displayName,
+        orderMode: modeSlug,
+        modeLabel,
         status: o.status,
         totalAmountUsdCents: o.boosterPoolMinor,
+        boosterPoolUsd: (o.boosterPoolMinor / 100).toFixed(2),
+        discordChannelId: o.discordChannelId,
+        discordMessageId: o.discordMessageId,
+        discordLink,
         rosterSlotsNeeded: {
           tanks: 1,
           healers: 1,
@@ -841,11 +943,135 @@ async function handleGetBoosterPortalData(req: Request, res: Response): Promise<
       };
     });
 
+    // ─── Section C: My Orders (Active & Historical) ─────────────────────────
+    const myOrders = myAssignments.map((a) => {
+      const execChan = a.order.orderChannels.find((c) => c.channelType === 'execution' && c.status === 'active');
+      const channelUrl = execChan
+        ? `https://discord.com/channels/${guildId}/${execChan.discordChannelId}`
+        : null;
+
+      const modeSlug = deriveOrderChannelModeSlug({ service: a.order.service, orderMode: a.order.orderMode });
+      const modeLabel = modeSlug === 'mythicplus' ? 'Mythic+' : modeSlug === 'pilot' ? 'Pilot' : 'Selfplay';
+
+      const teamMembers = a.order.assignments.map((teamA) => ({
+        userId: teamA.userId,
+        username: teamA.user?.username || teamA.userId,
+        displayName: teamA.user?.displayName || null,
+        assignedRole: teamA.assignedRole,
+        status: teamA.status,
+      }));
+
+      return {
+        id: a.orderId,
+        assignmentId: a.id,
+        orderId: a.orderId,
+        orderRef: a.order.orderRef,
+        title: `${a.order.game.displayName} - ${a.order.service.displayName}`,
+        gameSlug: a.order.game.slug,
+        gameName: a.order.game.displayName,
+        serviceName: a.order.service.displayName,
+        orderMode: modeSlug,
+        modeLabel,
+        assignedRole: a.assignedRole,
+        assignmentStatus: a.status,
+        orderStatus: a.order.status,
+        totalAmountUsdCents: a.order.boosterPoolMinor,
+        boosterPoolUsd: (a.order.boosterPoolMinor / 100).toFixed(2),
+        assignedAt: a.assignedAt.toISOString(),
+        runsCount: a.order.runs.length,
+        executionChannelId: execChan?.discordChannelId || null,
+        executionChannelUrl: channelUrl,
+        teamMembers,
+      };
+    });
+
+    // ─── Section D: My Runs & Proofs ────────────────────────────────────────
+    const myRunsAndProofs = myProofs.map((p) => {
+      // Find matching execution channel for order if available
+      const matchedAssignment = myAssignments.find((a) => a.orderId === p.run.order.id);
+      const execChan = matchedAssignment?.order.orderChannels.find(
+        (c) => c.channelType === 'execution' && c.status === 'active'
+      );
+      const executionChannelUrl = execChan
+        ? `https://discord.com/channels/${guildId}/${execChan.discordChannelId}`
+        : null;
+
+      return {
+        proofId: p.id,
+        runId: p.runId,
+        runNumber: p.run.runNumber,
+        orderId: p.run.order.id,
+        orderRef: p.run.order.orderRef,
+        gameSlug: p.run.order.gameSlug,
+        proofType: p.proofType,
+        evidenceUrl: p.evidenceUrl,
+        description: p.description,
+        status: p.status,
+        reviewNotes: p.reviewNotes,
+        reviewedBy: p.reviewedBy?.username || null,
+        reviewedAt: p.reviewedAt?.toISOString() || null,
+        submittedAt: p.submittedAt.toISOString(),
+        executionChannelUrl,
+      };
+    });
+
+    // ─── Section E: Activity History ────────────────────────────────────────
+    const activityHistory = [
+      ...myAssignments.map((a) => ({
+        id: `assign_${a.id}`,
+        category: 'ASSIGNMENT',
+        orderId: a.orderId,
+        orderRef: a.order.orderRef,
+        title: `Assigned as ${a.assignedRole} to #${a.order.orderRef}`,
+        detail: `${a.order.game.displayName} - ${a.order.service.displayName} (Status: ${a.status})`,
+        status: a.status,
+        timestamp: a.assignedAt.toISOString(),
+      })),
+      ...myProofs.map((p) => ({
+        id: `proof_${p.id}`,
+        category: 'PROOF',
+        orderId: p.run.order.id,
+        orderRef: p.run.order.orderRef,
+        title: `Proof Submission for Run #${p.run.runNumber}`,
+        detail: p.reviewNotes
+          ? `Review Decision: ${p.status.toUpperCase()} — ${p.reviewNotes}`
+          : p.description || 'Uploaded proof screenshot',
+        status: p.status,
+        timestamp: p.submittedAt.toISOString(),
+      })),
+      ...myDisputes.map((d) => ({
+        id: `dispute_${d.id}`,
+        category: 'DISPUTE',
+        orderId: d.orderId,
+        orderRef: d.order.orderRef,
+        title: `Dispute Case: ${d.disputeType}`,
+        detail: d.description || 'Dispute in progress',
+        status: d.status,
+        timestamp: d.createdAt.toISOString(),
+      })),
+    ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    // Legacy backwards-compatible structures
+    const assignedOrders = myOrders.map((o) => ({
+      assignmentId: o.assignmentId,
+      orderId: o.orderId,
+      assignedRole: o.assignedRole,
+      assignedAt: o.assignedAt,
+      orderTitle: o.title,
+      gameSlug: o.gameSlug,
+      status: o.orderStatus,
+      totalAmountUsdCents: o.totalAmountUsdCents,
+    }));
+
     res.json({
       success: true,
+      overview,
+      availableQueue,
+      myOrders,
+      myRunsAndProofs,
+      activityHistory,
       boosterInfo,
       assignedOrders,
-      availableQueue,
       booster: {
         isBooster,
         qualifications: pilotVerif ? pilotVerif.status : 'STANDARD',
@@ -856,19 +1082,7 @@ async function handleGetBoosterPortalData(req: Request, res: Response): Promise<
           gameName: a.game.displayName,
           approvalType: a.approvalType,
         })),
-        myAssignments: myAssignments.map((a) => ({
-          id: a.id,
-          orderId: a.orderId,
-          orderRef: a.order.orderRef,
-          gameName: a.order.game.displayName,
-          serviceName: a.order.service.displayName,
-          assignedRole: a.assignedRole,
-          status: a.status,
-          orderStatus: a.order.status,
-          boosterPoolUsd: (a.order.boosterPoolMinor / 100).toFixed(2),
-          assignedAt: a.assignedAt,
-          runsCount: a.order.runs.length,
-        })),
+        myAssignments: myOrders,
         availableQueue,
       },
     });
