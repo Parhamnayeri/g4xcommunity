@@ -176,26 +176,161 @@ export async function configureChannelMapping(
 export async function inspectMappingConnectivity(key: string) {
   const mapping = await prisma.discordChannelMapping.findUnique({ where: { channelKey: key } });
   if (!mapping) throw new Error('MAPPING_NOT_FOUND');
+
+  if (mapping.isActive === false) {
+    return { valid: false, status: 'DISABLED', error: 'MAPPING_DISABLED', savedStatus: 'DISABLED' };
+  }
+
   const client = getGlobalDiscordClient();
-  if (!client)
-    return { valid: false, error: 'DISCORD_CLIENT_NOT_INITIALIZED', savedStatus: mapping.syncStatus };
+  if (!client) {
+    return { valid: false, status: 'UNAVAILABLE', error: 'DISCORD_CLIENT_NOT_INITIALIZED', savedStatus: mapping.syncStatus };
+  }
+
   try {
-    const guild = client.guilds?.cache?.get(mapping.guildId) || (await client.guilds?.fetch(mapping.guildId));
-    if (!guild) return { valid: false, error: 'GUILD_INACCESSIBLE' };
+    const guild = client.guilds?.cache?.get(mapping.guildId) || (await client.guilds?.fetch?.(mapping.guildId).catch(() => null));
+    if (!guild) {
+      await prisma.discordChannelMapping.update({
+        where: { channelKey: key },
+        data: {
+          syncStatus: 'UNAVAILABLE',
+          lastSyncResult: 'Guild inaccessible or bot not in guild',
+          lastSyncedAt: new Date(),
+        },
+      }).catch(() => {});
+      return { valid: false, status: 'UNAVAILABLE', error: 'GUILD_INACCESSIBLE', savedStatus: 'UNAVAILABLE' };
+    }
+
     const result = await validateDiscordChannel(
       mapping.discordChannelId || '',
       guild,
       mapping.channelType as 'GUILD_TEXT' | 'GUILD_CATEGORY',
     );
-    if (!result.valid) return result;
+    if (!result.valid) {
+      await prisma.discordChannelMapping.update({
+        where: { channelKey: key },
+        data: {
+          syncStatus: 'UNAVAILABLE',
+          lastSyncResult: `Channel invalid or missing: ${result.error}`,
+          lastSyncedAt: new Date(),
+        },
+      }).catch(() => {});
+      return { ...result, status: 'UNAVAILABLE', savedStatus: 'UNAVAILABLE' };
+    }
+
     const channel =
       guild.channels?.cache?.get(mapping.discordChannelId) ||
-      (await guild.channels.fetch(mapping.discordChannelId));
+      (await guild.channels?.fetch?.(mapping.discordChannelId).catch(() => null));
+
+    if (!channel) {
+      await prisma.discordChannelMapping.update({
+        where: { channelKey: key },
+        data: {
+          syncStatus: 'UNAVAILABLE',
+          lastSyncResult: 'Channel not found in guild',
+          lastSyncedAt: new Date(),
+        },
+      }).catch(() => {});
+      return { valid: false, status: 'UNAVAILABLE', error: 'CHANNEL_NOT_FOUND', savedStatus: 'UNAVAILABLE' };
+    }
+
+    // Check for workflow conflicts
+    const conflict = await prisma.discordChannelMapping.findFirst({
+      where: {
+        guildId: mapping.guildId,
+        discordChannelId: mapping.discordChannelId,
+        channelKey: { not: key },
+        isActive: true,
+      },
+    });
+
+    if (conflict) {
+      await prisma.discordChannelMapping.update({
+        where: { channelKey: key },
+        data: {
+          syncStatus: 'RECONCILIATION_REQUIRED',
+          lastSyncResult: `Workflow conflict with mapping ${conflict.channelKey}`,
+          lastSyncedAt: new Date(),
+        },
+      }).catch(() => {});
+      return { valid: false, status: 'RECONCILIATION_REQUIRED', error: `CONFLICTING_MAPPING_${conflict.channelKey}`, savedStatus: 'RECONCILIATION_REQUIRED' };
+    }
+
     const permissions = validateBotChannelPermissions(channel);
-    if (!permissions.valid)
-      return { valid: false, error: `BOT_PERMISSIONS_MISSING: ${permissions.missing.join(', ')}` };
-    return { ...result, checkedAt: new Date().toISOString(), savedStatus: mapping.syncStatus };
-  } catch {
-    return { valid: false, error: 'DISCORD_API_FAILURE_OR_INACCESSIBLE_GUILD' };
+    if (!permissions.valid) {
+      await prisma.discordChannelMapping.update({
+        where: { channelKey: key },
+        data: {
+          syncStatus: 'DEGRADED',
+          lastSyncResult: `Bot missing required permissions: ${permissions.missing.join(', ')}`,
+          lastSyncedAt: new Date(),
+        },
+      }).catch(() => {});
+      return {
+        valid: false,
+        status: 'DEGRADED',
+        error: `BOT_PERMISSIONS_MISSING: ${permissions.missing.join(', ')}`,
+        missing: permissions.missing,
+        savedStatus: 'DEGRADED',
+      };
+    }
+
+    // Fully verified
+    await prisma.discordChannelMapping.update({
+      where: { channelKey: key },
+      data: {
+        syncStatus: 'VERIFIED',
+        lastSyncResult: 'Live Discord channel verified and operational.',
+        lastSyncedAt: new Date(),
+      },
+    }).catch(() => {});
+
+    return {
+      ...result,
+      valid: true,
+      status: 'VERIFIED',
+      channelName: channel.name,
+      checkedAt: new Date().toISOString(),
+      savedStatus: 'VERIFIED',
+    };
+  } catch (err: any) {
+    return { valid: false, status: 'UNAVAILABLE', error: `DISCORD_API_FAILURE: ${err?.message || err}` };
   }
+}
+
+export async function reconcileChannelMapping(actorId: string, key: string) {
+  if (!(await authorize(actorId, Permission.SERVICE_CONFIG_MANAGE)).allowed) {
+    throw new Error('PERMISSION_DENIED');
+  }
+  const mapping = await prisma.discordChannelMapping.findUnique({ where: { channelKey: key } });
+  if (!mapping) throw new Error('MAPPING_NOT_FOUND');
+
+  const observation = await inspectMappingConnectivity(key);
+
+  if (mapping.gameSlug && mapping.serviceMode) {
+    await prisma.channelRoute.updateMany({
+      where: {
+        discordGuildId: mapping.guildId,
+        gameSlug: mapping.gameSlug,
+        serviceMode: mapping.serviceMode,
+      },
+      data: {
+        discordChannelId: mapping.discordChannelId || '',
+        isActive: mapping.isActive && observation.valid,
+      },
+    });
+  }
+
+  await prisma.auditLog.create({
+    data: {
+      actorId,
+      action: 'DISCORD_MAPPING_RECONCILE',
+      entityType: 'DiscordChannelMapping',
+      entityId: key,
+      previousValues: JSON.stringify({ syncStatus: mapping.syncStatus }),
+      newValues: JSON.stringify({ syncStatus: observation.status || (observation.valid ? 'VERIFIED' : 'UNAVAILABLE') }),
+      reason: 'Live Discord mapping reconciliation executed by operator.',
+    },
+  });
+
+  return { success: true, observation };
 }
