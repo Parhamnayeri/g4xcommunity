@@ -14,7 +14,8 @@ import {
 import { LoadingState } from '../components/ui/LoadingState';
 
 export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
-  const { user } = useAuth();
+  const { user, hasRole } = useAuth();
+  const isAuthorized = hasRole('admin', 'owner');
 
   // Queue State
   const [applications, setApplications] = useState<KycApplicationItem[]>([]);
@@ -41,6 +42,10 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
 
   // Load Queue
   const loadQueue = useCallback(async (page: number = 1) => {
+    if (!isAuthorized) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -57,7 +62,7 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
     } finally {
       setLoading(false);
     }
-  }, [categoryFilter, statusFilter]);
+  }, [categoryFilter, statusFilter, isAuthorized]);
 
   // Load Single Application Detail
   const loadDetail = useCallback(async (id: number) => {
@@ -79,8 +84,12 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
   }, []);
 
   useEffect(() => {
-    loadQueue(1);
-  }, [loadQueue]);
+    if (isAuthorized) {
+      loadQueue(1);
+    } else {
+      setLoading(false);
+    }
+  }, [loadQueue, isAuthorized]);
 
   // Handle Decision Submit
   const handleDecisionSubmit = async (e: React.FormEvent) => {
@@ -111,6 +120,23 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
       setSubmitting(false);
     }
   };
+
+  if (!isAuthorized) {
+    return (
+      <div className="card-surface" style={{ padding: '3rem', textAlign: 'center', maxWidth: '650px', margin: '3rem auto' }}>
+        <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🪪</div>
+        <h2 style={{ fontSize: '1.5rem', color: 'var(--status-danger)', marginBottom: '0.75rem' }}>
+          Access Denied: KYC Reviewer Privilege Required
+        </h2>
+        <p style={{ color: 'var(--text-muted)', lineHeight: '1.6', marginBottom: '2rem' }}>
+          Identity document verification and sensitive KYC applications are strictly restricted to authorized Admin and Owner roles.
+        </p>
+        <Link to="/dashboard" className="btn btn-secondary">
+          Return to Member Dashboard
+        </Link>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>

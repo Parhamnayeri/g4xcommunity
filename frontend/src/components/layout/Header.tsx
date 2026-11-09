@@ -1,16 +1,38 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Logo } from '../brand/Logo';
 import { useAuth } from '../../hooks/useAuth';
 import { Button } from '../ui/Button';
 
 export const Header: React.FC = () => {
-  const { user, status, logout } = useAuth();
+  const { user, status, logout, hasRole } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
 
   const isNavActive = (path: string) => location.pathname === path;
+
+  // Accessible dismiss: Close dropdown when clicking outside or pressing Escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setUserDropdownOpen(false);
+        setMenuOpen(false);
+      }
+    };
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setUserDropdownOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   return (
     <header
@@ -131,7 +153,7 @@ export const Header: React.FC = () => {
               }}
             />
           ) : user ? (
-            <div style={{ position: 'relative' }}>
+            <div style={{ position: 'relative' }} ref={dropdownRef}>
               <button
                 type="button"
                 onClick={() => setUserDropdownOpen(!userDropdownOpen)}
@@ -148,6 +170,8 @@ export const Header: React.FC = () => {
                   transition: 'border-color var(--transition-fast)',
                 }}
                 aria-expanded={userDropdownOpen}
+                aria-haspopup="true"
+                aria-label="User account menu"
               >
                 {/* User Avatar Placeholder or initials */}
                 <div
@@ -209,7 +233,7 @@ export const Header: React.FC = () => {
                     position: 'absolute',
                     top: '110%',
                     right: 0,
-                    width: '230px',
+                    width: '240px',
                     backgroundColor: 'var(--bg-surface)',
                     border: '1px solid var(--border-subtle)',
                     borderRadius: 'var(--radius-md)',
@@ -225,11 +249,177 @@ export const Header: React.FC = () => {
                       marginBottom: '0.35rem',
                     }}
                   >
-                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Signed in as</div>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Signed in as</div>
                     <div style={{ fontSize: '0.9rem', fontWeight: 700, color: '#fff' }}>
-                      {user.username}
+                      {user.displayName || user.username}
                     </div>
                   </div>
+
+                  <Link
+                    to="/dashboard"
+                    onClick={() => setUserDropdownOpen(false)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.55rem 0.75rem',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.85rem',
+                      color: 'var(--text-primary)',
+                      transition: 'background 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                  >
+                    📊 Portal Overview
+                  </Link>
+
+                  <Link
+                    to="/wallet"
+                    onClick={() => setUserDropdownOpen(false)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.55rem 0.75rem',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.85rem',
+                      color: 'var(--text-primary)',
+                      transition: 'background 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                  >
+                    💳 Wallet &amp; Deposits
+                  </Link>
+
+                  <Link
+                    to="/profile"
+                    onClick={() => setUserDropdownOpen(false)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.55rem 0.75rem',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.85rem',
+                      color: 'var(--text-primary)',
+                      transition: 'background 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                  >
+                    👤 Profile &amp; Settings
+                  </Link>
+
+                  {hasRole('booster') && (
+                    <Link
+                      to="/booster/settings"
+                      onClick={() => setUserDropdownOpen(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.55rem 0.75rem',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.85rem',
+                        color: 'var(--accent-lime)',
+                        fontWeight: 600,
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                      ⚔️ Booster Hub
+                    </Link>
+                  )}
+
+                  {hasRole('staff', 'manager', 'admin', 'owner') && (
+                    <Link
+                      to="/staff"
+                      onClick={() => setUserDropdownOpen(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.55rem 0.75rem',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.85rem',
+                        color: 'var(--text-primary)',
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                      🛡️ Staff Operations
+                    </Link>
+                  )}
+
+                  {hasRole('manager', 'admin', 'owner') && (
+                    <Link
+                      to="/management"
+                      onClick={() => setUserDropdownOpen(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.55rem 0.75rem',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.85rem',
+                        color: 'var(--text-primary)',
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                      📋 Management Portal
+                    </Link>
+                  )}
+
+                  {hasRole('admin', 'owner') && (
+                    <Link
+                      to="/admin"
+                      onClick={() => setUserDropdownOpen(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.55rem 0.75rem',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.85rem',
+                        color: 'var(--text-primary)',
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                      ⚙️ Admin Portal
+                    </Link>
+                  )}
+
+                  {hasRole('owner') && (
+                    <Link
+                      to="/owner"
+                      onClick={() => setUserDropdownOpen(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.55rem 0.75rem',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.85rem',
+                        color: 'var(--accent-lime)',
+                        fontWeight: 700,
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(204, 255, 0, 0.08)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                      👑 Owner Portal
+                    </Link>
+                  )}
+
+                  <div style={{ height: '1px', backgroundColor: 'var(--border-subtle)', margin: '0.35rem 0' }} />
 
                   <a
                     href="/legacy"
@@ -237,35 +427,17 @@ export const Header: React.FC = () => {
                       display: 'flex',
                       alignItems: 'center',
                       gap: '0.5rem',
-                      padding: '0.6rem 0.75rem',
+                      padding: '0.55rem 0.75rem',
                       borderRadius: 'var(--radius-sm)',
-                      fontSize: '0.85rem',
-                      color: 'var(--text-primary)',
+                      fontSize: '0.82rem',
+                      color: 'var(--text-muted)',
                       transition: 'background 0.15s ease',
                     }}
                     onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
                     onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                   >
-                    Legacy Dashboard &amp; Admin
+                    Legacy Dashboard &rarr;
                   </a>
-
-                  <Link
-                    to="/dashboard"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                      padding: '0.6rem 0.75rem',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '0.85rem',
-                      color: 'var(--text-primary)',
-                      transition: 'background 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                  >
-                    Portal Overview
-                  </Link>
 
                   <button
                     type="button"
@@ -278,7 +450,7 @@ export const Header: React.FC = () => {
                       alignItems: 'center',
                       gap: '0.5rem',
                       width: '100%',
-                      padding: '0.6rem 0.75rem',
+                      padding: '0.55rem 0.75rem',
                       borderRadius: 'var(--radius-sm)',
                       fontSize: '0.85rem',
                       color: 'var(--status-danger)',
@@ -344,10 +516,12 @@ export const Header: React.FC = () => {
           style={{
             borderTop: '1px solid var(--border-subtle)',
             backgroundColor: 'var(--bg-surface)',
-            padding: '1rem 1.5rem',
+            padding: '1.25rem 1.5rem',
             display: 'flex',
             flexDirection: 'column',
-            gap: '1rem',
+            gap: '0.85rem',
+            maxHeight: 'calc(100vh - 74px)',
+            overflowY: 'auto',
           }}
         >
           <Link
@@ -385,13 +559,99 @@ export const Header: React.FC = () => {
           >
             Privacy Policy
           </Link>
+
+          {user ? (
+            <>
+              <div style={{ height: '1px', backgroundColor: 'var(--border-subtle)', margin: '0.25rem 0' }} />
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 700 }}>
+                My Portals
+              </div>
+              <Link
+                to="/dashboard"
+                onClick={() => setMenuOpen(false)}
+                style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}
+              >
+                📊 Overview &amp; Dashboard
+              </Link>
+              <Link
+                to="/wallet"
+                onClick={() => setMenuOpen(false)}
+                style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}
+              >
+                💳 Wallet &amp; Deposits
+              </Link>
+              <Link
+                to="/profile"
+                onClick={() => setMenuOpen(false)}
+                style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}
+              >
+                👤 Profile &amp; Characters
+              </Link>
+              {hasRole('booster') && (
+                <Link
+                  to="/booster/settings"
+                  onClick={() => setMenuOpen(false)}
+                  style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--accent-lime)' }}
+                >
+                  ⚔️ Booster Hub
+                </Link>
+              )}
+              {hasRole('staff', 'manager', 'admin', 'owner') && (
+                <Link
+                  to="/staff"
+                  onClick={() => setMenuOpen(false)}
+                  style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}
+                >
+                  🛡️ Staff Operations
+                </Link>
+              )}
+              {hasRole('manager', 'admin', 'owner') && (
+                <Link
+                  to="/management"
+                  onClick={() => setMenuOpen(false)}
+                  style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}
+                >
+                  📋 Management Portal
+                </Link>
+              )}
+              {hasRole('admin', 'owner') && (
+                <Link
+                  to="/admin"
+                  onClick={() => setMenuOpen(false)}
+                  style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-primary)' }}
+                >
+                  ⚙️ Admin Portal
+                </Link>
+              )}
+              {hasRole('owner') && (
+                <Link
+                  to="/owner"
+                  onClick={() => setMenuOpen(false)}
+                  style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--accent-lime)' }}
+                >
+                  👑 Owner Portal
+                </Link>
+              )}
+            </>
+          ) : (
+            <div style={{ marginTop: '0.5rem' }}>
+              <a href="/auth/discord" style={{ textDecoration: 'none' }}>
+                <Button variant="purple" size="md" style={{ width: '100%' }}>
+                  Login with Discord
+                </Button>
+              </a>
+            </div>
+          )}
+
+          <div style={{ height: '1px', backgroundColor: 'var(--border-subtle)', margin: '0.25rem 0' }} />
+
           <a
             href="/legacy"
             onClick={() => setMenuOpen(false)}
             style={{
-              fontSize: '1rem',
+              fontSize: '0.9rem',
               fontWeight: 700,
-              color: 'var(--accent-lime)',
+              color: 'var(--text-muted)',
               display: 'flex',
               alignItems: 'center',
               gap: '0.5rem',

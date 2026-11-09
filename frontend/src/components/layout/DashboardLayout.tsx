@@ -58,8 +58,6 @@ export const DashboardLayout: React.FC = () => {
     );
   }
 
-  const isOwnerOrAdmin = hasRole('owner', 'manager', 'admin', 'staff');
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <Header />
@@ -88,153 +86,98 @@ export const DashboardLayout: React.FC = () => {
       {/* Navigation Sub-bar */}
       <div
         style={{
-          backgroundColor: 'rgba(24, 21, 36, 0.5)',
+          backgroundColor: 'rgba(24, 21, 36, 0.65)',
           borderBottom: '1px solid var(--border-subtle)',
-          padding: '0.5rem 0',
+          padding: '0.4rem 0',
+          position: 'sticky',
+          top: '74px',
+          zIndex: 90,
+          backdropFilter: 'blur(8px)',
         }}
       >
-        <div className="container" style={{ display: 'flex', gap: '1rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
-          <Link
-            to="/dashboard"
-            style={{
-              padding: '0.4rem 0.8rem',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              color: location.pathname === '/dashboard' ? 'var(--accent-lime)' : 'var(--text-muted)',
-              borderBottom: location.pathname === '/dashboard' ? '2px solid var(--accent-lime)' : 'none',
-            }}
+        <div className="container">
+          <nav
+            className="tabs-nav-bar"
+            aria-label="Portal Navigation"
+            style={{ marginBottom: 0, borderBottom: 'none', padding: '0.25rem 0' }}
           >
-            Overview
-          </Link>
-          <Link
-            to="/wallet"
-            style={{
-              padding: '0.4rem 0.8rem',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              color: location.pathname === '/wallet' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            }}
-          >
-            Wallet
-          </Link>
-          <Link
-            to="/exchange"
-            style={{
-              padding: '0.4rem 0.8rem',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              color: location.pathname === '/exchange' ? 'var(--accent-lime)' : 'var(--text-muted)',
-              borderBottom: location.pathname === '/exchange' ? '2px solid var(--accent-lime)' : 'none',
-            }}
-          >
-            Exchange
-          </Link>
-          <Link
-            to="/exchanger"
-            style={{
-              padding: '0.4rem 0.8rem',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              color: location.pathname === '/exchanger' ? 'var(--accent-lime)' : 'var(--text-muted)',
-              borderBottom: location.pathname === '/exchanger' ? '2px solid var(--accent-lime)' : 'none',
-            }}
-          >
-            Exchanger Portal
-          </Link>
-          <Link
-            to="/profile"
-            style={{
-              padding: '0.4rem 0.8rem',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              color: location.pathname === '/profile' ? 'var(--accent-lime)' : 'var(--text-muted)',
-              borderBottom: location.pathname === '/profile' ? '2px solid var(--accent-lime)' : 'none',
-            }}
-          >
-            Profile &amp; Characters
-          </Link>
-          <Link
-            to="/booster/settings"
-            style={{
-              padding: '0.4rem 0.8rem',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              color: ['/booster/settings', '/settings'].includes(location.pathname) ? 'var(--accent-lime)' : 'var(--text-muted)',
-              borderBottom: ['/booster/settings', '/settings'].includes(location.pathname) ? '2px solid var(--accent-lime)' : 'none',
-            }}
-          >
-            Booster Hub
-          </Link>
-          {hasRole('staff', 'manager', 'admin', 'owner') && (
             <Link
-              to="/staff"
-              style={{
-                padding: '0.4rem 0.8rem',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                color: location.pathname === '/staff' ? 'var(--accent-lime)' : 'var(--text-muted)',
-                borderBottom: location.pathname === '/staff' ? '2px solid var(--accent-lime)' : 'none',
-              }}
+              to="/dashboard"
+              className={`tab-btn ${location.pathname === '/dashboard' ? 'tab-btn-active' : ''}`}
             >
-              Staff Portal
+              Overview
             </Link>
-          )}
-          {hasRole('manager', 'admin', 'owner') && (
-            <>
+            <Link
+              to="/wallet"
+              className={`tab-btn ${location.pathname === '/wallet' ? 'tab-btn-active' : ''}`}
+            >
+              Wallet
+            </Link>
+            <Link
+              to="/exchange"
+              className={`tab-btn ${location.pathname === '/exchange' ? 'tab-btn-active' : ''}`}
+            >
+              Exchange
+            </Link>
+            <Link
+              to="/exchanger"
+              className={`tab-btn ${location.pathname === '/exchanger' ? 'tab-btn-active' : ''}`}
+            >
+              Exchanger Portal
+            </Link>
+            <Link
+              to="/profile"
+              className={`tab-btn ${location.pathname === '/profile' ? 'tab-btn-active' : ''}`}
+            >
+              Profile &amp; Characters
+            </Link>
+            <Link
+              to="/booster/settings"
+              className={`tab-btn ${['/booster/settings', '/settings'].includes(location.pathname) ? 'tab-btn-active' : ''}`}
+            >
+              Booster Hub
+            </Link>
+            {hasRole('staff', 'manager', 'admin', 'owner') && (
+              <Link
+                to="/staff"
+                className={`tab-btn ${location.pathname === '/staff' ? 'tab-btn-active' : ''}`}
+              >
+                Staff Portal
+              </Link>
+            )}
+            {hasRole('manager', 'admin', 'owner') && (
               <Link
                 to="/management"
-                style={{
-                  padding: '0.4rem 0.8rem',
-                  fontSize: '0.85rem',
-                  fontWeight: 600,
-                  color: location.pathname === '/management' ? 'var(--accent-lime)' : 'var(--text-muted)',
-                  borderBottom: location.pathname === '/management' ? '2px solid var(--accent-lime)' : 'none',
-                }}
+                className={`tab-btn ${location.pathname === '/management' ? 'tab-btn-active' : ''}`}
               >
                 Management
               </Link>
+            )}
+            {hasRole('admin', 'owner') && (
               <Link
                 to="/management/kyc"
-                style={{
-                  padding: '0.4rem 0.8rem',
-                  fontSize: '0.85rem',
-                  fontWeight: 600,
-                  color: location.pathname === '/management/kyc' ? 'var(--accent-lime)' : 'var(--text-muted)',
-                  borderBottom: location.pathname === '/management/kyc' ? '2px solid var(--accent-lime)' : 'none',
-                }}
+                className={`tab-btn ${location.pathname === '/management/kyc' ? 'tab-btn-active' : ''}`}
               >
                 KYC Review
               </Link>
-            </>
-          )}
-          {hasRole('admin', 'manager', 'owner') && (
-            <Link
-              to="/admin"
-              style={{
-                padding: '0.4rem 0.8rem',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                color: location.pathname.startsWith('/admin') ? 'var(--accent-lime)' : 'var(--text-muted)',
-                borderBottom: location.pathname.startsWith('/admin') ? '2px solid var(--accent-lime)' : 'none',
-              }}
-            >
-              Admin Hub
-            </Link>
-          )}
-          {hasRole('owner') && (
-            <Link
-              to="/owner"
-              style={{
-                padding: '0.4rem 0.8rem',
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                color: location.pathname.startsWith('/owner') ? 'var(--accent-lime)' : 'var(--text-muted)',
-                borderBottom: location.pathname.startsWith('/owner') ? '2px solid var(--accent-lime)' : 'none',
-              }}
-            >
-              👑 Owner Portal
-            </Link>
-          )}
+            )}
+            {hasRole('admin', 'owner') && (
+              <Link
+                to="/admin"
+                className={`tab-btn ${location.pathname.startsWith('/admin') ? 'tab-btn-active' : ''}`}
+              >
+                Admin Portal
+              </Link>
+            )}
+            {hasRole('owner') && (
+              <Link
+                to="/owner"
+                className={`tab-btn ${location.pathname.startsWith('/owner') ? 'tab-btn-active' : ''}`}
+              >
+                👑 Owner Portal
+              </Link>
+            )}
+          </nav>
         </div>
       </div>
 

@@ -305,15 +305,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
       </div>
 
       {/* Navigation Sub-Tabs */}
-      <div
-        style={{
-          display: 'flex',
-          gap: '0.5rem',
-          overflowX: 'auto',
-          borderBottom: '1px solid var(--border-subtle)',
-          paddingBottom: '0.5rem',
-        }}
-      >
+      <nav className="tabs-nav-bar" aria-label="Owner Portal Tabs">
         {[
           { key: 'overview', label: 'Executive Overview', icon: '🏛️' },
           { key: 'orders', label: 'Order Workspace', icon: '📦' },
@@ -334,26 +326,13 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
             key={t.key}
             type="button"
             onClick={() => handleTabChange(t.key as OwnerTab)}
-            style={{
-              padding: '0.55rem 1rem',
-              borderRadius: 'var(--radius-sm)',
-              border: 'none',
-              backgroundColor: activeTab === t.key ? 'var(--bg-surface-hover)' : 'transparent',
-              color: activeTab === t.key ? 'var(--accent-lime)' : 'var(--text-muted)',
-              fontWeight: 600,
-              fontSize: '0.85rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.45rem',
-              transition: 'all 0.15s ease',
-            }}
+            className={`tab-btn ${activeTab === t.key ? 'tab-btn-active' : ''}`}
           >
             <span>{t.icon}</span>
             <span>{t.label}</span>
           </button>
         ))}
-      </div>
+      </nav>
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 1: EXECUTIVE OVERVIEW                                                     */}

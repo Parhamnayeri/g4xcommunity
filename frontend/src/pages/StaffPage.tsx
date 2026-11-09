@@ -275,33 +275,11 @@ export const StaffPage: React.FC = () => {
       </div>
 
       {/* Tabs Bar */}
-      <div
-        style={{
-          display: 'flex',
-          borderBottom: '1px solid var(--border-subtle)',
-          gap: '0.5rem',
-          overflowX: 'auto',
-          paddingBottom: '0.25rem',
-        }}
-      >
+      <nav className="tabs-nav-bar" aria-label="Staff Console Tabs">
         <button
           type="button"
           onClick={() => handleTabChange('proofs')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'proofs' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'proofs' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.92rem',
-            padding: '0.65rem 1rem',
-            cursor: 'pointer',
-            transition: 'var(--transition-fast)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            whiteSpace: 'nowrap',
-          }}
+          className={`tab-btn ${activeTab === 'proofs' ? 'tab-btn-active' : ''}`}
         >
           <span>🛡️ Pending Proofs</span>
           <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>({overview?.metrics.pendingProofsCount ?? 0})</span>
@@ -310,21 +288,7 @@ export const StaffPage: React.FC = () => {
         <button
           type="button"
           onClick={() => handleTabChange('orders')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'orders' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'orders' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.92rem',
-            padding: '0.65rem 1rem',
-            cursor: 'pointer',
-            transition: 'var(--transition-fast)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            whiteSpace: 'nowrap',
-          }}
+          className={`tab-btn ${activeTab === 'orders' ? 'tab-btn-active' : ''}`}
         >
           <span>📦 Order Workspace</span>
         </button>
@@ -332,21 +296,7 @@ export const StaffPage: React.FC = () => {
         <button
           type="button"
           onClick={() => handleTabChange('users')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'users' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'users' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.92rem',
-            padding: '0.65rem 1rem',
-            cursor: 'pointer',
-            transition: 'var(--transition-fast)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            whiteSpace: 'nowrap',
-          }}
+          className={`tab-btn ${activeTab === 'users' ? 'tab-btn-active' : ''}`}
         >
           <span>👥 User Directory</span>
         </button>
@@ -354,21 +304,7 @@ export const StaffPage: React.FC = () => {
         <button
           type="button"
           onClick={() => handleTabChange('disputes')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'disputes' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'disputes' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.92rem',
-            padding: '0.65rem 1rem',
-            cursor: 'pointer',
-            transition: 'var(--transition-fast)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            whiteSpace: 'nowrap',
-          }}
+          className={`tab-btn ${activeTab === 'disputes' ? 'tab-btn-active' : ''}`}
         >
           <span>⚖️ Dispute Queue</span>
           <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>({overview?.metrics.activeDisputesCount ?? 0})</span>
@@ -377,25 +313,11 @@ export const StaffPage: React.FC = () => {
         <button
           type="button"
           onClick={() => handleTabChange('activity')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'activity' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'activity' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.92rem',
-            padding: '0.65rem 1rem',
-            cursor: 'pointer',
-            transition: 'var(--transition-fast)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            whiteSpace: 'nowrap',
-          }}
+          className={`tab-btn ${activeTab === 'activity' ? 'tab-btn-active' : ''}`}
         >
           <span>📋 My Operational Activity</span>
         </button>
-      </div>
+      </nav>
 
       {/* Tab: Order Workspace (Read-Only) */}
       {activeTab === 'orders' && (

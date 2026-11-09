@@ -43,7 +43,7 @@ interface ManagementPageProps {
 }
 
 export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'overview' }) => {
-  const { user } = useAuth();
+  const { user, hasRole } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab') as ManagementTab | null;
 
@@ -198,43 +198,37 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'ov
           </p>
         </div>
 
-        {/* KYC Portal Navigation Link */}
-        <Link
-          to="/management/kyc"
-          className="btn btn-cta btn-sm"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '0.5rem',
-            padding: '0.6rem 1.25rem',
-          }}
-        >
-          <span>🛡️ Open KYC Review Portal</span>
-          <span
+        {/* KYC Portal Navigation Link: Strictly restricted to Admin and Owner */}
+        {hasRole('admin', 'owner') && (
+          <Link
+            to="/management/kyc"
+            className="btn btn-cta btn-sm"
             style={{
-              backgroundColor: 'var(--text-inverse)',
-              color: 'var(--accent-lime)',
-              borderRadius: '999px',
-              padding: '0.1rem 0.5rem',
-              fontSize: '0.75rem',
-              fontWeight: 800,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              padding: '0.6rem 1.25rem',
             }}
           >
-            {overview?.kpis.pendingKycVerificationsCount ?? 0}
-          </span>
-        </Link>
+            <span>🛡️ Open KYC Review Portal</span>
+            <span
+              style={{
+                backgroundColor: 'var(--text-inverse)',
+                color: 'var(--accent-lime)',
+                borderRadius: '999px',
+                padding: '0.1rem 0.5rem',
+                fontSize: '0.75rem',
+                fontWeight: 800,
+              }}
+            >
+              {overview?.kpis.pendingKycVerificationsCount ?? 0}
+            </span>
+          </Link>
+        )}
       </div>
 
       {/* Tabs */}
-      <div
-        style={{
-          display: 'flex',
-          borderBottom: '1px solid var(--border-subtle)',
-          gap: '0.5rem',
-          overflowX: 'auto',
-          paddingBottom: '0.25rem',
-        }}
-      >
+      <nav className="tabs-nav-bar" aria-label="Management Console Tabs">
         {[
           { key: 'overview', label: 'Overview & KPIs', icon: '📊' },
           { key: 'orders', label: `Order Pipeline (${overview?.kpis.activeOrdersCount ?? 0})`, icon: '📦' },
@@ -249,27 +243,13 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'ov
             key={t.key}
             type="button"
             onClick={() => handleTabChange(t.key as ManagementTab)}
-            style={{
-              background: 'none',
-              border: 'none',
-              borderBottom: activeTab === t.key ? '2px solid var(--accent-lime)' : '2px solid transparent',
-              color: activeTab === t.key ? 'var(--accent-lime)' : 'var(--text-muted)',
-              fontWeight: 700,
-              fontSize: '0.9rem',
-              padding: '0.65rem 0.95rem',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.4rem',
-              transition: 'var(--transition-fast)',
-            }}
+            className={`tab-btn ${activeTab === t.key ? 'tab-btn-active' : ''}`}
           >
             <span>{t.icon}</span>
             <span>{t.label}</span>
           </button>
         ))}
-      </div>
+      </nav>
 
       {/* Tab: Overview & KPIs */}
       {activeTab === 'overview' && (
