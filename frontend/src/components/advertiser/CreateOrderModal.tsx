@@ -335,7 +335,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                       fontSize: '0.85rem',
                     }}
                   >
-                    Non-Pilot (Self-Play)
+                    Selfpay (Self-Play)
                   </button>
                   <button
                     type="button"

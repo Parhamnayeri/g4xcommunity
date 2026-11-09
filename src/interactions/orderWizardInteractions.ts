@@ -356,7 +356,7 @@ export function buildModeSelectRow(
     .setPlaceholder('Select Service Execution Mode...')
     .addOptions(
       new StringSelectMenuOptionBuilder()
-        .setLabel('🛡️ Non-Pilot (Self-Play)')
+        .setLabel('🛡️ Selfpay (Self-Play)')
         .setValue('non_pilot')
         .setDescription('Customer plays their own character alongside the boosters.')
         .setEmoji('🛡️'),
@@ -697,7 +697,7 @@ export async function handleOrderWizardSelectMenu(
           .setDescription(
             `• **Service:** **${service.displayName}**\n\n` +
             'This service supports both execution modes. Please select:\n' +
-            '• **Non-Pilot (Self-Play):** Customer plays on their own account.\n' +
+            '• **Selfpay (Self-Play):** Customer plays on their own account.\n' +
             '• **Pilot (Account-Play):** Verified booster logs into the customer account via VPN.'
           )
           .setColor(0x9b59b6)
@@ -1173,7 +1173,7 @@ export async function handleOrderWizardModalSubmit(
           `• **Site Order ID:** \`${siteOrderId || 'N/A'}\`\n` +
           `• **Game:** **${game.displayName}**\n` +
           `• **Service:** **${service.displayName}**\n` +
-          `• **Mode:** \`${createdOrder.orderMode === 'pilot' ? '✈️ Pilot' : '🛡️ Non-Pilot'}\`\n` +
+          `• **Mode:** \`${createdOrder.orderMode === 'pilot' ? '✈️ Pilot' : '🛡️ Selfpay'}\`\n` +
           `• **Site Gross Amount:** **$${(createdOrder.grossAmountMinor / 100).toFixed(2)} USD**\n` +
           (expectedPlatformNetMinor > 0 ? `• **Expected Platform Net:** **$${(expectedPlatformNetMinor / 100).toFixed(2)} USD** *(after ${(session.platform || '').toUpperCase()} seller fees)*\n` : '') +
           `• **Total Booster Pool:** **$${(createdOrder.boosterPoolMinor / 100).toFixed(2)} USD**\n` +
@@ -1195,7 +1195,7 @@ export async function handleOrderWizardModalSubmit(
           `• **Order Reference:** \`#${createdOrder.orderRef}\`\n` +
           `• **Game:** **${game.displayName}**\n` +
           `• **Service:** **${service.displayName}**\n` +
-          `• **Mode:** \`${createdOrder.orderMode === 'pilot' ? '✈️ Pilot' : '🛡️ Non-Pilot'}\`\n` +
+          `• **Mode:** \`${createdOrder.orderMode === 'pilot' ? '✈️ Pilot' : '🛡️ Selfpay'}\`\n` +
           (advRank ? `• **Advertiser Rank:** \`${advRank}\`\n` : '') +
           `• **Total Amount:** **$${(createdOrder.grossAmountMinor / 100).toFixed(2)} USD**\n` +
           `• **Total Booster Pool:** **$${(createdOrder.boosterPoolMinor / 100).toFixed(2)} USD**\n` +

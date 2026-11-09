@@ -50,6 +50,60 @@ export interface ArchiveResult {
 }
 
 /**
+ * Derives the short mode slug for Discord order execution channel naming.
+ * Rules:
+ *  1. Service is Mythic+ (e.g. mythic_plus, mythicplus) -> mythicplus
+ *  2. Order mode is Pilot -> pilot
+ *  3. Otherwise -> selfplay
+ */
+export function deriveOrderChannelModeSlug(order: {
+  service?: { serviceKey?: string; displayName?: string } | null;
+  serviceKey?: string;
+  orderMode?: string;
+}): string {
+  const serviceKey = (order.service?.serviceKey || order.serviceKey || '').toLowerCase();
+  const serviceName = (order.service?.displayName || '').toLowerCase();
+
+  if (
+    serviceKey.includes('mythic_plus') ||
+    serviceKey.includes('mythicplus') ||
+    serviceKey.includes('mythic+') ||
+    serviceName.includes('mythic+') ||
+    serviceName.includes('mythic plus')
+  ) {
+    return 'mythicplus';
+  }
+
+  const mode = (order.orderMode || '').toLowerCase();
+  if (mode === 'pilot') {
+    return 'pilot';
+  }
+
+  return 'selfplay';
+}
+
+/**
+ * Builds the canonical Discord execution channel name.
+ * Format: order-${order.id}-${modeSlug}
+ * Truncates safely if exceeds 100 characters while keeping prefix and slug.
+ */
+export function buildOrderExecutionChannelName(order: {
+  id: number;
+  service?: { serviceKey?: string; displayName?: string } | null;
+  serviceKey?: string;
+  orderMode?: string;
+}): string {
+  const modeSlug = deriveOrderChannelModeSlug(order);
+  const rawName = `order-${order.id}-${modeSlug}`.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  if (rawName.length <= 100) {
+    return rawName;
+  }
+  const prefix = `order-${order.id}-`;
+  const maxSlugLen = 100 - prefix.length;
+  return `${prefix}${modeSlug.slice(0, Math.max(0, maxSlugLen))}`.slice(0, 100);
+}
+
+/**
  * Resolves the Discord guild to use for order channels.
  */
 export function resolveExecutionGuild(client: any, guildId?: string): any {
@@ -484,16 +538,19 @@ export async function getOrCreateOrderExecutionChannel(
   }
 
   // 5b. Guard against duplicate Discord channels if creation previously succeeded in Discord but DB write failed
-  const channelName = `order-${order.id}`;
+  const channelName = buildOrderExecutionChannelName(order);
+  const legacyChannelName = `order-${order.id}`;
   let orphanChannel: any = null;
   if (guild.channels?.cache) {
+    const isMatching = (c: any) =>
+      (c.name === channelName || c.name === legacyChannelName) &&
+      (c.type === ChannelType.GuildText || c.isTextBased?.());
+
     if (typeof guild.channels.cache.find === 'function') {
-      orphanChannel = guild.channels.cache.find(
-        (c: any) => c.name === channelName && (c.type === ChannelType.GuildText || c.isTextBased?.())
-      );
+      orphanChannel = guild.channels.cache.find(isMatching);
     } else if (typeof guild.channels.cache.values === 'function') {
       for (const c of guild.channels.cache.values()) {
-        if (c.name === channelName && (c.type === ChannelType.GuildText || c.isTextBased?.())) {
+        if (isMatching(c)) {
           orphanChannel = c;
           break;
         }
@@ -919,6 +976,7 @@ export async function getAuthorizedChannelAccess(
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
+      service: true,
       assignments: true,
       orderChannels: {
         where: { channelType: 'execution', status: 'active' },
@@ -963,7 +1021,7 @@ export async function getAuthorizedChannelAccess(
         hasChannel: true,
         channelId: fallbackChannelId,
         channelUrl: `https://discord.com/channels/${guildId}/${fallbackChannelId}`,
-        channelName: `order-${order.id}`,
+        channelName: buildOrderExecutionChannelName(order),
       };
     }
     return {
@@ -979,6 +1037,6 @@ export async function getAuthorizedChannelAccess(
     hasChannel: true,
     channelId: activeChannel.discordChannelId,
     channelUrl,
-    channelName: `order-${order.id}`,
+    channelName: buildOrderExecutionChannelName(order),
   };
 }

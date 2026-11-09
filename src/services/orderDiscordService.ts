@@ -136,7 +136,7 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
   const modeText =
     order.orderMode === 'pilot'
       ? 'Pilot (Account Play)'
-      : `Non-Pilot / Self-Play (${order.orderType?.toUpperCase() || 'GROUP'})`;
+      : `Selfpay / Self-Play (${order.orderType?.toUpperCase() || 'GROUP'})`;
 
   embed.setDescription(
     `**Game:** ${gameTitle}\n` +

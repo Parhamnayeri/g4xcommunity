@@ -1175,13 +1175,13 @@ export async function updateOrderOperationalFields(params: {
   });
 
   if (!order) {
-    throw new DomainError(DomainErrorCode.NOT_FOUND, `ORDER_NOT_FOUND: Order #${orderId} was not found in the database`);
+    throw new DomainError(DomainErrorCode.ORDER_NOT_FOUND, `ORDER_NOT_FOUND: Order #${orderId} was not found in the database`);
   }
 
   // اعتبارسنجی چرخه حیات: امکان ویرایش سفارشات خاتمه یافته یا لغو شده وجود ندارد
   if (['completed', 'cancelled'].includes(order.status)) {
     throw new DomainError(
-      DomainErrorCode.INVALID_STATE_TRANSITION,
+      DomainErrorCode.INVALID_ORDER_TRANSITION,
       `LIFECYCLE_RESTRICTION: Order #${orderId} is in terminal status '${order.status}' and cannot have operational fields modified`
     );
   }

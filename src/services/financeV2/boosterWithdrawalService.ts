@@ -1188,23 +1188,41 @@ export async function updateWithdrawalMetadata(params: {
     throw new Error(`WITHDRAWAL_NOT_FOUND: Withdrawal request #${requestId} not found`);
   }
 
+  const previousAudit = await prisma.auditLog.findFirst({
+    where: {
+      entityType: 'BoosterWithdrawalRequest',
+      entityId: String(requestId),
+      action: 'WITHDRAWAL_METADATA_EDITED',
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  let prevNotes: string | undefined = undefined;
+  let prevAdminNotes: string | undefined = undefined;
+
+  if (previousAudit?.newValues) {
+    try {
+      const parsed = JSON.parse(previousAudit.newValues);
+      prevNotes = parsed.notes;
+      prevAdminNotes = parsed.adminNotes;
+    } catch {}
+  }
+
   const previousValues: Record<string, any> = {};
   const newValues: Record<string, any> = {};
-  const dataToUpdate: Record<string, any> = {};
 
-  if (notes !== undefined && notes !== request.notes) {
-    previousValues.notes = request.notes;
+  if (notes !== undefined && notes !== prevNotes) {
+    previousValues.notes = prevNotes || null;
     newValues.notes = notes;
-    dataToUpdate.notes = notes;
   }
 
-  if (adminNotes !== undefined && adminNotes !== request.adminNotes) {
-    previousValues.adminNotes = request.adminNotes;
+  if (adminNotes !== undefined && adminNotes !== prevAdminNotes) {
+    previousValues.adminNotes = prevAdminNotes || null;
     newValues.adminNotes = adminNotes;
-    dataToUpdate.adminNotes = adminNotes;
   }
 
-  if (Object.keys(dataToUpdate).length === 0) {
+  const changedFields = Object.keys(newValues);
+  if (changedFields.length === 0) {
     return {
       success: true,
       request,
@@ -1213,12 +1231,12 @@ export async function updateWithdrawalMetadata(params: {
     };
   }
 
-  const changedFields = Object.keys(dataToUpdate);
-
   const updatedRequest = await prisma.$transaction(async (tx) => {
     const updated = await tx.boosterWithdrawalRequest.update({
       where: { id: requestId },
-      data: dataToUpdate,
+      data: {
+        updatedAt: new Date(),
+      },
     });
 
     await tx.auditLog.create({

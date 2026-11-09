@@ -618,7 +618,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                       {details.gameName} · {details.serviceName}
                     </strong>
                     <p>
-                      {details.orderMode} · {details.status}
+                      {details.orderMode === 'non_pilot' ? 'selfpay' : details.orderMode} · {details.status}
                     </p>
                     <p>Customer: {details.customerId || '—'}</p>
                     <p>Creator: {details.creatorId || '—'}</p>
