@@ -85,6 +85,9 @@ export interface SerializedWowCharacter {
   region: string;
   characterClass: string | null;
   activeSpec: string | null;
+  activeRole?: string | null;
+  faction?: string | null;
+  thumbnailUrl?: string | null;
   itemLevel: number | null;
   mythicScore: number | null;
   tankScore: number | null;
@@ -95,10 +98,19 @@ export interface SerializedWowCharacter {
   isMain: boolean;
   isActive: boolean;
   syncStatus: string;
+  syncError?: string | null;
+  recentRuns?: any[];
   lastSyncedAt: Date | null;
 }
 
 export function serializeCharacter(character: WowCharacter): SerializedWowCharacter {
+  let recentRuns: any[] = [];
+  try {
+    if ((character as any).recentRunsJson) {
+      recentRuns = JSON.parse((character as any).recentRunsJson);
+    }
+  } catch {}
+
   return {
     id: character.id,
     characterName: character.characterName,
@@ -106,6 +118,9 @@ export function serializeCharacter(character: WowCharacter): SerializedWowCharac
     region: character.region,
     characterClass: character.characterClass,
     activeSpec: character.activeSpec,
+    activeRole: (character as any).activeRole ?? null,
+    faction: (character as any).faction ?? null,
+    thumbnailUrl: (character as any).thumbnailUrl ?? null,
     itemLevel: character.itemLevel,
     mythicScore: character.mythicScore,
     tankScore: character.tankScore,
@@ -116,6 +131,8 @@ export function serializeCharacter(character: WowCharacter): SerializedWowCharac
     isMain: character.isMain,
     isActive: character.isActive,
     syncStatus: character.syncStatus,
+    syncError: (character as any).syncError ?? null,
+    recentRuns,
     lastSyncedAt: character.lastSyncedAt,
   };
 }

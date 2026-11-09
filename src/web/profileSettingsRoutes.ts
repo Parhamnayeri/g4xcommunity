@@ -18,7 +18,7 @@ import fs from 'fs';
 import path from 'path';
 import prisma from '../database/db';
 import { requireAuth, requireCsrf, AuthenticatedRequest } from './middleware/auth';
-import { serializeUser } from './serializers';
+import { serializeUser, serializeCharacter } from './serializers';
 import { maskIban, maskCryptoAddress } from '../services/financeV2/iranianIbanValidator';
 import { deriveOrderChannelModeSlug } from '../services/orderExecutionChannelService';
 
@@ -726,7 +726,7 @@ export async function handleGetBoosterPortalData(req: Request, res: Response): P
 
     const guildId = process.env.DISCORD_GUILD_ID || '123456789012345678';
 
-    const [approvals, myAssignments, pilotVerif, myProofs, myDisputes] = await Promise.all([
+    const [approvals, myAssignments, pilotVerif, myProofs, myDisputes, boosterCharacters] = await Promise.all([
       prisma.userGameApproval.findMany({
         where: { userId, status: 'approved' },
         include: { game: { select: { slug: true, displayName: true } } },
@@ -794,6 +794,10 @@ export async function handleGetBoosterPortalData(req: Request, res: Response): P
         },
         orderBy: { createdAt: 'desc' },
         take: 20,
+      }),
+      prisma.wowCharacter.findMany({
+        where: { userId, isActive: true },
+        orderBy: [{ isMain: 'desc' }, { mythicScore: 'desc' }],
       }),
     ]);
 
@@ -887,11 +891,18 @@ export async function handleGetBoosterPortalData(req: Request, res: Response): P
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       .slice(0, 10);
 
+    const mainCharacter = boosterCharacters.find((c) => c.isMain) || boosterCharacters[0] || null;
+    const highestMythicScore = boosterCharacters.reduce((max, c) => Math.max(max, c.mythicScore || 0), 0);
+    const totalCharactersCount = boosterCharacters.length;
+
     const overview = {
       assignedActiveCount,
       runsInProgressCount,
       proofsAwaitingReviewCount,
       completedOrdersCount,
+      highestMythicScore,
+      totalCharactersCount,
+      mainCharacter: mainCharacter ? serializeCharacter(mainCharacter) : null,
       recentActivity,
     };
 
@@ -1066,6 +1077,8 @@ export async function handleGetBoosterPortalData(req: Request, res: Response): P
     res.json({
       success: true,
       overview,
+      characters: boosterCharacters.map(serializeCharacter),
+      mainCharacter: mainCharacter ? serializeCharacter(mainCharacter) : null,
       availableQueue,
       myOrders,
       myRunsAndProofs,
