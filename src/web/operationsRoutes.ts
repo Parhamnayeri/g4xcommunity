@@ -18,7 +18,7 @@ import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 import { reviewRunProof, resolveOrderDispute, getDisputesForUser } from '../services/orderDisputeService';
 import { recordStaffReview, recordAdminFinalApproval } from '../services/financeV2/g4xBoostReleaseService';
-import { getSeparatedOrdersList, getCategorizedOrders, publishOrder, getOrderDiagnostics, getOrderAuditHistory } from '../services/orderLifecycleService';
+import { getSeparatedOrdersList, getCategorizedOrders, publishOrder, getOrderDiagnostics, getOrderAuditHistory, updateOrderOperationalFields } from '../services/orderLifecycleService';
 import { assignOrderBoosters } from '../services/assignmentService';
 import { parsePresignRoles } from '../services/presignReviewService';
 import { orderWorkspaceActions } from '../services/orderWorkspacePolicy';
@@ -492,7 +492,7 @@ operationsRouter.get('/management/overview', requireAuth, requireManagementAcces
 /**
  * GET /management/orders — Separated order pipeline (G4X vs Advertiser) with pagination & filters
  */
-operationsRouter.get('/management/orders', requireAuth, requireLivePermission(Permission.ORDER_VIEW_PRIVATE), async (req: Request, res: Response): Promise<void> => {
+operationsRouter.get('/management/orders', requireAuth, requireLiveManagementAccess, async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
     const tab = req.query.tab === 'advertiser' ? 'advertiser' : 'g4x';
@@ -523,7 +523,7 @@ operationsRouter.get('/management/orders', requireAuth, requireLivePermission(Pe
 });
 
 /** A single authorized details contract shared by Management, Admin and Owner. */
-operationsRouter.get('/management/orders/:id', requireAuth, requireLivePermission(Permission.ORDER_VIEW_PRIVATE), async (req: Request, res: Response): Promise<void> => {
+operationsRouter.get('/management/orders/:id', requireAuth, requireLiveManagementAccess, async (req: Request, res: Response): Promise<void> => {
   const orderId = Number(req.params.id);
   if (!Number.isSafeInteger(orderId) || orderId <= 0) {
     res.status(400).json({ error: 'INVALID_ORDER_ID' }); return;
@@ -567,6 +567,112 @@ operationsRouter.get('/management/orders/:id', requireAuth, requireLivePermissio
     res.status(500).json({ error: 'ORDER_DETAILS_FAILED', message: err.message });
   }
 });
+
+/**
+ * GET /staff/orders — Read-only permitted order workspace list for staff
+ */
+operationsRouter.get('/staff/orders', requireAuth, requireLivePermission(Permission.ORDER_VIEW_PERMITTED), async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const tab = req.query.tab === 'advertiser' ? 'advertiser' : 'g4x';
+
+    const result = await getSeparatedOrdersList({
+      tab,
+      origin: tab as any,
+      page: req.query.page ? Number(req.query.page) : 1,
+      limit: req.query.limit ? Number(req.query.limit) : 15,
+      search: req.query.search ? String(req.query.search) : undefined,
+      status: req.query.status ? String(req.query.status) : undefined,
+      paymentStatus: req.query.paymentStatus ? String(req.query.paymentStatus) : undefined,
+      gameSlug: req.query.gameSlug ? String(req.query.gameSlug) : undefined,
+      source: req.query.source ? String(req.query.source) : undefined,
+      startDate: req.query.startDate ? String(req.query.startDate) : undefined,
+      endDate: req.query.endDate ? String(req.query.endDate) : undefined,
+      user: {
+        discordId: user.discordId,
+        userRoles: user.userRoles || [],
+      },
+    });
+
+    res.json(result);
+  } catch (err: any) {
+    console.error('[Operations] Staff orders error:', err);
+    res.status(500).json({ error: err.message || 'Failed to fetch staff orders' });
+  }
+});
+
+/**
+ * GET /staff/orders/:id — Read-only permitted order details for staff
+ */
+operationsRouter.get('/staff/orders/:id', requireAuth, requireLivePermission(Permission.ORDER_VIEW_PERMITTED), async (req: Request, res: Response): Promise<void> => {
+  const orderId = Number(req.params.id);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+    res.status(400).json({ error: 'INVALID_ORDER_ID' }); return;
+  }
+  try {
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        requiredRoles: true,
+        assignments: { include: { user: { select: { username: true, displayName: true } } }, orderBy: { assignedAt: 'desc' } },
+        presigns: { where: { status: 'registered' }, include: { user: { select: { username: true, displayName: true } } } },
+        runs: { include: { proofs: { include: {
+          submittedBy: { select: { username: true } }, reviewedBy: { select: { username: true } },
+        } } }, orderBy: { runNumber: 'asc' } },
+        disputes: { orderBy: { createdAt: 'desc' } }, escrowHolds: true, boostReleaseTracker: true,
+      },
+    });
+    if (!order) { res.status(404).json({ error: 'ORDER_NOT_FOUND' }); return; }
+    const actorId = (req as AuthenticatedRequest).user.discordId;
+    const permissions = new Set<Permission>();
+    for (const permission of [Permission.PROOF_REVIEW, Permission.DISPUTE_REVIEW]) {
+      if ((await authorize(actorId, permission)).allowed) permissions.add(permission);
+    }
+    const diagnostics = await getOrderDiagnostics(orderId);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, order: {
+      ...diagnostics,
+      orderMode: order.orderMode,
+      platformFeeUsd: (order.platformFeeMinor / 100).toFixed(2),
+      advertiserFeeUsd: (order.advertiserFeeMinor / 100).toFixed(2),
+      customerId: order.customerId, advertiserId: order.advertiserId,
+      notes: order.notes, externalOrderId: order.externalOrderId,
+      discordChannelId: order.discordChannelId, executionChannelId: order.executionChannelId, reviewChannelId: order.reviewChannelId,
+      requiredRoles: order.requiredRoles, assignments: order.assignments, presigns: order.presigns,
+      runs: order.runs, disputes: order.disputes, escrowHolds: order.escrowHolds,
+      boostReleaseTracker: order.boostReleaseTracker,
+      authorizedActions: orderWorkspaceActions(order, permissions, false),
+      auditAvailable: false, auditLogs: [],
+    } });
+  } catch (err: any) {
+    res.status(500).json({ error: 'ORDER_DETAILS_FAILED', message: err.message });
+  }
+});
+
+/**
+ * PATCH & POST /management/orders/:id/operational — Edit permitted operational order fields with immutable audit history
+ */
+const handleOperationalOrderEdit = async (req: Request, res: Response): Promise<void> => {
+  const orderId = Number(req.params.id);
+  const { notes, externalOrderId, reason } = req.body;
+  const actorId = (req as AuthenticatedRequest).user.discordId;
+
+  try {
+    const result = await updateOrderOperationalFields({
+      orderId,
+      actorId,
+      fields: { notes, externalOrderId },
+      reason,
+    });
+    res.json(result);
+  } catch (err: any) {
+    const status = err.code === 'NOT_FOUND' ? 404 : 400;
+    res.status(status).json({ error: err.message || 'Failed to update order operational fields' });
+  }
+};
+
+operationsRouter.patch('/management/orders/:id/operational', requireAuth, requireLivePermission(Permission.ORDER_EDIT_OPERATIONAL), requireCsrf, handleOperationalOrderEdit);
+operationsRouter.post('/management/orders/:id/operational', requireAuth, requireLivePermission(Permission.ORDER_EDIT_OPERATIONAL), requireCsrf, handleOperationalOrderEdit);
 
 /** Select registered applicants; existing assignment engine owns approvals, reservations and Discord updates. */
 operationsRouter.post('/management/orders/:id/assign', requireAuth, requireLivePermission(Permission.ORDER_ASSIGN), requireCsrf, async (req: Request, res: Response): Promise<void> => {

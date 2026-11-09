@@ -258,9 +258,13 @@ async function runPermissionTests() {
     const res18 = await authorize(uExchangerA, Permission.ORDER_VIEW_PRIVATE, { orderId: orderAdvA.id });
     assert(!res18.allowed && res18.reason?.includes('EXCHANGER_CONFIDENTIAL_DENIED'), '18. Exchanger denied confidential boost order source information');
 
-    // ─── تست ۱۹: سلب دسترسی ادمین به بررسی مدارک هویتی حساس ───────────────
-    const res19 = await authorize(uAdmin, Permission.SENSITIVE_IDENTITY_REVIEW);
-    assert(!res19.allowed && res19.reason?.includes('SENSITIVE_IDENTITY_ACCESS_DENIED'), '19. Unauthorized identity document access denied (Admin denied, Manager/Owner only)');
+    // ─── تست ۱۹: دسترسی ادمین و مالک به بررسی مدارک هویتی حساس و سلب دسترسی منیجر و استاف ───────────────
+    const res19Admin = await authorize(uAdmin, Permission.SENSITIVE_IDENTITY_REVIEW);
+    const res19Manager = await authorize(uManager, Permission.SENSITIVE_IDENTITY_REVIEW);
+    const res19Staff = await authorize(uStaff, Permission.SENSITIVE_IDENTITY_REVIEW);
+    assert(res19Admin.allowed, '19a. Admin permitted for sensitive identity review');
+    assert(!res19Manager.allowed && res19Manager.reason?.includes('SENSITIVE_IDENTITY_ACCESS_DENIED'), '19b. Manager denied sensitive identity review');
+    assert(!res19Staff.allowed, '19c. Staff denied sensitive identity review');
 
     // ─── تست ۲۰: رد درخواست با تاییدیه صلاحیت معلق یا نامعتبر ─────────────
     await prisma.userGameApproval.upsert({

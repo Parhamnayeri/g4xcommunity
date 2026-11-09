@@ -1,8 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { AdminModuleNavigation } from '../components/admin/NativeAdminModules';
 import { LoadingState } from '../components/ui/LoadingState';
 import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
+import { UserManagementWorkspace } from '../components/admin/UserManagementWorkspace';
+import { WithdrawalQueueWorkspace } from '../components/admin/WithdrawalQueueWorkspace';
+import {
+  ApplicationsWorkspace,
+  GamesWorkspace,
+  ChannelsWorkspace,
+} from '../components/admin/NativeAdminModules';
+import { KycManagementPage } from './KycManagementPage';
 import {
   AdminOverviewResponse,
   AdminDepositItem,
@@ -19,43 +27,63 @@ import {
   fetchAdminOffers,
   fetchAdminAuditLogs,
   fetchRolesMatrix,
-  fetchAdminUsers,
-  updateAdminUserStatus,
-  updateAdminUserRole,
-  fetchAdminWithdrawals,
-  reviewAdminWithdrawal,
 } from '../services/adminPortal';
 
-export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ defaultTab = 'overview' }) => {
+export type AdminTab =
+  | 'overview'
+  | 'orders'
+  | 'users'
+  | 'deposits'
+  | 'withdrawals'
+  | 'applications'
+  | 'kyc'
+  | 'exchange'
+  | 'games'
+  | 'discord'
+  | 'audit'
+  | 'roles';
+
+const VALID_ADMIN_TABS: AdminTab[] = [
+  'overview',
+  'orders',
+  'users',
+  'deposits',
+  'withdrawals',
+  'applications',
+  'kyc',
+  'exchange',
+  'games',
+  'discord',
+  'audit',
+  'roles',
+];
+
+export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'overview' }) => {
   const { user, hasRole } = useAuth();
   const isAdminOrOwner = hasRole('owner', 'manager', 'admin');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab') as AdminTab | null;
 
   // Navigation tab
-  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'users' | 'deposits' | 'withdrawals' | 'exchange' | 'audit' | 'roles'>(defaultTab);
+  const [activeTab, setActiveTab] = useState<AdminTab>(
+    tabParam && VALID_ADMIN_TABS.includes(tabParam) ? tabParam : defaultTab
+  );
 
-  useEffect(() => { setActiveTab(defaultTab); }, [defaultTab]);
+  useEffect(() => {
+    if (tabParam && VALID_ADMIN_TABS.includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+  }, [tabParam]);
+
+  const handleTabChange = (newTab: AdminTab) => {
+    setActiveTab(newTab);
+    setSearchParams({ tab: newTab });
+  };
 
   // Overview state
   const [overview, setOverview] = useState<AdminOverviewResponse | null>(null);
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [overviewError, setOverviewError] = useState<string | null>(null);
-
-  // Users state
-  const [users, setUsers] = useState<any[]>([]);
-  const [usersPagination, setUsersPagination] = useState({ page: 1, limit: 15, total: 0, totalPages: 0 });
-  const [usersLoading, setUsersLoading] = useState(false);
-  const [userSearch, setUserSearch] = useState('');
-  const [userRoleFilter, setUserRoleFilter] = useState('');
-  const [userStatusFilter, setUserStatusFilter] = useState('all');
-
-  // User moderation modal
-  const [selectedUser, setSelectedUser] = useState<any | null>(null);
-  const [modModalType, setModModalType] = useState<'status' | 'role' | null>(null);
-  const [modReason, setModReason] = useState('');
-  const [roleToModify, setRoleToModify] = useState('booster');
-  const [roleAction, setRoleAction] = useState<'grant' | 'revoke'>('grant');
-  const [submittingUserMod, setSubmittingUserMod] = useState(false);
-  const [userModMsg, setUserModMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Deposits state
   const [deposits, setDeposits] = useState<AdminDepositItem[]>([]);
@@ -67,16 +95,6 @@ export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
   const [depositNotes, setDepositNotes] = useState('');
   const [submittingDeposit, setSubmittingDeposit] = useState(false);
   const [depositReviewMsg, setDepositReviewMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
-
-  // Withdrawals state
-  const [withdrawals, setWithdrawals] = useState<any[]>([]);
-  const [withdrawalsLoading, setWithdrawalsLoading] = useState(false);
-  const [selectedWithdrawal, setSelectedWithdrawal] = useState<any | null>(null);
-  const [withdrawalDecision, setWithdrawalDecision] = useState<'approve_paid' | 'reject'>('approve_paid');
-  const [withdrawalTxHash, setWithdrawalTxHash] = useState('');
-  const [withdrawalNotes, setWithdrawalNotes] = useState('');
-  const [submittingWithdrawal, setSubmittingWithdrawal] = useState(false);
-  const [withdrawalReviewMsg, setWithdrawalReviewMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Exchange state
   const [trades, setTrades] = useState<AdminTradeItem[]>([]);
@@ -108,26 +126,6 @@ export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
     }
   }, []);
 
-  // Load Users Data
-  const loadUsers = useCallback(async (page = 1) => {
-    setUsersLoading(true);
-    try {
-      const data = await fetchAdminUsers({
-        page,
-        limit: usersPagination.limit,
-        search: userSearch || undefined,
-        role: userRoleFilter || undefined,
-        accountStatus: userStatusFilter !== 'all' ? userStatusFilter : undefined,
-      });
-      setUsers(data?.users || []);
-      setUsersPagination(data?.pagination || { page: 1, limit: 15, total: 0, totalPages: 1 });
-    } catch (err) {
-      console.error('Failed to load users:', err);
-    } finally {
-      setUsersLoading(false);
-    }
-  }, [usersPagination.limit, userSearch, userRoleFilter, userStatusFilter]);
-
   // Load Deposits
   const loadDeposits = useCallback(async (page = 1) => {
     setDepositsLoading(true);
@@ -145,19 +143,6 @@ export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
       setDepositsLoading(false);
     }
   }, [depositsPagination.limit, depositStatusFilter]);
-
-  // Load Withdrawals
-  const loadWithdrawals = useCallback(async () => {
-    setWithdrawalsLoading(true);
-    try {
-      const data = await fetchAdminWithdrawals();
-      setWithdrawals(data?.withdrawals || []);
-    } catch (err) {
-      console.error('Failed to load withdrawals:', err);
-    } finally {
-      setWithdrawalsLoading(false);
-    }
-  }, []);
 
   // Load Exchange Oversight
   const loadExchange = useCallback(async (page = 1) => {
@@ -216,13 +201,11 @@ export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
 
   useEffect(() => {
     if (!isAdminOrOwner) return;
-    if (activeTab === 'users') loadUsers(1);
     if (activeTab === 'deposits') loadDeposits(1);
-    if (activeTab === 'withdrawals') loadWithdrawals();
     if (activeTab === 'exchange') loadExchange(1);
     if (activeTab === 'audit') loadAuditLogs(1);
     if (activeTab === 'roles') loadMatrix();
-  }, [activeTab, isAdminOrOwner, loadUsers, loadDeposits, loadWithdrawals, loadExchange, loadAuditLogs, loadMatrix]);
+  }, [activeTab, isAdminOrOwner, loadDeposits, loadExchange, loadAuditLogs, loadMatrix]);
 
   if (!isAdminOrOwner) {
     return (
@@ -244,7 +227,6 @@ export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-      <AdminModuleNavigation />
       {/* Portal Header */}
       <div
         className="card-surface"
@@ -276,9 +258,7 @@ export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
             className="btn btn-secondary btn-sm"
             onClick={() => {
               if (activeTab === 'overview') loadOverview();
-              if (activeTab === 'users') loadUsers(usersPagination.page);
               if (activeTab === 'deposits') loadDeposits(depositsPagination.page);
-              if (activeTab === 'withdrawals') loadWithdrawals();
               if (activeTab === 'exchange') loadExchange(tradesPagination.page);
               if (activeTab === 'audit') loadAuditLogs(auditPagination.page);
               if (activeTab === 'roles') loadMatrix();
@@ -310,14 +290,18 @@ export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
           { key: 'users', label: 'User Management', icon: '👥' },
           { key: 'deposits', label: 'Manual IRT Deposits', icon: '💳' },
           { key: 'withdrawals', label: 'Withdrawal Queue', icon: '💸' },
+          { key: 'applications', label: 'Member Applications', icon: '📋' },
+          { key: 'kyc', label: 'KYC Management', icon: '🪪' },
           { key: 'exchange', label: 'Marketplace Oversight', icon: '🪙' },
+          { key: 'games', label: 'Games & Services', icon: '🎮' },
+          { key: 'discord', label: 'Discord Channels', icon: '💬' },
           { key: 'audit', label: 'Audit Trail', icon: '📜' },
           { key: 'roles', label: 'Role & Permissions', icon: '🛡️' },
         ].map((t) => (
           <button
             key={t.key}
             type="button"
-            onClick={() => setActiveTab(t.key as any)}
+            onClick={() => handleTabChange(t.key as AdminTab)}
             style={{
               padding: '0.55rem 1rem',
               borderRadius: 'var(--radius-sm)',
@@ -505,333 +489,13 @@ export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
       {/* TAB 2: USER MANAGEMENT & ACCOUNT STATUS                                       */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'users' && (
-        <div className="card-surface" style={{ padding: '1.75rem' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-            <h2 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>Community User Registry &amp; RBAC</h2>
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-              <input
-                type="text"
-                placeholder="Search username, ID..."
-                value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
-                style={{
-                  padding: '0.45rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--bg-main)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem',
-                }}
-              />
-              <select
-                value={userRoleFilter}
-                onChange={(e) => setUserRoleFilter(e.target.value)}
-                style={{
-                  padding: '0.45rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--bg-main)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem',
-                }}
-              >
-                <option value="">All Roles</option>
-                <option value="admin">Admin</option>
-                <option value="manager">Manager</option>
-                <option value="staff">Staff</option>
-                <option value="booster">Booster</option>
-                <option value="pilot">Pilot</option>
-                <option value="advertiser">Advertiser</option>
-                <option value="exchanger">Exchanger</option>
-              </select>
-              <select
-                value={userStatusFilter}
-                onChange={(e) => setUserStatusFilter(e.target.value)}
-                style={{
-                  padding: '0.45rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--bg-main)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem',
-                }}
-              >
-                <option value="all">All Status</option>
-                <option value="active">Active Only</option>
-                <option value="suspended">Suspended Only</option>
-              </select>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => loadUsers(1)}
-              >
-                Filter
-              </button>
-            </div>
-          </div>
-
-          {usersLoading ? (
-            <LoadingState message="Loading users..." />
-          ) : users.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-              No users matching search filters.
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>User</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Discord Snowflake</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Roles</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Adv. Rank</th>
-                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((u) => (
-                    <tr key={u.discordId} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div style={{ fontWeight: 600 }}>{u.displayName || u.username}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>@{u.username}</div>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                        {u.discordId}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <span className={`badge ${u.isActive ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.75rem' }}>
-                          {u.isActive ? 'Active' : 'Suspended'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                          {u.roles && u.roles.length > 0 ? (
-                            u.roles.map((r: any) => (
-                              <span key={r.roleKey} className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
-                                {r.roleKey}
-                              </span>
-                            ))
-                          ) : (
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>None</span>
-                          )}
-                        </div>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', color: 'var(--accent-lime)' }}>
-                        {u.advertiserRank || '—'}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
-                        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            style={{ fontSize: '0.75rem', padding: '0.25rem 0.6rem' }}
-                            onClick={() => {
-                              setSelectedUser(u);
-                              setModModalType('role');
-                              setUserModMsg(null);
-                            }}
-                          >
-                            Roles
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-sm"
-                            style={{
-                              fontSize: '0.75rem',
-                              padding: '0.25rem 0.6rem',
-                              backgroundColor: u.isActive ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
-                              color: u.isActive ? 'var(--status-danger)' : 'var(--status-success)',
-                            }}
-                            onClick={() => {
-                              setSelectedUser(u);
-                              setModModalType('status');
-                              setUserModMsg(null);
-                            }}
-                          >
-                            {u.isActive ? 'Suspend' : 'Activate'}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              {/* Pagination */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  Page {usersPagination.page} of {usersPagination.totalPages || 1} ({usersPagination.total} total)
-                </span>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    type="button"
-                    disabled={usersPagination.page <= 1}
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => loadUsers(usersPagination.page - 1)}
-                  >
-                    &larr; Prev
-                  </button>
-                  <button
-                    type="button"
-                    disabled={usersPagination.page >= usersPagination.totalPages}
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => loadUsers(usersPagination.page + 1)}
-                  >
-                    Next &rarr;
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* User Moderation Modal */}
-          {selectedUser && modModalType && (
-            <div
-              style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 1000,
-                padding: '1rem',
-              }}
-            >
-              <div className="card-surface" style={{ maxWidth: '480px', width: '100%', padding: '1.75rem' }}>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-                  {modModalType === 'status'
-                    ? `${selectedUser.isActive ? 'Suspend' : 'Activate'} Account`
-                    : `Manage Roles: ${selectedUser.username}`}
-                </h3>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
-                  Target: {selectedUser.displayName || selectedUser.username} ({selectedUser.discordId})
-                </p>
-
-                {modModalType === 'role' && (
-                  <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                        Action
-                      </label>
-                      <select
-                        value={roleAction}
-                        onChange={(e) => setRoleAction(e.target.value as any)}
-                        style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-main)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)' }}
-                      >
-                        <option value="grant">Grant Role</option>
-                        <option value="revoke">Revoke Role</option>
-                      </select>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                        Role Key
-                      </label>
-                      <select
-                        value={roleToModify}
-                        onChange={(e) => setRoleToModify(e.target.value)}
-                        style={{ width: '100%', padding: '0.5rem', backgroundColor: 'var(--bg-main)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)' }}
-                      >
-                        <option value="booster">booster</option>
-                        <option value="pilot">pilot</option>
-                        <option value="advertiser">advertiser</option>
-                        <option value="exchanger">exchanger</option>
-                        <option value="staff">staff</option>
-                        <option value="admin">admin</option>
-                        <option value="manager">manager</option>
-                      </select>
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ marginBottom: '1.25rem' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                    Mandatory Audit Reason (min 5 characters)
-                  </label>
-                  <textarea
-                    rows={3}
-                    placeholder="Explain the administrative justification for this change..."
-                    value={modReason}
-                    onChange={(e) => setModReason(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-main)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)',
-                      fontSize: '0.85rem',
-                      resize: 'vertical',
-                    }}
-                  />
-                </div>
-
-                {userModMsg && (
-                  <div
-                    style={{
-                      padding: '0.65rem 0.85rem',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '0.82rem',
-                      marginBottom: '1rem',
-                      backgroundColor: userModMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                      color: userModMsg.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
-                    }}
-                  >
-                    {userModMsg.text}
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => {
-                      setSelectedUser(null);
-                      setModModalType(null);
-                      setModReason('');
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={submittingUserMod || modReason.trim().length < 5}
-                    className="btn btn-cta btn-sm"
-                    onClick={async () => {
-                      setSubmittingUserMod(true);
-                      setUserModMsg(null);
-                      try {
-                        if (modModalType === 'status') {
-                          await updateAdminUserStatus(selectedUser.discordId, !selectedUser.isActive, modReason);
-                          setUserModMsg({ text: 'Account status successfully updated.', type: 'success' });
-                        } else {
-                          await updateAdminUserRole(selectedUser.discordId, roleToModify, roleAction, modReason);
-                          setUserModMsg({ text: `Role ${roleAction}ed successfully.`, type: 'success' });
-                        }
-                        setTimeout(() => {
-                          setSelectedUser(null);
-                          setModModalType(null);
-                          setModReason('');
-                          loadUsers(usersPagination.page);
-                        }, 800);
-                      } catch (err: any) {
-                        setUserModMsg({ text: err.message || 'Operation failed', type: 'error' });
-                      } finally {
-                        setSubmittingUserMod(false);
-                      }
-                    }}
-                  >
-                    {submittingUserMod ? 'Saving...' : 'Confirm Mutation'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+        <UserManagementWorkspace
+          canBan={true}
+          canManageRoles={true}
+          allowPrivilegedRoles={false}
+          title="Community User Registry & RBAC"
+          subtitle="Search users, review verification status, apply ban/unban moderation with mandatory reasons, and assign non-privileged operational roles."
+        />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
@@ -1233,213 +897,40 @@ export const AdminPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
       {/* TAB 4: WITHDRAWAL QUEUE                                                       */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'withdrawals' && (
-        <div className="card-surface" style={{ padding: '1.75rem' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-            <div>
-              <h2 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>Booster Withdrawal Queue</h2>
-              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0.25rem 0 0' }}>
-                Review reserved booster payout requests and verify external disbursement proofs.
-              </p>
-            </div>
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={loadWithdrawals}
-            >
-              Refresh Queue
-            </button>
-          </div>
+        <WithdrawalQueueWorkspace
+          canReview={true}
+          canEditMetadata={true}
+          title="Booster Withdrawal Queue"
+          subtitle="Review reserved booster payout requests, verify disbursements, and edit administrative review metadata with full audit history."
+        />
+      )}
 
-          {withdrawalsLoading ? (
-            <LoadingState message="Loading withdrawal requests..." />
-          ) : withdrawals.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-              No booster withdrawal requests currently in queue.
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Ref / Date</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Booster</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Method</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Requested / Net</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Destination</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
-                    <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {withdrawals.map((w) => (
-                    <tr key={w.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>{w.withdrawalRef}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                          {new Date(w.createdAt).toLocaleDateString()}
-                        </div>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div>{w.boosterName}</div>
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{w.boosterId}</div>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
-                          {w.payoutMethod}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div style={{ fontWeight: 700, color: 'var(--accent-lime)' }}>
-                          ${(w.requestedUsdCents ? w.requestedUsdCents / 100 : w.requestedUsd || 0).toFixed(2)}
-                        </div>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace', fontSize: '0.78rem' }}>
-                        {w.destinationAddress ? `${w.destinationAddress.slice(0, 10)}...${w.destinationAddress.slice(-6)}` : '—'}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <span className="badge badge-warning" style={{ fontSize: '0.75rem' }}>
-                          {w.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          style={{ fontSize: '0.78rem', padding: '0.3rem 0.65rem' }}
-                          onClick={() => {
-                            setSelectedWithdrawal(w);
-                            setWithdrawalDecision('approve_paid');
-                            setWithdrawalTxHash('');
-                            setWithdrawalNotes('');
-                            setWithdrawalReviewMsg(null);
-                          }}
-                        >
-                          Review &amp; Payout
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: MEMBER APPLICATIONS                                                      */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'applications' && (
+        <ApplicationsWorkspace embedded={true} />
+      )}
 
-          {/* Withdrawal Review Modal */}
-          {selectedWithdrawal && (
-            <div
-              style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 1000,
-                padding: '1rem',
-              }}
-            >
-              <div className="card-surface" style={{ maxWidth: '520px', width: '100%', padding: '2rem' }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-                  Execute Payout Decision #{selectedWithdrawal.id}
-                </h3>
-                <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
-                  <div>Booster: <strong>{selectedWithdrawal.boosterName}</strong></div>
-                  <div>Method: <strong>{selectedWithdrawal.payoutMethod}</strong></div>
-                  <div>Destination: <strong style={{ wordBreak: 'break-all' }}>{selectedWithdrawal.destinationAddress}</strong></div>
-                </div>
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: KYC MANAGEMENT                                                           */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'kyc' && (
+        <KycManagementPage embedded={true} />
+      )}
 
-                <div
-                  style={{
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-                    border: '1px solid rgba(239, 68, 68, 0.25)',
-                    padding: '0.75rem 1rem',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '0.8rem',
-                    color: '#fca5a5',
-                    marginBottom: '1rem',
-                  }}
-                >
-                  ⚠️ <strong>Live Payouts Feature Gate Notice:</strong> Live disbursements are disabled (FINANCE_V2_LIVE_PAYOUTS_ENABLED=false). Review mutations are recorded safely without executing automated blockchain or Iranian bank transfers.
-                </div>
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: GAMES & SERVICES                                                         */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'games' && (
+        <GamesWorkspace embedded={true} />
+      )}
 
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                    Blockchain TxHash or Bank Receipt Reference
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Enter external settlement reference or hash..."
-                    value={withdrawalTxHash}
-                    onChange={(e) => setWithdrawalTxHash(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.55rem',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-main)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)',
-                      fontSize: '0.85rem',
-                    }}
-                  />
-                </div>
-
-                {withdrawalReviewMsg && (
-                  <div
-                    style={{
-                      padding: '0.65rem 0.85rem',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '0.82rem',
-                      marginBottom: '1rem',
-                      backgroundColor: withdrawalReviewMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                      color: withdrawalReviewMsg.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
-                    }}
-                  >
-                    {withdrawalReviewMsg.text}
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => setSelectedWithdrawal(null)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={submittingWithdrawal}
-                    className="btn btn-cta btn-sm"
-                    onClick={async () => {
-                      setSubmittingWithdrawal(true);
-                      setWithdrawalReviewMsg(null);
-                      try {
-                        await reviewAdminWithdrawal(selectedWithdrawal.id, withdrawalDecision, {
-                          txHash: withdrawalTxHash.trim() || undefined,
-                          notes: withdrawalNotes.trim() || undefined,
-                        });
-                        setWithdrawalReviewMsg({ text: 'Withdrawal review recorded.', type: 'success' });
-                        setTimeout(() => {
-                          setSelectedWithdrawal(null);
-                          loadWithdrawals();
-                        }, 800);
-                      } catch (err: any) {
-                        setWithdrawalReviewMsg({ text: err.message || 'Review failed', type: 'error' });
-                      } finally {
-                        setSubmittingWithdrawal(false);
-                      }
-                    }}
-                  >
-                    {submittingWithdrawal ? 'Saving...' : 'Confirm'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: DISCORD CHANNELS                                                         */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'discord' && (
+        <ChannelsWorkspace embedded={true} />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}

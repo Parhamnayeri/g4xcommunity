@@ -7,7 +7,9 @@ import { OrderItem, OrderDiagnosticsData, PaginationMeta } from '../../types/ope
 import { apiRequest } from '../../services/api';
 import {
   fetchManagementOrders,
+  fetchStaffOrders,
   fetchOrderDiagnostics,
+  fetchStaffOrderDetails,
   publishOrderCard,
   reviewOrderStaff,
   approveOrderAdmin,
@@ -16,12 +18,14 @@ import {
   verifyOrderPayment,
   assignOrderRoster,
   refreshOrderDiscord,
+  updateOrderOperational,
 } from '../../services/operations';
 
 interface Props {
   initialTab?: 'g4x' | 'advertiser';
   title?: string;
   subtitle?: string;
+  readOnly?: boolean;
 }
 const initialFilters = {
   search: '',
@@ -76,9 +80,13 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   initialTab = 'g4x',
   title = 'Order Management',
   subtitle = 'Orders, funding, roster, proof and Discord status in one workspace.',
+  readOnly = false,
 }) => {
   const { hasRole } = useAuth();
-  const allowed = hasRole('manager', 'admin', 'owner');
+  const allowed = readOnly
+    ? hasRole('staff', 'manager', 'admin', 'owner')
+    : hasRole('manager', 'admin', 'owner');
+  const isReadOnly = Boolean(readOnly || !hasRole('manager', 'admin', 'owner'));
   const [tab, setTab] = useState(initialTab);
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
@@ -107,6 +115,11 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   const [receipt, setReceipt] = useState('');
   const [selectedClaims, setSelectedClaims] = useState<Record<number, string>>({});
   const [busy, setBusy] = useState(false);
+  const [opNotes, setOpNotes] = useState('');
+  const [opExternalId, setOpExternalId] = useState('');
+  const [opReason, setOpReason] = useState('');
+  const [opFeedback, setOpFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [savingOp, setSavingOp] = useState(false);
   const mutationLock = useRef(false);
   const closeButton = useRef<HTMLButtonElement>(null);
   const detailsDialog = useRef<HTMLDivElement>(null);
@@ -130,7 +143,8 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
     let current = true;
     setLoading(true);
     setError('');
-    fetchManagementOrders({
+    const fetchOrdersMethod = isReadOnly ? fetchStaffOrders : fetchManagementOrders;
+    fetchOrdersMethod({
       ...appliedFilters,
       tab,
       sourceWebsite: tab === 'g4x' ? appliedFilters.sourceWebsite : undefined,
@@ -167,9 +181,14 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
     setDetailsLoading(true);
     setDetailsError('');
     setDetails(null);
-    fetchOrderDiagnostics(selectedId)
+    const fetchDetailsMethod = isReadOnly ? fetchStaffOrderDetails : fetchOrderDiagnostics;
+    fetchDetailsMethod(selectedId)
       .then((res) => {
-        if (current) setDetails(res.order);
+        if (current) {
+          setDetails(res.order);
+          setOpNotes(res.order.notes || '');
+          setOpExternalId(res.order.externalOrderId || '');
+        }
       })
       .catch((err) => {
         if (current) setDetailsError(err.message);
@@ -223,6 +242,8 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
     setReason('');
     setReceipt('');
     setSelectedClaims({});
+    setOpReason('');
+    setOpFeedback(null);
   };
   const mutate = async (operation: () => Promise<unknown>, message: string) => {
     if (mutationLock.current) return;
@@ -268,7 +289,11 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   if (!allowed)
     return (
       <Card>
-        <p role="alert">Manager, Admin or Owner access is required.</p>
+        <p role="alert">
+          {readOnly
+            ? 'Staff, Manager, Admin or Owner access is required.'
+            : 'Manager, Admin or Owner access is required.'}
+        </p>
       </Card>
     );
   return (
@@ -597,7 +622,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                       {details.gameName} · {details.serviceName}
                     </strong>
                     <p>
-                      {details.orderMode} · {details.status}
+                      {details.orderMode === 'non_pilot' ? 'selfplay' : details.orderMode} · {details.status}
                     </p>
                     <p>Customer: {details.customerId || '—'}</p>
                     <p>Creator: {details.creatorId || '—'}</p>
@@ -637,83 +662,167 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                   <p>Review channel: {details.reviewChannelId || 'Not provisioned'}</p>
                   <p>Stored channel/message references do not confirm live Discord connectivity.</p>
                 </section>
-                <section>
-                  <h3>Authorized actions</h3>
-                  <p>Operational approval does not release funds or enable real-money payouts.</p>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.5rem' }}>
-                    {(Object.keys(actionLabels) as Action[])
-                      .filter((a) => details.authorizedActions.includes(a))
-                      .map((a) => (
-                        <button
-                          key={a}
-                          className="btn btn-secondary"
-                          disabled={busy}
-                          onClick={() => {
-                            setAction(a);
-                            setReason('');
-                            setReceipt(details.activeReceiptRef || '');
-                          }}
-                        >
-                          {actionLabels[a]}
-                        </button>
-                      ))}
-                  </div>
-                  {action && details.authorizedActions.includes(action) && (
+                {!isReadOnly && !['completed', 'cancelled'].includes(details.status) && (
+                  <section style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-subtle)' }}>
+                    <h3 style={{ margin: '0 0 0.35rem' }}>Operational Fields</h3>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0 0 0.75rem' }}>
+                      Update operational notes or external reference. Historical payments and assignments remain unchanged.
+                    </p>
                     <form
-                      onSubmit={submitAction}
-                      style={{ display: 'grid', gap: '.5rem', marginTop: '1rem' }}
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        if (opReason.trim().length < 5) return;
+                        setSavingOp(true);
+                        setOpFeedback(null);
+                        try {
+                          await updateOrderOperational(details.orderId, {
+                            notes: opNotes.trim() || undefined,
+                            externalOrderId: opExternalId.trim() || undefined,
+                            reason: opReason.trim(),
+                          });
+                          setOpFeedback({ text: 'Operational fields saved successfully.', type: 'success' });
+                          setRevision((n) => n + 1);
+                        } catch (err: any) {
+                          setOpFeedback({ text: err.message || 'Operational update failed', type: 'error' });
+                        } finally {
+                          setSavingOp(false);
+                        }
+                      }}
+                      style={{ display: 'grid', gap: '0.65rem' }}
                     >
-                      <h4>{actionLabels[action]}</h4>
-                      {action === 'pay_wallet' && (
-                        <p>
-                          Reserve {details.grossAmountUsd} from the order creator's backed wallet, not the
-                          reviewing operator's wallet. Available:{' '}
-                          {(details.creatorWalletAvailableCents / 100).toFixed(2)} USD. No payout is
-                          performed.
+                      <label style={{ fontSize: '0.85rem' }}>
+                        Operational Notes
+                        <textarea
+                          className="input"
+                          rows={2}
+                          value={opNotes}
+                          onChange={(e) => setOpNotes(e.target.value)}
+                          style={{ width: '100%', marginTop: '0.25rem' }}
+                        />
+                      </label>
+                      <label style={{ fontSize: '0.85rem' }}>
+                        External Order ID
+                        <input
+                          className="input"
+                          value={opExternalId}
+                          onChange={(e) => setOpExternalId(e.target.value)}
+                          style={{ width: '100%', marginTop: '0.25rem' }}
+                        />
+                      </label>
+                      <label style={{ fontSize: '0.85rem' }}>
+                        Audit Reason * (Min 5 chars)
+                        <input
+                          className="input"
+                          required
+                          minLength={5}
+                          placeholder="Reason for operational changes..."
+                          value={opReason}
+                          onChange={(e) => setOpReason(e.target.value)}
+                          style={{ width: '100%', marginTop: '0.25rem' }}
+                        />
+                      </label>
+                      {opFeedback && (
+                        <p style={{ color: opFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)', fontSize: '0.85rem', margin: 0 }}>
+                          {opFeedback.text}
                         </p>
                       )}
-                      {action === 'verify_payment' ? (
-                        <label>
-                          Verified order receipt reference
-                          <input
-                            className="input"
-                            required
-                            value={receipt}
-                            onChange={(e) => setReceipt(e.target.value)}
-                          />
-                        </label>
-                      ) : (
-                        ['cancel', 'staff_review', 'final_approve'].includes(action) && (
-                          <label>
-                            Reason / review notes
-                            <textarea
-                              className="input"
-                              required
-                              minLength={5}
-                              value={reason}
-                              onChange={(e) => setReason(e.target.value)}
-                            />
-                          </label>
-                        )
-                      )}
-                      <p>
-                        Confirm this action on {details.orderRef}. The server will recheck current
-                        permissions, evidence and lifecycle state.
-                      </p>
                       <div>
-                        <button type="submit" disabled={busy} className="btn btn-primary">
-                          {busy ? 'Working…' : 'Confirm action'}
-                        </button>{' '}
                         <button
-                          type="button"
-                          disabled={busy}
-                          className="btn btn-secondary"
-                          onClick={() => setAction(null)}
+                          type="submit"
+                          disabled={busy || savingOp || opReason.trim().length < 5}
+                          className="btn btn-secondary btn-sm"
                         >
-                          Go back
+                          {savingOp ? 'Saving…' : 'Save Operational Changes'}
                         </button>
                       </div>
                     </form>
+                  </section>
+                )}
+                <section>
+                  <h3>Authorized actions</h3>
+                  {isReadOnly ? (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                      Staff read-only view: inspecting permitted orders. Creation, operational modification, cancellation, payment, and roster assignment actions are disabled.
+                    </p>
+                  ) : (
+                    <>
+                      <p>Operational approval does not release funds or enable real-money payouts.</p>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.5rem' }}>
+                        {(Object.keys(actionLabels) as Action[])
+                          .filter((a) => details.authorizedActions.includes(a))
+                          .map((a) => (
+                            <button
+                              key={a}
+                              className="btn btn-secondary"
+                              disabled={busy}
+                              onClick={() => {
+                                setAction(a);
+                                setReason('');
+                                setReceipt(details.activeReceiptRef || '');
+                              }}
+                            >
+                              {actionLabels[a]}
+                            </button>
+                          ))}
+                      </div>
+                      {action && details.authorizedActions.includes(action) && (
+                        <form
+                          onSubmit={submitAction}
+                          style={{ display: 'grid', gap: '.5rem', marginTop: '1rem' }}
+                        >
+                          <h4>{actionLabels[action]}</h4>
+                          {action === 'pay_wallet' && (
+                            <p>
+                              Reserve {details.grossAmountUsd} from the order creator's backed wallet, not the
+                              reviewing operator's wallet. Available:{' '}
+                              {(details.creatorWalletAvailableCents / 100).toFixed(2)} USD. No payout is
+                              performed.
+                            </p>
+                          )}
+                          {action === 'verify_payment' ? (
+                            <label>
+                              Verified order receipt reference
+                              <input
+                                className="input"
+                                required
+                                value={receipt}
+                                onChange={(e) => setReceipt(e.target.value)}
+                              />
+                            </label>
+                          ) : (
+                            ['cancel', 'staff_review', 'final_approve'].includes(action) && (
+                              <label>
+                                Reason / review notes
+                                <textarea
+                                  className="input"
+                                  required
+                                  minLength={5}
+                                  value={reason}
+                                  onChange={(e) => setReason(e.target.value)}
+                                />
+                              </label>
+                            )
+                          )}
+                          <p>
+                            Confirm this action on {details.orderRef}. The server will recheck current
+                            permissions, evidence and lifecycle state.
+                          </p>
+                          <div>
+                            <button type="submit" disabled={busy} className="btn btn-primary">
+                              {busy ? 'Working…' : 'Confirm action'}
+                            </button>{' '}
+                            <button
+                              type="button"
+                              disabled={busy}
+                              className="btn btn-secondary"
+                              onClick={() => setAction(null)}
+                            >
+                              Go back
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </>
                   )}
                 </section>
                 <section>
@@ -730,7 +839,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                       {time(a.assignedAt)} {a.replacementReason && `· ${a.replacementReason}`}
                     </p>
                   ))}
-                  {details.authorizedActions.includes('assign') && (
+                  {!isReadOnly && details.authorizedActions.includes('assign') && (
                     <form
                       onSubmit={(e) => {
                         e.preventDefault();

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 
 export interface LogoProps {
@@ -9,6 +9,9 @@ export interface LogoProps {
 export const Logo: React.FC<LogoProps> = ({ size = 'md', showSubtitle = true }) => {
   const iconSize = size === 'sm' ? 26 : size === 'lg' ? 44 : 34;
   const textSize = size === 'sm' ? '1.1rem' : size === 'lg' ? '1.75rem' : '1.35rem';
+
+  const customLogoUrl = import.meta.env.VITE_APP_LOGO_URL;
+  const [imgError, setImgError] = useState(false);
 
   return (
     <Link
@@ -21,30 +24,48 @@ export const Logo: React.FC<LogoProps> = ({ size = 'md', showSubtitle = true }) 
       }}
       aria-label="G4X Community Home"
     >
-      {/* Brand Icon SVG */}
-      <svg
-        width={iconSize}
-        height={iconSize}
-        viewBox="0 0 40 40"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        style={{
-          filter: 'drop-shadow(0 0 10px rgba(124, 58, 237, 0.5))',
-          flexShrink: 0,
-        }}
-      >
-        <rect width="40" height="40" rx="10" fill="#181524" stroke="#2D2645" strokeWidth="1.5" />
-        <path
-          d="M12 28L18 12H23L17 28H12Z"
-          fill="#7C3AED"
+      {/* Brand Icon: Custom image with graceful SVG fallback */}
+      {customLogoUrl && !imgError ? (
+        <img
+          src={customLogoUrl}
+          alt="G4X Logo"
+          width={iconSize}
+          height={iconSize}
+          onError={() => setImgError(true)}
+          style={{
+            width: iconSize,
+            height: iconSize,
+            objectFit: 'contain',
+            borderRadius: '8px',
+            flexShrink: 0,
+            filter: 'drop-shadow(0 0 10px rgba(124, 58, 237, 0.5))',
+          }}
         />
-        <path
-          d="M20 28L28 12H23L15 28H20Z"
-          fill="#CCFF00"
-          style={{ filter: 'drop-shadow(0 0 6px rgba(204, 255, 0, 0.8))' }}
-        />
-        <circle cx="28" cy="25" r="3" fill="#CCFF00" />
-      </svg>
+      ) : (
+        <svg
+          width={iconSize}
+          height={iconSize}
+          viewBox="0 0 40 40"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          style={{
+            filter: 'drop-shadow(0 0 10px rgba(124, 58, 237, 0.5))',
+            flexShrink: 0,
+          }}
+        >
+          <rect width="40" height="40" rx="10" fill="#181524" stroke="#2D2645" strokeWidth="1.5" />
+          <path
+            d="M12 28L18 12H23L17 28H12Z"
+            fill="#7C3AED"
+          />
+          <path
+            d="M20 28L28 12H23L15 28H20Z"
+            fill="#CCFF00"
+            style={{ filter: 'drop-shadow(0 0 6px rgba(204, 255, 0, 0.8))' }}
+          />
+          <circle cx="28" cy="25" r="3" fill="#CCFF00" />
+        </svg>
+      )}
 
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         <div

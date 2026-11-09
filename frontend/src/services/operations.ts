@@ -128,6 +128,46 @@ export async function fetchStaffDisputes(params?: {
   };
 }
 
+export async function fetchStaffOrders(params?: {
+  tab?: 'g4x' | 'advertiser';
+  source?: 'advertiser' | 'external_g4x';
+  status?: string;
+  paymentStatus?: string;
+  gameSlug?: string;
+  sourceWebsite?: string;
+  search?: string;
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  limit?: number;
+}): Promise<{
+  orders: OrderItem[];
+  pagination: PaginationMeta;
+  counts?: { g4x: number; advertiser: number; needsReview: number };
+  tab?: string;
+}> {
+  const query = new URLSearchParams();
+  if (params?.tab) query.set('tab', params.tab);
+  if (params?.source) query.set('source', params.source);
+  if (params?.status) query.set('status', params.status);
+  if (params?.paymentStatus) query.set('paymentStatus', params.paymentStatus);
+  if (params?.gameSlug) query.set('gameSlug', params.gameSlug);
+  if (params?.sourceWebsite) query.set('source', params.sourceWebsite);
+  if (params?.search) query.set('search', params.search);
+  if (params?.startDate) query.set('startDate', params.startDate);
+  if (params?.endDate) query.set('endDate', params.endDate);
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.limit) query.set('limit', String(params.limit));
+
+  const res = await apiRequest<any>(`/api/staff/orders?${query.toString()}`);
+  return {
+    orders: Array.isArray(res?.orders) ? res.orders : [],
+    pagination: normalizePagination(res, params?.limit || 15),
+    counts: res?.counts,
+    tab: res?.tab,
+  };
+}
+
 // ==========================================
 // Management Operations APIs
 // ==========================================
@@ -180,6 +220,12 @@ export async function fetchOrderDiagnostics(
   orderId: number
 ): Promise<{ success: boolean; order: OrderDiagnosticsData }> {
   return apiRequest(`/api/management/orders/${orderId}`);
+}
+
+export async function fetchStaffOrderDetails(
+  orderId: number
+): Promise<{ success: boolean; order: OrderDiagnosticsData }> {
+  return apiRequest(`/api/staff/orders/${orderId}`);
 }
 
 export async function fetchOrderAuditHistory(
@@ -343,4 +389,14 @@ export async function verifyOrderPayment(orderId: number, receiptRef: string): P
 
 export async function refreshOrderDiscord(orderId: number): Promise<{ success: boolean; message: string }> {
   return apiRequest(`/api/management/orders/${orderId}/refresh-discord`, { method: 'POST' });
+}
+
+export async function updateOrderOperational(
+  orderId: number,
+  data: { notes?: string; externalOrderId?: string; reason: string }
+): Promise<{ success: boolean; order: any }> {
+  return apiRequest(`/api/management/orders/${orderId}/operational`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
 }

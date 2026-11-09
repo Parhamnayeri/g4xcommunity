@@ -132,22 +132,24 @@ function useMutation(reload: () => void) {
 export function AdminModuleNavigation() {
   const { hasRole } = useAuth();
   return hasRole('owner', 'manager', 'admin') ? (
-    <nav aria-label="Administration modules" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-      <Link to="/management/applications">Member Applications</Link>
-      <Link to="/admin/games">Games &amp; Services</Link>
-      <Link to="/admin/discord">Discord Channels</Link>
-      <Link to="/management">Management</Link>
-      <Link to="/admin">Admin</Link>
+    <nav aria-label="Administration modules" style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+      <Link to="/management/applications" className="btn btn-secondary btn-sm">Member Applications</Link>
+      <Link to="/admin/games" className="btn btn-secondary btn-sm">Games &amp; Services</Link>
+      <Link to="/admin/discord" className="btn btn-secondary btn-sm">Discord Channels</Link>
+      <Link to="/management" className="btn btn-secondary btn-sm">Management</Link>
+      <Link to="/admin" className="btn btn-secondary btn-sm">Admin</Link>
     </nav>
   ) : null;
 }
-function Shell({ title, children }: { title: string; children: React.ReactNode }) {
+function Shell({ title, embedded = false, children }: { title: string; embedded?: boolean; children: React.ReactNode }) {
   const { hasRole } = useAuth();
   if (!hasRole('owner', 'manager', 'admin')) return <p role="alert">Management or Admin access required.</p>;
   return (
-    <section className="card-surface" style={box}>
-      <h2>{title}</h2>
-      <AdminModuleNavigation />
+    <section className="card-surface" style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>{title}</h2>
+      </div>
+      {!embedded && <AdminModuleNavigation />}
       {children}
     </section>
   );
@@ -170,7 +172,7 @@ function Field({
   pattern?: string;
 }) {
   return (
-    <label>
+    <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
       {label}
       <input
         className="input"
@@ -180,6 +182,7 @@ function Field({
         required={required}
         disabled={disabled}
         pattern={pattern}
+        style={{ padding: '0.45rem 0.75rem', fontSize: '0.85rem' }}
       />
     </label>
   );
@@ -196,12 +199,12 @@ function Select({
   onChange: (value: string) => void;
 }) {
   return (
-    <label>
+    <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
       {label}
-      <select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
+      <select className="input" value={value} onChange={(e) => onChange(e.target.value)} style={{ padding: '0.45rem 0.75rem', fontSize: '0.85rem' }}>
         {values.map((v) => (
           <option key={v} value={v}>
-            {v || 'All'}
+            {v ? v.replace(/_/g, ' ') : 'All'}
           </option>
         ))}
       </select>
@@ -218,14 +221,28 @@ function Pagination({
   onChange: (page: number) => void;
 }) {
   return (
-    <div>
-      <button type="button" disabled={page <= 1} onClick={() => onChange(page - 1)}>
-        Previous
-      </button>{' '}
-      Page {page} of {totalPages}{' '}
-      <button type="button" disabled={page >= totalPages} onClick={() => onChange(page + 1)}>
-        Next
-      </button>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', fontSize: '0.85rem' }}>
+      <span style={{ color: 'var(--text-muted)' }}>
+        Page {page} of {totalPages || 1}
+      </span>
+      <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <button
+          type="button"
+          disabled={page <= 1}
+          onClick={() => onChange(page - 1)}
+          className="btn btn-secondary btn-sm"
+        >
+          Previous
+        </button>
+        <button
+          type="button"
+          disabled={page >= totalPages}
+          onClick={() => onChange(page + 1)}
+          className="btn btn-secondary btn-sm"
+        >
+          Next
+        </button>
+      </div>
     </div>
   );
 }
@@ -248,7 +265,7 @@ interface Application {
   qualifications?: Record<string, unknown>;
   actions?: string[];
 }
-export function ApplicationsWorkspace() {
+export function ApplicationsWorkspace({ embedded = false }: { embedded?: boolean } = {}) {
   const [filters, setFilters] = useState({
       search: '',
       category: '',
@@ -283,7 +300,7 @@ export function ApplicationsWorkspace() {
   const pagination = normalizePagination(list.data, 15);
   const applications = Array.isArray(list.data.applications) ? list.data.applications : [];
   return (
-    <Shell title="Member Applications">
+    <Shell title="Member Applications" embedded={embedded}>
       <form
         style={grid}
         onSubmit={(e) => {
@@ -330,40 +347,60 @@ export function ApplicationsWorkspace() {
           value={filters.endDate}
           onChange={(endDate) => setFilters({ ...filters, endDate })}
         />
-        <button>Apply filters</button>
+        <div style={{ alignSelf: 'end' }}>
+          <button type="submit" className="btn btn-primary btn-sm">Apply filters</button>
+        </div>
       </form>
       <ErrorMessage error={list.error || action.error} />
-      {action.message && <p role="status">{action.message}</p>}
-      {list.error && <button onClick={list.reload}>Retry</button>}
+      {action.message && <p role="status" style={{ color: 'var(--status-success)' }}>{action.message}</p>}
+      {list.error && <button className="btn btn-secondary btn-sm" onClick={list.reload}>Retry</button>}
       {list.error ? null : list.loading ? (
-        <p role="status">Loading applications…</p>
+        <p role="status" style={{ color: 'var(--text-muted)' }}>Loading applications…</p>
       ) : !applications.length ? (
-        <p>No matching applications.</p>
+        <p style={{ color: 'var(--text-muted)' }}>No matching applications.</p>
       ) : (
         <div style={{ overflowX: 'auto' }}>
-          <table>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
             <thead>
-              <tr>
-                <th>Applicant</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Submitted</th>
-                <th>Details</th>
+              <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                <th style={{ padding: '0.75rem 0.5rem' }}>Applicant</th>
+                <th style={{ padding: '0.75rem 0.5rem' }}>Type</th>
+                <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
+                <th style={{ padding: '0.75rem 0.5rem' }}>Submitted</th>
+                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Details</th>
               </tr>
             </thead>
             <tbody>
               {applications.map((a) => (
-                <tr key={a.id}>
-                  <td>
-                    {a.displayName || a.username}
-                    <br />
-                    {a.userId}
+                <tr key={a.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
+                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                    <div style={{ fontWeight: 600 }}>{a.displayName || a.username}</div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{a.userId}</div>
                   </td>
-                  <td>{a.category}</td>
-                  <td>{a.status}</td>
-                  <td>{new Date(a.submittedAt).toLocaleString()}</td>
-                  <td>
+                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                    <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>{a.category}</span>
+                  </td>
+                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                    <span
+                      className={`badge ${
+                        a.status === 'approved'
+                          ? 'badge-success'
+                          : a.status === 'rejected'
+                            ? 'badge-danger'
+                            : 'badge-warning'
+                      }`}
+                      style={{ fontSize: '0.72rem' }}
+                    >
+                      {a.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
+                    {new Date(a.submittedAt).toLocaleString()}
+                  </td>
+                  <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
                     <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
                       onClick={() => {
                         setSelected(a.id);
                         setNotes('');
@@ -380,11 +417,22 @@ export function ApplicationsWorkspace() {
       )}
       <Pagination page={pagination.page} totalPages={pagination.totalPages} onChange={setPage} />
       {selected !== null && (
-        <section aria-label="Application details" className="card-surface" style={box}>
-          <h3>Application #{selected}</h3>
-          <button disabled={action.busy} onClick={() => setSelected(null)}>
-            Close details
-          </button>
+        <section
+          aria-label="Application details"
+          className="card-surface"
+          style={{
+            ...box,
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-sm)',
+            marginTop: '1.25rem',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.5rem' }}>
+            <h3 style={{ margin: 0, fontSize: '1.15rem' }}>Application #{selected}</h3>
+            <button className="btn btn-secondary btn-sm" disabled={action.busy} onClick={() => setSelected(null)}>
+              Close details
+            </button>
+          </div>
           <ErrorMessage error={detail.error} />
           {detail.loading ? (
             <p>Loading details…</p>
@@ -395,22 +443,59 @@ export function ApplicationsWorkspace() {
               const a = detail.data.application;
               return (
                 <>
-                  <p>
-                    {a.username} · {a.userId} · {a.category} · {a.status}
-                  </p>
-                  <p>
-                    {a.game?.displayName} · {a.service?.displayName} · Identity: {a.identityStatus}
-                  </p>
-                  <p>
-                    Reviewer: {a.reviewedBy?.username || 'Not reviewed'} · Notes: {a.reviewerNotes || '—'}
-                  </p>
-                  <p>Rejection reason: {a.rejectionReason || '—'}</p>
-                  <p>Supplemental information: {a.supplementalInfo || '—'}</p>
-                  <pre style={{ whiteSpace: 'pre-wrap' }}>
-                    {JSON.stringify(a.qualifications || {}, null, 2)}
-                  </pre>
-                  <Link to="/management/kyc">Open protected KYC review</Link>
-                  <p>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', backgroundColor: 'var(--bg-main)', padding: '0.85rem', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Applicant: </span>
+                      <strong>{a.username}</strong> ({a.userId})
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Type: </span>
+                      <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>{a.category}</span>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Status: </span>
+                      <span className={`badge ${a.status === 'approved' ? 'badge-success' : a.status === 'rejected' ? 'badge-danger' : 'badge-warning'}`} style={{ fontSize: '0.72rem' }}>{a.status}</span>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Identity: </span>
+                      <strong>{a.identityStatus}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Game / Service: </span>
+                      <strong>{a.game?.displayName || '—'} / {a.service?.displayName || '—'}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--text-muted)' }}>Reviewer: </span>
+                      <strong>{a.reviewedBy?.username || 'Not reviewed'}</strong>
+                    </div>
+                  </div>
+                  {a.reviewerNotes && (
+                    <p style={{ fontSize: '0.85rem', margin: 0 }}>
+                      <strong>Reviewer Notes: </strong>{a.reviewerNotes}
+                    </p>
+                  )}
+                  {a.rejectionReason && (
+                    <p style={{ fontSize: '0.85rem', color: 'var(--status-danger)', margin: 0 }}>
+                      <strong>Rejection reason: </strong>{a.rejectionReason}
+                    </p>
+                  )}
+                  {a.supplementalInfo && (
+                    <p style={{ fontSize: '0.85rem', margin: 0 }}>
+                      <strong>Supplemental information: </strong>{a.supplementalInfo}
+                    </p>
+                  )}
+                  <div style={{ margin: '0.5rem 0' }}>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Qualifications Payload:</span>
+                    <pre style={{ whiteSpace: 'pre-wrap', backgroundColor: 'var(--bg-main)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', border: '1px solid var(--border-subtle)' }}>
+                      {JSON.stringify(a.qualifications || {}, null, 2)}
+                    </pre>
+                  </div>
+                  <div>
+                    <Link to="/management/kyc" className="btn btn-secondary btn-sm" style={{ display: 'inline-block', margin: '0.25rem 0' }}>
+                      Open protected KYC review
+                    </Link>
+                  </div>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
                     Pilot and Exchanger approvals still require identity verification. This screen cannot
                     verify identity.
                   </p>
@@ -424,9 +509,10 @@ export function ApplicationsWorkspace() {
                           reason: notes.trim(),
                         });
                       }}
+                      style={{ display: 'grid', gap: '0.75rem', marginTop: '0.5rem' }}
                     >
                       <Select label="Decision" value={decision} values={a.actions} onChange={setDecision} />
-                      <label>
+                      <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                         Reviewer notes
                         <textarea
                           className="input"
@@ -434,23 +520,27 @@ export function ApplicationsWorkspace() {
                           required
                           value={notes}
                           onChange={(e) => setNotes(e.target.value)}
+                          rows={2}
+                          style={{ padding: '0.5rem' }}
                         />
                       </label>
-                      <button disabled={action.busy}>Confirm decision</button>
+                      <div>
+                        <button className="btn btn-cta btn-sm" disabled={action.busy}>Confirm decision</button>
+                      </div>
                     </form>
                   ) : (
-                    <p>No authorized decisions available. Self-review and terminal decisions are blocked.</p>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No authorized decisions available. Self-review and terminal decisions are blocked.</p>
                   )}
-                  <h4>Decision history</h4>
+                  <h4 style={{ margin: '0.75rem 0 0.25rem', fontSize: '0.95rem' }}>Decision history</h4>
                   {Array.isArray(detail.data.history) && detail.data.history.length ? (
                     detail.data.history.map((h) => (
-                      <p key={h.id}>
+                      <p key={h.id} style={{ fontSize: '0.82rem', margin: '0.2rem 0', color: 'var(--text-muted)' }}>
                         {new Date(h.createdAt).toLocaleString()} · {h.actor?.username || 'System'} ·{' '}
-                        {h.action} · {h.notes || h.reason || '—'}
+                        <strong style={{ color: 'var(--text-primary)' }}>{h.action}</strong> · {h.notes || h.reason || '—'}
                       </p>
                     ))
                   ) : (
-                    <p>No recorded decisions.</p>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem' }}>No recorded decisions.</p>
                   )}
                 </>
               );
@@ -513,7 +603,7 @@ const emptyService = {
     isActive: true,
   } as Record<string, any>,
 };
-export function GamesWorkspace() {
+export function GamesWorkspace({ embedded = false }: { embedded?: boolean } = {}) {
   const resource = useResource<{ games?: Game[] }>('/api/admin/games', {}),
     action = useMutation(resource.reload);
   const [search, setSearch] = useState(''),
@@ -535,7 +625,7 @@ export function GamesWorkspace() {
   const pages = Math.max(1, Math.ceil(filtered.length / 10));
   const current = Math.min(page, pages);
   return (
-    <Shell title="Game Registry & Services">
+    <Shell title="Game Registry & Services" embedded={embedded}>
       <ErrorMessage error={resource.error || action.error} />
       {action.message && <p role="status">{action.message}</p>}
       <div style={grid}>
@@ -851,7 +941,7 @@ const emptyMapping = {
   serviceMode: '',
   isActive: true,
 };
-export function ChannelsWorkspace() {
+export function ChannelsWorkspace({ embedded = false }: { embedded?: boolean } = {}) {
   const { hasRole } = useAuth();
   const writable = hasRole('owner', 'manager');
   const resource = useResource<{ mappings?: Mapping[] }>('/api/management/channel-mappings', {}),
@@ -876,7 +966,7 @@ export function ChannelsWorkspace() {
   const games = Array.isArray(registry.data.games) ? registry.data.games : [];
   const game = games.find((g) => g.slug === form.gameSlug);
   return (
-    <Shell title="Discord Channel Management">
+    <Shell title="Discord Channel Management" embedded={embedded}>
       <p>
         Saved configuration is separate from live Discord verification. Saving never deletes Discord channels.
         Active order workflows prevent replacement or removal.

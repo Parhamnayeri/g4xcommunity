@@ -326,10 +326,10 @@ adminPortalRouter.post(
         return;
       }
 
-      // Recheck live FINANCE_ADJUST or FINANCE_ADMIN_VIEW
-      const auth = await authorize(user.discordId, Permission.FINANCE_ADMIN_VIEW);
+      // Recheck live MANUAL_DEPOSIT_REVIEW (Admin & Owner only; Management rejected)
+      const auth = await authorize(user.discordId, Permission.MANUAL_DEPOSIT_REVIEW);
       if (!auth.allowed) {
-        res.status(403).json({ error: 'PERMISSION_DENIED', message: 'Insufficient financial permissions' });
+        res.status(403).json({ error: 'PERMISSION_DENIED', message: 'Manual IRT deposit review requires Admin or Owner permission' });
         return;
       }
 

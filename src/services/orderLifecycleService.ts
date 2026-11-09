@@ -1141,6 +1141,110 @@ export async function getOrderAuditHistory(orderId: number) {
   });
 }
 
+/**
+ * ویرایش فیلدهای مجاز عملیاتی سفارش (مانند notes یا externalOrderId)
+ * همراه با ثبت تفصیلی مقادیر قبلی، مقادیر جدید، علت و شناسه ویرایشگر در AuditLog
+ */
+export async function updateOrderOperationalFields(params: {
+  orderId: number;
+  actorId: string;
+  fields: {
+    notes?: string;
+    externalOrderId?: string;
+  };
+  reason: string;
+}) {
+  const { orderId, actorId, fields, reason } = params;
+
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+    throw new DomainError(DomainErrorCode.VALIDATION_ERROR, 'INVALID_ORDER_ID: A valid positive integer order ID is required');
+  }
+
+  if (!reason || !reason.trim() || reason.trim().length < 3) {
+    throw new DomainError(DomainErrorCode.VALIDATION_ERROR, 'REASON_REQUIRED: A valid audit reason (minimum 3 characters) is strictly mandatory for operational order modifications');
+  }
+
+  // احراز صلاحیت سروری
+  const auth = await authorize(actorId, Permission.ORDER_EDIT_OPERATIONAL);
+  if (!auth.allowed) {
+    throw new DomainError(DomainErrorCode.PERMISSION_DENIED, auth.reason || 'ORDER_EDIT_FORBIDDEN: Insufficient permissions to edit operational order fields');
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+  });
+
+  if (!order) {
+    throw new DomainError(DomainErrorCode.ORDER_NOT_FOUND, `ORDER_NOT_FOUND: Order #${orderId} was not found in the database`);
+  }
+
+  // اعتبارسنجی چرخه حیات: امکان ویرایش سفارشات خاتمه یافته یا لغو شده وجود ندارد
+  if (['completed', 'cancelled'].includes(order.status)) {
+    throw new DomainError(
+      DomainErrorCode.INVALID_ORDER_TRANSITION,
+      `LIFECYCLE_RESTRICTION: Order #${orderId} is in terminal status '${order.status}' and cannot have operational fields modified`
+    );
+  }
+
+  const previousValues: Record<string, any> = {};
+  const newValues: Record<string, any> = {};
+  const dataToUpdate: Record<string, any> = {};
+
+  if (fields.notes !== undefined && fields.notes !== order.notes) {
+    previousValues.notes = order.notes;
+    newValues.notes = fields.notes;
+    dataToUpdate.notes = fields.notes;
+  }
+
+  if (fields.externalOrderId !== undefined && fields.externalOrderId !== order.externalOrderId) {
+    previousValues.externalOrderId = order.externalOrderId;
+    newValues.externalOrderId = fields.externalOrderId;
+    dataToUpdate.externalOrderId = fields.externalOrderId;
+  }
+
+  if (Object.keys(dataToUpdate).length === 0) {
+    return {
+      success: true,
+      order,
+      changedFields: [],
+      message: 'No changes detected on permitted operational fields',
+    };
+  }
+
+  const changedFields = Object.keys(dataToUpdate);
+
+  const updatedOrder = await prisma.$transaction(async (tx) => {
+    const updated = await tx.order.update({
+      where: { id: orderId },
+      data: dataToUpdate,
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: 'ORDER_OPERATIONAL_EDITED',
+        entityType: 'Order',
+        entityId: String(orderId),
+        previousValues: JSON.stringify(previousValues),
+        newValues: JSON.stringify(newValues),
+        reason: reason.trim(),
+        isSuccess: true,
+      },
+    });
+
+    return updated;
+  });
+
+  return {
+    success: true,
+    order: updatedOrder,
+    changedFields,
+    previousValues,
+    newValues,
+    reason: reason.trim(),
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Separated G4X and Advertiser Order Lists (Domain Engine & Privacy Enforcement)
 // ─────────────────────────────────────────────────────────────────────────────

@@ -18,18 +18,73 @@ import {
   fetchOwnerAuditLogs,
   fetchOwnerSecurityHealth,
 } from '../services/ownerPortal';
+import { useSearchParams } from 'react-router-dom';
 import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
+import { UserManagementWorkspace } from '../components/admin/UserManagementWorkspace';
+import { WithdrawalQueueWorkspace } from '../components/admin/WithdrawalQueueWorkspace';
+import {
+  ApplicationsWorkspace,
+  GamesWorkspace,
+  ChannelsWorkspace,
+} from '../components/admin/NativeAdminModules';
+import { KycManagementPage } from './KycManagementPage';
 import { AdminDepositItem } from '../types/adminPortal';
 import { fetchAdminDeposits, reviewAdminDeposit } from '../services/adminPortal';
 
-export const OwnerPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ defaultTab = 'overview' }) => {
+export type OwnerTab =
+  | 'overview'
+  | 'orders'
+  | 'users'
+  | 'deposits'
+  | 'withdrawals'
+  | 'applications'
+  | 'kyc'
+  | 'games'
+  | 'discord'
+  | 'config'
+  | 'ledgers'
+  | 'gates'
+  | 'audit'
+  | 'security';
+
+const VALID_OWNER_TABS: OwnerTab[] = [
+  'overview',
+  'orders',
+  'users',
+  'deposits',
+  'withdrawals',
+  'applications',
+  'kyc',
+  'games',
+  'discord',
+  'config',
+  'ledgers',
+  'gates',
+  'audit',
+  'security',
+];
+
+export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'overview' }) => {
   const { user, hasRole } = useAuth();
   const isOwner = hasRole('owner');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab') as OwnerTab | null;
 
   // Navigation tab
-  const [activeTab, setActiveTab] = useState<'overview' | 'orders' | 'deposits' | 'config' | 'ledgers' | 'gates' | 'audit' | 'security'>(defaultTab);
+  const [activeTab, setActiveTab] = useState<OwnerTab>(
+    tabParam && VALID_OWNER_TABS.includes(tabParam) ? tabParam : defaultTab
+  );
 
-  useEffect(() => { setActiveTab(defaultTab); }, [defaultTab]);
+  useEffect(() => {
+    if (tabParam && VALID_OWNER_TABS.includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+  }, [tabParam]);
+
+  const handleTabChange = (newTab: OwnerTab) => {
+    setActiveTab(newTab);
+    setSearchParams({ tab: newTab });
+  };
 
   // Overview state
   const [overview, setOverview] = useState<OwnerOverviewResponse | null>(null);
@@ -261,9 +316,6 @@ export const OwnerPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <a href="/admin" className="btn btn-secondary btn-sm">
-            &larr; Switch to Admin Hub
-          </a>
           <button
             type="button"
             className="btn btn-cta btn-sm"
@@ -296,7 +348,13 @@ export const OwnerPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
         {[
           { key: 'overview', label: 'Executive Overview', icon: '🏛️' },
           { key: 'orders', label: 'Order Workspace', icon: '📦' },
+          { key: 'users', label: 'User Management', icon: '👥' },
           { key: 'deposits', label: 'Manual IRT Deposits', icon: '💳' },
+          { key: 'withdrawals', label: 'Withdrawal Queue', icon: '💸' },
+          { key: 'applications', label: 'Member Applications', icon: '📋' },
+          { key: 'kyc', label: 'KYC Management', icon: '🪪' },
+          { key: 'games', label: 'Games & Services', icon: '🎮' },
+          { key: 'discord', label: 'Discord Channels', icon: '💬' },
           { key: 'config', label: 'Financial Configuration', icon: '⚙️' },
           { key: 'ledgers', label: 'Wallets & Ledgers', icon: '📈' },
           { key: 'gates', label: 'Feature Gates Status', icon: '🔒' },
@@ -306,7 +364,7 @@ export const OwnerPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
           <button
             key={t.key}
             type="button"
-            onClick={() => setActiveTab(t.key as any)}
+            onClick={() => handleTabChange(t.key as OwnerTab)}
             style={{
               padding: '0.55rem 1rem',
               borderRadius: 'var(--radius-sm)',
@@ -479,6 +537,59 @@ export const OwnerPage: React.FC<{ defaultTab?: 'overview' | 'orders' }> = ({ de
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'orders' && (
         <OrderManagementWorkspace title="Executive Order Pipeline & Operations Workspace" />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: EXECUTIVE USER MANAGEMENT & RBAC                                         */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'users' && (
+        <UserManagementWorkspace
+          canBan={true}
+          canManageRoles={true}
+          allowPrivilegedRoles={true}
+          title="Executive User Registry & Multi-Role Governance"
+          subtitle="Full authoritative oversight, privileged role grants, and immutable ban history audit."
+        />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: BOOSTER WITHDRAWAL QUEUE & ADMINISTRATION                                */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'withdrawals' && (
+        <WithdrawalQueueWorkspace
+          canReview={true}
+          canEditMetadata={true}
+          title="Executive Booster Withdrawal Administration"
+          subtitle="Review payout requests, update operational destination metadata, and inspect full audit trail."
+        />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: MEMBER REGISTRATION APPLICATIONS                                        */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'applications' && (
+        <ApplicationsWorkspace embedded={true} />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: KYC IDENTITY DOCUMENTS MANAGEMENT                                        */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'kyc' && (
+        <KycManagementPage />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: GAMES & SERVICES REGISTRY                                                */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'games' && (
+        <GamesWorkspace embedded={true} />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: DISCORD CHANNELS & PROVISIONING                                          */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'discord' && (
+        <ChannelsWorkspace embedded={true} />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}

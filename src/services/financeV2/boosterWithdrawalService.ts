@@ -1154,3 +1154,130 @@ export async function boosterCancelWithdrawal(
   });
 }
 
+/**
+ * ۸. ویرایش یادداشت‌ها و متادیتای عملیاتی درخواست برداشت (Withdrawal Metadata Edit)
+ * صریحاً محدود به Admin و Owner، ثبت تغییرات کامل، جلوگیری قطعی از دستکاری ارقام مالی یا حساب‌ها
+ */
+export async function updateWithdrawalMetadata(params: {
+  requestId: number;
+  actorId: string;
+  notes?: string;
+  adminNotes?: string;
+  reason: string;
+}) {
+  const { requestId, actorId, notes, adminNotes, reason } = params;
+
+  if (!Number.isSafeInteger(requestId) || requestId <= 0) {
+    throw new Error('INVALID_WITHDRAWAL_ID: A valid positive integer withdrawal ID is required');
+  }
+
+  if (!reason || !reason.trim() || reason.trim().length < 3) {
+    throw new Error('REASON_REQUIRED: A valid audit reason (minimum 3 characters) is strictly mandatory');
+  }
+
+  const auth = await authorize(actorId, Permission.WITHDRAWAL_REVIEW);
+  if (!auth.allowed) {
+    throw new Error(`WITHDRAWAL_REVIEW_FORBIDDEN: ${auth.reason || 'Insufficient permissions to update withdrawal metadata (Admin/Owner required)'}`);
+  }
+
+  const request = await prisma.boosterWithdrawalRequest.findUnique({
+    where: { id: requestId },
+  });
+
+  if (!request) {
+    throw new Error(`WITHDRAWAL_NOT_FOUND: Withdrawal request #${requestId} not found`);
+  }
+
+  const previousAudit = await prisma.auditLog.findFirst({
+    where: {
+      entityType: 'BoosterWithdrawalRequest',
+      entityId: String(requestId),
+      action: 'WITHDRAWAL_METADATA_EDITED',
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  let prevNotes: string | undefined = undefined;
+  let prevAdminNotes: string | undefined = undefined;
+
+  if (previousAudit?.newValues) {
+    try {
+      const parsed = JSON.parse(previousAudit.newValues);
+      prevNotes = parsed.notes;
+      prevAdminNotes = parsed.adminNotes;
+    } catch {}
+  }
+
+  const previousValues: Record<string, any> = {};
+  const newValues: Record<string, any> = {};
+
+  if (notes !== undefined && notes !== prevNotes) {
+    previousValues.notes = prevNotes || null;
+    newValues.notes = notes;
+  }
+
+  if (adminNotes !== undefined && adminNotes !== prevAdminNotes) {
+    previousValues.adminNotes = prevAdminNotes || null;
+    newValues.adminNotes = adminNotes;
+  }
+
+  const changedFields = Object.keys(newValues);
+  if (changedFields.length === 0) {
+    return {
+      success: true,
+      request,
+      changedFields: [],
+      message: 'No metadata changes detected',
+    };
+  }
+
+  const updatedRequest = await prisma.$transaction(async (tx) => {
+    const updated = await tx.boosterWithdrawalRequest.update({
+      where: { id: requestId },
+      data: {
+        updatedAt: new Date(),
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: 'WITHDRAWAL_METADATA_EDITED',
+        entityType: 'BoosterWithdrawalRequest',
+        entityId: String(requestId),
+        previousValues: JSON.stringify(previousValues),
+        newValues: JSON.stringify(newValues),
+        reason: reason.trim(),
+        isSuccess: true,
+      },
+    });
+
+    return updated;
+  });
+
+  return {
+    success: true,
+    request: updatedRequest,
+    changedFields,
+    previousValues,
+    newValues,
+    reason: reason.trim(),
+  };
+}
+
+/**
+ * ۹. تاریخچه ممیزی یک درخواست برداشت
+ */
+export async function getWithdrawalAuditHistory(requestId: number) {
+  return await prisma.auditLog.findMany({
+    where: {
+      entityType: 'BoosterWithdrawalRequest',
+      entityId: String(requestId),
+    },
+    include: {
+      actor: { select: { discordId: true, username: true, displayName: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
