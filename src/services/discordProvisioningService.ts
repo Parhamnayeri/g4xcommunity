@@ -422,6 +422,108 @@ export async function provisionAllChannels(
       }
     }
 
+    // Official Rules & Policies Channel (#rules-and-policies) under START HERE
+    totalConfigured++;
+    try {
+      const startHereCat = guild.channels?.cache?.get(regResult.categories.startHereId);
+      const existingRulesMapping = await prisma.discordChannelMapping.findUnique({
+        where: { channelKey: 'rules:channel:official' },
+      });
+
+      let rulesChannel: any = null;
+      if (existingRulesMapping?.discordChannelId && guild.channels?.cache) {
+        rulesChannel = guild.channels.cache.get(existingRulesMapping.discordChannelId);
+      }
+
+      if (!rulesChannel) {
+        const { channel: foundOrCreated, isNew } = await getOrCreateTextChannel(
+          guild,
+          'rules-and-policies',
+          startHereCat,
+          {
+            topic: 'Official G4X Community Rules, Guidelines & Policy Documents — https://g4x.online/rules',
+            aliases: ['rules', 'rules-policies', 'official-rules', 'rules-and-guidelines'],
+            permissionOverwrites: [
+              {
+                id: guild.roles.everyone.id,
+                allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
+                deny: [
+                  PermissionFlagsBits.SendMessages,
+                  PermissionFlagsBits.CreatePublicThreads,
+                  PermissionFlagsBits.CreatePrivateThreads,
+                  PermissionFlagsBits.AddReactions,
+                ],
+              },
+            ],
+          }
+        );
+        rulesChannel = foundOrCreated;
+        if (isNew) created++;
+        else reused++;
+      } else {
+        reused++;
+      }
+
+      if (rulesChannel?.id) {
+        await upsertMapping({
+          guildId,
+          channelKey: 'rules:channel:official',
+          categoryName: 'START HERE',
+          channelName: rulesChannel.name || 'rules-and-policies',
+          purpose: 'Official community rules and policies document channel',
+          discordChannelId: rulesChannel.id,
+          parentCategoryId: startHereCat?.id || regResult.categories.startHereId || null,
+          syncStatus: 'SYNCED',
+          lastSyncResult: 'Official rules channel verified and mapped in START HERE',
+        });
+        synced++;
+
+        // If a published policy already exists, check if it needs sync or placeholder
+        const { getPublishedPolicy, syncPolicyToDiscord } = await import('./policyService');
+        const publishedVer = await getPublishedPolicy('community-rules');
+        if (publishedVer) {
+          if (options.client || (global as any).discordClient) {
+            await syncPolicyToDiscord(publishedVer.id, options.client || (global as any).discordClient);
+          }
+        } else {
+          // No published policy: send safe placeholder if channel is empty, without exposing draft
+          try {
+            if (typeof rulesChannel.messages?.fetch === 'function') {
+              const msgs = await rulesChannel.messages.fetch({ limit: 1 });
+              if (msgs.size === 0 && typeof rulesChannel.send === 'function') {
+                await rulesChannel.send(
+                  '# 📜 G4X Community Rules & Policies\nOfficial community policies and platform standards are available at: https://g4x.online/rules'
+                );
+              }
+            }
+          } catch {
+            // Ignore placeholder send error in mock environments
+          }
+        }
+      } else {
+        await upsertMapping({
+          guildId,
+          channelKey: 'rules:channel:official',
+          categoryName: 'START HERE',
+          channelName: 'rules-and-policies',
+          purpose: 'Official community rules and policies document channel',
+          syncStatus: 'MISSING',
+          lastSyncResult: 'Rules channel not found or bot lacks permissions',
+        });
+      }
+    } catch (rulesErr: any) {
+      warnings.push(`Rules channel provisioning warning: ${rulesErr.message}`);
+      await upsertMapping({
+        guildId,
+        channelKey: 'rules:channel:official',
+        categoryName: 'START HERE',
+        channelName: 'rules-and-policies',
+        purpose: 'Official community rules and policies document channel',
+        syncStatus: 'MISSING',
+        lastSyncResult: rulesErr.message || 'Provisioning error',
+      });
+    }
+
     // Staff Review Channels
     const mgmtDef = [
       { key: 'booster', name: 'app-boosters', purpose: 'Staff review channel for Booster applications' },

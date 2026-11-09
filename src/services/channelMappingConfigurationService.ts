@@ -14,7 +14,7 @@ export async function configureChannelMapping(
 ) {
   if (!(await authorize(actorId, Permission.SERVICE_CONFIG_MANAGE)).allowed)
     throw new Error('PERMISSION_DENIED');
-  if (!/^(reg|order_panel|publication|execution):[a-z0-9_:-]{1,120}$/.test(key))
+  if (!/^(reg|order_panel|publication|execution|rules):[a-z0-9_:-]{1,120}$/.test(key))
     throw new Error('INVALID_MAPPING_KEY');
   return prisma.$transaction(async (tx) => {
     const existing = await tx.discordChannelMapping.findUnique({ where: { channelKey: key } });
