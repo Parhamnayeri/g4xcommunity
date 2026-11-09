@@ -509,9 +509,45 @@ export const DiscordCommandsPage: React.FC = () => {
                 </div>
 
                 {/* Summary / description */}
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', lineHeight: 1.5, marginBottom: '1.25rem' }}>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.92rem', lineHeight: 1.5, marginBottom: '1rem' }}>
                   {cmd.description}
                 </p>
+
+                {/* Execution Context & Runtime Authorization Scope */}
+                {cmd.executionContext && (
+                  <div
+                    style={{
+                      marginBottom: '1.25rem',
+                      padding: '0.5rem 0.85rem',
+                      borderRadius: '6px',
+                      backgroundColor: 'rgba(168, 85, 247, 0.08)',
+                      border: '1px solid rgba(168, 85, 247, 0.25)',
+                      fontSize: '0.78rem',
+                      color: '#d8b4fe',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.6rem',
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        fontSize: '0.68rem',
+                        letterSpacing: '0.04em',
+                        padding: '0.15rem 0.45rem',
+                        borderRadius: '3px',
+                        backgroundColor: 'rgba(168, 85, 247, 0.2)',
+                        color: '#e9d5ff',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Execution Scope
+                    </span>
+                    <span style={{ lineHeight: 1.4 }}>{cmd.executionContext}</span>
+                  </div>
+                )}
 
                 {/* Syntax block with Copy Button */}
                 <div

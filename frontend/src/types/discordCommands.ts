@@ -46,6 +46,7 @@ export interface DiscordCommandItem {
   summary: string;
   description: string;
   channelContext: string;
+  executionContext: string;
   requiredRoles: string[];
   requiredPermission?: string;
   parameters: CommandParameter[];

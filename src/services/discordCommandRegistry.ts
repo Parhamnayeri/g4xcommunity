@@ -9,12 +9,13 @@
  * Rules:
  *  - Every command, subcommand, parameter, and interaction corresponds to real code.
  *  - No invented commands, synthetic flags, or speculative capabilities.
- *  - Strict role-based filtering: evaluated server-side.
+ *  - Strict role-based filtering: evaluated server-side using explicit permission contracts.
  *  - Multi-role union support: users holding multiple roles receive the union of permitted commands.
  *  - Booster/Pilot-only users have zero access to this private guide.
+ *  - Distinguishes guide documentation visibility from runtime channel/order execution eligibility.
  */
 
-import { SystemRoleKey, Permission, ROLE_PERMISSIONS } from './permissionTypes';
+import { SystemRoleKey, Permission } from './permissionTypes';
 
 export type CommandType =
   | 'text_command'
@@ -60,6 +61,7 @@ export interface DiscordCommandItem {
   summary: string;
   description: string;
   channelContext: string;
+  executionContext: string;
   requiredRoles: SystemRoleKey[];
   requiredPermission?: Permission;
   parameters: CommandParameter[];
@@ -90,6 +92,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Creates or reuses all authoritative Discord channels defined in the provisioning catalog. Configures channel permissions for roles, syncs channel IDs into the database mapping, and outputs a complete status report. Aliases: `G4!setup channels`, `G4!setup sync`.',
     channelContext: 'Discord Server (Guild) text channel with bot permissions',
+    executionContext:
+      'Executable exclusively by Management, Admin, or Owner with SERVICE_CONFIG_MANAGE permission in a guild server.',
     requiredRoles: ['manager', 'admin', 'owner'],
     requiredPermission: Permission.SERVICE_CONFIG_MANAGE,
     parameters: [],
@@ -127,6 +131,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Provisions the public `START HERE` category (#become-booster, #become-adv, #become-pilot-booster, #become-exchanger) with persistent interactive registration panels, and the private `APPLICATION MANAGEMENT` category (#app-boosters, #app-adv, #app-pilots, #app-exchangers) for staff review.',
     channelContext: 'Discord Server (Guild) text channel',
+    executionContext:
+      'Requires SERVICE_CONFIG_MANAGE permission. Creates channels or edits existing panel in current channel.',
     requiredRoles: ['manager', 'admin', 'owner'],
     requiredPermission: Permission.SERVICE_CONFIG_MANAGE,
     parameters: [],
@@ -155,6 +161,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Creates the `G4X ORDERS` category (#wow_midnight_mythic, #non_pilot, #pilot) and `ADVERTISER ORDERS` category (#wow_midnight_mythic, #non_pilot, #pilot) equipped with persistent interactive buttons that launch the Order Creation Wizard. Aliases: `G4!setup order-panels`, `G4!setup order_panels`.',
     channelContext: 'Discord Server (Guild) text channel',
+    executionContext:
+      'Requires SERVICE_CONFIG_MANAGE permission. Deploys interactive buttons in order creation channels.',
     requiredRoles: ['manager', 'admin', 'owner'],
     requiredPermission: Permission.SERVICE_CONFIG_MANAGE,
     parameters: [],
@@ -183,6 +191,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Provisions dedicated order publication channels for WoW Midnight (#mythic_plus_boosts, #non_pilot_boosts, #pilot_boosts) and WoW Forever (#non_pilot_boosts, #pilot_boosts), recording authoritative channel routes in the database. Aliases: `G4!setup pub-channels`, `G4!setup routing`.',
     channelContext: 'Discord Server (Guild) text channel',
+    executionContext:
+      'Requires SERVICE_CONFIG_MANAGE permission. Configures game-specific channel routes.',
     requiredRoles: ['manager', 'admin', 'owner'],
     requiredPermission: Permission.SERVICE_CONFIG_MANAGE,
     parameters: [],
@@ -213,6 +223,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Queries open orders in status `open_presign` with verified payment. Displays order ID, reference, game, service, order mode, pre-signed candidate counts, and Mythic+ role slot breakdown (Tank, Healer, DPS).',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Executable by any user with ORDER_VIEW_PERMITTED or active operational/advertiser role.',
     requiredRoles: ['advertiser', 'staff', 'manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_VIEW_PERMITTED,
     parameters: [
@@ -251,6 +263,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Displays order reference, game, service, lifecycle status, mode, run counts, source platform (Community vs Advertiser vs External G2G/SkyCoach/Eldorado), gross economics, booster pool, pre-signed applicants, and active booster assignments.',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Executable by any user with ORDER_VIEW_PERMITTED or order creator ownership.',
     requiredRoles: ['advertiser', 'staff', 'manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_VIEW_PERMITTED,
     parameters: [
@@ -289,6 +303,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Validates game slug and service ID. If the creator has sufficient available balance in WalletV2, the funds are debited and reserved into escrow immediately, and the order is published. If balance is insufficient, the order is created as an unpaid draft in `payment_pending` status. Aliases: `G4!order adv-create`.',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Requires ORDER_CREATE_INTERNAL (Management/Admin/Owner) or ORDER_CREATE_ADVERTISER (Advertiser with approved commercial rank). Execution reserves funds from WalletV2 if funded.',
     requiredRoles: ['advertiser', 'manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_CREATE_ADVERTISER,
     parameters: [
@@ -355,6 +371,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Creates an order originating from third-party marketplace channels. Captures commercial source platform, platform seller account reference, seller fee policy snapshot, and input basis (gross sale vs net proceeds).',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Requires ORDER_CREATE_INTERNAL (Management/Admin/Owner) and valid external platform credentials.',
     requiredRoles: ['manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_CREATE_INTERNAL,
     parameters: [
@@ -435,6 +453,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Provides a deep diagnostic view of an order: funding status, wallet balance, active receipt references, publication blockers, and valid administrative actions.',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Requires ORDER_VIEW_PERMITTED. Displays lifecycle diagnostics and eligible next actions.',
     requiredRoles: ['staff', 'manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_VIEW_PERMITTED,
     parameters: [
@@ -469,6 +489,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Inspects whether an order has sufficient creator wallet balance, active payment requests, or verified payment receipts.',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Requires ORDER_VIEW_PERMITTED or ownership of the order.',
     requiredRoles: ['advertiser', 'staff', 'manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_VIEW_PERMITTED,
     parameters: [
@@ -497,6 +519,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Atomically reserves gross funds from the creator available balance in WalletV2 into escrow, updates payment status to `verified`, sets order status to `open_presign`, and publishes the order card to Discord.',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Requires ORDER_CREATE_INTERNAL or ownership of the order, plus sufficient available USD balance in WalletV2.',
     requiredRoles: ['advertiser', 'manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_CREATE_ADVERTISER,
     parameters: [
@@ -531,6 +555,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Authoritatively verifies that payment is confirmed and routes the order card with interactive pre-signing buttons to the designated channel.',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Requires ORDER_PUBLISH permission (Management/Admin/Owner) and verified payment status on the order.',
     requiredRoles: ['manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_PUBLISH,
     parameters: [
@@ -565,6 +591,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Verifies that a real PaymentReceipt exists, has matching amount, is unconsumed, and transitions the order to verified status. Synthetic approvals without receipt evidence are rejected.',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Requires ORDER_PAYMENT_VERIFY permission (strictly Admin & Owner only) and an unconsumed, verified PaymentReceipt reference.',
     requiredRoles: ['admin', 'owner'],
     requiredPermission: Permission.ORDER_PAYMENT_VERIFY,
     parameters: [
@@ -610,6 +638,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Cancels an active or open boost order, releases all active reservations/funds back to the creator wallet, logs audit entries, and archives private execution channels.',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Requires ORDER_CANCEL permission (Management/Admin/Owner) or order creator ownership. Order must not be completed or in active dispute.',
     requiredRoles: ['advertiser', 'manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_CANCEL,
     parameters: [
@@ -651,6 +681,7 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Returns an embed summarizing order commands: list, view, manage, funding, pay-wallet, verify-payment, publish, create, ext-create, and cancel.',
     channelContext: 'Any Discord channel',
+    executionContext: 'Executable by any authorized member in any Discord channel.',
     requiredRoles: ['advertiser', 'staff', 'manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_VIEW_PERMITTED,
     parameters: [],
@@ -674,6 +705,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Enforces order creator or management RBAC. Resolves individual `@User` mentions and `team:<id>` premade squad tokens. Validates qualification, pre-sign registration, absence of duplicate bookings, and exact Mythic+ role matching (1 Tank, 1 Healer, 2 DPS) via backtracking. Automatically provisions private channel `order-{orderId}-{mode}`.',
     channelContext: 'Any authorized Discord channel',
+    executionContext:
+      'Requires ORDER_ASSIGN (Management/Admin/Owner) or order creator ownership. Participants must have pre-signed and satisfy exact 1 Tank, 1 Healer, 2 DPS matching.',
     requiredRoles: ['advertiser', 'manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_ASSIGN,
     parameters: [
@@ -723,7 +756,7 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     ],
   },
 
-  // ─── 4. PROOF COMMAND & EXECUTION CHANNEL (Assigned Boosters, Staff, Mgmt) ──
+  // ─── 4. PROOF COMMAND & EXECUTION CHANNEL (Booster / Pilot) ─────────────────
   {
     id: 'proof-upload',
     name: 'G4!proof',
@@ -734,7 +767,9 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Directly uploads a completion screenshot inside an active private execution channel (`order-{orderId}-{mode}`). Validates image format (PNG/JPEG/WEBP/GIF, max 10MB), records Discord provenance (message ID, channel ID, author ID), creates a RunProof record, and notifies Staff reviewers.',
     channelContext: 'Private Order Execution Channel ONLY (`order-{orderId}-{mode}`)',
-    requiredRoles: ['advertiser', 'staff', 'manager', 'admin', 'owner'],
+    executionContext:
+      'Requires PROOF_SUBMIT_ASSIGNED. Author MUST be an actively assigned booster for the order inside its authoritative private execution channel.',
+    requiredRoles: ['booster', 'pilot'],
     requiredPermission: Permission.PROOF_SUBMIT_ASSIGNED,
     parameters: [
       {
@@ -770,7 +805,7 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     ],
   },
 
-  // ─── 5. PROFILE & CHARACTER COMMANDS (All authorized roles) ─────────────────
+  // ─── 5. PROFILE & CHARACTER COMMANDS ────────────────────────────────────────
   {
     id: 'profile-view',
     name: 'G4!profile',
@@ -781,7 +816,9 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Shows user roles, booster qualification status, main WoW character stats (Mythic+ score, class, spec, item level, Raider.IO link), and squad participation. Includes interactive buttons to refresh Raider.IO data.',
     channelContext: 'Any Discord channel',
+    executionContext: 'Executable by any member to view their own profile or inspect another member public stats.',
     requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    requiredPermission: Permission.USER_VIEW_PERMITTED,
     parameters: [
       {
         name: 'user',
@@ -808,11 +845,14 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     category: 'profile',
     type: 'text_command',
     syntax: 'G4!profile add-char [region] <realm> <characterName>',
-    summary: 'Register a World of Warcraft character with automatic Raider.IO sync.',
+    summary: 'Register a World of Warcraft character with automatic Raider.IO sync. (Approved Boosters only)',
     description:
       'Registers a WoW character for your profile. Automatically queries Raider.IO API for character class, spec, item level, and Mythic+ score breakdown (overall, tank, healer, dps).',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext:
+      'Requires approved World of Warcraft Booster qualification. Validates realm and character name against Raider.IO.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
         name: 'region',
@@ -863,7 +903,9 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Displays a clean summary of all active characters associated with your Discord account, highlighting your Main Character and displaying class, spec, realm, and score.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext: 'Requires approved Booster qualification. Lists registered characters for the user.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [],
     examples: [
       {
@@ -879,11 +921,14 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     category: 'profile',
     type: 'text_command',
     syntax: 'G4!profile set-main <id | characterName>',
-    summary: 'Set your primary/main character for pre-signs and profile displays.',
+    summary: 'Set your primary/main character for pre-signs and profile displays. (Approved Boosters only)',
     description:
       'Designates a character as your Main Character. The main character is displayed on your profile card and used as the default character when pre-signing for boost orders.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext:
+      'Requires approved Booster qualification. Designates active main character for boost pre-signing.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
         name: 'target',
@@ -906,11 +951,14 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     category: 'profile',
     type: 'text_command',
     syntax: 'G4!profile sync [id | characterName]',
-    summary: 'Re-sync character stats, item level, and Mythic+ score from Raider.IO.',
+    summary: 'Re-sync character stats, item level, and Mythic+ score from Raider.IO. (Approved Boosters only)',
     description:
       'Pulls the latest progression data from Raider.IO. If no character is specified, synchronizes your main character.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext:
+      'Requires approved Booster qualification. Pulls latest progression scores from Raider.IO.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
         name: 'target',
@@ -933,11 +981,14 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     category: 'profile',
     type: 'text_command',
     syntax: 'G4!profile remove-char <id | characterName>',
-    summary: 'Deactivate or remove a character from your roster. Aliases: del-char.',
+    summary: 'Deactivate or remove a character from your roster. Aliases: del-char. (Approved Boosters only)',
     description:
       'Safely marks a character as inactive in your roster. Preserves historical assignment and run logs for audit integrity.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext:
+      'Requires approved Booster qualification. Deactivates character from user active roster.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
         name: 'target',
@@ -955,18 +1006,20 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     commonErrors: [],
   },
 
-  // ─── 6. PREMADE SQUAD COMMANDS (All authorized roles) ───────────────────────
+  // ─── 6. PREMADE SQUAD COMMANDS (Booster / Pilot) ────────────────────────────
   {
     id: 'team-create',
     name: 'G4!team create',
     category: 'teams',
     type: 'text_command',
     syntax: 'G4!team create <teamName> [duo|trio|full]',
-    summary: 'Create and register a new premade squad for joint pre-signing.',
+    summary: 'Create and register a new premade squad for joint pre-signing. (Approved Boosters only)',
     description:
       'Registers a premade squad. Capacity options: `duo` (2 players), `trio` (3 players), `full` (4 players for Mythic+). The creator becomes the Squad Leader and can invite members.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext:
+      'Requires approved Booster qualification (ensureApprovedBooster). Creator becomes Squad Leader.',
+    requiredRoles: ['booster', 'pilot'],
     requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
@@ -1008,7 +1061,10 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Shows active squad rosters, member roles (Tank, Healer, DPS, Flex), accepted member count, and pending invitations.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext:
+      'Requires approved Booster qualification. Lists squads where user is leader or accepted member.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [],
     examples: [
       {
@@ -1028,7 +1084,9 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Sends an invitation to a booster. Roles: `tank`, `healer`, `dps`, `flex`. Target user can accept via interactive buttons or G4!team accept.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext:
+      'Requires Squad Leader status or Admin/Manager bypass. Target invitee MUST be an approved booster.',
+    requiredRoles: ['booster', 'pilot'],
     requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
@@ -1076,7 +1134,9 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Confirms your membership in the squad. Once all members have accepted, the squad leader can pre-sign the entire team for boost orders.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext: 'Requires a pending invitation to the specified squad for the executing user.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
         name: 'teamName',
@@ -1102,7 +1162,9 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     summary: 'Decline a pending squad invitation.',
     description: 'Declines an invitation and removes the pending invite record.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext: 'Requires a pending invitation to the specified squad.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
         name: 'teamName',
@@ -1129,7 +1191,9 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Removes yourself from a squad roster. If you are the leader and other accepted members exist, leadership transfers to the senior member.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext: 'Requires active accepted membership in the squad.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
         name: 'teamName',
@@ -1155,7 +1219,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     summary: 'Disband a premade squad. (Squad Leader only)',
     description: 'Disbands the squad and releases all member associations.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext: 'Requires Squad Leader status.',
+    requiredRoles: ['booster', 'pilot'],
     requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
@@ -1182,7 +1247,9 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     summary: 'View detailed squad roster, member roles, and status. Aliases: view.',
     description: 'Displays team roster, members, characters, accepted roles, and invitation status.',
     channelContext: 'Any Discord channel',
-    requiredRoles: ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'],
+    executionContext: 'Executable by any member to inspect squad roster and details.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.SQUAD_MANAGE_OWN,
     parameters: [
       {
         name: 'teamName',
@@ -1211,6 +1278,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Initiated from persistent buttons in order channels. Flow A (Management): Select platform (G4X Direct vs G2G/SkyCoach/Eldorado) -> Game -> Service -> Mode -> Fill modal. Flow B (Advertisers): Game -> Service -> Mode -> Fill modal. Enforces commercial rank commissions and session protection.',
     channelContext: 'Order Creation Channels (`#wow_midnight_mythic`, `#non_pilot`, `#pilot`)',
+    executionContext:
+      'Initiated via persistent button. Flow A requires ORDER_CREATE_INTERNAL; Flow B requires ORDER_CREATE_ADVERTISER. Session expires after 15 minutes.',
     requiredRoles: ['advertiser', 'manager', 'admin', 'owner'],
     requiredPermission: Permission.ORDER_CREATE_ADVERTISER,
     parameters: [
@@ -1251,7 +1320,10 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Boosters click role buttons on public order cards to register interest. Keystone owners can toggle keystone contribution. Squad leaders click Premade Team to register their entire active roster. Withdraw button removes registration.',
     channelContext: 'Order Publication Channels (`#mythic_plus_boosts`, `#non_pilot_boosts`, `#pilot_boosts`)',
-    requiredRoles: ['advertiser', 'staff', 'manager', 'admin', 'owner'],
+    executionContext:
+      'Clicking role buttons requires approved Booster qualification (CLAIM_CREATE) and absence of active double-booking.',
+    requiredRoles: ['booster', 'pilot'],
+    requiredPermission: Permission.CLAIM_CREATE,
     parameters: [
       {
         name: 'Role Button',
@@ -1286,8 +1358,10 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Inside private order channels (`order-{orderId}-{mode}`), assigned boosters click **Submit Proof** (opens modal for screenshot URL and completion time) or **Complete Run** (marks run finished and requests proof). Pings staff reviewers automatically.',
     channelContext: 'Private Order Execution Channel ONLY (`order-{orderId}-{mode}`)',
-    requiredRoles: ['advertiser', 'staff', 'manager', 'admin', 'owner'],
-    requiredPermission: Permission.PROOF_SUBMIT_ASSIGNED,
+    executionContext:
+      'Complete Run and Submit Proof buttons require assigned booster status (RUN_FINISH_ASSIGNED, PROOF_SUBMIT_ASSIGNED) or Staff review (PROOF_REVIEW).',
+    requiredRoles: ['staff', 'manager', 'admin', 'owner'],
+    requiredPermission: Permission.PROOF_REVIEW,
     parameters: [
       {
         name: 'Submit Proof Modal',
@@ -1320,6 +1394,8 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
     description:
       'Applicants submit application forms via modals in #become-booster, #become-adv, #become-exchanger. Review panels in #app-boosters, #app-adv render with one-click Approve, Reject, and Request Info buttons for management.',
     channelContext: 'Registration & Application Management Channels',
+    executionContext:
+      'Approve, Reject, and Request Info buttons require BOOSTER_APPLICATION_REVIEW permission (Management, Admin, Owner).',
     requiredRoles: ['manager', 'admin', 'owner'],
     requiredPermission: Permission.BOOSTER_APPLICATION_REVIEW,
     parameters: [
@@ -1344,6 +1420,12 @@ export const DISCORD_COMMAND_REGISTRY: DiscordCommandItem[] = [
 /**
  * Evaluates the union of permitted commands for an authenticated user holding specified roles.
  * Returns null if the user does NOT hold any authorized guide roles (e.g. Booster/Pilot only).
+ *
+ * Enforces:
+ *  - Strict RBAC: No unconditional bypasses for Admin or Manager.
+ *  - Booster-specific actions (proof upload, squad creation/management, character management)
+ *    are shown ONLY if the user holds an active booster or pilot role.
+ *  - Owner inspects the full documentation catalog without bypassing runtime execution checks.
  */
 export function getPermittedCommandsForRoles(
   userRoleKeys: string[]
@@ -1357,123 +1439,176 @@ export function getPermittedCommandsForRoles(
     'owner',
   ];
 
-  // 1. Role Gate: Check if user has at least one authorized role
-  const effectiveRoles = userRoleKeys.filter((r): r is SystemRoleKey =>
+  // 1. Role Gate: Caller MUST hold at least one authorized guide role
+  const effectiveGuideRoles = userRoleKeys.filter((r): r is SystemRoleKey =>
     authorizedGuideRoles.includes(r as SystemRoleKey)
   );
 
-  if (effectiveRoles.length === 0) {
-    return null; // Denied: Booster/Pilot-only or unauthenticated
+  if (effectiveGuideRoles.length === 0) {
+    return null; // Denied: Booster-only, Pilot-only, or unauthenticated
   }
 
-  const isOwner = effectiveRoles.includes('owner');
-  const isAdmin = effectiveRoles.includes('admin');
-  const isManager = effectiveRoles.includes('manager');
-  const isStaff = effectiveRoles.includes('staff');
-  const isAdvertiser = effectiveRoles.includes('advertiser');
-  const isExchanger = effectiveRoles.includes('exchanger');
+  const isOwner = userRoleKeys.includes('owner');
+  const isAdmin = userRoleKeys.includes('admin');
+  const isManager = userRoleKeys.includes('manager');
+  const isStaff = userRoleKeys.includes('staff');
+  const isAdvertiser = userRoleKeys.includes('advertiser');
+  const isExchanger = userRoleKeys.includes('exchanger');
+  const isBoosterEligible = userRoleKeys.includes('booster') || userRoleKeys.includes('pilot');
 
-  // 2. Filter commands by checking if any of the user's active roles permit the command (True Role Union)
+  // Evaluate each command using explicit, role-authorized contracts:
   const permittedMap = new Map<string, DiscordCommandItem>();
 
   for (const cmd of DISCORD_COMMAND_REGISTRY) {
+    // Owner can inspect the entire catalog for documentation purposes (Requirement 6)
     if (isOwner) {
       permittedMap.set(cmd.id, cmd);
       continue;
     }
 
+    let permitted = false;
+
+    // A. Booster-specific actions: proof submission, squad management, character management, public pre-signing.
+    // Requirement 3: "Do not show Booster-specific proof, team or character-management actions
+    // to Advertiser, Exchanger or Staff unless the actual user has the additional required eligibility or role."
+    // Also applies to Manager-only and Admin-only unless they hold booster eligibility (Requirement 1 & 3).
+    const isBoosterSpecificAction = [
+      'proof-upload',
+      'team-create',
+      'team-list',
+      'team-invite',
+      'team-accept',
+      'team-decline',
+      'team-leave',
+      'team-disband',
+      'team-info',
+      'profile-add-char',
+      'profile-characters',
+      'profile-set-main',
+      'profile-sync',
+      'profile-remove-char',
+      'presign-buttons-card',
+    ].includes(cmd.id);
+
+    if (isBoosterSpecificAction) {
+      if (isBoosterEligible) {
+        permitted = true;
+      }
+      if (permitted) {
+        permittedMap.set(cmd.id, cmd);
+      }
+      continue;
+    }
+
+    // B. Admin Role: Can inspect all operational, order, setup, and verification commands.
+    // Has ORDER_PAYMENT_VERIFY, SERVICE_CONFIG_MANAGE, ORDER_CREATE_INTERNAL, etc.
     if (isAdmin) {
-      permittedMap.set(cmd.id, cmd);
-      continue;
+      const adminAllowed = [
+        'setup-all',
+        'setup-registration',
+        'setup-orders',
+        'setup-publications',
+        'order-create',
+        'order-ext-create',
+        'order-list',
+        'order-view',
+        'order-manage',
+        'order-funding',
+        'order-pay-wallet',
+        'order-publish',
+        'order-verify-payment',
+        'order-cancel',
+        'order-help',
+        'assign-command',
+        'wizard-order-create',
+        'registration-review-panels',
+        'execution-channel-controls',
+        'profile-view',
+      ];
+      if (adminAllowed.includes(cmd.id)) {
+        permitted = true;
+      }
     }
 
-    if (isManager && cmd.id !== 'order-verify-payment') {
-      permittedMap.set(cmd.id, cmd);
-      continue;
+    // C. Manager Role: Can inspect operational, order, setup, and registration review.
+    // Strictly does NOT have ORDER_PAYMENT_VERIFY (Admin & Owner only).
+    if (isManager) {
+      const managerAllowed = [
+        'setup-all',
+        'setup-registration',
+        'setup-orders',
+        'setup-publications',
+        'order-create',
+        'order-ext-create',
+        'order-list',
+        'order-view',
+        'order-manage',
+        'order-funding',
+        'order-pay-wallet',
+        'order-publish',
+        'order-cancel',
+        'order-help',
+        'assign-command',
+        'wizard-order-create',
+        'registration-review-panels',
+        'execution-channel-controls',
+        'profile-view',
+      ];
+      if (managerAllowed.includes(cmd.id)) {
+        permitted = true;
+      }
     }
 
-    // Role-specific whitelist checks for union
-    const advertiserAllowed = [
-      'order-create',
-      'order-list',
-      'order-view',
-      'order-funding',
-      'order-pay-wallet',
-      'order-cancel',
-      'order-help',
-      'assign-command',
-      'proof-upload',
-      'profile-view',
-      'profile-add-char',
-      'profile-characters',
-      'profile-set-main',
-      'profile-sync',
-      'profile-remove-char',
-      'team-create',
-      'team-list',
-      'team-invite',
-      'team-accept',
-      'team-decline',
-      'team-leave',
-      'team-disband',
-      'team-info',
-      'wizard-order-create',
-      'presign-buttons-card',
-      'execution-channel-controls',
-    ];
-    if (isAdvertiser && advertiserAllowed.includes(cmd.id)) {
-      permittedMap.set(cmd.id, cmd);
-      continue;
+    // D. Staff Role: Read-only order inspection, execution channel tracking, profile-view.
+    // Strictly does NOT have setup, creation, cancel, assign, payment verification, or booster proof upload.
+    if (isStaff) {
+      const staffAllowed = [
+        'order-list',
+        'order-view',
+        'order-manage',
+        'order-funding',
+        'order-help',
+        'execution-channel-controls',
+        'profile-view',
+      ];
+      if (staffAllowed.includes(cmd.id)) {
+        permitted = true;
+      }
     }
 
-    const staffAllowed = [
-      'order-list',
-      'order-view',
-      'order-manage',
-      'order-funding',
-      'order-help',
-      'proof-upload',
-      'profile-view',
-      'profile-add-char',
-      'profile-characters',
-      'profile-set-main',
-      'profile-sync',
-      'profile-remove-char',
-      'team-create',
-      'team-list',
-      'team-invite',
-      'team-accept',
-      'team-decline',
-      'team-leave',
-      'team-disband',
-      'team-info',
-      'presign-buttons-card',
-      'execution-channel-controls',
-    ];
-    if (isStaff && staffAllowed.includes(cmd.id)) {
-      permittedMap.set(cmd.id, cmd);
-      continue;
+    // E. Advertiser Role: Advertiser order creation, list, view, own order funding/wallet/cancel, assign own, wizard, profile-view.
+    // Strictly does NOT have setup, ext-create, publish, verify-payment, or application review.
+    if (isAdvertiser) {
+      const advertiserAllowed = [
+        'order-create',
+        'order-list',
+        'order-view',
+        'order-funding',
+        'order-pay-wallet',
+        'order-cancel',
+        'order-help',
+        'assign-command',
+        'wizard-order-create',
+        'profile-view',
+      ];
+      if (advertiserAllowed.includes(cmd.id)) {
+        permitted = true;
+      }
     }
 
-    const exchangerAllowed = [
-      'profile-view',
-      'profile-add-char',
-      'profile-characters',
-      'profile-set-main',
-      'profile-sync',
-      'profile-remove-char',
-      'team-create',
-      'team-list',
-      'team-invite',
-      'team-accept',
-      'team-decline',
-      'team-leave',
-      'team-disband',
-      'team-info',
-    ];
-    if (isExchanger && exchangerAllowed.includes(cmd.id)) {
+    // F. Exchanger Role: profile-view only.
+    // Strictly does NOT have orders, setup, or application review.
+    if (isExchanger) {
+      const exchangerAllowed = [
+        'profile-view',
+      ];
+      if (exchangerAllowed.includes(cmd.id)) {
+        permitted = true;
+      }
+    }
+
+    if (permitted) {
       permittedMap.set(cmd.id, cmd);
-      continue;
     }
   }
 

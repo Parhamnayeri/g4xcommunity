@@ -15,6 +15,7 @@
 
 import { Router, Request, Response } from 'express';
 import { requireAuth, AuthenticatedRequest } from './middleware/auth';
+import prisma from '../database/db';
 import {
   getPermittedCommandsForRoles,
   DiscordCommandItem,
@@ -32,9 +33,9 @@ discordCommandsRouter.get(
   requireAuth,
   async (req: Request, res: Response): Promise<void> => {
     try {
-      const user = (req as AuthenticatedRequest).user;
+      const sessionUser = (req as AuthenticatedRequest).user;
 
-      if (!user || !user.isActive) {
+      if (!sessionUser || !sessionUser.isActive) {
         res.status(401).json({
           error: 'UNAUTHORIZED',
           message: 'An active authenticated session is required to access the Discord Commands Guide.',
@@ -42,7 +43,23 @@ discordCommandsRouter.get(
         return;
       }
 
-      const roleKeys = (user.userRoles || []).map((r) => r.roleKey as string);
+      // Requirement 9: Authoritative live database query to reflect real-time role revocations & deactivations
+      const dbUser = await prisma.user.findUnique({
+        where: { discordId: sessionUser.discordId },
+        include: {
+          userRoles: true,
+        },
+      });
+
+      if (!dbUser || !dbUser.isActive) {
+        res.status(401).json({
+          error: 'UNAUTHORIZED',
+          message: 'Account not found or has been deactivated.',
+        });
+        return;
+      }
+
+      const roleKeys = (dbUser.userRoles || []).map((r) => r.roleKey as string);
 
       // Evaluate server-side role permissions
       const permittedResult = getPermittedCommandsForRoles(roleKeys);
