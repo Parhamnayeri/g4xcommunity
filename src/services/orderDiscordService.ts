@@ -455,205 +455,254 @@ export function buildOrderComponents(
   return [row];
 }
 
+const inFlightPublications = new Map<number, Promise<PublishOrderResult>>();
+
 /**
  * Publishes a real order card to Discord, or refreshes an existing one.
- * Fully idempotent: Retries or restarts never produce duplicate cards.
+ * Fully idempotent: Retries, restarts or concurrent calls never produce duplicate cards.
  */
 export async function publishOrRefreshOrderCard(
   client: any,
   orderId: number,
   optionsOrChannelId?: string | PublishCardOptions
 ): Promise<PublishOrderResult> {
-  const activeClient = client || _globalDiscordClient;
-  if (!activeClient) {
-    return {
-      success: false,
-      error: 'DISCORD_CLIENT_NOT_INITIALIZED: Discord client is not available',
-    };
+  const existingInFlight = inFlightPublications.get(orderId);
+  if (existingInFlight) {
+    return await existingInFlight;
   }
 
-  let explicitChannelId: string | undefined;
-  let targetGuildId: string | undefined;
-
-  if (typeof optionsOrChannelId === 'string') {
-    // If caller passed a guild ID (e.g. from message.guild?.id), adapt cleanly
-    if (activeClient.guilds?.cache && activeClient.guilds.cache.has(optionsOrChannelId)) {
-      targetGuildId = optionsOrChannelId;
-    } else {
-      explicitChannelId = optionsOrChannelId;
-    }
-  } else if (optionsOrChannelId && typeof optionsOrChannelId === 'object') {
-    explicitChannelId = optionsOrChannelId.targetChannelId;
-    targetGuildId = optionsOrChannelId.guildId;
-  }
-
-  const order = await prisma.order.findUnique({
-    where: { id: orderId },
-    include: {
-      game: true,
-      service: true,
-      requiredRoles: true,
-      keyRequirements: true,
-      presigns: {
-        include: { user: true },
-      },
-      assignments: {
-        include: { user: true },
-      },
-    },
-  });
-
-  if (!order) {
-    throw new DomainError(DomainErrorCode.ORDER_NOT_FOUND, `Order #${orderId} not found`);
-  }
-
-  // Payment verification guard: Unfunded/unverified orders must not be published for public claims
-  if (order.paymentStatus !== 'verified' && order.paymentStatus !== 'unneeded') {
-    return {
-      success: false,
-      error: `PAYMENT_NOT_VERIFIED: Order #${order.id} cannot be published for public claims. Payment status is '${order.paymentStatus}'`,
-    };
-  }
-
-  // Approved External Platform Order Policy validation
-  if (order.paymentStatus === 'unneeded') {
-    if (
-      order.creatorType !== 'g4x' ||
-      !order.sourceWebsite ||
-      !['g2g', 'skycoach', 'eldorado'].includes(order.sourceWebsite.toLowerCase()) ||
-      !order.externalOrderId
-    ) {
+  const publicationPromise = (async (): Promise<PublishOrderResult> => {
+    const activeClient = client || _globalDiscordClient;
+    if (!activeClient) {
       return {
         success: false,
-        error: `EXTERNAL_POLICY_VIOLATION: Order #${order.id} does not qualify for external-order publication policy. Valid source platform and Site Order ID are required.`,
+        error: 'DISCORD_CLIENT_NOT_INITIALIZED: Discord client is not available',
       };
     }
-    if (!order.game?.isActive || !order.service?.isActive) {
-      return {
-        success: false,
-        error: `INACTIVE_GAME_OR_SERVICE: Order #${order.id} cannot be published because the game or service is inactive.`,
-      };
-    }
-  }
 
-  // Advertiser Order Guard: Must be genuine funded verified
-  if (order.creatorType === 'advertiser' && order.paymentStatus !== 'verified') {
-    return {
-      success: false,
-      error: `ADVERTISER_UNFUNDED: Advertiser Order #${order.id} cannot be published until payment is verified.`,
-    };
-  }
+    let explicitChannelId: string | undefined;
+    let targetGuildId: string | undefined;
 
-  const channel = await resolveOrdersChannel(
-    activeClient,
-    {
-      gameSlug: order.gameSlug,
-      serviceId: order.serviceId,
-      serviceKey: order.service?.serviceKey,
-      orderMode: order.orderMode,
-      discordChannelId: explicitChannelId || order.discordChannelId,
-    },
-    targetGuildId || process.env.DISCORD_GUILD_ID
-  );
-
-  if (!channel) {
-    return {
-      success: false,
-      error: 'NO_ORDERS_CHANNEL_RESOLVED: Could not find configured orders channel for this game/service',
-    };
-  }
-
-  // Validate bot channel permissions
-  const permCheck = validateBotChannelPermissions(channel);
-  if (!permCheck.valid) {
-    return {
-      success: false,
-      error: `MISSING_PERMISSIONS: Bot lacks required permission(s) [${permCheck.missing.join(', ')}] in channel #${channel.name || channel.id}`,
-    };
-  }
-
-  const embed = buildOrderEmbed(order, order.presigns, order.assignments);
-  const components = buildOrderComponents(order, order.presigns);
-
-  // Check if an existing published message exists to update
-  if (order.discordChannelId && order.discordMessageId) {
-    try {
-      const targetCh =
-        channel.id === order.discordChannelId
-          ? channel
-          : await activeClient.channels.fetch(order.discordChannelId).catch(() => null);
-
-      if (targetCh && typeof targetCh.isTextBased === 'function' && targetCh.isTextBased()) {
-        const existingMsg = await targetCh.messages.fetch(order.discordMessageId).catch(() => null);
-        if (existingMsg) {
-          await existingMsg.edit({ embeds: [embed], components });
-          return {
-            success: true,
-            messageId: existingMsg.id,
-            channelId: targetCh.id,
-            isNew: false,
-          };
-        }
+    if (typeof optionsOrChannelId === 'string') {
+      // If caller passed a guild ID (e.g. from message.guild?.id), adapt cleanly
+      if (activeClient.guilds?.cache && activeClient.guilds.cache.has(optionsOrChannelId)) {
+        targetGuildId = optionsOrChannelId;
+      } else {
+        explicitChannelId = optionsOrChannelId;
       }
-    } catch (err: any) {
-      console.warn(`[OrderDiscord] Could not edit existing message #${order.discordMessageId}:`, err?.message || err);
-      // If error is transient (not 10008 Unknown Message or 404), retry editing once before republishing
-      if (err?.code !== 10008 && err?.status !== 404) {
-        try {
-          await new Promise((res) => setTimeout(res, 500));
-          const targetCh =
-            channel.id === order.discordChannelId
-              ? channel
-              : await activeClient.channels.fetch(order.discordChannelId).catch(() => null);
-          if (targetCh) {
-            const existingMsg = await targetCh.messages.fetch(order.discordMessageId).catch(() => null);
-            if (existingMsg) {
-              await existingMsg.edit({ embeds: [embed], components });
-              return {
-                success: true,
-                messageId: existingMsg.id,
-                channelId: targetCh.id,
-                isNew: false,
-              };
-            }
-          }
-        } catch (retryErr) {
-          console.warn(`[OrderDiscord] Retry edit failed, proceeding to republish:`, retryErr);
-        }
-      }
+    } else if (optionsOrChannelId && typeof optionsOrChannelId === 'object') {
+      explicitChannelId = optionsOrChannelId.targetChannelId;
+      targetGuildId = optionsOrChannelId.guildId;
     }
-  }
 
-  // Publish new message with retry on transient Discord failures
-  let sentMsg: any = null;
-  try {
-    sentMsg = await channel.send({ embeds: [embed], components });
-  } catch (apiErr: any) {
-    try {
-      await new Promise((res) => setTimeout(res, 500));
-      sentMsg = await channel.send({ embeds: [embed], components });
-    } catch (retryApiErr: any) {
-      console.error(`[OrderDiscord] Discord API error while sending order #${order.id} card:`, retryApiErr);
-      return {
-        success: false,
-        error: `DISCORD_API_ERROR: ${retryApiErr?.message || retryApiErr}`,
-      };
-    }
-  }
-
-  // Persist references with safe retry reconciliation
-  try {
-    await prisma.order.update({
-      where: { id: order.id },
-      data: {
-        discordChannelId: channel.id,
-        discordMessageId: sentMsg.id,
-        publishedAt: order.publishedAt ?? new Date(),
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        game: true,
+        service: true,
+        requiredRoles: true,
+        keyRequirements: true,
+        presigns: {
+          include: { user: true },
+        },
+        assignments: {
+          include: { user: true },
+        },
       },
     });
-  } catch (dbErr) {
-    console.error(`[OrderDiscord] DB save failed after Discord message send for order #${order.id}:`, dbErr);
-    // Safe retry
+
+    if (!order) {
+      throw new DomainError(DomainErrorCode.ORDER_NOT_FOUND, `Order #${orderId} not found`);
+    }
+
+    // Payment verification guard: Unfunded/unverified orders must not be published for public claims
+    if (order.paymentStatus !== 'verified' && order.paymentStatus !== 'unneeded') {
+      return {
+        success: false,
+        error: `PAYMENT_NOT_VERIFIED: Order #${order.id} cannot be published for public claims. Payment status is '${order.paymentStatus}'`,
+      };
+    }
+
+    // Approved External Platform Order Policy validation
+    if (order.paymentStatus === 'unneeded') {
+      if (
+        order.creatorType !== 'g4x' ||
+        !order.sourceWebsite ||
+        !['g2g', 'skycoach', 'eldorado'].includes(order.sourceWebsite.toLowerCase()) ||
+        !order.externalOrderId
+      ) {
+        return {
+          success: false,
+          error: `EXTERNAL_POLICY_VIOLATION: Order #${order.id} does not qualify for external-order publication policy. Valid source platform and Site Order ID are required.`,
+        };
+      }
+      if (!order.game?.isActive || !order.service?.isActive) {
+        return {
+          success: false,
+          error: `INACTIVE_GAME_OR_SERVICE: Order #${order.id} cannot be published because the game or service is inactive.`,
+        };
+      }
+    }
+
+    // Advertiser Order Guard: Must be genuine funded verified
+    if (order.creatorType === 'advertiser' && order.paymentStatus !== 'verified') {
+      return {
+        success: false,
+        error: `ADVERTISER_UNFUNDED: Advertiser Order #${order.id} cannot be published until payment is verified.`,
+      };
+    }
+
+    const channel = await resolveOrdersChannel(
+      activeClient,
+      {
+        gameSlug: order.gameSlug,
+        serviceId: order.serviceId,
+        serviceKey: order.service?.serviceKey,
+        orderMode: order.orderMode,
+        discordChannelId: explicitChannelId || order.discordChannelId,
+      },
+      targetGuildId || process.env.DISCORD_GUILD_ID
+    );
+
+    if (!channel) {
+      return {
+        success: false,
+        error: 'NO_ORDERS_CHANNEL_RESOLVED: Could not find configured orders channel for this game/service',
+      };
+    }
+
+    // Validate bot channel permissions
+    const permCheck = validateBotChannelPermissions(channel);
+    if (!permCheck.valid) {
+      return {
+        success: false,
+        error: `MISSING_PERMISSIONS: Bot lacks required permission(s) [${permCheck.missing.join(', ')}] in channel #${channel.name || channel.id}`,
+      };
+    }
+
+    const embed = buildOrderEmbed(order, order.presigns, order.assignments);
+    const components = buildOrderComponents(order, order.presigns);
+
+    // Check if an existing published message exists to update
+    if (order.discordChannelId && order.discordMessageId) {
+      try {
+        const targetCh =
+          channel.id === order.discordChannelId
+            ? channel
+            : await activeClient.channels.fetch(order.discordChannelId).catch(() => null);
+
+        if (targetCh && typeof targetCh.isTextBased === 'function' && targetCh.isTextBased()) {
+          const existingMsg = await targetCh.messages.fetch(order.discordMessageId).catch(() => null);
+          if (existingMsg) {
+            await existingMsg.edit({ embeds: [embed], components });
+            return {
+              success: true,
+              messageId: existingMsg.id,
+              channelId: targetCh.id,
+              isNew: false,
+            };
+          }
+        }
+      } catch (err: any) {
+        console.warn(`[OrderDiscord] Could not edit existing message #${order.discordMessageId}:`, err?.message || err);
+        const isUnknownMessage =
+          err?.code === 10008 || err?.status === 404 || err?.message?.includes('Unknown Message');
+
+        if (!isUnknownMessage) {
+          // Transient error: retry editing once before failing. Never blindly republish!
+          try {
+            await new Promise((res) => setTimeout(res, 500));
+            const targetCh =
+              channel.id === order.discordChannelId
+                ? channel
+                : await activeClient.channels.fetch(order.discordChannelId).catch(() => null);
+            if (targetCh && typeof targetCh.isTextBased === 'function' && targetCh.isTextBased()) {
+              const existingMsg = await targetCh.messages.fetch(order.discordMessageId).catch(() => null);
+              if (existingMsg) {
+                await existingMsg.edit({ embeds: [embed], components });
+                return {
+                  success: true,
+                  messageId: existingMsg.id,
+                  channelId: targetCh.id,
+                  isNew: false,
+                };
+              }
+            }
+          } catch (retryErr: any) {
+            console.warn(`[OrderDiscord] Retry edit failed on transient error:`, retryErr);
+            // Do NOT fall through to channel.send on transient errors — avoids duplicate cards
+            return {
+              success: false,
+              error: `DISCORD_EDIT_FAILED: Failed to edit existing card #${order.discordMessageId}: ${retryErr?.message || retryErr}`,
+              channelId: order.discordChannelId,
+              messageId: order.discordMessageId,
+            };
+          }
+        } else {
+          // The message was genuinely deleted in Discord; clear stale messageId so we can cleanly republish
+          await prisma.order.update({
+            where: { id: order.id },
+            data: { discordMessageId: null },
+          }).catch(() => {});
+        }
+      }
+    }
+
+    // Recovery check: Inspect recent channel messages if discordMessageId is missing
+    if (!order.discordMessageId && typeof channel.messages?.fetch === 'function') {
+      try {
+        const recentMessages = await channel.messages.fetch({ limit: 25 }).catch(() => null);
+        if (recentMessages) {
+          const list = typeof recentMessages.find === 'function'
+            ? recentMessages
+            : Array.from(recentMessages.values ? recentMessages.values() : []);
+          const existingCard = list.find((m: any) => {
+            const emb = m.embeds?.[0];
+            return emb?.footer?.text?.includes(`ID: #${order.id}`);
+          });
+
+          if (existingCard) {
+            await prisma.order.update({
+              where: { id: order.id },
+              data: {
+                discordChannelId: channel.id,
+                discordMessageId: existingCard.id,
+                publishedAt: order.publishedAt ?? new Date(),
+              },
+            });
+            await existingCard.edit({ embeds: [embed], components });
+            return {
+              success: true,
+              messageId: existingCard.id,
+              channelId: channel.id,
+              isNew: false,
+            };
+          }
+        }
+      } catch (recErr) {
+        console.warn('[OrderDiscord] Could not check recent messages for existing order card:', recErr);
+      }
+    }
+
+    // Publish new message with retry on transient Discord failures
+    let sentMsg: any = null;
+    try {
+      sentMsg = await channel.send({ embeds: [embed], components });
+    } catch (apiErr: any) {
+      try {
+        await new Promise((res) => setTimeout(res, 500));
+        sentMsg = await channel.send({ embeds: [embed], components });
+      } catch (retryApiErr: any) {
+        console.error(`[OrderDiscord] Discord API error while sending order #${order.id} card:`, retryApiErr);
+        return {
+          success: false,
+          error: `DISCORD_API_ERROR: ${retryApiErr?.message || retryApiErr}`,
+        };
+      }
+    }
+
+    // Persist references with safe retry reconciliation
+    let dbPersisted = false;
     try {
       await prisma.order.update({
         where: { id: order.id },
@@ -663,17 +712,44 @@ export async function publishOrRefreshOrderCard(
           publishedAt: order.publishedAt ?? new Date(),
         },
       });
-    } catch (retryErr) {
-      console.error(`[OrderDiscord] Retry DB save also failed for order #${order.id}:`, retryErr);
+      dbPersisted = true;
+    } catch (dbErr) {
+      console.error(`[OrderDiscord] DB save failed after Discord message send for order #${order.id}:`, dbErr);
+      try {
+        await prisma.order.update({
+          where: { id: order.id },
+          data: {
+            discordChannelId: channel.id,
+            discordMessageId: sentMsg.id,
+            publishedAt: order.publishedAt ?? new Date(),
+          },
+        });
+        dbPersisted = true;
+      } catch (retryErr: any) {
+        console.error(`[OrderDiscord] Retry DB save also failed for order #${order.id}:`, retryErr);
+        return {
+          success: false,
+          error: `DB_PERSISTENCE_FAILED: Discord message was sent (${sentMsg.id}) but database persistence failed: ${retryErr?.message || retryErr}`,
+          messageId: sentMsg.id,
+          channelId: channel.id,
+        };
+      }
     }
-  }
 
-  return {
-    success: true,
-    messageId: sentMsg.id,
-    channelId: channel.id,
-    isNew: true,
-  };
+    return {
+      success: dbPersisted,
+      messageId: sentMsg.id,
+      channelId: channel.id,
+      isNew: true,
+    };
+  })();
+
+  inFlightPublications.set(orderId, publicationPromise);
+  try {
+    return await publicationPromise;
+  } finally {
+    inFlightPublications.delete(orderId);
+  }
 }
 
 /**
