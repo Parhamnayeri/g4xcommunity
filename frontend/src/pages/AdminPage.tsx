@@ -12,6 +12,7 @@ import {
   ChannelsWorkspace,
 } from '../components/admin/NativeAdminModules';
 import { KycManagementPage } from './KycManagementPage';
+import { RulesManagementWorkspace } from '../components/admin/RulesManagementWorkspace';
 import {
   AdminOverviewResponse,
   AdminTradeItem,
@@ -38,6 +39,7 @@ export type AdminTab =
   | 'exchange'
   | 'games'
   | 'discord'
+  | 'rules'
   | 'audit'
   | 'roles';
 
@@ -52,6 +54,7 @@ const VALID_ADMIN_TABS: AdminTab[] = [
   'exchange',
   'games',
   'discord',
+  'rules',
   'audit',
   'roles',
 ];
@@ -263,6 +266,7 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
           { key: 'exchange', label: 'Marketplace Oversight', icon: '🪙' },
           { key: 'games', label: 'Games & Services', icon: '🎮' },
           { key: 'discord', label: 'Discord Channels', icon: '💬' },
+          { key: 'rules', label: 'Rules & Policies', icon: '⚖️' },
           { key: 'audit', label: 'Audit Trail', icon: '📜' },
           { key: 'roles', label: 'Role & Permissions', icon: '🛡️' },
         ].map((t) => (
@@ -712,6 +716,11 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
           )}
         </div>
       )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* RULES & POLICIES CMS WORKSPACE                                                */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'rules' && <RulesManagementWorkspace />}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 7: ROLE & PERMISSION MATRIX                                               */}

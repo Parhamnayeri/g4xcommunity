@@ -1570,3 +1570,116 @@ model UserPayoutPreference {
   @@index([userId])
   @@map("user_payout_preferences")
 }
+
+// ─── ۴۵. اسناد خط‌مشی و قوانین پلتفرم (Rules & Policies CMS) ───────────────────
+model PolicyDocument {
+  id                        Int             @id @default(autoincrement())
+  slug                      String          @unique @default("community-rules")
+  title                     String          @default("G4X Community Official Policy & Rules")
+  description               String?
+  currentPublishedVersionId Int?            @map("current_published_version_id")
+  createdAt                 DateTime        @default(now()) @map("created_at")
+  updatedAt                 DateTime        @updatedAt @map("updated_at")
+
+  versions                  PolicyVersion[]
+
+  @@map("policy_documents")
+}
+
+model PolicyVersion {
+  id                  Int                    @id @default(autoincrement())
+  documentId          Int                    @map("document_id")
+  versionNumber       Int                    @map("version_number")
+  status              String                 @default("DRAFT") // DRAFT | PUBLISHED | ARCHIVED
+  title               String                 @default("G4X Community Official Policy & Rules")
+  effectiveDate       DateTime?              @map("effective_date")
+  publishedAt         DateTime?              @map("published_at")
+  authorDiscordId     String                 @map("author_discord_id")
+  publisherDiscordId  String?                @map("publisher_discord_id")
+  lastEditorDiscordId String?                @map("last_editor_discord_id")
+  changelog           String?
+  discordSyncStatus   String                 @default("PENDING") @map("discord_sync_status") // PENDING | SYNCED | FAILED | NOT_CONFIGURED
+  discordSyncResult   String?                @map("discord_sync_result")
+  discordSyncedAt     DateTime?              @map("discord_synced_at")
+  rawContentMarkdown  String                 @map("raw_content_markdown")
+  createdAt           DateTime               @default(now()) @map("created_at")
+  updatedAt           DateTime               @updatedAt @map("updated_at")
+
+  document            PolicyDocument         @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  sections            PolicySection[]
+  discordMessages     PolicyDiscordMessage[]
+  userAcceptances     UserPolicyAcceptance[]
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId])
+  @@index([status])
+  @@map("policy_versions")
+}
+
+model PolicySection {
+  id            Int                @id @default(autoincrement())
+  versionId     Int                @map("version_id")
+  sectionNumber Int                @map("section_number")
+  sectionKey    String             @map("section_key")
+  title         String
+  sortOrder     Int                @default(0) @map("sort_order")
+  isActive      Boolean            @default(true) @map("is_active")
+  content       String?
+
+  version       PolicyVersion      @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  subsections   PolicySubsection[]
+
+  @@unique([versionId, sectionKey])
+  @@index([versionId, sortOrder])
+  @@map("policy_sections")
+}
+
+model PolicySubsection {
+  id            Int           @id @default(autoincrement())
+  sectionId     Int           @map("section_id")
+  subsectionKey String?       @map("subsection_key")
+  title         String
+  sortOrder     Int           @default(0) @map("sort_order")
+  content       String
+  contentType   String        @default("MARKDOWN") @map("content_type") // MARKDOWN | TABLE | LIST
+  tableDataJson String?       @map("table_data_json")
+  isActive      Boolean       @default(true) @map("is_active")
+
+  section       PolicySection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  @@index([sectionId, sortOrder])
+  @@map("policy_subsections")
+}
+
+model PolicyDiscordMessage {
+  id           Int           @id @default(autoincrement())
+  versionId    Int           @map("version_id")
+  channelId    String        @map("channel_id")
+  messageId    String        @map("message_id")
+  messageIndex Int           @default(0) @map("message_index")
+  sectionKey   String?       @map("section_key")
+  checksum     String?
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  version      PolicyVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([versionId])
+  @@index([channelId])
+  @@map("policy_discord_messages")
+}
+
+model UserPolicyAcceptance {
+  id         Int           @id @default(autoincrement())
+  userId     String        @map("user_id")
+  versionId  Int           @map("version_id")
+  acceptedAt DateTime      @default(now()) @map("accepted_at")
+  ipAddress  String?       @map("ip_address")
+  userAgent  String?       @map("user_agent")
+
+  version    PolicyVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, versionId])
+  @@index([userId])
+  @@index([versionId])
+  @@map("user_policy_acceptances")
+}

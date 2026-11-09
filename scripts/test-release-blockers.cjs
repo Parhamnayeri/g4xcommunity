@@ -14,13 +14,14 @@ function run(args) {
 }
 console.log(`Disposable test database: ${directory}`);
 run(['node_modules/prisma/build/index.js', 'migrate', 'deploy']);
-run(['node_modules/ts-node/dist/bin.js', 'src/database/seed.ts']);
 const selected = process.argv[2];
+if (selected && selected !== 'startup') run(['node_modules/ts-node/dist/bin.js', 'src/database/seed.ts']);
 if (!selected || selected === 'startup') run(['node_modules/ts-node/dist/bin.js', 'src/test/startup_persistence_suite.ts']);
 else if (selected === 'spa') run(['node_modules/ts-node/dist/bin.js', 'src/test/spa_routing_suite.ts']);
 else if (selected === 'characters') run(['node_modules/ts-node/dist/bin.js', 'src/test/raiderio_booster_character_suite.ts']);
 else if (selected === 'booster-hub') run(['node_modules/ts-node/dist/bin.js', 'src/test/discord_booster_hub_suite.ts']);
 else if (selected === 'discord-order-workflow') run(['node_modules/ts-node/dist/bin.js', 'src/test/discord_order_workflow_suite.ts']);
 else if (selected === 'manual-deposit') run(['node_modules/ts-node/dist/bin.js', 'src/test/manual_irt_deposit_workflow_suite.ts']);
+else if (selected === 'rules-cms') run(['node_modules/ts-node/dist/bin.js', 'src/test/dynamic_rules_and_policies_cms_suite.ts']);
 else if (selected.endsWith('.ts')) run(['node_modules/ts-node/dist/bin.js', selected]);
 else console.error(`Unknown suite: ${selected}`);

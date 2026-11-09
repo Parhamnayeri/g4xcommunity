@@ -29,6 +29,7 @@ import {
 } from '../components/admin/NativeAdminModules';
 import { KycManagementPage } from './KycManagementPage';
 import { DepositQueueWorkspace } from '../components/admin/DepositQueueWorkspace';
+import { RulesManagementWorkspace } from '../components/admin/RulesManagementWorkspace';
 
 export type OwnerTab =
   | 'overview'
@@ -40,6 +41,7 @@ export type OwnerTab =
   | 'kyc'
   | 'games'
   | 'discord'
+  | 'rules'
   | 'config'
   | 'ledgers'
   | 'gates'
@@ -56,6 +58,7 @@ const VALID_OWNER_TABS: OwnerTab[] = [
   'kyc',
   'games',
   'discord',
+  'rules',
   'config',
   'ledgers',
   'gates',
@@ -324,6 +327,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
           { key: 'kyc', label: 'KYC Management', icon: '🪪' },
           { key: 'games', label: 'Games & Services', icon: '🎮' },
           { key: 'discord', label: 'Discord Channels', icon: '💬' },
+          { key: 'rules', label: 'Rules & Policies', icon: '⚖️' },
           { key: 'config', label: 'Financial Configuration', icon: '⚙️' },
           { key: 'ledgers', label: 'Wallets & Ledgers', icon: '📈' },
           { key: 'gates', label: 'Feature Gates Status', icon: '🔒' },
@@ -1233,6 +1237,11 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
           ) : null}
         </div>
       )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* RULES & POLICIES CMS WORKSPACE                                                */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'rules' && <RulesManagementWorkspace />}
     </div>
   );
 };

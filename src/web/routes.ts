@@ -200,6 +200,7 @@ import { ownerGateRouter } from './ownerGate';
 import { adminPortalRouter } from './adminPortalRoutes';
 import { ownerPortalRouter } from './ownerPortalRoutes';
 import { profileSettingsRouter } from './profileSettingsRoutes';
+import { policyRouter } from './policyRoutes';
 
 export const router = Router();
 
@@ -210,6 +211,7 @@ router.use('/ownergate', ownerGateRouter);
 // ─── روت‌های پورتال ادمین و مالک (Website Phase 8) ──────────────────────────
 router.use('/', adminPortalRouter);
 router.use('/', ownerPortalRouter);
+router.use('/', policyRouter);
 
 // ─── روت‌های پروفایل کاربر، تنظیمات و پورتال بوستر (Website Phase 9) ─────────
 router.use('/', profileSettingsRouter);
