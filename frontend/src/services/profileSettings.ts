@@ -11,6 +11,9 @@ import {
   UserSettingsUpdateRequest,
   UserSettings,
   BoosterPortalDataResponse,
+  WowCharacter,
+  RaiderIOPreviewData,
+  CharacterDetailsResponse,
 } from '../types/profileSettings';
 
 export async function fetchUserProfile(): Promise<UserProfileResponse> {
@@ -43,29 +46,84 @@ export async function fetchBoosterPortalData(): Promise<BoosterPortalDataRespons
   return apiRequest<BoosterPortalDataResponse>('/api/booster/portal-data');
 }
 
-export async function addWowCharacter(characterData: {
-  name: string;
-  realm: string;
-  region: string;
-  class: string;
-  spec?: string;
-  role?: string;
-}): Promise<any> {
-  return apiRequest('/characters/add', {
+export async function fetchUserCharacters(includeInactive = false): Promise<WowCharacter[]> {
+  const query = includeInactive ? '?includeInactive=true' : '';
+  return apiRequest<WowCharacter[]>(`/characters${query}`);
+}
+
+export async function fetchCharacterDetails(characterId: number | string): Promise<CharacterDetailsResponse> {
+  return apiRequest<CharacterDetailsResponse>(`/characters/${characterId}`);
+}
+
+export async function previewRaiderIOCharacter(params: {
+  url?: string;
+  region?: string;
+  realm?: string;
+  characterName?: string;
+}): Promise<{
+  success: boolean;
+  preview: RaiderIOPreviewData;
+  attribution: { notice: string; poweredBy: string; apiTermsUrl: string; commercialNotice: string };
+}> {
+  return apiRequest('/characters/preview', {
     method: 'POST',
-    body: JSON.stringify(characterData),
+    body: JSON.stringify(params),
   });
 }
 
-export async function setMainCharacter(characterId: number): Promise<any> {
-  return apiRequest('/characters/set-main', {
+export async function addWowCharacter(characterData: {
+  characterName?: string;
+  name?: string;
+  realm?: string;
+  region?: string;
+  raiderioUrl?: string;
+  class?: string;
+  spec?: string;
+  role?: string;
+}): Promise<{ success: boolean; character: WowCharacter }> {
+  const payload = {
+    characterName: characterData.characterName || characterData.name || '',
+    realm: characterData.realm || '',
+    region: characterData.region || 'eu',
+    raiderioUrl: characterData.raiderioUrl,
+  };
+  return apiRequest<{ success: boolean; character: WowCharacter }>('/characters/add', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function setMainCharacter(characterId: number): Promise<{ success: boolean; character: WowCharacter }> {
+  return apiRequest<{ success: boolean; character: WowCharacter }>('/characters/set-main', {
     method: 'POST',
     body: JSON.stringify({ characterId }),
   });
 }
 
-export async function removeCharacter(characterId: number): Promise<any> {
-  return apiRequest('/characters/remove', {
+export async function syncWowCharacter(characterId: number): Promise<{
+  success: boolean;
+  result: any;
+  character: WowCharacter;
+}> {
+  return apiRequest<{
+    success: boolean;
+    result: any;
+    character: WowCharacter;
+  }>('/characters/sync-request', {
+    method: 'POST',
+    body: JSON.stringify({ characterId }),
+  });
+}
+
+export async function removeCharacter(characterId: number): Promise<{ success: boolean; character: WowCharacter }> {
+  return apiRequest<{ success: boolean; character: WowCharacter }>('/characters/remove', {
+    method: 'POST',
+    body: JSON.stringify({ characterId }),
+  });
+}
+
+export async function reactivateCharacter(characterId: number): Promise<{ success: boolean; character: WowCharacter }> {
+  return apiRequest<{ success: boolean; character: WowCharacter }>('/characters/reactivate', {
     method: 'POST',
     body: JSON.stringify({ characterId }),
   });

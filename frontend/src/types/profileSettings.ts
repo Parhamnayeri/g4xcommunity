@@ -55,17 +55,81 @@ export interface LatestApplicationInfo {
   reviewedAt: string | null;
 }
 
+export interface WowMythicPlusRun {
+  dungeon: string;
+  shortName?: string;
+  mythicLevel: number;
+  completedAt: string;
+  clearTimeMs?: number;
+  numKeystoneUpgrades?: number;
+  score?: number;
+  url?: string;
+}
+
 export interface WowCharacter {
   id: number;
-  name: string;
+  characterName: string;
+  name?: string;
   realm: string;
   region: string;
-  class: string;
-  spec: string;
-  role: string;
-  itemLevel: number;
-  mythicScore: number;
+  characterClass?: string | null;
+  class?: string;
+  activeSpec?: string | null;
+  spec?: string;
+  activeRole?: string | null;
+  role?: string;
+  faction?: string | null;
+  thumbnailUrl?: string | null;
+  itemLevel: number | null;
+  mythicScore: number | null;
+  tankScore?: number | null;
+  healerScore?: number | null;
+  dpsScore?: number | null;
+  raidProgression?: string | null;
+  raiderioUrl?: string | null;
   isMain: boolean;
+  isActive?: boolean;
+  syncStatus?: string;
+  syncError?: string | null;
+  recentRuns?: WowMythicPlusRun[];
+  lastSyncedAt?: string | null;
+}
+
+export interface RaiderIOPreviewData {
+  name: string;
+  race?: string | null;
+  class: string;
+  activeSpec?: string | null;
+  activeRole?: string | null;
+  gender?: string | null;
+  faction?: string | null;
+  region: string;
+  realm: string;
+  profileUrl: string;
+  thumbnailUrl?: string | null;
+  itemLevel?: number | null;
+  mythicScore?: number | null;
+  tankScore?: number | null;
+  healerScore?: number | null;
+  dpsScore?: number | null;
+  raidProgression?: string | null;
+  recentRuns?: WowMythicPlusRun[];
+  bestRuns?: WowMythicPlusRun[];
+}
+
+export interface CharacterDetailsResponse {
+  success: boolean;
+  character: WowCharacter;
+  cooldownRemainingSeconds: number;
+  canRefresh: boolean;
+  recentRuns: WowMythicPlusRun[];
+  bestRuns: WowMythicPlusRun[];
+  attribution: {
+    notice: string;
+    poweredBy: string;
+    apiTermsUrl: string;
+    commercialNotice: string;
+  };
 }
 
 export interface ActivitySummary {
@@ -149,6 +213,9 @@ export interface BoosterOverviewData {
   runsInProgressCount: number;
   proofsAwaitingReviewCount: number;
   completedOrdersCount: number;
+  highestMythicScore?: number;
+  totalCharactersCount?: number;
+  mainCharacter?: WowCharacter | null;
   recentActivity: Array<{
     id: string;
     type: string;
@@ -252,6 +319,8 @@ export interface BoosterActivityItem {
 export interface BoosterPortalDataResponse {
   success: boolean;
   overview?: BoosterOverviewData;
+  characters?: WowCharacter[];
+  mainCharacter?: WowCharacter | null;
   myOrders?: BoosterOrder[];
   myRunsAndProofs?: BoosterRunProof[];
   activityHistory?: BoosterActivityItem[];

@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '../hooks/useAuth';
 import { LoadingState } from '../components/ui/LoadingState';
 import {
   UserProfileResponse,
   ProfileUpdateRequest,
-  WowCharacter,
 } from '../types/profileSettings';
 import {
   fetchUserProfile,
@@ -15,7 +13,6 @@ import {
 } from '../services/profileSettings';
 
 export const ProfilePage: React.FC = () => {
-  const { user } = useAuth();
 
   const [loading, setLoading] = useState<boolean>(true);
   const [data, setData] = useState<UserProfileResponse | null>(null);
