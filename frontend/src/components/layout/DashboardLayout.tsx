@@ -58,8 +58,6 @@ export const DashboardLayout: React.FC = () => {
     );
   }
 
-  const isOwnerOrAdmin = hasRole('owner', 'manager', 'admin', 'staff');
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       <Header />
@@ -165,6 +163,20 @@ export const DashboardLayout: React.FC = () => {
           >
             Booster Hub
           </Link>
+          {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner') && (
+            <Link
+              to="/discord-commands"
+              style={{
+                padding: '0.4rem 0.8rem',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                color: location.pathname === '/discord-commands' ? 'var(--accent-lime)' : 'var(--text-muted)',
+                borderBottom: location.pathname === '/discord-commands' ? '2px solid var(--accent-lime)' : 'none',
+              }}
+            >
+              Discord Commands
+            </Link>
+          )}
           {hasRole('staff', 'manager', 'admin', 'owner') && (
             <Link
               to="/staff"

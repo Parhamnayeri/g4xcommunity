@@ -23,5 +23,6 @@ else if (selected === 'booster-hub') run(['node_modules/ts-node/dist/bin.js', 's
 else if (selected === 'discord-order-workflow') run(['node_modules/ts-node/dist/bin.js', 'src/test/discord_order_workflow_suite.ts']);
 else if (selected === 'manual-deposit') run(['node_modules/ts-node/dist/bin.js', 'src/test/manual_irt_deposit_workflow_suite.ts']);
 else if (selected === 'rules-cms') run(['node_modules/ts-node/dist/bin.js', 'src/test/dynamic_rules_and_policies_cms_suite.ts']);
+else if (selected === 'discord-commands') run(['node_modules/ts-node/dist/bin.js', 'src/test/private_discord_commands_guide_suite.ts']);
 else if (selected.endsWith('.ts')) run(['node_modules/ts-node/dist/bin.js', selected]);
 else console.error(`Unknown suite: ${selected}`);

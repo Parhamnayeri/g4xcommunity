@@ -93,7 +93,7 @@ function sendReactEntry(_req: express.Request, res: express.Response): void {
 // HTML navigation (including refresh) must reach React without an API session.
 // Explicit JSON clients retain the old aliases and all their authorization checks.
 const reactPages = [
-  '/', '/rules', '/privacy', '/dashboard', '/wallet', '/withdraw', '/profile',
+  '/', '/rules', '/privacy', '/discord-commands', '/dashboard', '/wallet', '/withdraw', '/profile',
   '/booster/settings', '/settings', '/advertiser', '/exchange', '/exchanger',
   '/orders', '/staff', '/management', '/management/orders', '/management/kyc',
   '/admin', '/management/applications', '/admin/applications', '/admin/games',

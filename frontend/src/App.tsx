@@ -22,6 +22,7 @@ import { AdminPage } from './pages/AdminPage';
 import { OwnerPage } from './pages/OwnerPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { BoosterSettingsPage } from './pages/BoosterSettingsPage';
+import { DiscordCommandsPage } from './pages/DiscordCommandsPage';
 
 import { RouteErrorBoundary } from './components/common/RouteErrorBoundary';
 
@@ -43,6 +44,7 @@ export const App: React.FC = () => {
             <Route path="/wallet" element={<RouteErrorBoundary routeName="Wallet"><WalletPage /></RouteErrorBoundary>} />
             <Route path="/withdraw" element={<RouteErrorBoundary routeName="Withdraw"><WithdrawPage /></RouteErrorBoundary>} />
             <Route path="/profile" element={<RouteErrorBoundary routeName="Profile"><ProfilePage /></RouteErrorBoundary>} />
+            <Route path="/discord-commands" element={<RouteErrorBoundary routeName="Discord Commands"><DiscordCommandsPage /></RouteErrorBoundary>} />
             <Route path="/booster/settings" element={<RouteErrorBoundary routeName="Booster Settings"><BoosterSettingsPage /></RouteErrorBoundary>} />
             <Route path="/settings" element={<RouteErrorBoundary routeName="Settings"><BoosterSettingsPage /></RouteErrorBoundary>} />
             <Route path="/advertiser" element={<RouteErrorBoundary routeName="Advertiser"><AdvertiserPage /></RouteErrorBoundary>} />

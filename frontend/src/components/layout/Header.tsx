@@ -5,7 +5,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { Button } from '../ui/Button';
 
 export const Header: React.FC = () => {
-  const { user, status, logout } = useAuth();
+  const { user, status, logout, hasRole } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const location = useLocation();
@@ -267,6 +267,27 @@ export const Header: React.FC = () => {
                     Portal Overview
                   </Link>
 
+                  {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner') && (
+                    <Link
+                      to="/discord-commands"
+                      onClick={() => setUserDropdownOpen(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.6rem 0.75rem',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.85rem',
+                        color: 'var(--accent-lime)',
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                      🤖 Discord Commands
+                    </Link>
+                  )}
+
                   <button
                     type="button"
                     onClick={() => {
@@ -385,6 +406,15 @@ export const Header: React.FC = () => {
           >
             Privacy Policy
           </Link>
+          {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner') && (
+            <Link
+              to="/discord-commands"
+              onClick={() => setMenuOpen(false)}
+              style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--accent-lime)' }}
+            >
+              🤖 Discord Commands Guide
+            </Link>
+          )}
           <a
             href="/legacy"
             onClick={() => setMenuOpen(false)}
