@@ -396,22 +396,23 @@ export function buildExecutionChannelSummary(order: any, activeAssignments: any[
   return { embed, components: [row] };
 }
 
-const channelCreationLocks = new Set<number>();
+const inFlightCreations = new Map<number, Promise<OrderExecutionChannelResult>>();
 
 /**
  * Creates or retrieves the single authoritative Discord coordination channel for an order.
+ * Ensures robust idempotency across concurrent requests, process restarts, and network retries.
  */
 export async function getOrCreateOrderExecutionChannel(
   orderId: number,
   client: any,
   options?: { guildId?: string; actorId?: string }
 ): Promise<OrderExecutionChannelResult> {
-  if (channelCreationLocks.has(orderId)) {
-    await new Promise((res) => setTimeout(res, 200));
+  const existingInFlight = inFlightCreations.get(orderId);
+  if (existingInFlight) {
+    return await existingInFlight;
   }
-  channelCreationLocks.add(orderId);
 
-  try {
+  const creationPromise = (async (): Promise<OrderExecutionChannelResult> => {
     const order = await prisma.order.findUnique({
       where: { id: orderId },
       include: {
@@ -424,287 +425,382 @@ export async function getOrCreateOrderExecutionChannel(
       },
     });
 
-  if (!order) {
-    throw new DomainError(DomainErrorCode.ORDER_NOT_FOUND, `Order #${orderId} not found`);
-  }
-
-  // 1. Authoritative Payment Check (Client-supplied status is strictly ignored)
-  const isPaidOrUnneeded = order.paymentStatus === 'verified' || order.paymentStatus === 'unneeded';
-  if (!isPaidOrUnneeded) {
-    throw new DomainError(
-      DomainErrorCode.PAYMENT_NOT_VERIFIED,
-      `Cannot create execution channel for unpaid order #${orderId} (paymentStatus: '${order.paymentStatus}')`
-    );
-  }
-
-  // 2. Lifecycle Status Check
-  if (['draft', 'payment_pending', 'cancelled'].includes(order.status)) {
-    throw new DomainError(
-      DomainErrorCode.INVALID_ORDER_TRANSITION,
-      `Cannot create execution channel for order #${orderId} in '${order.status}' status`
-    );
-  }
-
-  // 3. Assigned Boosters Check (Presign-only does NOT qualify for private channels)
-  const activeAssignments = order.assignments.filter((a) => a.status === 'assigned');
-  if (activeAssignments.length === 0) {
-    throw new DomainError(
-      DomainErrorCode.ORDER_NOT_ASSIGNED,
-      `Order #${orderId} has no assigned boosters. Private channels are not created for presign-only orders.`
-    );
-  }
-
-  const assignedUserIds = activeAssignments.map((a) => a.userId);
-  const guild = resolveExecutionGuild(client, options?.guildId);
-  if (!guild) {
-    throw new DomainError(
-      DomainErrorCode.CHANNEL_CREATION_FAILED,
-      'No valid Discord guild found for creating order channel'
-    );
-  }
-
-  // 4. Idempotency Check: Existing active mapping in DB
-  const existingMapping = await prisma.orderChannel.findFirst({
-    where: {
-      orderId: order.id,
-      channelType: 'execution',
-      status: 'active',
-    },
-  });
-
-  if (existingMapping) {
-    let existingChannel: any = null;
-    try {
-      if (typeof client.channels?.fetch === 'function') {
-        existingChannel = await client.channels.fetch(existingMapping.discordChannelId).catch(() => null);
-      } else if (guild.channels?.cache) {
-        existingChannel = guild.channels.cache.get(existingMapping.discordChannelId);
-      }
-    } catch {
-      existingChannel = null;
+    if (!order) {
+      throw new DomainError(DomainErrorCode.ORDER_NOT_FOUND, `Order #${orderId} not found`);
     }
 
-    if (existingChannel) {
-      // Channel exists and is healthy; synchronize permissions to ensure fresh roster
-      await syncOrderChannelPermissions(order.id, client, existingChannel);
-      return {
-        success: true,
-        channelId: existingChannel.id,
-        guildId: guild.id,
-        isNew: false,
-        channel: existingChannel,
-      };
+    // 1. Authoritative Payment Check (Client-supplied status is strictly ignored)
+    const isPaidOrUnneeded = order.paymentStatus === 'verified' || order.paymentStatus === 'unneeded';
+    if (!isPaidOrUnneeded) {
+      throw new DomainError(
+        DomainErrorCode.PAYMENT_NOT_VERIFIED,
+        `Cannot create execution channel for unpaid order #${orderId} (paymentStatus: '${order.paymentStatus}')`
+      );
     }
 
-    // Existing channel in DB was deleted in Discord -> mark old mapping as deleted to allow recovery
-    await prisma.orderChannel.update({
-      where: { id: existingMapping.id },
-      data: { status: 'deleted' },
-    });
-  }
-
-  // 5. Recovery from legacy order.executionChannelId if DB mapping was missing
-  if (order.executionChannelId) {
-    let legacyChannel: any = null;
-    try {
-      if (typeof client.channels?.fetch === 'function') {
-        legacyChannel = await client.channels.fetch(order.executionChannelId).catch(() => null);
-      }
-    } catch {
-      legacyChannel = null;
+    // 2. Lifecycle Status Check
+    if (['draft', 'payment_pending', 'cancelled'].includes(order.status)) {
+      throw new DomainError(
+        DomainErrorCode.INVALID_ORDER_TRANSITION,
+        `Cannot create execution channel for order #${orderId} in '${order.status}' status`
+      );
     }
 
-    if (legacyChannel) {
-      // Restore missing OrderChannel row
-      await prisma.orderChannel.create({
-        data: {
-          orderId: order.id,
-          discordGuildId: guild.id,
-          discordChannelId: legacyChannel.id,
-          channelType: 'execution',
-          status: 'active',
-        },
-      });
-
-      await syncOrderChannelPermissions(order.id, client, legacyChannel);
-      return {
-        success: true,
-        channelId: legacyChannel.id,
-        guildId: guild.id,
-        isNew: false,
-        channel: legacyChannel,
-      };
+    // 3. Assigned Boosters Check (Presign-only does NOT qualify for private channels)
+    const activeAssignments = order.assignments.filter((a) => a.status === 'assigned');
+    if (activeAssignments.length === 0) {
+      throw new DomainError(
+        DomainErrorCode.ORDER_NOT_ASSIGNED,
+        `Order #${orderId} has no assigned boosters. Private channels are not created for presign-only orders.`
+      );
     }
-  }
 
-  // 5b. Guard against duplicate Discord channels if creation previously succeeded in Discord but DB write failed
-  const channelName = buildOrderExecutionChannelName(order);
-  const legacyChannelName = `order-${order.id}`;
-  let orphanChannel: any = null;
-  if (guild.channels?.cache) {
-    const isMatching = (c: any) =>
-      (c.name === channelName || c.name === legacyChannelName) &&
-      (c.type === ChannelType.GuildText || c.isTextBased?.());
-
-    if (typeof guild.channels.cache.find === 'function') {
-      orphanChannel = guild.channels.cache.find(isMatching);
-    } else if (typeof guild.channels.cache.values === 'function') {
-      for (const c of guild.channels.cache.values()) {
-        if (isMatching(c)) {
-          orphanChannel = c;
-          break;
-        }
-      }
+    const assignedUserIds = activeAssignments.map((a) => a.userId);
+    const guild = resolveExecutionGuild(client, options?.guildId);
+    if (!guild) {
+      throw new DomainError(
+        DomainErrorCode.CHANNEL_CREATION_FAILED,
+        'No valid Discord guild found for creating order channel'
+      );
     }
-  }
 
-  if (orphanChannel) {
-    await prisma.$transaction(async (tx) => {
-      await tx.orderChannel.create({
-        data: {
-          orderId: order.id,
-          discordGuildId: guild.id,
-          discordChannelId: orphanChannel.id,
-          channelType: 'execution',
-          status: 'active',
-        },
-      });
-      await tx.order.update({
-        where: { id: order.id },
-        data: { executionChannelId: orphanChannel.id },
-      });
-    });
-
-    await syncOrderChannelPermissions(order.id, client, orphanChannel);
-    return {
-      success: true,
-      channelId: orphanChannel.id,
-      guildId: guild.id,
-      isNew: false,
-      channel: orphanChannel,
-    };
-  }
-
-  // 6. Create New Discord Channel
-  const category = await resolveOrCreateExecutionCategory(guild);
-  const botUserId = client.user?.id || guild.members?.me?.id;
-  const permissionOverwrites = buildExecutionChannelOverwrites(
-    guild,
-    order,
-    assignedUserIds,
-    botUserId
-  );
-
-  let newChannel: any = null;
-
-  try {
-    if (typeof guild.channels?.create === 'function') {
-      newChannel = await guild.channels.create({
-        name: channelName,
-        type: ChannelType.GuildText,
-        parent: category ? category.id : undefined,
-        permissionOverwrites,
-      });
-    } else {
-      // Mocked channel fallback
-      newChannel = {
-        id: `mock_chan_ord_${order.id}`,
-        name: channelName,
-        guild: { id: guild.id },
-        isTextBased: () => true,
-        permissionOverwrites: {
-          cache: new Map(permissionOverwrites.map((o) => [o.id, o])),
-          edit: async () => true,
-          delete: async () => true,
-        },
-        send: async () => ({ id: `msg_mock_${Date.now()}` }),
-      };
-    }
-  } catch (err: any) {
-    throw new DomainError(
-      DomainErrorCode.CHANNEL_CREATION_FAILED,
-      `Discord API failed to create channel #${channelName}: ${err?.message || err}`
-    );
-  }
-
-  // 7. Persist Mapping in Database Atomically
-  await prisma.$transaction(async (tx) => {
-    await tx.orderChannel.create({
-      data: {
+    // 4. Idempotency Check: Existing active mapping in DB
+    const existingMapping = await prisma.orderChannel.findFirst({
+      where: {
         orderId: order.id,
-        discordGuildId: guild.id,
-        discordChannelId: newChannel.id,
         channelType: 'execution',
         status: 'active',
       },
     });
 
-    await tx.order.update({
-      where: { id: order.id },
-      data: { executionChannelId: newChannel.id },
-    });
-  });
+    if (existingMapping) {
+      let existingChannel: any = null;
+      try {
+        if (typeof client?.channels?.fetch === 'function') {
+          existingChannel = await client.channels.fetch(existingMapping.discordChannelId).catch(() => null);
+        }
+        if (!existingChannel && typeof guild.channels?.fetch === 'function') {
+          existingChannel = await guild.channels.fetch(existingMapping.discordChannelId).catch(() => null);
+        }
+        if (!existingChannel && guild.channels?.cache) {
+          existingChannel = guild.channels.cache.get(existingMapping.discordChannelId);
+        }
+      } catch {
+        existingChannel = null;
+      }
 
-  // 8. Post English Summary & Action Buttons
-  try {
-    const { embed, components } = buildExecutionChannelSummary(order, activeAssignments);
-    if (typeof newChannel.send === 'function') {
-      await newChannel.send({ embeds: [embed], components });
+      if (existingChannel) {
+        // Channel exists and is healthy; synchronize permissions to ensure fresh roster
+        await syncOrderChannelPermissions(order.id, client, existingChannel);
+        return {
+          success: true,
+          channelId: existingChannel.id,
+          guildId: guild.id,
+          isNew: false,
+          channel: existingChannel,
+        };
+      }
+
+      // Existing channel in DB was deleted in Discord -> mark old mapping as deleted to allow recovery
+      // Note: Never call channel.delete() here; channel is already confirmed missing remotely.
+      await prisma.orderChannel.update({
+        where: { id: existingMapping.id },
+        data: { status: 'deleted' },
+      });
     }
-  } catch (err) {
-    console.warn('[OrderExecutionChannel] Failed to post initial summary embed:', err);
-  }
 
-  return {
-    success: true,
-    channelId: newChannel.id,
-    guildId: guild.id,
-    isNew: true,
-    channel: newChannel,
-  };
+    // 5. Recovery from legacy order.executionChannelId if DB mapping was missing
+    if (order.executionChannelId) {
+      let legacyChannel: any = null;
+      try {
+        if (typeof client?.channels?.fetch === 'function') {
+          legacyChannel = await client.channels.fetch(order.executionChannelId).catch(() => null);
+        }
+        if (!legacyChannel && typeof guild.channels?.fetch === 'function') {
+          legacyChannel = await guild.channels.fetch(order.executionChannelId).catch(() => null);
+        }
+      } catch {
+        legacyChannel = null;
+      }
+
+      if (legacyChannel) {
+        // Restore missing OrderChannel row
+        try {
+          await prisma.orderChannel.create({
+            data: {
+              orderId: order.id,
+              discordGuildId: guild.id,
+              discordChannelId: legacyChannel.id,
+              channelType: 'execution',
+              status: 'active',
+            },
+          });
+        } catch (dbInsertErr: any) {
+          if (dbInsertErr?.code !== 'P2002' && !dbInsertErr?.message?.includes('UNIQUE constraint failed')) {
+            throw dbInsertErr;
+          }
+        }
+
+        await syncOrderChannelPermissions(order.id, client, legacyChannel);
+        return {
+          success: true,
+          channelId: legacyChannel.id,
+          guildId: guild.id,
+          isNew: false,
+          channel: legacyChannel,
+        };
+      }
+    }
+
+    // 5b. Guard against duplicate Discord channels if creation previously succeeded in Discord but DB write failed
+    // Fetch channels from Discord if cache is incomplete
+    if (typeof guild.channels?.fetch === 'function' && (!guild.channels.cache || guild.channels.cache.size === 0)) {
+      await guild.channels.fetch().catch(() => null);
+    }
+
+    const channelName = buildOrderExecutionChannelName(order);
+    const legacyChannelName = `order-${order.id}`;
+    const exactRegex = new RegExp(`^order-${order.id}(-(selfplay|pilot|mythicplus))?$`, 'i');
+
+    let orphanChannel: any = null;
+    if (guild.channels?.cache) {
+      const isMatching = (c: any) => {
+        if (c.type !== ChannelType.GuildText && !c.isTextBased?.()) return false;
+        if (c.topic && (c.topic.includes(`Order #${order.id}`) || c.topic.includes(`Ref: ${order.orderRef}`))) {
+          return true;
+        }
+        return exactRegex.test(c.name || '') || c.name === channelName || c.name === legacyChannelName;
+      };
+
+      if (typeof guild.channels.cache.find === 'function') {
+        orphanChannel = guild.channels.cache.find(isMatching);
+      } else if (typeof guild.channels.cache.values === 'function') {
+        for (const c of guild.channels.cache.values()) {
+          if (isMatching(c)) {
+            orphanChannel = c;
+            break;
+          }
+        }
+      }
+    }
+
+    // Verify orphan channel does NOT belong to another order
+    if (orphanChannel) {
+      const usedByOtherMapping = await prisma.orderChannel.findFirst({
+        where: { discordChannelId: orphanChannel.id, orderId: { not: order.id } },
+      });
+      const usedByOtherOrder = await prisma.order.findFirst({
+        where: { executionChannelId: orphanChannel.id, id: { not: order.id } },
+      });
+
+      if (usedByOtherMapping || usedByOtherOrder) {
+        // Channel belongs to a different order, do not adopt!
+        orphanChannel = null;
+      }
+    }
+
+    if (orphanChannel) {
+      try {
+        await prisma.$transaction(async (tx) => {
+          await tx.orderChannel.create({
+            data: {
+              orderId: order.id,
+              discordGuildId: guild.id,
+              discordChannelId: orphanChannel.id,
+              channelType: 'execution',
+              status: 'active',
+            },
+          });
+          await tx.order.update({
+            where: { id: order.id },
+            data: { executionChannelId: orphanChannel.id },
+          });
+        });
+      } catch (txErr: any) {
+        if (txErr?.code !== 'P2002' && !txErr?.message?.includes('UNIQUE constraint failed')) {
+          throw txErr;
+        }
+      }
+
+      await syncOrderChannelPermissions(order.id, client, orphanChannel);
+      return {
+        success: true,
+        channelId: orphanChannel.id,
+        guildId: guild.id,
+        isNew: false,
+        channel: orphanChannel,
+      };
+    }
+
+    // 6. Create New Discord Channel
+    const category = await resolveOrCreateExecutionCategory(guild);
+    const botUserId = client?.user?.id || guild.members?.me?.id;
+    const permissionOverwrites = buildExecutionChannelOverwrites(
+      guild,
+      order,
+      assignedUserIds,
+      botUserId
+    );
+    const topic = `G4X Order #${order.id} | Ref: ${order.orderRef} | Mode: ${deriveOrderChannelModeSlug(order)}`;
+
+    let newChannel: any = null;
+
+    try {
+      if (typeof guild.channels?.create === 'function') {
+        newChannel = await guild.channels.create({
+          name: channelName,
+          type: ChannelType.GuildText,
+          topic,
+          parent: category ? category.id : undefined,
+          permissionOverwrites,
+        });
+      } else {
+        // Mocked channel fallback
+        newChannel = {
+          id: `mock_chan_ord_${order.id}`,
+          name: channelName,
+          topic,
+          guild: { id: guild.id },
+          isTextBased: () => true,
+          permissionOverwrites: {
+            cache: new Map(permissionOverwrites.map((o) => [o.id, o])),
+            edit: async () => true,
+            delete: async () => true,
+          },
+          send: async () => ({ id: `msg_mock_${Date.now()}` }),
+        };
+      }
+    } catch (err: any) {
+      throw new DomainError(
+        DomainErrorCode.CHANNEL_CREATION_FAILED,
+        `Discord API failed to create channel #${channelName}: ${err?.message || err}`
+      );
+    }
+
+    // 7. Persist Mapping in Database Atomically with Uniqueness Guard
+    try {
+      await prisma.$transaction(async (tx) => {
+        await tx.orderChannel.create({
+          data: {
+            orderId: order.id,
+            discordGuildId: guild.id,
+            discordChannelId: newChannel.id,
+            channelType: 'execution',
+            status: 'active',
+          },
+        });
+
+        await tx.order.update({
+          where: { id: order.id },
+          data: { executionChannelId: newChannel.id },
+        });
+      });
+    } catch (dbErr: any) {
+      // Concurrency race: If another thread/process inserted the active row concurrently
+      if (dbErr?.code === 'P2002' || dbErr?.message?.includes('UNIQUE constraint failed')) {
+        const raceActive = await prisma.orderChannel.findFirst({
+          where: { orderId: order.id, channelType: 'execution', status: 'active' },
+        });
+        if (raceActive) {
+          let liveCh: any = null;
+          try {
+            if (typeof client?.channels?.fetch === 'function') {
+              liveCh = await client.channels.fetch(raceActive.discordChannelId).catch(() => null);
+            }
+          } catch {
+            liveCh = null;
+          }
+          return {
+            success: true,
+            channelId: raceActive.discordChannelId,
+            guildId: guild.id,
+            isNew: false,
+            channel: liveCh || newChannel,
+          };
+        }
+      }
+      throw dbErr;
+    }
+
+    // 8. Post English Summary & Action Buttons
+    try {
+      const { embed, components } = buildExecutionChannelSummary(order, activeAssignments);
+      if (typeof newChannel.send === 'function') {
+        await newChannel.send({ embeds: [embed], components });
+      }
+    } catch (err) {
+      console.warn('[OrderExecutionChannel] Failed to post initial summary embed:', err);
+    }
+
+    return {
+      success: true,
+      channelId: newChannel.id,
+      guildId: guild.id,
+      isNew: true,
+      channel: newChannel,
+    };
+  })();
+
+  inFlightCreations.set(orderId, creationPromise);
+  try {
+    return await creationPromise;
   } finally {
-    channelCreationLocks.delete(orderId);
+    inFlightCreations.delete(orderId);
   }
 }
 
 /**
  * Synchronizes channel permission overwrites when the order booster roster changes.
+ * Preserves access for participants in active disputes and safely handles guild departures.
  */
 export async function syncOrderChannelPermissions(
   orderId: number,
   client: any,
   providedChannel?: any
-): Promise<void> {
+): Promise<{ success: boolean; updatedCount: number; removedCount: number; errors: string[] }> {
+  const result = { success: true, updatedCount: 0, removedCount: 0, errors: [] as string[] };
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
       assignments: true,
+      disputes: true,
       orderChannels: {
         where: { channelType: 'execution', status: 'active' },
       },
     },
   });
 
-  if (!order) return;
+  if (!order) return { ...result, success: false, errors: ['ORDER_NOT_FOUND'] };
 
   const activeMapping = order.orderChannels[0];
   const channelId = activeMapping?.discordChannelId || order.executionChannelId;
-  if (!channelId) return;
+  if (!channelId) return { ...result, success: false, errors: ['NO_ACTIVE_CHANNEL'] };
 
   let channel = providedChannel;
   if (!channel && client) {
     channel = await client.channels?.fetch?.(channelId).catch(() => null);
   }
 
-  if (!channel) return;
+  if (!channel) return { ...result, success: false, errors: ['CHANNEL_NOT_FOUND'] };
 
   const activeAssignments = order.assignments.filter((a) => a.status === 'assigned');
   const assignedUserIds = activeAssignments.map((a) => a.userId);
 
-  // Replaced / removed boosters who should lose access
+  // Replaced / removed boosters who should lose access unless involved in an active dispute
   const removedAssignments = order.assignments.filter((a) =>
     ['replaced', 'cancelled', 'removed'].includes(a.status)
   );
+
+  // Preserve access for participants in active disputes
+  const activeDisputes = (order.disputes || []).filter((d) =>
+    ['open', 'under_review', 'waiting_for_evidence'].includes(d.status)
+  );
+  const disputeParticipantIds = new Set<string>();
+  for (const d of activeDisputes) {
+    if ((d as any).openedById) disputeParticipantIds.add((d as any).openedById);
+    if ((d as any).initiatorId) disputeParticipantIds.add((d as any).initiatorId);
+    if ((d as any).respondentId) disputeParticipantIds.add((d as any).respondentId);
+  }
 
   // Update active booster permissions
   for (const uid of assignedUserIds) {
@@ -717,29 +813,45 @@ export async function syncOrderChannelPermissions(
           EmbedLinks: true,
           AttachFiles: true,
         });
+        result.updatedCount++;
       }
-    } catch (e) {
-      console.warn(`[OrderExecutionChannel] Could not grant permissions for ${uid}:`, e);
+    } catch (e: any) {
+      if (e?.code === 10007) {
+        console.warn(`[OrderExecutionChannel] Member ${uid} left the guild; skipped permission grant.`);
+      } else {
+        console.warn(`[OrderExecutionChannel] Could not grant permissions for ${uid}:`, e);
+        result.errors.push(`GRANT_FAILED_${uid}: ${e?.message || e}`);
+      }
     }
   }
 
-  // Revoke removed booster permissions
+  // Revoke removed booster permissions (only if not participating in an unresolved dispute)
   for (const rem of removedAssignments) {
-    if (!assignedUserIds.includes(rem.userId)) {
+    if (!assignedUserIds.includes(rem.userId) && !disputeParticipantIds.has(rem.userId)) {
       try {
         if (typeof channel.permissionOverwrites?.delete === 'function') {
           await channel.permissionOverwrites.delete(rem.userId);
+          result.removedCount++;
         } else if (typeof channel.permissionOverwrites?.edit === 'function') {
           await channel.permissionOverwrites.edit(rem.userId, {
             ViewChannel: false,
             SendMessages: false,
           });
+          result.removedCount++;
         }
-      } catch (e) {
-        console.warn(`[OrderExecutionChannel] Could not revoke permissions for ${rem.userId}:`, e);
+      } catch (e: any) {
+        if (e?.code === 10007) {
+          console.warn(`[OrderExecutionChannel] Member ${rem.userId} left the guild; permission delete skipped.`);
+        } else {
+          console.warn(`[OrderExecutionChannel] Could not revoke permissions for ${rem.userId}:`, e);
+          result.errors.push(`REVOKE_FAILED_${rem.userId}: ${e?.message || e}`);
+        }
       }
     }
   }
+
+  result.success = result.errors.length === 0;
+  return result;
 }
 
 /**
@@ -795,8 +907,11 @@ export async function handleOrderCancellationChannel(
   }
 }
 
+const recentExecutionMilestones = new Map<string, number>();
+
 /**
  * Posts operational milestone updates in the private coordination channel.
+ * Prevents redundant/duplicate consecutive notifications for the same milestone.
  */
 export async function notifyExecutionChannelMilestone(
   orderId: number,
@@ -805,6 +920,15 @@ export async function notifyExecutionChannelMilestone(
   details?: { actorId?: string; notes?: string }
 ): Promise<void> {
   if (!client) return;
+
+  const milestoneKey = `${orderId}:${milestone}`;
+  const lastSent = recentExecutionMilestones.get(milestoneKey);
+  const now = Date.now();
+  if (lastSent && now - lastSent < 30000) {
+    // Skip duplicate milestone notification within 30 seconds
+    return;
+  }
+  recentExecutionMilestones.set(milestoneKey, now);
 
   const mapping = await prisma.orderChannel.findFirst({
     where: { orderId, channelType: 'execution', status: 'active' },

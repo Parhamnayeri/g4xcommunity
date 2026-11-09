@@ -26,7 +26,7 @@ import { reviewApplication } from '../services/registrationService';
 import { publishOrRefreshOrderCard, getGlobalDiscordClient } from '../services/orderDiscordService';
 import { KYC_DOCS_DIR, validateKycDocumentReference } from '../services/kycDocumentSecurity';
 
-import { configureChannelMapping, inspectMappingConnectivity } from '../services/channelMappingConfigurationService';
+import { configureChannelMapping, inspectMappingConnectivity, reconcileChannelMapping } from '../services/channelMappingConfigurationService';
 import { listChannelMappings } from '../services/discordProvisioningService';
 
 export const operationsRouter = Router();
@@ -1507,4 +1507,12 @@ for (const method of ['post', 'put', 'delete'] as const) {
 }
 operationsRouter.post('/management/channel-mappings/:key/verify', requireAuth, requireLivePermission(Permission.SERVICE_CONFIG_MANAGE), requireCsrf, async (req: Request, res: Response) => {
   try { res.json(await inspectMappingConnectivity(req.params.key)); } catch (error: any) { res.status(400).json({ error: error.message }); }
+});
+operationsRouter.post('/management/channel-mappings/:key/reconcile', requireAuth, requireLivePermission(Permission.SERVICE_CONFIG_MANAGE), requireCsrf, async (req: Request, res: Response) => {
+  try {
+    const actorId = (req as AuthenticatedRequest).user.discordId;
+    res.json(await reconcileChannelMapping(actorId, req.params.key));
+  } catch (error: any) {
+    res.status(400).json({ error: error.message });
+  }
 });

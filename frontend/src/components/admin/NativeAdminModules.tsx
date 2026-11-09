@@ -995,7 +995,7 @@ export function ChannelsWorkspace({ embedded = false }: { embedded?: boolean } =
         <Select
           label="Saved status"
           value={status}
-          values={['', 'PENDING', 'MANUAL', 'SYNCED', 'MISSING', 'INVALID', 'DISABLED']}
+          values={['', 'SAVED', 'VERIFIED', 'UNAVAILABLE', 'DEGRADED', 'RECONCILIATION_REQUIRED', 'PENDING', 'MANUAL', 'DISABLED']}
           onChange={(v) => {
             setStatus(v);
             setPage(1);
@@ -1012,17 +1012,49 @@ export function ChannelsWorkspace({ embedded = false }: { embedded?: boolean } =
           <div key={m.channelKey} className="card-surface" style={box}>
             <strong>
               {m.channelKey} · {m.purpose}
+              <span
+                style={{
+                  display: 'inline-block',
+                  marginLeft: '8px',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  backgroundColor:
+                    m.syncStatus === 'VERIFIED' || m.syncStatus === 'SYNCED'
+                      ? '#065f46'
+                      : m.syncStatus === 'DEGRADED'
+                        ? '#78350f'
+                        : m.syncStatus === 'UNAVAILABLE' || m.syncStatus === 'MISSING' || m.syncStatus === 'INVALID'
+                          ? '#7f1d1d'
+                          : m.syncStatus === 'RECONCILIATION_REQUIRED'
+                            ? '#581c87'
+                            : '#374151',
+                  color:
+                    m.syncStatus === 'VERIFIED' || m.syncStatus === 'SYNCED'
+                      ? '#6ee7b7'
+                      : m.syncStatus === 'DEGRADED'
+                        ? '#fde68a'
+                        : m.syncStatus === 'UNAVAILABLE' || m.syncStatus === 'MISSING' || m.syncStatus === 'INVALID'
+                          ? '#fca5a5'
+                          : m.syncStatus === 'RECONCILIATION_REQUIRED'
+                            ? '#d8b4fe'
+                            : '#d1d5db',
+                }}
+              >
+                {m.syncStatus}
+              </span>
             </strong>
             <p>
               Guild: {m.guildId} · Channel: {m.discordChannelId || 'Not configured'}
             </p>
             <p>
-              {m.gameSlug || 'Global workflow'} · Service: {m.serviceId || '—'} · {m.serviceMode} ·{' '}
+              {m.gameSlug || 'Global workflow'} · Service: {m.serviceId || '—'} · {m.serviceMode || 'all'} ·{' '}
               {m.isActive ? 'Enabled' : 'Disabled'} · Saved status: {m.syncStatus}
             </p>
             <p>{m.lastSyncResult}</p>
             {writable && (
-              <div>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
                 <button
                   onClick={() => {
                     setEditing(m.channelKey);
@@ -1057,19 +1089,38 @@ export function ChannelsWorkspace({ embedded = false }: { embedded?: boolean } =
                 <button
                   onClick={async () => {
                     try {
-                      const result = await apiRequest<{ valid: boolean; error?: string; checkedAt?: string }>(
+                      const result = await apiRequest<{ valid: boolean; status?: string; error?: string; checkedAt?: string }>(
                         `/api/management/channel-mappings/${encodeURIComponent(m.channelKey)}/verify`,
                         { method: 'POST' },
                       );
                       setVerification(
-                        `${m.channelKey}: ${result.valid ? `Live channel verified at ${result.checkedAt}` : result.error || 'Live validation failed'}`,
+                        `${m.channelKey}: ${result.valid ? `Live channel verified at ${result.checkedAt}` : `${result.status || 'FAILED'}: ${result.error || 'Live validation failed'}`}`,
                       );
+                      resource.reload();
                     } catch (e: any) {
                       setVerification(e.message);
                     }
                   }}
                 >
                   Verify live connectivity
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const result = await apiRequest<{ success: boolean; observation?: { valid: boolean; status?: string; error?: string } }>(
+                        `/api/management/channel-mappings/${encodeURIComponent(m.channelKey)}/reconcile`,
+                        { method: 'POST' },
+                      );
+                      setVerification(
+                        `${m.channelKey}: Reconciled (Status: ${result.observation?.status || (result.observation?.valid ? 'VERIFIED' : 'UNAVAILABLE')}).`,
+                      );
+                      resource.reload();
+                    } catch (e: any) {
+                      setVerification(e.message);
+                    }
+                  }}
+                >
+                  Reconcile mapping
                 </button>
               </div>
             )}

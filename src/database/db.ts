@@ -36,6 +36,25 @@ export async function ensureWithdrawalEvidenceUniqueIndexes(client: PrismaClient
   }
 }
 
-// مقداردهی اولیه ایندکس‌های امنیتی تسویه در پس‌زمینه
+/**
+ * تضمین ایجاد ایندکس یکتای جزئی بر روی کانال‌های اجرای فعال در SQLite
+ * ممانعت قطعی از ثبت بیش از یک کانال اجرای فعال برای هر سفارش در شرایط همروندی (Race Condition)
+ */
+export async function ensureOrderChannelUniqueIndexes(client: PrismaClient = prisma): Promise<void> {
+  try {
+    await client.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_order_channels_active_execution
+      ON order_channels(order_id)
+      WHERE channel_type = 'execution' AND status = 'active';
+    `);
+  } catch (err: any) {
+    if (!err.message?.includes('no such table')) {
+      console.warn('[DB] Warning creating partial unique index on order_channels:', err.message);
+    }
+  }
+}
+
+// مقداردهی اولیه ایندکس‌های امنیتی تسویه و کانال‌های اجرا در پس‌زمینه
 ensureWithdrawalEvidenceUniqueIndexes().catch(() => {});
+ensureOrderChannelUniqueIndexes().catch(() => {});
 
