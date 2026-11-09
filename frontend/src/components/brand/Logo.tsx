@@ -11,6 +11,13 @@ export const Logo: React.FC<LogoProps> = ({ size = 'md', showSubtitle = true }) 
   const textSize = size === 'sm' ? '1.1rem' : size === 'lg' ? '1.75rem' : '1.35rem';
 
   const customLogoUrl = import.meta.env.VITE_APP_LOGO_URL;
+  // Guard against album links or invalid image schemes
+  const isValidImageUrl = Boolean(
+    customLogoUrl &&
+    !customLogoUrl.includes('/a/') &&
+    !customLogoUrl.includes('/album/') &&
+    (customLogoUrl.startsWith('http://') || customLogoUrl.startsWith('https://') || customLogoUrl.startsWith('/'))
+  );
   const [imgError, setImgError] = useState(false);
 
   return (
@@ -25,12 +32,14 @@ export const Logo: React.FC<LogoProps> = ({ size = 'md', showSubtitle = true }) 
       aria-label="G4X Community Home"
     >
       {/* Brand Icon: Custom image with graceful SVG fallback */}
-      {customLogoUrl && !imgError ? (
+      {isValidImageUrl && !imgError ? (
         <img
           src={customLogoUrl}
-          alt="G4X Logo"
+          alt="G4X Community Logo"
           width={iconSize}
           height={iconSize}
+          loading="eager"
+          decoding="async"
           onError={() => setImgError(true)}
           style={{
             width: iconSize,
