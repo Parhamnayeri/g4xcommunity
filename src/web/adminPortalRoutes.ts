@@ -187,6 +187,62 @@ adminPortalRouter.get(
 // 2. MANUAL IRT & CRYPTO DEPOSIT QUEUE OVERSIGHT
 // ─────────────────────────────────────────────────────────────────────────────
 
+export function serializeAdminDepositItem(r: any) {
+  const notes = r.adminNotes || '';
+  const receiptMatch = notes.match(/(?:^|\|\s*)Receipt:\s*([^\s|]+)/i);
+  const extractedReceiptKey = receiptMatch ? receiptMatch[1].trim() : null;
+
+  const dateMatch = notes.match(/(?:^|\|\s*)Date:\s*([^\s|]+)/i);
+  const extractedDate = dateMatch ? dateMatch[1].trim() : null;
+
+  const cardMatch = notes.match(/(?:^|\|\s*)CardLast4:\s*([^\s|]+)/i);
+  const extractedCardLast4 = cardMatch ? cardMatch[1].trim() : null;
+
+  const payerDescription = notes
+    .replace(/(?:^|\|\s*)Receipt:\s*[^\s|]+/gi, '')
+    .replace(/(?:^|\|\s*)Date:\s*[^\s|]+/gi, '')
+    .replace(/(?:^|\|\s*)CardLast4:\s*[^\s|]+/gi, '')
+    .replace(/\|\s*\|/g, '|')
+    .replace(/^\|\s*|\s*\|$/g, '')
+    .trim() || null;
+
+  const attempts = r.paymentRequests?.flatMap((pr: any) => pr.attempts) || [];
+  const attempt = attempts.find((a: any) => a.method === 'CARD_TO_CARD_IRT') || attempts[0];
+
+  const receiptFileKey = extractedReceiptKey || (attempt?.receiptScreenshotUrl ? attempt.receiptScreenshotUrl.replace('/api/wallet/receipts/', '') : null);
+  const receiptUrl = receiptFileKey ? `/api/wallet/receipts/${receiptFileKey}` : (attempt?.receiptScreenshotUrl || null);
+  const senderCardLast4 = attempt?.senderCardLast4 || extractedCardLast4 || null;
+  const paymentDate = extractedDate || (attempt?.createdAt ? new Date(attempt.createdAt).toISOString().split('T')[0] : null);
+
+  return {
+    id: r.id,
+    fundingRef: r.fundingRef,
+    quoteRef: r.quoteRef,
+    advertiserId: r.advertiserId,
+    advertiserName: r.advertiser?.displayName || r.advertiser?.username || r.advertiserId,
+    fundingMethod: r.fundingMethod,
+    status: r.status,
+    targetUsdCents: r.targetUsdCents,
+    targetUsdFormatted: `$${(r.targetUsdCents / 100).toFixed(2)}`,
+    externalCurrency: r.externalCurrency,
+    externalAmountUnits: r.externalAmountUnits,
+    exchangeRate: r.exchangeRate,
+    evidenceRef: r.evidenceRef,
+    payerIdentifier: maskCard(r.payerIdentifier),
+    rawPayerIdentifier: r.payerIdentifier,
+    adminNotes: r.adminNotes,
+    receiptFileKey,
+    receiptUrl,
+    senderCardLast4,
+    paymentDate,
+    payerDescription,
+    verifiedBy: r.verifier?.displayName || r.verifier?.username || r.verifiedBy,
+    verifiedAt: r.verifiedAt,
+    creditedAt: r.creditedAt,
+    createdAt: r.createdAt,
+  };
+}
+
 adminPortalRouter.get(
   '/admin/deposits',
   requireAuth,
@@ -197,18 +253,38 @@ adminPortalRouter.get(
       const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 20));
       const status = typeof req.query.status === 'string' ? req.query.status.trim() : 'PENDING_ADMIN_VERIFICATION';
       const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+      const applicant = typeof req.query.applicant === 'string' ? req.query.applicant.trim() : '';
+      const startDate = typeof req.query.startDate === 'string' ? req.query.startDate.trim() : '';
+      const endDate = typeof req.query.endDate === 'string' ? req.query.endDate.trim() : '';
 
       const whereClause: any = {};
       if (status && status !== 'all') {
         whereClause.status = status;
       }
+      if (applicant) {
+        whereClause.advertiserId = applicant;
+      }
+      if (startDate || endDate) {
+        whereClause.createdAt = {};
+        if (startDate) whereClause.createdAt.gte = new Date(startDate);
+        if (endDate) {
+          const end = new Date(endDate);
+          end.setHours(23, 59, 59, 999);
+          whereClause.createdAt.lte = end;
+        }
+      }
       if (search) {
-        whereClause.OR = [
+        const searchConditions: any[] = [
           { fundingRef: { contains: search } },
           { advertiserId: { contains: search } },
           { payerIdentifier: { contains: search } },
+          { evidenceRef: { contains: search } },
           { advertiser: { username: { contains: search } } },
         ];
+        if (!isNaN(Number(search))) {
+          searchConditions.push({ id: Number(search) });
+        }
+        whereClause.OR = searchConditions;
       }
 
       const [total, requests] = await Promise.all([
@@ -232,61 +308,7 @@ adminPortalRouter.get(
         }),
       ]);
 
-      const serialized = requests.map((r) => {
-        const notes = r.adminNotes || '';
-        const receiptMatch = notes.match(/(?:^|\|\s*)Receipt:\s*([^\s|]+)/i);
-        const extractedReceiptKey = receiptMatch ? receiptMatch[1].trim() : null;
-
-        const dateMatch = notes.match(/(?:^|\|\s*)Date:\s*([^\s|]+)/i);
-        const extractedDate = dateMatch ? dateMatch[1].trim() : null;
-
-        const cardMatch = notes.match(/(?:^|\|\s*)CardLast4:\s*([^\s|]+)/i);
-        const extractedCardLast4 = cardMatch ? cardMatch[1].trim() : null;
-
-        let payerDescription = notes
-          .replace(/(?:^|\|\s*)Receipt:\s*[^\s|]+/gi, '')
-          .replace(/(?:^|\|\s*)Date:\s*[^\s|]+/gi, '')
-          .replace(/(?:^|\|\s*)CardLast4:\s*[^\s|]+/gi, '')
-          .replace(/\|\s*\|/g, '|')
-          .replace(/^\|\s*|\s*\|$/g, '')
-          .trim() || null;
-
-        const attempts = (r as any).paymentRequests?.flatMap((pr: any) => pr.attempts) || [];
-        const attempt = attempts.find((a: any) => a.method === 'CARD_TO_CARD_IRT') || attempts[0];
-
-        const receiptFileKey = extractedReceiptKey || (attempt?.receiptScreenshotUrl ? attempt.receiptScreenshotUrl.replace('/api/wallet/receipts/', '') : null);
-        const receiptUrl = receiptFileKey ? `/api/wallet/receipts/${receiptFileKey}` : (attempt?.receiptScreenshotUrl || null);
-        const senderCardLast4 = attempt?.senderCardLast4 || extractedCardLast4 || null;
-        const paymentDate = extractedDate || (attempt?.createdAt ? new Date(attempt.createdAt).toISOString().split('T')[0] : null);
-
-        return {
-          id: r.id,
-          fundingRef: r.fundingRef,
-          quoteRef: r.quoteRef,
-          advertiserId: r.advertiserId,
-          advertiserName: r.advertiser?.displayName || r.advertiser?.username || r.advertiserId,
-          fundingMethod: r.fundingMethod,
-          status: r.status,
-          targetUsdCents: r.targetUsdCents,
-          targetUsdFormatted: `$${(r.targetUsdCents / 100).toFixed(2)}`,
-          externalCurrency: r.externalCurrency,
-          externalAmountUnits: r.externalAmountUnits,
-          exchangeRate: r.exchangeRate,
-          evidenceRef: r.evidenceRef,
-          payerIdentifier: maskCard(r.payerIdentifier),
-          rawPayerIdentifier: r.payerIdentifier,
-          adminNotes: r.adminNotes,
-          receiptFileKey,
-          receiptUrl,
-          senderCardLast4,
-          paymentDate,
-          payerDescription,
-          verifiedBy: r.verifier?.displayName || r.verifier?.username || r.verifiedBy,
-          verifiedAt: r.verifiedAt,
-          creditedAt: r.creditedAt,
-          createdAt: r.createdAt,
-        };
-      });
+      const serialized = requests.map(serializeAdminDepositItem);
 
       res.json({
         success: true,
@@ -300,6 +322,69 @@ adminPortalRouter.get(
       });
     } catch (err: any) {
       res.status(500).json({ error: 'DEPOSIT_QUEUE_FAILED', message: err.message || 'Failed to fetch deposits' });
+    }
+  }
+);
+
+adminPortalRouter.get(
+  '/admin/deposits/:id',
+  requireAuth,
+  requireAdminPortalAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const fundingId = parseInt(req.params.id, 10);
+      if (isNaN(fundingId) || fundingId <= 0) {
+        res.status(400).json({ error: 'INVALID_ID', message: 'Valid deposit ID required' });
+        return;
+      }
+
+      const deposit = await prisma.advertiserFundingRequest.findUnique({
+        where: { id: fundingId },
+        include: {
+          advertiser: {
+            select: { discordId: true, username: true, displayName: true },
+          },
+          verifier: {
+            select: { discordId: true, username: true, displayName: true },
+          },
+          paymentRequests: {
+            include: { attempts: true },
+          },
+        },
+      });
+
+      if (!deposit) {
+        res.status(404).json({ error: 'NOT_FOUND', message: 'Deposit request not found' });
+        return;
+      }
+
+      const auditLogs = await prisma.auditLog.findMany({
+        where: {
+          entityType: 'AdvertiserFundingRequest',
+          entityId: String(fundingId),
+        },
+        include: {
+          actor: { select: { discordId: true, username: true, displayName: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      res.json({
+        success: true,
+        deposit: serializeAdminDepositItem(deposit),
+        auditTrail: auditLogs.map((a) => ({
+          id: a.id,
+          actorId: a.actorId,
+          actor: a.actor?.displayName || a.actor?.username || a.actorId || 'System',
+          action: a.action,
+          reason: a.reason,
+          previousValues: a.previousValues,
+          newValues: a.newValues,
+          createdAt: a.createdAt,
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'DEPOSIT_FETCH_FAILED', message: err.message || 'Failed to fetch deposit' });
     }
   }
 );

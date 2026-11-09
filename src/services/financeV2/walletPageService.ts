@@ -447,12 +447,13 @@ export async function getReceiptEvidence(
     if (isSystemOwner) {
       isAuthorizedReviewer = true;
     } else {
-      // استعلام دقیق اختیارات ممیزی مالی سرور (نه صرفاً برچسب‌های کلاینت)
-      const [viewAuth, adjustAuth] = await Promise.all([
-        authorize(user.discordId, Permission.FINANCE_ADMIN_VIEW),
+      // استعلام اختیارات نظارت مالی سرور (FINANCE_ADMIN_VIEW / MANUAL_DEPOSIT_REVIEW / FINANCE_ADJUST)
+      const [depReviewAuth, adjustAuth, adminViewAuth] = await Promise.all([
+        authorize(user.discordId, Permission.MANUAL_DEPOSIT_REVIEW),
         authorize(user.discordId, Permission.FINANCE_ADJUST),
+        authorize(user.discordId, Permission.FINANCE_ADMIN_VIEW),
       ]);
-      isAuthorizedReviewer = Boolean(viewAuth.allowed || adjustAuth.allowed);
+      isAuthorizedReviewer = Boolean(depReviewAuth.allowed || adjustAuth.allowed || adminViewAuth.allowed);
     }
   }
 
@@ -703,8 +704,13 @@ export async function submitIrtDeposit(input: SubmitIrtDepositInput) {
     throw new Error('EXPIRED_QUOTE: The deposit quote has expired. Please refresh to obtain a valid quote.');
   }
 
-  if (quoteHash !== undefined && quoteHash !== authoritativeQuote.quoteHash) {
-    throw new Error('INVALID_QUOTE_SIGNATURE: Deposit quote signature verification failed. Please refresh your quote.');
+  if (quoteHash !== undefined) {
+    const expiresAtStr = quoteExpiresAt ? new Date(quoteExpiresAt).toISOString() : authoritativeQuote.quoteExpiresAt.toISOString();
+    const expectedHashPayload = `${targetUsdCents}:${authoritativeQuote.adminUsdIrtRate}:${authoritativeQuote.incomingIrtFeeRate}:${authoritativeQuote.totalIrtAmount}:${expiresAtStr}`;
+    const expectedHash = crypto.createHash('sha256').update(expectedHashPayload).digest('hex');
+    if (quoteHash !== expectedHash && quoteHash !== authoritativeQuote.quoteHash) {
+      throw new Error('INVALID_QUOTE_SIGNATURE: Deposit quote signature verification failed. Please refresh your quote.');
+    }
   }
 
   // ۲. تجمیع یادداشت‌ها و پیوند فیش
@@ -1030,6 +1036,9 @@ export async function getUserDepositHistory(userId: string, page = 1, limit = 10
       reviewOutcome = 'Cancelled';
     }
 
+    const receiptMatch = r.adminNotes ? r.adminNotes.match(/(?:^|\|\s*)Receipt:\s*([^\s|]+)/i) : null;
+    const receiptFileKey = receiptMatch ? receiptMatch[1].trim() : null;
+
     return {
       id: r.id,
       fundingRef: r.fundingRef,
@@ -1047,7 +1056,8 @@ export async function getUserDepositHistory(userId: string, page = 1, limit = 10
       reviewOutcome,
       evidenceRef: r.evidenceRef,
       payerIdentifier: maskPayerIdentifier(r.payerIdentifier),
-      // یادداشت‌های داخلی مدیریت (adminNotes) و نام فایل‌های رسید عمداً جهت رعایت حریم خصوصی مالی حذف شدند
+      receiptFileKey,
+      receiptUrl: receiptFileKey ? `/api/wallet/receipts/${receiptFileKey}` : null,
       verifiedAt: r.verifiedAt,
       creditedAt: r.creditedAt,
     };
@@ -1176,6 +1186,11 @@ export async function adminReviewFunding(
   action: 'APPROVE' | 'REJECT',
   notes?: string
 ) {
+  const auth = await authorize(actorId, Permission.MANUAL_DEPOSIT_REVIEW);
+  if (!auth.allowed) {
+    throw new Error('PERMISSION_DENIED: Manual IRT deposit review requires Admin or Owner permission.');
+  }
+
   const funding = await prisma.advertiserFundingRequest.findUnique({
     where: { id: fundingId },
   });
@@ -1193,6 +1208,10 @@ export async function adminReviewFunding(
     throw new Error(`ALREADY_CREDITED: Deposit request #${fundingId} was already approved and credited.`);
   }
 
+  if (funding.status === 'REJECTED') {
+    throw new Error(`ALREADY_REJECTED: Deposit request #${fundingId} was already rejected.`);
+  }
+
   if (action === 'REJECT') {
     if (!notes || notes.trim().length < 5) {
       throw new Error('REJECTION_NOTES_REQUIRED: A meaningful explanation (at least 5 characters) is required when rejecting a deposit request.');
@@ -1208,6 +1227,22 @@ export async function adminReviewFunding(
       },
     });
 
+    // Update linked PaymentRequest and PaymentAttempt if any
+    const pReq = await prisma.paymentRequest.findFirst({
+      where: { fundingRequestId: fundingId },
+      include: { attempts: true },
+    });
+    if (pReq) {
+      await prisma.paymentRequest.update({
+        where: { id: pReq.id },
+        data: { status: 'rejected' },
+      });
+      await prisma.paymentAttempt.updateMany({
+        where: { paymentRequestId: pReq.id, status: 'pending' },
+        data: { status: 'failed', reviewReason: notes.trim() },
+      });
+    }
+
     await prisma.auditLog.create({
       data: {
         actorId,
@@ -1215,6 +1250,8 @@ export async function adminReviewFunding(
         entityType: 'AdvertiserFundingRequest',
         entityId: String(fundingId),
         reason: notes.trim(),
+        previousValues: JSON.stringify({ status: funding.status }),
+        newValues: JSON.stringify({ status: 'REJECTED', verifiedBy: actorId }),
         isSuccess: true,
       },
     });
@@ -1223,10 +1260,14 @@ export async function adminReviewFunding(
   }
 
   if (action === 'APPROVE') {
+    if (!notes || notes.trim().length < 5) {
+      throw new Error('APPROVAL_NOTES_REQUIRED: Verification notes (at least 5 characters) are required when approving a deposit request.');
+    }
+
     // بررسی سوئیچ شارژ زنده والت
     assertLiveCreditsEnabled();
 
-    return await adminVerifyAndCreditIrtFunding(fundingId, actorId, notes);
+    return await adminVerifyAndCreditIrtFunding(fundingId, actorId, notes.trim());
   }
 
   throw new Error(`INVALID_ACTION: Action '${action}' is not supported.`);

@@ -4,6 +4,8 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { requireAuth, requireCsrf, requireRole, AuthenticatedRequest } from './middleware/auth';
+import { authorize } from '../services/authorizationService';
+import { Permission } from '../services/permissionTypes';
 import {
   getWalletOverview,
   getAuthoritativeIrtQuote,
@@ -235,12 +237,40 @@ const handleLedgerActivity = async (req: Request, res: Response): Promise<void> 
 walletRouter.get('/wallet/ledger', requireAuth, requireWalletAccess, handleLedgerActivity);
 walletRouter.get('/api/wallet/ledger', requireAuth, requireWalletAccess, handleLedgerActivity);
 
-// ─── 9. ممیزی و تایید/رد درخواست شارژ توسط ادمین ────────────────────────────
+// ─── 9. ممیزی و تایید/رد درخواست شارژ توسط ادمین و مالک (Admin & Owner Only) ───
+export async function requireManualDepositReviewAccess(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  const user = (req as AuthenticatedRequest).user;
+  if (!user || !user.isActive) {
+    res.status(401).json({ error: 'Unauthorized', message: 'Authentication required' });
+    return;
+  }
+
+  const auth = await authorize(user.discordId, Permission.MANUAL_DEPOSIT_REVIEW);
+  if (!auth.allowed) {
+    res.status(403).json({
+      error: 'PERMISSION_DENIED',
+      message: 'Access Denied: Manual IRT deposit review requires Admin or Owner permission.',
+    });
+    return;
+  }
+
+  next();
+}
+
 const handleAdminDepositReview = async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
     const fundingId = Number(req.params.id);
     const { action, notes } = req.body;
+
+    if (!fundingId || isNaN(fundingId) || fundingId <= 0) {
+      res.status(400).json({ error: 'INVALID_ID: Valid deposit request identifier is required.' });
+      return;
+    }
 
     if (!action || !['APPROVE', 'REJECT'].includes(action)) {
       res.status(400).json({ error: 'INVALID_ACTION: action must be either APPROVE or REJECT' });
@@ -250,21 +280,34 @@ const handleAdminDepositReview = async (req: Request, res: Response): Promise<vo
     const result = await adminReviewFunding(fundingId, user.discordId, action, notes);
     res.json(result);
   } catch (err: any) {
-    res.status(400).json({ error: err.message || 'Failed to review deposit request' });
+    const msg = err.message || '';
+    if (msg.includes('PERMISSION_DENIED') || msg.includes('SELF_APPROVAL_PROHIBITED')) {
+      res.status(403).json({ error: 'FORBIDDEN', message: msg });
+      return;
+    }
+    if (msg.includes('FUNDING_REQUEST_NOT_FOUND')) {
+      res.status(404).json({ error: 'NOT_FOUND', message: msg });
+      return;
+    }
+    if (msg.includes('ALREADY_CREDITED') || msg.includes('ALREADY_REJECTED')) {
+      res.status(409).json({ error: 'CONFLICT', message: msg });
+      return;
+    }
+    res.status(400).json({ error: msg || 'Failed to review deposit request' });
   }
 };
 
 walletRouter.post(
   '/wallet/admin/deposits/:id/review',
   requireAuth,
-  requireRole('owner', 'manager', 'admin'),
+  requireManualDepositReviewAccess,
   requireCsrf,
   handleAdminDepositReview
 );
 walletRouter.post(
   '/api/wallet/admin/deposits/:id/review',
   requireAuth,
-  requireRole('owner', 'manager', 'admin'),
+  requireManualDepositReviewAccess,
   requireCsrf,
   handleAdminDepositReview
 );

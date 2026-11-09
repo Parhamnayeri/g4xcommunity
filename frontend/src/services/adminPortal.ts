@@ -22,6 +22,9 @@ export async function fetchAdminDeposits(params?: {
   limit?: number;
   status?: string;
   search?: string;
+  applicant?: string;
+  startDate?: string;
+  endDate?: string;
 }): Promise<{
   deposits: AdminDepositItem[];
   pagination: { page: number; limit: number; total: number; totalPages: number };
@@ -31,11 +34,31 @@ export async function fetchAdminDeposits(params?: {
   if (params?.limit) query.set('limit', String(params.limit));
   if (params?.status) query.set('status', params.status);
   if (params?.search) query.set('search', params.search);
+  if (params?.applicant) query.set('applicant', params.applicant);
+  if (params?.startDate) query.set('startDate', params.startDate);
+  if (params?.endDate) query.set('endDate', params.endDate);
   const res = await apiRequest<any>(`/api/admin/deposits?${query.toString()}`);
   return {
     deposits: Array.isArray(res?.deposits) ? res.deposits : [],
     pagination: normalizePagination(res, params?.limit || 20),
   };
+}
+
+export async function fetchAdminDepositDetails(depositId: number): Promise<{
+  success: boolean;
+  deposit: AdminDepositItem;
+  auditTrail: Array<{
+    id: number;
+    actor: string;
+    actorId?: string;
+    action: string;
+    reason: string | null;
+    previousValues?: string | null;
+    newValues: string | null;
+    createdAt: string;
+  }>;
+}> {
+  return apiRequest(`/api/admin/deposits/${depositId}`);
 }
 
 export async function reviewAdminDeposit(

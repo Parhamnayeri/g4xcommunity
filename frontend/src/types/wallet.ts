@@ -105,6 +105,10 @@ export interface SubmitIrtDepositInput {
   receiptFileKey?: string;
   paymentDate?: string;
   adminNotes?: string;
+  expectedExchangeRate?: number;
+  expectedTotalIrt?: number;
+  quoteExpiresAt?: string;
+  quoteHash?: string;
 }
 
 export interface SubmitIrtDepositResponse {
@@ -140,7 +144,9 @@ export interface DepositHistoryItem {
   reviewOutcome: string;
   evidenceRef: string | null;
   payerIdentifier: string | null;
-  adminNotes: string | null;
+  receiptFileKey?: string | null;
+  receiptUrl?: string | null;
+  adminNotes?: string | null;
   verifiedAt: string | null;
   creditedAt: string | null;
 }

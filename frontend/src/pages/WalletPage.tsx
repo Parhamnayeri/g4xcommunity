@@ -15,7 +15,7 @@ import { fetchWalletOverview } from '../services/wallet';
 export const WALLET_ROLES = ['advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner'];
 
 export const WalletPage: React.FC = () => {
-  const { user, status } = useAuth();
+  const { user, status, hasRole } = useAuth();
 
   const [data, setData] = useState<WalletOverviewResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -75,7 +75,7 @@ export const WalletPage: React.FC = () => {
 
   // Permissions Guard (Section 2)
   const userRoles = user?.roles || [];
-  const isOwner = Boolean(user?.isOwner) || userRoles.includes('owner');
+  const isOwner = hasRole('owner');
   const hasWalletAccess = isOwner || WALLET_ROLES.some((r) => userRoles.includes(r));
 
   if (!hasWalletAccess) {
