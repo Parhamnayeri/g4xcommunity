@@ -85,7 +85,9 @@ Launches the Express server on `http://127.0.0.1:3001` with the in-memory Mock D
 ```bash
 npm run test:staging
 ```
-Executes 56 automated assertions covering environment boundaries, reset confinement, migration integrity, synthetic dataset consistency, and HTTP role-based authorization smoke tests.
+Executes 83 automated assertions across two specialized suites:
+1. `npm run test:staging:bootstrap` (57 tests): covers environment validation, reset confinement, Prisma migrations, partial unique indexes, synthetic dataset integrity, and HTTP role-based authorization smoke tests.
+2. `npm run test:staging:security` (26 tests): covers production entrypoint fail-closed guards, production route 404 sanitization, loopback peer anti-spoofing, synthetic identity allowlists, canonical path confinement, anti-symlink protection, credential leakage checks, and session cookie separation.
 
 ---
 
@@ -108,9 +110,27 @@ The staging database is populated with 10 synthetic test identities using dedica
 
 ---
 
-## 5. Staging Authentication Endpoint
+## 5. Hardened Staging Synthetic Authentication
 
-To allow seamless browser and automated API testing without requiring live Discord OAuth2 callbacks, a dedicated endpoint is enabled strictly when `process.env.STAGING_MODE === 'true'`:
+To allow seamless browser and automated API testing without requiring live Discord OAuth2 callbacks, an isolated staging authentication router is provided with strict security boundaries:
+
+### Security Boundaries:
+1. **Production Route Segregation**:
+   - `POST /api/auth/staging-login` is **NEVER** registered in production routes (`src/web/routes.ts` or `src/web/server.ts`).
+   - Production entrypoint (`src/index.ts`) fails closed immediately if `STAGING_MODE=true` is passed.
+   - Production web server returns HTTP 404 for any staging authentication attempt.
+2. **Loopback Peer Enforcement (Zero-Trust)**:
+   - Requests are checked against raw socket address (`req.socket.remoteAddress`).
+   - Only `127.0.0.1`, `::1`, and `::ffff:127.0.0.1` are permitted.
+   - Non-loopback remote peers receive `403 FORBIDDEN_REMOTE_ACCESS`.
+   - Headers `Host` and `X-Forwarded-For` are strictly ignored for authorization.
+3. **Strict Synthetic Identity Allowlist**:
+   - Only pre-seeded 18-digit synthetic IDs in the range `999999999999990001` - `999999999999990010` are accepted.
+   - Real Discord user IDs or arbitrary snowflakes are rejected with `403 FORBIDDEN_SYNTHETIC_IDENTITY`.
+   - Only pre-approved synthetic roles (`owner`, `admin`, `manager`, `staff`, `advertiser`, `exchanger`, `booster`, `pilot`, `multi_role`, `unverified`) can be resolved.
+4. **Session Separation (`g4x_staging.sid`)**:
+   - Staging sets an isolated cookie name: `g4x_staging.sid` (production uses `g4x.sid`).
+   - Staging sessions are completely ignored by the production server, preventing cross-environment replay attacks.
 
 ```http
 POST /api/auth/staging-login
@@ -140,7 +160,7 @@ Content-Type: application/json
   "csrfToken": "4a7f..."
 }
 ```
-The endpoint regenerates the session ID, sets `req.session.userId`, issues an HttpOnly session cookie, and returns the CSRF token.
+The endpoint regenerates the session ID, sets `req.session.userId`, issues an HttpOnly `g4x_staging.sid` session cookie, and returns the CSRF token.
 
 ---
 

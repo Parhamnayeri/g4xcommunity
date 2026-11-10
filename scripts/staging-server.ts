@@ -42,7 +42,7 @@ process.env.MOCK_DISCORD = 'true';
 
 import { validateStagingEnvironment } from './validate-staging-env';
 import { setGlobalDiscordClient } from '../src/services/orderDiscordService';
-import { app } from '../src/web/server';
+import { createStagingApp } from '../src/web/staging/stagingApp';
 import prisma from '../src/database/db';
 
 export function createMockDiscordClient(): any {
@@ -141,6 +141,8 @@ export async function startStagingServer(portOverride?: number): Promise<Running
 
   const host = process.env.HOST || '127.0.0.1';
   const port = portOverride || Number(process.env.PORT || 3001);
+
+  const app = createStagingApp();
 
   const server = await new Promise<http.Server>((resolve, reject) => {
     const s = app.listen(port, host, () => {

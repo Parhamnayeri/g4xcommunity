@@ -40,6 +40,7 @@
 import path from 'path';
 import request from 'supertest';
 import { app } from '../web/server';
+import { createStagingApp } from '../web/staging/stagingApp';
 import prisma from '../database/db';
 import { resolveDatabaseOwner } from '../web/ownerGate';
 
@@ -300,10 +301,21 @@ async function runStagingBootstrapSuite(): Promise<void> {
     // ─── 5. HTTP SMOKE & ROLE-BASED AUTHORIZATION SMOKE TESTS ─────────────────
     console.log('\n[SECTION 5] Running HTTP Smoke Tests & Protected Portal Authorization...');
 
+    const stagingApp = createStagingApp();
+
+    // 5.0 Production App Isolation: Production app MUST return 404 for staging login
+    const prodStagingLoginRes = await request(app)
+      .post('/api/auth/staging-login')
+      .send({ userId: SYNTHETIC_USERS.BOOSTER });
+    assert(
+      prodStagingLoginRes.status === 404,
+      'Production app (server.ts) strictly returns 404 for /api/auth/staging-login'
+    );
+
     // 5.1 Public routes return 200 HTML
     const publicPages = ['/', '/rules', '/privacy', '/discord-commands'];
     for (const page of publicPages) {
-      const res = await request(app).get(page).set('Accept', 'text/html');
+      const res = await request(stagingApp).get(page).set('Accept', 'text/html');
       assert(
         res.status === 200 && res.type.includes('html'),
         `Public page '${page}' serves 200 OK HTML`
@@ -311,55 +323,55 @@ async function runStagingBootstrapSuite(): Promise<void> {
     }
 
     // 5.2 Public CMS policy API returns 200 JSON
-    const policyRes = await request(app).get('/api/public/rules');
+    const policyRes = await request(stagingApp).get('/api/public/rules');
     assert(
       policyRes.status === 200 && policyRes.body.success && policyRes.body.policy,
       'GET /api/public/rules serves authoritative published policy'
     );
 
     // 5.3 Public games catalog returns 200 JSON
-    const gamesRes = await request(app).get('/api/public/games');
+    const gamesRes = await request(stagingApp).get('/api/public/games');
     assert(
       gamesRes.status === 200 && Array.isArray(gamesRes.body.games) && gamesRes.body.games.length > 0,
       'GET /api/public/games serves active game catalog'
     );
 
     // 5.4 SPA Fallback for unknown frontend page
-    const spaRes = await request(app).get('/booster/settings').set('Accept', 'text/html');
+    const spaRes = await request(stagingApp).get('/booster/settings').set('Accept', 'text/html');
     assert(
       spaRes.status === 200 && spaRes.type.includes('html'),
       'HTML request to /booster/settings falls back to SPA React entry point'
     );
 
     // 5.5 Unknown API route returns 404 JSON, NOT SPA HTML
-    const api404Res = await request(app).get('/api/unknown/endpoint/never/exists');
+    const api404Res = await request(stagingApp).get('/api/unknown/endpoint/never/exists');
     assert(
       api404Res.status === 404 && api404Res.body.error === 'NOT_FOUND',
       'Unknown API route returns 404 JSON error, never index.html'
     );
 
     // 5.6 Unauthenticated requests to protected endpoints return 401
-    const unauthMe = await request(app).get('/api/me');
+    const unauthMe = await request(stagingApp).get('/api/me');
     assert(unauthMe.status === 401, 'Unauthenticated GET /api/me returns 401 Unauthorized');
 
-    const unauthStaff = await request(app).get('/api/staff/orders');
+    const unauthStaff = await request(stagingApp).get('/api/staff/orders');
     assert(unauthStaff.status === 401, 'Unauthenticated GET /api/staff/orders returns 401 Unauthorized');
 
-    const unauthAdmin = await request(app).get('/api/admin/users');
+    const unauthAdmin = await request(stagingApp).get('/api/admin/users');
     assert(unauthAdmin.status === 401, 'Unauthenticated GET /api/admin/users returns 401 Unauthorized');
 
-    const unauthOwner = await request(app).get('/api/owner/overview');
+    const unauthOwner = await request(stagingApp).get('/api/owner/overview');
     assert(unauthOwner.status === 401, 'Unauthenticated GET /api/owner/overview returns 401 Unauthorized');
 
     // 5.7 Staging Login: Booster Session
-    const boosterAgent = request.agent(app);
+    const boosterAgent = request.agent(stagingApp);
     const boosterLoginRes = await boosterAgent
       .post('/api/auth/staging-login')
       .send({ userId: SYNTHETIC_USERS.BOOSTER });
 
     assert(
       boosterLoginRes.status === 200 && boosterLoginRes.body.success,
-      'POST /api/auth/staging-login succeeds for Booster identity'
+      'POST /api/auth/staging-login succeeds for Booster identity on staging app'
     );
 
     const boosterMeRes = await boosterAgent.get('/api/me');
@@ -382,7 +394,7 @@ async function runStagingBootstrapSuite(): Promise<void> {
     );
 
     // 5.8 Staging Login: Staff Session
-    const staffAgent = request.agent(app);
+    const staffAgent = request.agent(stagingApp);
     await staffAgent
       .post('/api/auth/staging-login')
       .send({ userId: SYNTHETIC_USERS.STAFF });
@@ -401,7 +413,7 @@ async function runStagingBootstrapSuite(): Promise<void> {
     );
 
     // 5.9 Staging Login: Admin Session
-    const adminAgent = request.agent(app);
+    const adminAgent = request.agent(stagingApp);
     await adminAgent
       .post('/api/auth/staging-login')
       .send({ userId: SYNTHETIC_USERS.ADMIN });
@@ -413,7 +425,7 @@ async function runStagingBootstrapSuite(): Promise<void> {
     );
 
     // 5.10 Staging Login: Owner Session
-    const ownerAgent = request.agent(app);
+    const ownerAgent = request.agent(stagingApp);
     await ownerAgent
       .post('/api/auth/staging-login')
       .send({ userId: SYNTHETIC_USERS.OWNER });

@@ -93,12 +93,26 @@ export async function bootstrapStagingEnvironment(options: {
   });
 
   const schemaDir = findPrismaSchemaDir();
-  const allowedStagingDir = path.normalize(path.resolve(schemaDir, 'staging')).toLowerCase();
-  const targetNormalized = path.normalize(target.canonicalPath).toLowerCase();
+  const stagingDir = path.resolve(schemaDir, 'staging');
+  let canonicalStagingDir = stagingDir;
+  if (fs.existsSync(stagingDir)) {
+    canonicalStagingDir = fs.realpathSync(stagingDir);
+  }
 
+  let canonicalTarget = target.canonicalPath;
+  if (fs.existsSync(canonicalTarget)) {
+    canonicalTarget = fs.realpathSync(canonicalTarget);
+  } else {
+    const parent = path.dirname(canonicalTarget);
+    if (fs.existsSync(parent)) {
+      canonicalTarget = path.join(fs.realpathSync(parent), path.basename(canonicalTarget));
+    }
+  }
+
+  const requiredPrefix = canonicalStagingDir.toLowerCase() + path.sep;
   // Strict staging directory boundary check
-  if (!targetNormalized.startsWith(allowedStagingDir)) {
-    const errorMsg = `[CRITICAL SAFETY ERROR] Target database path '${target.canonicalPath}' is NOT inside allowed staging directory '${allowedStagingDir}'. Refusing to bootstrap non-staging database!`;
+  if (!canonicalTarget.toLowerCase().startsWith(requiredPrefix)) {
+    const errorMsg = `[CRITICAL SAFETY ERROR] Target database path '${target.canonicalPath}' is NOT inside allowed staging directory '${canonicalStagingDir}'. Refusing to bootstrap non-staging database!`;
     console.error(errorMsg);
     return {
       success: false,

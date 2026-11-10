@@ -14,18 +14,8 @@ import { PrismaClient } from '@prisma/client';
 import prismaInstance from '../src/database/db';
 import { seed as seedBaseDefaults } from '../src/database/seed';
 
-export const SYNTHETIC_USERS = {
-  OWNER: '999999999999990001',
-  ADMIN: '999999999999990002',
-  MANAGEMENT: '999999999999990003',
-  STAFF: '999999999999990004',
-  ADVERTISER: '999999999999990005',
-  EXCHANGER: '999999999999990006',
-  BOOSTER: '999999999999990007',
-  PILOT: '999999999999990008',
-  MULTI_ROLE: '999999999999990009',
-  UNVERIFIED: '999999999999990010',
-} as const;
+export { SYNTHETIC_USERS } from '../src/web/staging/syntheticUsers';
+import { SYNTHETIC_USERS } from '../src/web/staging/syntheticUsers';
 
 export async function seedStagingDatabase(prisma: PrismaClient = prismaInstance): Promise<void> {
   console.log('[SeedStaging] 🧪 Beginning synthetic staging dataset seeding...');
