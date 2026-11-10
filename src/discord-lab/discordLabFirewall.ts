@@ -171,7 +171,7 @@ export class DiscordLabFirewall {
     }
 
     // 3. Guild-targeted routes: /guilds/:guildId/...
-    const guildMatch = pathOnly.match(/^\/guilds\/([1-9][0-9]{16,19})(\/.*)?$/);
+    const guildMatch = pathOnly.match(/^\/guilds\/([a-zA-Z0-9_\-]+)(\/.*)?$/);
     if (guildMatch) {
       const targetGuildId = guildMatch[1];
       if (targetGuildId !== this.allowedGuildId) {
@@ -182,17 +182,55 @@ export class DiscordLabFirewall {
       }
 
       const guildSubPath = guildMatch[2] || '';
-      const isPermittedGuildRoute =
-        guildSubPath === '' ||
-        /^\/channels(\/[a-zA-Z0-9_\-]+)?$/.test(guildSubPath) ||
-        /^\/members(\/[a-zA-Z0-9_\-]+(\/roles\/[a-zA-Z0-9_\-]+)?)?$/.test(guildSubPath) ||
-        /^\/roles(\/[a-zA-Z0-9_\-]+)?$/.test(guildSubPath) ||
-        /^\/emojis(\/[a-zA-Z0-9_\-]+)?$/.test(guildSubPath);
 
-      if (!isPermittedGuildRoute) {
+      // Explicitly reject destructive guild deletion
+      if (guildSubPath === '' && method === 'DELETE') {
         this.totalEventsRejected++;
         throw new DiscordLabSecurityError(
-          `Outgoing REST route '${method} ${pathOnly}' on guild '${targetGuildId}' is unclassified or unauthorized. Fail-closed containment strictly rejects unknown routes.`
+          `Outgoing REST operation 'DELETE /guilds/${targetGuildId}' strictly blocked: destructive guild deletion is prohibited.`
+        );
+      }
+
+      // Exact route + HTTP method allowlist for guild operations:
+      // Permits only documented, necessary routes:
+      // - GET /guilds/:guildId (safe guild metadata read)
+      // - GET /guilds/:guildId/channels (safe channel listing)
+      // - POST /guilds/:guildId/channels (create test channel in allowed lab guild)
+      // - GET /guilds/:guildId/members (safe member listing)
+      // - GET /guilds/:guildId/members/:memberId (safe member read)
+      // - PUT /guilds/:guildId/members/:memberId/roles/:roleId (assign test role to member)
+      // - DELETE /guilds/:guildId/members/:memberId/roles/:roleId (remove test role from member)
+      // - GET /guilds/:guildId/roles (safe roles read)
+      // - GET /guilds/:guildId/roles/:roleId (safe role details read)
+      // - GET /guilds/:guildId/emojis (safe emojis read)
+      // - GET /guilds/:guildId/emojis/:emojiId (safe emoji details read)
+
+      let isAllowedGuildOp = false;
+
+      if (guildSubPath === '') {
+        if (method === 'GET') isAllowedGuildOp = true;
+      } else if (guildSubPath === '/channels') {
+        if (method === 'GET' || method === 'POST') isAllowedGuildOp = true;
+      } else if (guildSubPath === '/members') {
+        if (method === 'GET') isAllowedGuildOp = true;
+      } else if (/^\/members\/[a-zA-Z0-9_\-]+$/.test(guildSubPath)) {
+        if (method === 'GET') isAllowedGuildOp = true;
+      } else if (/^\/members\/[a-zA-Z0-9_\-]+\/roles\/[a-zA-Z0-9_\-]+$/.test(guildSubPath)) {
+        if (method === 'PUT' || method === 'DELETE') isAllowedGuildOp = true;
+      } else if (guildSubPath === '/roles') {
+        if (method === 'GET') isAllowedGuildOp = true;
+      } else if (/^\/roles\/[a-zA-Z0-9_\-]+$/.test(guildSubPath)) {
+        if (method === 'GET') isAllowedGuildOp = true;
+      } else if (guildSubPath === '/emojis') {
+        if (method === 'GET') isAllowedGuildOp = true;
+      } else if (/^\/emojis\/[a-zA-Z0-9_\-]+$/.test(guildSubPath)) {
+        if (method === 'GET') isAllowedGuildOp = true;
+      }
+
+      if (!isAllowedGuildOp) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing REST operation '${method} ${pathOnly}' on guild '${targetGuildId}' is strictly blocked: destructive, unclassified, or unsupported guild operation. Permitted guild operations require an exact route and method allowlist match.`
         );
       }
 
@@ -221,6 +259,27 @@ export class DiscordLabFirewall {
         );
       }
 
+      // Check if target channel is a Direct Message (DM) or Group DM
+      if (client) {
+        const cachedChannel: any = client.channels?.cache?.get(targetChannelId);
+        if (cachedChannel) {
+          const isDm =
+            cachedChannel.isDMBased?.() === true ||
+            cachedChannel.type === 1 ||
+            cachedChannel.type === 3 ||
+            Boolean(cachedChannel.recipientId) ||
+            Boolean(cachedChannel.recipient) ||
+            (!cachedChannel.guildId && !cachedChannel.guild);
+
+          if (isDm) {
+            this.totalEventsRejected++;
+            throw new DiscordLabSecurityError(
+              `Outgoing REST operation '${method} ${pathOnly}' strictly blocked: DM and group-DM operations are denied in Discord Lab mode regardless of recipient membership. Permitted operations must target verified guild channels only.`
+            );
+          }
+        }
+      }
+
       // Verify target guild ownership for channel
       let isVerifiedInAllowedGuild = false;
 
@@ -239,12 +298,6 @@ export class DiscordLabFirewall {
               );
             }
             isVerifiedInAllowedGuild = true;
-          } else if (cachedChannel.isDMBased?.() || cachedChannel.type === 1) {
-            const recipientId = cachedChannel.recipientId || cachedChannel.recipient?.id;
-            const allowedGuild = client.guilds?.cache?.get(this.allowedGuildId);
-            if (recipientId && allowedGuild?.members?.cache?.has(recipientId)) {
-              isVerifiedInAllowedGuild = true;
-            }
           }
         }
 
@@ -262,7 +315,7 @@ export class DiscordLabFirewall {
       if (isMutation && !isVerifiedInAllowedGuild) {
         this.totalEventsRejected++;
         throw new DiscordLabSecurityError(
-          `Outgoing REST mutation '${method} ${pathOnly}' strictly blocked: target guild ownership of channel '${targetChannelId}' is unverified or unknown (not found in allowed test guild '${this.allowedGuildId}').`
+          `Outgoing REST mutation '${method} ${pathOnly}' strictly blocked: target guild ownership of channel '${targetChannelId}' is unverified or unknown (not found in allowed test guild '${this.allowedGuildId}'). Permitted operations must target verified guild channels only.`
         );
       }
 

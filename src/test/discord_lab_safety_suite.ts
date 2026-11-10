@@ -848,6 +848,239 @@ async function runDiscordLabSafetyTests(): Promise<void> {
     assert.strictEqual(callbackRes.success, true);
   });
 
+  await test('9.9 REST firewall strictly rejects destructive guild operations (DELETE, PATCH) and destructive role/emoji operations even on allowed test guild', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    // 1. DELETE /guilds/{allowedGuildId} must be strictly blocked
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/guilds/${VALID_TEST_GUILD_ID}`,
+          method: 'DELETE',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('destructive guild deletion is prohibited'));
+        return true;
+      }
+    );
+
+    // 2. PATCH /guilds/{allowedGuildId} must be strictly blocked
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/guilds/${VALID_TEST_GUILD_ID}`,
+          method: 'PATCH',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('destructive, unclassified, or unsupported guild operation'));
+        return true;
+      }
+    );
+
+    // 3. Destructive role creation / modification / deletion on guild must be blocked
+    const destructiveRoleRoutes = [
+      { fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/roles`, method: 'POST' },
+      { fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/roles/some_role_1`, method: 'PATCH' },
+      { fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/roles/some_role_1`, method: 'DELETE' },
+    ];
+    for (const r of destructiveRoleRoutes) {
+      await assert.rejects(
+        async () => {
+          await (mockVerifiedClient.rest as any).request(r);
+        },
+        (err: any) => {
+          assert(err instanceof DiscordLabSecurityError);
+          assert(err.message.includes('unsupported guild operation'));
+          return true;
+        }
+      );
+    }
+
+    // 4. Destructive emoji creation / modification / deletion on guild must be blocked
+    const destructiveEmojiRoutes = [
+      { fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/emojis`, method: 'POST' },
+      { fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/emojis/some_emoji_1`, method: 'PATCH' },
+      { fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/emojis/some_emoji_1`, method: 'DELETE' },
+    ];
+    for (const r of destructiveEmojiRoutes) {
+      await assert.rejects(
+        async () => {
+          await (mockVerifiedClient.rest as any).request(r);
+        },
+        (err: any) => {
+          assert(err instanceof DiscordLabSecurityError);
+          assert(err.message.includes('unsupported guild operation'));
+          return true;
+        }
+      );
+    }
+
+    // 5. Destructive member kick and ban must be blocked
+    const destructiveMemberRoutes = [
+      { fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/members/some_member_1`, method: 'DELETE' },
+      { fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/bans/some_member_1`, method: 'PUT' },
+    ];
+    for (const r of destructiveMemberRoutes) {
+      await assert.rejects(
+        async () => {
+          await (mockVerifiedClient.rest as any).request(r);
+        },
+        (err: any) => {
+          assert(err instanceof DiscordLabSecurityError);
+          return true;
+        }
+      );
+    }
+
+    // 6. Legitimate role assignment / removal on allowed test guild member is permitted
+    const addRoleRes: any = await (mockVerifiedClient.rest as any).request({
+      fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/members/test_member_123/roles/test_role_456`,
+      method: 'PUT',
+    });
+    assert.strictEqual(addRoleRes.success, true);
+
+    const removeRoleRes: any = await (mockVerifiedClient.rest as any).request({
+      fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/members/test_member_123/roles/test_role_456`,
+      method: 'DELETE',
+    });
+    assert.strictEqual(removeRoleRes.success, true);
+  });
+
+  await test('9.10 REST firewall strictly denies all outgoing DM and group-DM operations regardless of recipient guild membership', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([
+          [
+            VALID_TEST_GUILD_ID,
+            {
+              id: VALID_TEST_GUILD_ID,
+              members: { cache: new Map([['test_guild_member_1', { id: 'test_guild_member_1' }]]) },
+              channels: { cache: new Map() },
+            },
+          ],
+        ]),
+      },
+      channels: {
+        cache: new Map([
+          [
+            'dm_channel_with_guild_member',
+            {
+              id: 'dm_channel_with_guild_member',
+              isDMBased: () => true,
+              type: 1,
+              recipientId: 'test_guild_member_1',
+            },
+          ],
+          [
+            'group_dm_channel_test',
+            {
+              id: 'group_dm_channel_test',
+              isDMBased: () => true,
+              type: 3,
+            },
+          ],
+        ]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    // 1. Negative Test: DM send must be rejected even though recipient is in the allowed guild
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/dm_channel_with_guild_member/messages',
+          method: 'POST',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('DM and group-DM operations are denied in Discord Lab mode'));
+        return true;
+      }
+    );
+
+    // 2. Negative Test: DM edit must be rejected
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/dm_channel_with_guild_member/messages/message_999',
+          method: 'PATCH',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('DM and group-DM operations are denied in Discord Lab mode'));
+        return true;
+      }
+    );
+
+    // 3. Negative Test: DM delete must be rejected
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/dm_channel_with_guild_member/messages/message_999',
+          method: 'DELETE',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('DM and group-DM operations are denied in Discord Lab mode'));
+        return true;
+      }
+    );
+
+    // 4. Negative Test: Group DM operation must be rejected
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/group_dm_channel_test/messages',
+          method: 'POST',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('DM and group-DM operations are denied in Discord Lab mode'));
+        return true;
+      }
+    );
+
+    // 5. Negative Test: Unknown DM channel (not in cache) mutation is denied fail-closed
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/uncached_dm_channel_000/messages',
+          method: 'POST',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('target guild ownership of channel'));
+        return true;
+      }
+    );
+  });
+
   // ─── 10. Startup Hardening & Live Environment Enforcement ───────────────────
   console.log('\n[Category 10: Startup Hardening & Credential Enforcement]');
 
