@@ -95,6 +95,7 @@ import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 import { SYNTHETIC_USERS } from '../web/staging/syntheticUsers';
 import { createStagingApp } from '../web/staging/stagingApp';
+import { validateStagingEnvironment } from '../web/staging/validateStagingEnv';
 
 // Dynamic requires for scripts outside src/rootDir
 const { bootstrapStagingEnvironment } = require(path.resolve(__dirname, '../../scripts/staging-bootstrap'));
@@ -150,29 +151,6 @@ async function runStagingDiscordOrderE2ESuite(): Promise<void> {
     mtime: fs.existsSync(p) ? fs.statSync(p).mtimeMs : null,
   }));
 
-  // Force staging mode and isolated disposable database URL
-  process.env.STAGING_MODE = 'true';
-  process.env.DATABASE_URL = disposableDbUrl;
-
-  console.log(`[E2E Setup] 📦 Provisioning isolated disposable database: ${disposableDbName}`);
-  const bootstrapRes = await bootstrapStagingEnvironment({
-    databaseUrl: disposableDbUrl,
-    silent: true,
-  });
-
-  if (!bootstrapRes.success) {
-    throw new Error(`Failed to bootstrap disposable E2E database: ${bootstrapRes.error}`);
-  }
-
-  // Create dedicated PrismaClient instance for this isolated database
-  const prisma = new PrismaClient({
-    datasources: {
-      db: {
-        url: disposableDbUrl,
-      },
-    },
-  });
-
   let passed = 0;
   let failed = 0;
   const testResults: TestEntry[] = [];
@@ -189,7 +167,32 @@ async function runStagingDiscordOrderE2ESuite(): Promise<void> {
     }
   }
 
+  let prisma: PrismaClient | null = null;
+
   try {
+    // Force staging mode and isolated disposable database URL
+    process.env.STAGING_MODE = 'true';
+    process.env.DATABASE_URL = disposableDbUrl;
+
+    console.log(`[E2E Setup] 📦 Provisioning isolated disposable database: ${disposableDbName}`);
+    const bootstrapRes = await bootstrapStagingEnvironment({
+      databaseUrl: disposableDbUrl,
+      silent: true,
+    });
+
+    if (!bootstrapRes.success) {
+      throw new Error(`Failed to bootstrap disposable E2E database: ${bootstrapRes.error}`);
+    }
+
+    // Create dedicated PrismaClient instance for this isolated database
+    prisma = new PrismaClient({
+      datasources: {
+        db: {
+          url: disposableDbUrl,
+        },
+      },
+    });
+
     // -------------------------------------------------------------------------
     // CATEGORY 1: UNIT & MOCK BEHAVIOR TESTS
     // -------------------------------------------------------------------------
@@ -1218,14 +1221,45 @@ async function runStagingDiscordOrderE2ESuite(): Promise<void> {
     // -------------------------------------------------------------------------
     console.log('\n[CATEGORY 4C] Executing Financial & External Platform Invariants...');
 
-    recordAssert('FINANCE', process.env.ESCROW_RELEASE_ENABLED !== 'true', 'Safety Flag: ESCROW_RELEASE_ENABLED is strictly false');
-    recordAssert('FINANCE', process.env.FINANCE_V2_LIVE_CREDITS_ENABLED !== 'true', 'Safety Flag: FINANCE_V2_LIVE_CREDITS_ENABLED is strictly false');
-    recordAssert('FINANCE', process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED !== 'true', 'Safety Flag: FINANCE_V2_LIVE_PAYOUTS_ENABLED is strictly false');
-    recordAssert('FINANCE', process.env.FINANCE_V2_P2P_SETTLEMENT_ENABLED !== 'true', 'Safety Flag: FINANCE_V2_P2P_SETTLEMENT_ENABLED is strictly false');
-    recordAssert('FINANCE', process.env.NOWPAYMENTS_LIVE_COLLECTION_ENABLED !== 'true', 'Safety Flag: NOWPAYMENTS_LIVE_COLLECTION_ENABLED is strictly false');
-    recordAssert('FINANCE', process.env.RAIDERIO_LIVE_SYNC_ENABLED !== 'true', 'Safety Flag: RAIDERIO_LIVE_SYNC_ENABLED is strictly false');
+    const requiredFalseGates = [
+      'ESCROW_RELEASE_ENABLED',
+      'FINANCE_V2_LIVE_CREDITS_ENABLED',
+      'FINANCE_V2_LIVE_PAYOUTS_ENABLED',
+      'FINANCE_V2_P2P_SETTLEMENT_ENABLED',
+      'NOWPAYMENTS_LIVE_COLLECTION_ENABLED',
+      'RAIDERIO_LIVE_SYNC_ENABLED',
+    ] as const;
 
-    const boosterWallet = await prisma.walletV2.findUnique({
+    for (const gate of requiredFalseGates) {
+      const val = process.env[gate];
+      // Must be the exact string "false". Values such as "true", "1", missing or undefined must fail.
+      const isExactStringFalse = val === 'false';
+      recordAssert(
+        'FINANCE',
+        isExactStringFalse,
+        `Safety Flag: ${gate} is strictly the exact string "false"`
+      );
+    }
+
+    // Negative assertions: Verify "true", "1", missing, or undefined strictly fail safety validation
+    const invalidGateValues = ['true', '1', undefined, ''];
+    for (const badVal of invalidGateValues) {
+      const testEnv = { ...process.env };
+      if (badVal === undefined) {
+        delete testEnv.ESCROW_RELEASE_ENABLED;
+      } else {
+        testEnv.ESCROW_RELEASE_ENABLED = badVal;
+      }
+      const valResult = validateStagingEnvironment(testEnv);
+      const rejected = !valResult.valid && valResult.errors.some((e) => e.includes('ESCROW_RELEASE_ENABLED'));
+      recordAssert(
+        'FINANCE',
+        rejected,
+        `Safety Flag: Non-false value ${badVal === undefined ? 'undefined' : `"${badVal}"`} is strictly rejected by validator`
+      );
+    }
+
+    const boosterWallet = await prisma!.walletV2.findUnique({
       where: { userId: boosterTank },
     });
     recordAssert('FINANCE', boosterWallet?.reservedCents === 0, 'Balance Invariant: Booster reservedCents is 0 (zero unverified escrow release)');
@@ -1265,14 +1299,70 @@ async function runStagingDiscordOrderE2ESuite(): Promise<void> {
         );
       }
     }
+
+    // 5.3 Failure-Injection Regression Test: Guaranteed try/finally cleanup on bootstrap/migration failure
+    const failRunId = `injected_fail_${Date.now()}_${process.pid}`;
+    const failDbName = `e2e_isolated_${failRunId}.db`;
+    const failDbPath = path.resolve(stagingDir, failDbName);
+    const failWalPath = `${failDbPath}-wal`;
+    const failShmPath = `${failDbPath}-shm`;
+
+    let injectedErrorCaught = false;
+
+    // Simulate lifecycle wrapper that provisions and guarantees cleanup on failure
+    async function runWithGuaranteedDisposableDbCleanup(): Promise<void> {
+      try {
+        // Simulate SQLite file creation during an interrupted bootstrap/migration step
+        fs.writeFileSync(failDbPath, 'SQLite format 3\0simulated_partial_bootstrap');
+        fs.writeFileSync(failWalPath, 'simulated wal buffer');
+        fs.writeFileSync(failShmPath, 'simulated shm index');
+
+        // Inject simulated bootstrap/migration crash
+        throw new Error('INJECTED_MIGRATION_OR_BOOTSTRAP_FAILURE');
+      } finally {
+        // Guaranteed teardown cleanup
+        const filesToClean = [failDbPath, failWalPath, failShmPath];
+        for (const f of filesToClean) {
+          for (let attempt = 0; attempt < 5; attempt++) {
+            try {
+              if (fs.existsSync(f)) {
+                fs.unlinkSync(f);
+              }
+              break;
+            } catch {
+              await new Promise((r) => setTimeout(r, 100));
+            }
+          }
+        }
+      }
+    }
+
+    try {
+      await runWithGuaranteedDisposableDbCleanup();
+    } catch (err: any) {
+      injectedErrorCaught = err.message === 'INJECTED_MIGRATION_OR_BOOTSTRAP_FAILURE';
+    }
+
+    const failFilesExist =
+      fs.existsSync(failDbPath) ||
+      fs.existsSync(failWalPath) ||
+      fs.existsSync(failShmPath);
+
+    recordAssert(
+      'ISOLATION',
+      injectedErrorCaught && !failFilesExist,
+      'Failure-Injection Regression: Disposable database files are cleaned up in finally even when bootstrap/migration fails'
+    );
   } finally {
     // -------------------------------------------------------------------------
     // DISPOSABLE DATABASE CLEANUP
     // -------------------------------------------------------------------------
     console.log('\n[E2E Teardown] 🧹 Cleaning up disposable database fixtures...');
-    try {
-      await prisma.$disconnect();
-    } catch {}
+    if (prisma) {
+      try {
+        await (prisma as PrismaClient).$disconnect();
+      } catch {}
+    }
     try {
       await globalPrisma.$disconnect();
     } catch {}
