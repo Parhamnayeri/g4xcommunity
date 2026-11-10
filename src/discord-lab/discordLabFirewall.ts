@@ -113,22 +113,52 @@ export class DiscordLabFirewall {
     }
   }
 
+  public readonly permittedChannelIds: Set<string> = new Set();
+  public readonly permittedInteractionIds: Set<string> = new Set();
+
+  public registerPermittedChannel(channelId: string | null | undefined): void {
+    if (channelId && /^[1-9][0-9]{16,19}$/.test(channelId)) {
+      this.permittedChannelIds.add(channelId);
+    }
+  }
+
+  public registerPermittedInteraction(interactionId: string | null | undefined): void {
+    if (interactionId && /^[1-9][0-9]{16,19}$/.test(interactionId)) {
+      this.permittedInteractionIds.add(interactionId);
+    }
+  }
+
   /**
    * Authoritative gate for all outgoing Discord HTTP REST calls.
    * Intercepts client.rest.request to guarantee fail-closed containment.
+   *
+   * FAIL-CLOSED INVARIANTS:
+   *  1. Reject every unknown or unclassified REST route by default.
+   *  2. Permit only explicitly documented, necessary routes.
+   *  3. Permit startup identity routes ONLY with safe read methods (GET).
+   *  4. Enforce that target guild is strictly allowedGuildId for all guild routes.
+   *  5. Verify target guild ownership for every channel mutation (POST, PATCH, PUT, DELETE).
+   *  6. Reject unclassified routes regardless of path structure.
    */
   public assertOutgoingRestPermitted(options: any, client?: Client): void {
-    const fullRoute = String(options?.fullRoute || options?.path || '').trim();
+    const rawRoute = String(options?.fullRoute || options?.path || '').trim();
+    const pathOnly = rawRoute.split('?')[0].trim();
     const method = String(options?.method || 'GET').toUpperCase();
 
-    // 1. Allow bot login & identity read routes during startup/verification
+    // 1. Startup identity routes — safe read methods (GET) ONLY
     const isBotLoginRoute =
-      fullRoute === '/gateway/bot' ||
-      fullRoute === '/users/@me' ||
-      fullRoute === '/oauth2/applications/@me' ||
-      fullRoute === '/users/@me/guilds';
+      pathOnly === '/gateway/bot' ||
+      pathOnly === '/users/@me' ||
+      pathOnly === '/oauth2/applications/@me' ||
+      pathOnly === '/users/@me/guilds';
 
     if (isBotLoginRoute) {
+      if (method !== 'GET') {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Startup identity route '${method} ${pathOnly}' rejected: only safe read method 'GET' is permitted on identity routes.`
+        );
+      }
       return;
     }
 
@@ -136,48 +166,135 @@ export class DiscordLabFirewall {
     if (this._state !== DiscordLabState.ACTIVE && this._state !== DiscordLabState.VERIFIED) {
       this.totalEventsRejected++;
       throw new DiscordLabSecurityError(
-        `Outgoing REST operation '${method} ${fullRoute}' rejected: Discord Lab state is '${this._state}' (must be ACTIVE).`
+        `Outgoing REST operation '${method} ${pathOnly}' rejected: Discord Lab state is '${this._state}' (must be ACTIVE).`
       );
     }
 
     // 3. Guild-targeted routes: /guilds/:guildId/...
-    const guildMatch = fullRoute.match(/^\/guilds\/([^\/]+)/);
+    const guildMatch = pathOnly.match(/^\/guilds\/([1-9][0-9]{16,19})(\/.*)?$/);
     if (guildMatch) {
       const targetGuildId = guildMatch[1];
       if (targetGuildId !== this.allowedGuildId) {
         this.totalEventsRejected++;
         throw new DiscordLabSecurityError(
-          `Outgoing REST operation '${method} ${fullRoute}' strictly blocked: target guild '${targetGuildId}' is not the allowed test guild '${this.allowedGuildId}'.`
+          `Outgoing REST operation '${method} ${pathOnly}' strictly blocked: target guild '${targetGuildId}' is not the allowed test guild '${this.allowedGuildId}'.`
         );
       }
+
+      const guildSubPath = guildMatch[2] || '';
+      const isPermittedGuildRoute =
+        guildSubPath === '' ||
+        /^\/channels(\/[a-zA-Z0-9_\-]+)?$/.test(guildSubPath) ||
+        /^\/members(\/[a-zA-Z0-9_\-]+(\/roles\/[a-zA-Z0-9_\-]+)?)?$/.test(guildSubPath) ||
+        /^\/roles(\/[a-zA-Z0-9_\-]+)?$/.test(guildSubPath) ||
+        /^\/emojis(\/[a-zA-Z0-9_\-]+)?$/.test(guildSubPath);
+
+      if (!isPermittedGuildRoute) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing REST route '${method} ${pathOnly}' on guild '${targetGuildId}' is unclassified or unauthorized. Fail-closed containment strictly rejects unknown routes.`
+        );
+      }
+
+      return;
     }
 
     // 4. Channel-targeted routes: /channels/:channelId/...
-    const channelMatch = fullRoute.match(/^\/channels\/([^\/]+)/);
-    if (channelMatch && client) {
+    const channelMatch = pathOnly.match(/^\/channels\/([a-zA-Z0-9_\-]+)(\/.*)?$/);
+    if (channelMatch) {
       const targetChannelId = channelMatch[1];
-      const cachedChannel: any = client.channels?.cache?.get(targetChannelId);
+      const channelSubPath = channelMatch[2] || '';
 
-      if (cachedChannel) {
-        if (cachedChannel.guildId && cachedChannel.guildId !== this.allowedGuildId) {
-          this.totalEventsRejected++;
-          throw new DiscordLabSecurityError(
-            `Outgoing REST operation '${method} ${fullRoute}' strictly blocked: channel '${targetChannelId}' belongs to foreign guild '${cachedChannel.guildId}'.`
-          );
+      const isPermittedChannelRoute =
+        channelSubPath === '' ||
+        /^\/messages(\/[a-zA-Z0-9_\-]+(\/reactions(\/.*)?)?)?$/.test(channelSubPath) ||
+        /^\/messages\/[a-zA-Z0-9_\-]+\/threads$/.test(channelSubPath) ||
+        /^\/permissions\/[a-zA-Z0-9_\-]+$/.test(channelSubPath) ||
+        /^\/pins(\/[a-zA-Z0-9_\-]+)?$/.test(channelSubPath) ||
+        /^\/typing$/.test(channelSubPath) ||
+        /^\/threads$/.test(channelSubPath);
+
+      if (!isPermittedChannelRoute) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing REST route '${method} ${pathOnly}' on channel '${targetChannelId}' is unclassified or unauthorized. Fail-closed containment strictly rejects unknown routes.`
+        );
+      }
+
+      // Verify target guild ownership for channel
+      let isVerifiedInAllowedGuild = false;
+
+      if (this.permittedChannelIds.has(targetChannelId)) {
+        isVerifiedInAllowedGuild = true;
+      }
+
+      if (!isVerifiedInAllowedGuild && client) {
+        const cachedChannel: any = client.channels?.cache?.get(targetChannelId);
+        if (cachedChannel) {
+          if (cachedChannel.guildId) {
+            if (cachedChannel.guildId !== this.allowedGuildId) {
+              this.totalEventsRejected++;
+              throw new DiscordLabSecurityError(
+                `Outgoing REST operation '${method} ${pathOnly}' strictly blocked: channel '${targetChannelId}' belongs to foreign guild '${cachedChannel.guildId}'.`
+              );
+            }
+            isVerifiedInAllowedGuild = true;
+          } else if (cachedChannel.isDMBased?.() || cachedChannel.type === 1) {
+            const recipientId = cachedChannel.recipientId || cachedChannel.recipient?.id;
+            const allowedGuild = client.guilds?.cache?.get(this.allowedGuildId);
+            if (recipientId && allowedGuild?.members?.cache?.has(recipientId)) {
+              isVerifiedInAllowedGuild = true;
+            }
+          }
         }
-      } else {
-        const allowedGuild = client.guilds?.cache?.get(this.allowedGuildId);
-        if (allowedGuild && allowedGuild.channels?.cache) {
-          const inGuildCache = allowedGuild.channels.cache.has(targetChannelId);
-          if (!inGuildCache && method !== 'GET') {
-            this.totalEventsRejected++;
-            throw new DiscordLabSecurityError(
-              `Outgoing REST mutation '${method} ${fullRoute}' strictly blocked: target channel '${targetChannelId}' is not found in allowed test guild '${this.allowedGuildId}'.`
-            );
+
+        if (!isVerifiedInAllowedGuild) {
+          const allowedGuild = client.guilds?.cache?.get(this.allowedGuildId);
+          if (allowedGuild && allowedGuild.channels?.cache?.has(targetChannelId)) {
+            isVerifiedInAllowedGuild = true;
           }
         }
       }
+
+      // Do not trust client caches alone when target ownership is unknown.
+      // Every mutation (POST, PATCH, PUT, DELETE) MUST have proven ownership in allowedGuildId.
+      const isMutation = method !== 'GET';
+      if (isMutation && !isVerifiedInAllowedGuild) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing REST mutation '${method} ${pathOnly}' strictly blocked: target guild ownership of channel '${targetChannelId}' is unverified or unknown (not found in allowed test guild '${this.allowedGuildId}').`
+        );
+      }
+
+      return;
     }
+
+    // 5. Interaction callbacks: /interactions/:interactionId/:token/callback
+    const interactionMatch = pathOnly.match(/^\/interactions\/([a-zA-Z0-9_\-]+)\/([a-zA-Z0-9_\-]+)\/callback$/);
+    if (interactionMatch) {
+      if (method !== 'POST') {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing interaction callback '${method} ${pathOnly}' rejected: callbacks require POST method.`
+        );
+      }
+
+      const interactionId = interactionMatch[1];
+      if (!this.permittedInteractionIds.has(interactionId)) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing interaction callback for interaction '${interactionId}' strictly blocked: interaction was not verified from allowed test guild '${this.allowedGuildId}'.`
+        );
+      }
+
+      return;
+    }
+
+    // 6. Strict Default Fail-Closed: Any unclassified route is immediately rejected
+    this.totalEventsRejected++;
+    throw new DiscordLabSecurityError(
+      `Outgoing REST route '${method} ${pathOnly}' is unclassified or unauthorized. Fail-closed containment strictly rejects unknown routes by default.`
+    );
   }
 
   /**
@@ -305,6 +422,7 @@ export class DiscordLabFirewall {
         return;
       }
 
+      this.registerPermittedChannel(message.channelId);
       try {
         await handlers.onPermittedMessage(message);
       } catch (err: any) {
@@ -351,6 +469,11 @@ export class DiscordLabFirewall {
           } catch {}
         }
         return;
+      }
+
+      this.registerPermittedInteraction(interaction.id);
+      if (interaction.channelId) {
+        this.registerPermittedChannel(interaction.channelId);
       }
 
       try {

@@ -493,6 +493,16 @@ async function runDiscordLabSafetyTests(): Promise<void> {
     assert.strictEqual(isGlobalPrismaOverridden(), false, 'Global prisma must be reset to null after Lab stop');
   });
 
+  await test('8.4 Production-mode behavior remains completely intact when dynamic Prisma Proxy has no active override', () => {
+    assert.strictEqual(isGlobalPrismaOverridden(), false);
+    // Access properties on prismaProxy to ensure delegator functions correctly in standard mode
+    assert(typeof prisma.$connect === 'function');
+    assert(typeof prisma.$disconnect === 'function');
+    assert(typeof prisma.user === 'object');
+    assert(typeof prisma.order === 'object');
+    assert.strictEqual(isGlobalPrismaOverridden(), false);
+  });
+
   // ─── 9. Outgoing Discord REST Operations Firewall ──────────────────────────
   console.log('\n[Category 9: Outgoing Discord REST Operations Firewall]');
 
@@ -646,6 +656,198 @@ async function runDiscordLabSafetyTests(): Promise<void> {
     assert.strictEqual(res.id, 'new_chan_id');
   });
 
+  await test('9.5 REST firewall strictly rejects startup identity routes using non-GET methods', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockClient = {
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.attachRestFirewall(mockClient as any);
+
+    // POST /users/@me must be rejected
+    await assert.rejects(
+      async () => {
+        await (mockClient.rest as any).request({
+          fullRoute: '/users/@me',
+          method: 'POST',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('only safe read method'));
+        return true;
+      }
+    );
+
+    // DELETE /gateway/bot must be rejected
+    await assert.rejects(
+      async () => {
+        await (mockClient.rest as any).request({
+          fullRoute: '/gateway/bot',
+          method: 'DELETE',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('only safe read method'));
+        return true;
+      }
+    );
+  });
+
+  await test('9.6 REST firewall strictly rejects unclassified routes lacking guild or channel prefixes', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    const unclassifiedRoutes = [
+      '/applications/100000000000000001/commands',
+      '/invites/some_test_invite',
+      '/experiments',
+      '/oauth2/token',
+      '/voice/regions',
+      '/custom/unclassified/endpoint',
+    ];
+
+    for (const route of unclassifiedRoutes) {
+      await assert.rejects(
+        async () => {
+          await (mockVerifiedClient.rest as any).request({
+            fullRoute: route,
+            method: 'GET',
+          });
+        },
+        (err: any) => {
+          assert(err instanceof DiscordLabSecurityError);
+          assert(err.message.includes('unclassified or unauthorized'));
+          return true;
+        }
+      );
+    }
+  });
+
+  await test('9.7 REST firewall strictly protects message edits, reactions, permissions, and threads', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([
+          [
+            VALID_TEST_GUILD_ID,
+            {
+              id: VALID_TEST_GUILD_ID,
+              channels: { cache: new Map([['allowed_channel_456', { id: 'allowed_channel_456' }]]) },
+            },
+          ],
+        ]),
+      },
+      channels: {
+        cache: new Map([
+          ['foreign_channel_789', { id: 'foreign_channel_789', guildId: FOREIGN_GUILD_ID }],
+        ]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    // 1. Message Edit on foreign channel must be blocked
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/foreign_channel_789/messages/111111111111111111',
+          method: 'PATCH',
+        });
+      },
+      DiscordLabSecurityError
+    );
+
+    // 2. Reaction on foreign channel must be blocked
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/foreign_channel_789/messages/111111111111111111/reactions/%F0%9F%91%8D/@me',
+          method: 'PUT',
+        });
+      },
+      DiscordLabSecurityError
+    );
+
+    // 3. Permission overwrite on foreign channel must be blocked
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/foreign_channel_789/permissions/222222222222222222',
+          method: 'PUT',
+        });
+      },
+      DiscordLabSecurityError
+    );
+
+    // 4. Operations on verified allowed channel succeed
+    const editRes: any = await (mockVerifiedClient.rest as any).request({
+      fullRoute: '/channels/allowed_channel_456/messages/111111111111111111',
+      method: 'PATCH',
+    });
+    assert.strictEqual(editRes.success, true);
+
+    const reactionRes: any = await (mockVerifiedClient.rest as any).request({
+      fullRoute: '/channels/allowed_channel_456/messages/111111111111111111/reactions/%F0%9F%91%8D/@me',
+      method: 'PUT',
+    });
+    assert.strictEqual(reactionRes.success, true);
+  });
+
+  await test('9.8 REST firewall rejects interaction callbacks for unverified foreign interactions', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    // 1. Unverified interaction callback is rejected
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/interactions/999999999999999999/random_token_12345/callback',
+          method: 'POST',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('interaction was not verified'));
+        return true;
+      }
+    );
+
+    // 2. Verified interaction callback is permitted
+    firewall.registerPermittedInteraction('888888888888888888');
+    const callbackRes: any = await (mockVerifiedClient.rest as any).request({
+      fullRoute: '/interactions/888888888888888888/valid_test_token/callback',
+      method: 'POST',
+    });
+    assert.strictEqual(callbackRes.success, true);
+  });
+
   // ─── 10. Startup Hardening & Live Environment Enforcement ───────────────────
   console.log('\n[Category 10: Startup Hardening & Credential Enforcement]');
 
@@ -692,6 +894,18 @@ async function runDiscordLabSafetyTests(): Promise<void> {
     assert.strictEqual(result.valid, false);
     assert(result.reason?.includes('does not match expected DISCORD_LAB_APPLICATION_ID'));
     assert.strictEqual(firewall.state, DiscordLabState.TERMINATED);
+  });
+
+  await test('10.4 Live Discord Lab startup strictly refuses fallback to DISCORD_TOKEN when DISCORD_LAB_BOT_TOKEN is missing', () => {
+    const envWithOnlyLegacyToken: Record<string, string> = {
+      ...getBaselineValidEnv(),
+      DISCORD_TOKEN: VALID_SYNTHETIC_TOKEN,
+    };
+    delete envWithOnlyLegacyToken.DISCORD_LAB_BOT_TOKEN;
+
+    const res = validateDiscordLabEnvironment(envWithOnlyLegacyToken, { requireToken: true });
+    assert.strictEqual(res.valid, false);
+    assert(res.errors.some((e) => e.includes('DISCORD_LAB_BOT_TOKEN is missing')));
   });
 
   console.log('\n============================================================');

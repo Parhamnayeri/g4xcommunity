@@ -263,7 +263,16 @@ export class DiscordLabLifecycleManager {
           resolve();
         });
 
-        const token = (process.env.DISCORD_LAB_BOT_TOKEN || process.env.DISCORD_TOKEN || '').trim();
+        const token = (process.env.DISCORD_LAB_BOT_TOKEN || '').trim();
+        if (!token) {
+          clearTimeout(timeout);
+          reject(
+            new DiscordLabSecurityError(
+              'DISCORD_LAB_BOT_TOKEN is missing. Only the dedicated operator-managed lab token may be used.'
+            )
+          );
+          return;
+        }
         this.discordClient!.login(token).catch((err) => {
           clearTimeout(timeout);
           reject(err);

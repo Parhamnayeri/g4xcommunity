@@ -213,7 +213,7 @@ export function validateDiscordLabEnvironment(
   }
 
   // 8. Bot Token Format Verification (Strictly without printing or leaking)
-  const botToken = (env.DISCORD_LAB_BOT_TOKEN || env.DISCORD_TOKEN || '').trim();
+  const botToken = (env.DISCORD_LAB_BOT_TOKEN || '').trim();
   let tokenConfigured = false;
   if (!botToken) {
     if (options.requireToken) {
