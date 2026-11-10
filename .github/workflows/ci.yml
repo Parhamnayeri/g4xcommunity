@@ -1,0 +1,85 @@
+name: Continuous Integration
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build & Verify CI
+    runs-on: ubuntu-latest
+
+    env:
+      CI: 'true'
+      NODE_ENV: test
+      STAGING_MODE: 'true'
+      HOST: '127.0.0.1'
+      PORT: '3000'
+      DATABASE_URL: 'file:./staging/staging.db'
+      SESSION_SECRET: 'ci_random_session_secret_at_least_64_characters_hex_0123456789abcdef'
+      G4X_OWNER_ACCESS_KEY: 'ci_random_owner_access_key_min_32_characters_1234567890abcdef'
+      WITHDRAWAL_QUOTE_SIGNING_SECRET: 'ci_withdrawal_signing_secret_min_32_chars_abcdef012345'
+      EXCHANGE_QUOTE_SIGNING_SECRET: 'ci_exchange_signing_secret_min_32_chars_abcdef012345'
+      # Financial safety feature gates strictly set to false
+      ESCROW_RELEASE_ENABLED: 'false'
+      FINANCE_V2_LIVE_CREDITS_ENABLED: 'false'
+      FINANCE_V2_LIVE_PAYOUTS_ENABLED: 'false'
+      FINANCE_V2_P2P_SETTLEMENT_ENABLED: 'false'
+      NOWPAYMENTS_LIVE_COLLECTION_ENABLED: 'false'
+      RAIDERIO_LIVE_SYNC_ENABLED: 'false'
+      # Synthetic mock credentials
+      DISCORD_TOKEN: 'mock_ci_discord_bot_token_do_not_connect'
+      DISCORD_CLIENT_ID: '100000000000000001'
+      DISCORD_GUILD_ID: '100000000000000002'
+      ZARINPAL_MERCHANT_ID: 'mock_zarinpal_merchant_id_do_not_connect'
+      NOWPAYMENTS_API_KEY: 'mock_nowpayments_api_key_do_not_connect'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client
+        run: npx prisma generate
+
+      - name: Build application (TypeScript & Vite)
+        run: npm run build
+
+      - name: Run isolated staging verification suite
+        run: npm run test:staging
+
+      - name: Run migration & reconciliation safety suite
+        run: npm run test:migration:safety
+
+      - name: Run central permissions & authorization suite
+        run: npm run test:permissions
+
+      - name: Run Discord command registry suite
+        run: npm run test:discord-commands
+
+      - name: Run Discord order workflow concurrency suite
+        run: npm run test:discord-order-workflow
+
+      - name: Run Discord booster hub & proof suite
+        run: npm run test:booster-hub
+
+      - name: Run rules CMS & Discord synchronization suite
+        run: npm run test:rules-cms
+
+      - name: Run production dependency vulnerability audit
+        run: npm audit --omit=dev
