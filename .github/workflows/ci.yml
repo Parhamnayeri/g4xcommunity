@@ -24,11 +24,7 @@ jobs:
       HOST: '127.0.0.1'
       PORT: '3000'
       DATABASE_URL: 'file:./staging/staging.db'
-      SESSION_SECRET: 'ci_random_session_secret_at_least_64_characters_hex_0123456789abcdef'
-      G4X_OWNER_ACCESS_KEY: 'ci_random_owner_access_key_min_32_characters_1234567890abcdef'
-      WITHDRAWAL_QUOTE_SIGNING_SECRET: 'ci_withdrawal_signing_secret_min_32_chars_abcdef012345'
-      EXCHANGE_QUOTE_SIGNING_SECRET: 'ci_exchange_signing_secret_min_32_chars_abcdef012345'
-      # Financial safety feature gates strictly set to false
+      # Financial and external safety feature gates strictly set to the exact string "false"
       ESCROW_RELEASE_ENABLED: 'false'
       FINANCE_V2_LIVE_CREDITS_ENABLED: 'false'
       FINANCE_V2_LIVE_PAYOUTS_ENABLED: 'false'
@@ -41,6 +37,7 @@ jobs:
       DISCORD_GUILD_ID: '100000000000000002'
       ZARINPAL_MERCHANT_ID: 'mock_zarinpal_merchant_id_do_not_connect'
       NOWPAYMENTS_API_KEY: 'mock_nowpayments_api_key_do_not_connect'
+      NOWPAYMENTS_MODE: 'disabled'
 
     steps:
       - name: Checkout repository
@@ -54,6 +51,65 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Generate cryptographically random runtime secrets
+        run: |
+          mkdir -p prisma/staging
+          node -e "
+            const crypto = require('crypto');
+            const fs = require('fs');
+
+            const sessionSecret = crypto.randomBytes(32).toString('hex');
+            const ownerKey = crypto.randomBytes(32).toString('hex');
+            const withdrawalSecret = crypto.randomBytes(32).toString('hex');
+            const exchangeSecret = crypto.randomBytes(32).toString('hex');
+
+            // Mask all generated secrets in GitHub Actions logs
+            console.log('::add-mask::' + sessionSecret);
+            console.log('::add-mask::' + ownerKey);
+            console.log('::add-mask::' + withdrawalSecret);
+            console.log('::add-mask::' + exchangeSecret);
+
+            // Append to GitHub Actions environment
+            const envFile = process.env.GITHUB_ENV;
+            if (envFile) {
+              const envLines = [
+                'SESSION_SECRET=' + sessionSecret,
+                'G4X_OWNER_ACCESS_KEY=' + ownerKey,
+                'WITHDRAWAL_QUOTE_SIGNING_SECRET=' + withdrawalSecret,
+                'EXCHANGE_QUOTE_SIGNING_SECRET=' + exchangeSecret
+              ].join('\n') + '\n';
+              fs.appendFileSync(envFile, envLines);
+            }
+
+            // Write matching .env.staging
+            const stagingLines = [
+              'NODE_ENV=test',
+              'STAGING_MODE=true',
+              'HOST=127.0.0.1',
+              'PORT=3000',
+              'WEB_BASE_URL=http://127.0.0.1:3000',
+              'COOKIE_SECURE=false',
+              'DATABASE_URL=file:./staging/staging.db',
+              'DISCORD_TOKEN=mock_ci_discord_bot_token_do_not_connect',
+              'DISCORD_CLIENT_ID=100000000000000001',
+              'DISCORD_GUILD_ID=100000000000000002',
+              'SESSION_SECRET=' + sessionSecret,
+              'G4X_OWNER_ACCESS_KEY=' + ownerKey,
+              'WITHDRAWAL_QUOTE_SIGNING_SECRET=' + withdrawalSecret,
+              'EXCHANGE_QUOTE_SIGNING_SECRET=' + exchangeSecret,
+              'ESCROW_RELEASE_ENABLED=false',
+              'FINANCE_V2_LIVE_CREDITS_ENABLED=false',
+              'FINANCE_V2_LIVE_PAYOUTS_ENABLED=false',
+              'FINANCE_V2_P2P_SETTLEMENT_ENABLED=false',
+              'NOWPAYMENTS_LIVE_COLLECTION_ENABLED=false',
+              'RAIDERIO_LIVE_SYNC_ENABLED=false',
+              'NOWPAYMENTS_MODE=disabled',
+              'NOWPAYMENTS_API_KEY=mock_nowpayments_api_key_do_not_connect',
+              'ZARINPAL_MERCHANT_ID=mock_zarinpal_merchant_id_do_not_connect'
+            ];
+            fs.writeFileSync('.env.staging', stagingLines.join('\n') + '\n');
+          "
 
       - name: Generate Prisma Client
         run: npx prisma generate
