@@ -44,79 +44,10 @@ import { validateStagingEnvironment } from './validate-staging-env';
 import { setGlobalDiscordClient } from '../src/services/orderDiscordService';
 import { createStagingApp } from '../src/web/staging/stagingApp';
 import prisma from '../src/database/db';
+import { createRealisticMockDiscordClient, MockDiscordClient } from '../src/test/mockDiscordAdapter';
 
-export function createMockDiscordClient(): any {
-  let mockMessageCounter = 9000;
-
-  const mockChannel: any = {
-    id: '999999999999991001',
-    name: 'staging-orders',
-    isTextBased: () => true,
-    send: async (payload: any) => {
-      mockMessageCounter++;
-      return {
-        id: `99999999999999${mockMessageCounter}`,
-        channelId: mockChannel.id,
-        content: typeof payload === 'string' ? payload : payload.content,
-        embeds: payload.embeds || [],
-        components: payload.components || [],
-        edit: async () => {},
-        delete: async () => {},
-        react: async () => {},
-      };
-    },
-    messages: {
-      fetch: async (id: string) => ({
-        id,
-        channelId: mockChannel.id,
-        edit: async () => {},
-        delete: async () => {},
-      }),
-    },
-  };
-
-  const mockGuild: any = {
-    id: '999999999999990000',
-    name: 'G4X Staging Guild',
-    channels: {
-      fetch: async (id: string) => mockChannel,
-    },
-    members: {
-      fetch: async (id: string) => ({
-        id,
-        roles: {
-          cache: new Map(),
-          add: async () => {},
-          remove: async () => {},
-        },
-        user: { id, tag: `User_${id}#0000` },
-      }),
-    },
-  };
-
-  return {
-    user: {
-      id: '999999999999990000',
-      tag: 'G4X_Staging_Bot#0000',
-    },
-    guilds: {
-      fetch: async () => mockGuild,
-      cache: new Map([['999999999999990000', mockGuild]]),
-    },
-    channels: {
-      fetch: async () => mockChannel,
-      cache: new Map([['999999999999991001', mockChannel]]),
-    },
-    users: {
-      fetch: async (id: string) => ({
-        id,
-        tag: `User_${id}#0000`,
-        send: async () => ({ id: `dm_99999999999999${mockMessageCounter++}` }),
-      }),
-    },
-    ws: { ping: 5 },
-    isReady: () => true,
-  };
+export function createMockDiscordClient(): MockDiscordClient {
+  return createRealisticMockDiscordClient();
 }
 
 export interface RunningStagingServer {

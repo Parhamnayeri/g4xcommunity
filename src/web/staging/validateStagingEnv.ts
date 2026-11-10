@@ -151,9 +151,9 @@ export function validateStagingEnvironment(
 
   for (const gate of gates) {
     const val = env[gate];
-    if (val === 'true' || val === '1') {
+    if (val !== 'false') {
       errors.push(
-        `CRITICAL SAFETY VIOLATION: ${gate} is enabled ('${val}')! All financial and external synchronization gates MUST be 'false' in staging.`
+        `CRITICAL SAFETY VIOLATION: ${gate} must be explicitly set to the exact string 'false' (received: ${val === undefined ? 'undefined' : `'${val}'`})! All financial and external synchronization gates MUST be 'false' in staging.`
       );
     }
   }
