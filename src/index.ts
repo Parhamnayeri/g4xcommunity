@@ -10,6 +10,14 @@
  */
 
 import 'dotenv/config';
+
+// ─── بررسی ایمنی محیط: نقطه ورود اصلی پروداکشن هرگز با STAGING_MODE نباید اجرا شود ───
+if (process.env.STAGING_MODE === 'true') {
+  console.error(
+    '[CRITICAL SECURITY ERROR] Refusing to run production entrypoint (src/index.ts) with STAGING_MODE=true. Use dedicated staging runner instead (scripts/staging-server.ts).'
+  );
+  process.exit(1);
+}
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 
 import { initializeDatabase } from './database/schema';
@@ -118,6 +126,13 @@ process.on('uncaughtException', (error) => {
 // ─── توالی راه‌اندازی ────────────────────────────────────────────────────
 async function bootstrap(): Promise<void> {
   try {
+    // ۰. بررسی ایمنی محیط: نقطه ورود اصلی پروداکشن هرگز با STAGING_MODE نباید اجرا شود
+    if (process.env.STAGING_MODE === 'true') {
+      throw new Error(
+        '[CRITICAL SECURITY ERROR] Refusing to run production entrypoint (src/index.ts) with STAGING_MODE=true. Use dedicated staging runner instead (scripts/staging-server.ts).'
+      );
+    }
+
     // ۱. مقداردهی دیتابیس (async)
     await initializeDatabase();
 
@@ -128,7 +143,7 @@ async function bootstrap(): Promise<void> {
     const port = Number(process.env.PORT ?? 3000);
     startWebServer(port);
 
-    // ۴. لاگین به دیسکورد
+    // ۴. لاگین به دیسکورد (الزامی در پروداکشن بدون هیچ‌گونه بای‌پس)
     const token = process.env.DISCORD_TOKEN;
     if (!token) throw new Error('DISCORD_TOKEN is not set in .env');
     await client.login(token);
