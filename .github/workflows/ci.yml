@@ -138,5 +138,8 @@ jobs:
       - name: Run rules CMS & Discord synchronization suite
         run: npm run test:rules-cms
 
+      - name: Run safe Discord Lab integration safety suite
+        run: npm run test:discord-lab:safety
+
       - name: Run production dependency vulnerability audit
         run: npm audit --omit=dev
