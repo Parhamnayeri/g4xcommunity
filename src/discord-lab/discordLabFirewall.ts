@@ -310,12 +310,12 @@ export class DiscordLabFirewall {
       }
 
       // Do not trust client caches alone when target ownership is unknown.
-      // Every mutation (POST, PATCH, PUT, DELETE) MUST have proven ownership in allowedGuildId.
-      const isMutation = method !== 'GET';
-      if (isMutation && !isVerifiedInAllowedGuild) {
+      // Every operation (GET, POST, PATCH, PUT, DELETE) MUST have proven ownership in allowedGuildId.
+      // Unknown or DM channels cannot be read, written, edited, or deleted.
+      if (!isVerifiedInAllowedGuild) {
         this.totalEventsRejected++;
         throw new DiscordLabSecurityError(
-          `Outgoing REST mutation '${method} ${pathOnly}' strictly blocked: target guild ownership of channel '${targetChannelId}' is unverified or unknown (not found in allowed test guild '${this.allowedGuildId}'). Permitted operations must target verified guild channels only.`
+          `Outgoing REST operation '${method} ${pathOnly}' strictly blocked: target guild ownership of channel '${targetChannelId}' is unverified or unknown (not found in allowed test guild '${this.allowedGuildId}'). Permitted operations must target verified guild channels only.`
         );
       }
 

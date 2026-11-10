@@ -1079,6 +1079,102 @@ async function runDiscordLabSafetyTests(): Promise<void> {
         return true;
       }
     );
+
+    // 6. Negative Test: DM read (GET) must be strictly rejected
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/dm_channel_with_guild_member/messages',
+          method: 'GET',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('DM and group-DM operations are denied in Discord Lab mode'));
+        return true;
+      }
+    );
+
+    // 7. Negative Test: Unknown channel GET request is strictly denied fail-closed
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/completely_unknown_chan/messages',
+          method: 'GET',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('target guild ownership of channel'));
+        assert(err.message.includes('unverified or unknown'));
+        return true;
+      }
+    );
+
+    // 8. Negative Test: Unknown channel direct metadata GET is strictly denied fail-closed
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/completely_unknown_chan',
+          method: 'GET',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('target guild ownership of channel'));
+        assert(err.message.includes('unverified or unknown'));
+        return true;
+      }
+    );
+  });
+
+  await test('9.11 REST firewall permits legitimate GET, POST, PATCH operations on verified test-guild channels', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([
+          [
+            VALID_TEST_GUILD_ID,
+            {
+              id: VALID_TEST_GUILD_ID,
+              channels: { cache: new Map([['verified_test_channel_123', { id: 'verified_test_channel_123' }]]) },
+            },
+          ],
+        ]),
+      },
+      channels: {
+        cache: new Map([
+          ['verified_test_channel_123', { id: 'verified_test_channel_123', guildId: VALID_TEST_GUILD_ID }],
+        ]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    // 1. Legitimate GET on verified guild channel succeeds
+    const getRes: any = await (mockVerifiedClient.rest as any).request({
+      fullRoute: '/channels/verified_test_channel_123/messages',
+      method: 'GET',
+    });
+    assert.strictEqual(getRes.success, true);
+
+    // 2. Legitimate POST on verified guild channel succeeds
+    const postRes: any = await (mockVerifiedClient.rest as any).request({
+      fullRoute: '/channels/verified_test_channel_123/messages',
+      method: 'POST',
+    });
+    assert.strictEqual(postRes.success, true);
+
+    // 3. Legitimate PATCH on verified guild channel succeeds
+    const patchRes: any = await (mockVerifiedClient.rest as any).request({
+      fullRoute: '/channels/verified_test_channel_123/messages/msg_456',
+      method: 'PATCH',
+    });
+    assert.strictEqual(patchRes.success, true);
   });
 
   // ─── 10. Startup Hardening & Live Environment Enforcement ───────────────────
