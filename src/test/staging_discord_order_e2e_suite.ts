@@ -1300,7 +1300,10 @@ async function runStagingDiscordOrderE2ESuite(): Promise<void> {
       }
     }
 
-    // 5.3 Failure-Injection Regression Test: Guaranteed try/finally cleanup on bootstrap/migration failure
+    // 5.3 Synthetic Failure-Injection Regression Test: Guaranteed try/finally cleanup on bootstrap/migration failure
+    // NOTE: This test uses synthetic failure injection (simulated partial buffers and injected error)
+    // to prove that the try/finally lifecycle cleans up temporary files even if an abort occurs.
+    // This is NOT a real failed Prisma migration (all actual Prisma migrations pass 100% cleanly).
     const failRunId = `injected_fail_${Date.now()}_${process.pid}`;
     const failDbName = `e2e_isolated_${failRunId}.db`;
     const failDbPath = path.resolve(stagingDir, failDbName);

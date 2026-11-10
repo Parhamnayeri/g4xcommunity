@@ -184,6 +184,11 @@ Direct negative tests validated authorization boundaries:
 6. Multi-role user without specific role approval attempting to pre-sign unapproved role is rejected (`INVALID_ASSIGNED_ROLE`).
 7. Replaced booster attempting to submit proof in execution channel is strictly rejected (`UNASSIGNED_BOOSTER`).
 
+### 6.3 Disposable Database Provisioning & Teardown Failure-Injection Analysis
+- **Lifecycle Architecture**: Every E2E test run wraps disposable database provisioning (`prisma/staging/e2e_isolated_*.db`), Prisma client connection, and test execution within a guaranteed `try/finally` block.
+- **Teardown Invariant**: All temporary SQLite artifacts (`.db`, `-wal`, `-shm`) are guaranteed to be unlinked in `finally`, even if bootstrap or migrations fail.
+- **Synthetic Failure Injection**: The regression test for bootstrap/migration cleanup uses **synthetic failure injection** (`throw new Error('INJECTED_MIGRATION_OR_BOOTSTRAP_FAILURE')`) with simulated partial SQLite buffers to prove that the teardown lifecycle cleans up files when an abort occurs. It does **not** indicate a real failed Prisma migration, as all historical and current Prisma migrations apply 100% cleanly.
+
 ---
 
 ## 7. Financial & External Gateway Invariant Audit
