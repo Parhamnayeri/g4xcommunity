@@ -10,7 +10,8 @@ This document provides the definitive architectural, operational, and quality as
 - **Baseline Commit SHA**: `62eb665b272685bad562335095ef66b4ed0163f7` (Includes merged PRs #1 through #12)
 - **Execution Target**: Fully isolated local staging environment (`127.0.0.1:3001`) with disposable SQLite database (`prisma/staging/staging.db`).
 - **Deployment & Production Status**: **NO-GO**. Zero production deployment, zero Linode access, zero production database access, and zero live Discord guild interactions.
-- **Test Suite Execution**: 144 passing automated tests (57 environment bootstrap, 26 security hardening, 61 Discord order lifecycle E2E).
+- **Test Suite Execution**: 168 passing automated tests (57 environment bootstrap, 26 security hardening, 85 Discord order lifecycle E2E & failure recovery).
+- **Test Integrity**: Fully isolated disposable SQLite database per E2E run (`prisma/staging/e2e_isolated_*.db`); zero mutation of operator `staging.db` or production DBs; automated teardown cleanup.
 
 ---
 
@@ -140,23 +141,48 @@ Every Discord command and interaction is governed by strict role-based access co
 
 ---
 
-## 6. Dynamic Failure Injection & Resilience Analysis
+## 6. Dynamic Failure Injection & Service Resilience Analysis
 
-The staging environment was subjected to dynamic fault injection to verify error recovery:
+The staging environment was subjected to dynamic fault injection against real application services using `MockFailureInjector` across 8 distinct scenarios:
 
-1. **HTTP 429 Rate Limiting**:
-   - When Discord API rate limits occur (`429 Too Many Requests`), the bot honors `retry_after` headers and backs off without crashing.
-   - One-shot rate limits recover transparently on the subsequent attempt.
+1. **Case 1: Discord 403 on Channel Creation**:
+   - Throws `CHANNEL_CREATION_FAILED` (Discord code 50013 `Missing Permissions`).
+   - Transaction boundary invariant: Exactly 0 rows created in `OrderChannel` table.
+2. **Case 2: Discord 404 on Remote Channel Lookup**:
+   - Remote channel deleted or unknown (`Unknown Channel`, code 10003).
+   - Recovery invariant: Stale database mapping updated to `status = "deleted"`; replacement execution channel provisioned with fresh ID. Exactly 1 active channel mapping in database.
+3. **Case 3: Discord 429 Rate Limit on Public Card Publication**:
+   - Backoff retry succeeds; exactly 1 message card created in publication channel (0 duplicate messages).
+4. **Case 4: Orphan Channel Discovery & Recovery**:
+   - Remote Discord channel created before network interruption.
+   - Recovery invariant: Service discovers and adopts existing Discord channel by naming convention; cleanly marked `isNew = false`; exactly 0 duplicate channels created.
+5. **Case 5: Duplicate Interaction Submission**:
+   - Booster clicks pre-sign button multiple times concurrently.
+   - Idempotency invariant: Returns `already registered` reply; exactly 1 `OrderPresign` row created in database.
+6. **Case 6: Bot Restart During Active Order Assignment**:
+   - Process restart (`mockClient.simulateRestart()`) clears active memory maps.
+   - Channel recovered consistently from database `OrderChannel` table with matching permissions and 0 duplicate channels.
+7. **Case 7: Permission Overwrite Failure After Assignment**:
+   - Channel permission overwrite failure (`Missing Permissions`).
+   - Reporting invariant: `syncOrderChannelPermissions` accurately reports `success = false` with non-empty errors array without falsely masking failure.
+8. **Case 8: Self-Approval Prohibition on Proof Review**:
+   - Submitter attempting to approve their own completion proof.
+   - Guard invariant: Blocked with `DomainError(SELF_APPROVAL_PROHIBITED)`; proof status remains strictly `status = "pending"`.
 
-2. **HTTP 403 Forbidden (Missing Permissions)**:
-   - When bot lacks channel or role permissions, operations fail gracefully with descriptive domain error logging rather than silent failures or state corruption.
+### 6.1 Real Booster Replacement Workflow Verification
+- Executed via authoritative `replaceAssignment` service without mock shortcuts.
+- Database Invariant: Old assignment marked `status = "replaced"` with link to replacement assignment ID; old reservation marked `status = "released"`; new booster assignment marked `status = "assigned"`.
+- Discord Overwrite Invariant: Replaced booster loses `ViewChannel`; replacement booster gains `ViewChannel`; unrelated users remain strictly denied.
 
-3. **HTTP 404 Unknown Channel**:
-   - When a Discord channel mapped in the database has been deleted remotely, the system marks the stale database mapping as `deleted` and recovers by provisioning a replacement channel without throwing uncaught exceptions.
-
-4. **Bot Restart Resilience**:
-   - Simulated process restart (`mockClient.simulateRestart()`) clears active memory maps.
-   - Subsequent execution channel requests query the persistent `OrderChannel` table, restoring the authoritative channel and re-syncing permissions without creating duplicate channels.
+### 6.2 Direct Negative Authorization Suite
+Direct negative tests validated authorization boundaries:
+1. Booster attempting unauthorized assignment (`G4!assign`) is strictly rejected.
+2. Advertiser attempting to cancel another advertiser's order is strictly rejected; order status unchanged.
+3. Non-assigned user submitting completion proof is strictly rejected (`UNASSIGNED_BOOSTER`).
+4. Staff reviewing their own submitted proof is strictly blocked (`SELF_APPROVAL_PROHIBITED`).
+5. Booster with revoked game approval attempting to use stale pre-sign interaction is blocked (`BOOSTER_NOT_APPROVED`).
+6. Multi-role user without specific role approval attempting to pre-sign unapproved role is rejected (`INVALID_ASSIGNED_ROLE`).
+7. Replaced booster attempting to submit proof in execution channel is strictly rejected (`UNASSIGNED_BOOSTER`).
 
 ---
 
@@ -220,6 +246,15 @@ When authorized by project leadership to proceed to **Staging Phase 3 (Dedicated
 
 ## 9. QA Verdict & Release Recommendations
 
-- **Staging Phase 2 Status**: **PASSED (144 / 144 Tests Passed)**.
+- **Staging Phase 2 Status**: **PASSED (168 / 168 Automated Tests Passed)**.
+  - Category 1: Unit & Mock Behavior Tests (10 / 10 passed)
+  - Category 2: Service Integration Tests (25 / 25 passed)
+  - Category 3: Full Application Workflow Tests (16 / 16 passed)
+  - Category 4: Failure-Recovery Tests (13 / 13 passed)
+  - Category 4B: Negative Authorization Tests (9 / 9 passed)
+  - Category 4C: Financial & Safety Gate Invariants (7 / 7 passed)
+  - Category 5: Database Isolation & Non-Mutation Audit (5 / 5 passed)
+  - Staging Environment Bootstrap Suite (57 / 57 passed)
+  - Staging Security Hardening Suite (26 / 26 passed)
 - **Production Status**: **NO-GO (DO NOT MERGE OR DEPLOY)**.
-- **Summary**: The complete Discord order lifecycle, RBAC enforcement, private channel provisioning, and attachment handling have been validated with zero production exposure. The repository is ready for review.
+- **Summary**: The complete Discord order lifecycle, RBAC enforcement, private channel provisioning, attachment handling, booster replacement, failure recovery, and database isolation have been rigorously validated with zero production exposure. The repository is ready for review.
