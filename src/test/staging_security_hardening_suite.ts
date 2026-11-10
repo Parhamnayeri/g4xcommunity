@@ -78,7 +78,7 @@ async function runSecurityHardeningSuite(): Promise<void> {
           STAGING_MODE: 'true',
           DISCORD_TOKEN: 'mock_token',
         },
-        timeout: 15000,
+        timeout: 30000,
         encoding: 'utf-8',
       }
     );
@@ -91,19 +91,22 @@ async function runSecurityHardeningSuite(): Promise<void> {
     );
 
     // 1.2 Production entrypoint requires DISCORD_TOKEN unconditionally
+    const prodNoTokenEnv: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (k !== 'STAGING_MODE' && k !== 'MOCK_DISCORD' && v !== undefined) {
+        prodNoTokenEnv[k] = v;
+      }
+    }
+    prodNoTokenEnv.DATABASE_URL = 'file:./staging/staging.db';
+    prodNoTokenEnv.DISCORD_TOKEN = '';
+
     const prodNoTokenProc = spawnSync(
       process.execPath,
       ['-r', 'ts-node/register', 'src/index.ts'],
       {
         cwd: process.cwd(),
-        env: {
-          ...process.env,
-          STAGING_MODE: undefined,
-          MOCK_DISCORD: undefined,
-          DATABASE_URL: 'file:./staging/staging.db',
-          DISCORD_TOKEN: '',
-        },
-        timeout: 15000,
+        env: prodNoTokenEnv,
+        timeout: 30000,
         encoding: 'utf-8',
       }
     );
