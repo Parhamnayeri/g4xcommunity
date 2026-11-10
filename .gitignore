@@ -12,6 +12,7 @@ build/
 .env.*
 !.env.example
 !.env.staging.example
+!.env.discord-lab.example
 
 # ─── SQLite Databases & Local Storage ─────────────────────────────────────
 data/
