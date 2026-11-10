@@ -1356,6 +1356,26 @@ async function runStagingDiscordOrderE2ESuite(): Promise<void> {
       injectedErrorCaught && !failFilesExist,
       'Failure-Injection Regression: Disposable database files are cleaned up in finally even when bootstrap/migration fails'
     );
+
+    // 5.4 Release Blockers Script Failure-Cleanup Regression Test:
+    // Verify scripts/test-release-blockers.cjs executes its finally block and removes temporary SQLite directory
+    // even when a child test crashes or returns a non-zero exit code, preserving the failure status.
+    const rbProc = require('child_process').spawnSync(
+      process.execPath,
+      [path.resolve(repoRoot, 'scripts/test-release-blockers.cjs'), 'test-failure-injection'],
+      { encoding: 'utf8', timeout: 120000 }
+    );
+    const rbOutput = (rbProc.stdout || '') + (rbProc.stderr || '');
+    const dirMatch = rbOutput.match(/Disposable test database:\s+([^\r\n]+)/);
+    const reportedTempDir = dirMatch ? dirMatch[1].trim() : null;
+    const tempDirStillExists = reportedTempDir ? fs.existsSync(reportedTempDir) : true;
+    const exitCodePreserved = rbProc.status === 88;
+
+    recordAssert(
+      'ISOLATION',
+      exitCodePreserved && reportedTempDir !== null && !tempDirStillExists,
+      'Failure-Injection Regression: test-release-blockers cleans up disposable SQLite directory in finally and preserves non-zero exit code'
+    );
   } finally {
     // -------------------------------------------------------------------------
     // DISPOSABLE DATABASE CLEANUP

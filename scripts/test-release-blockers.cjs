@@ -31,16 +31,25 @@ for (const name of [
 
 env.NOWPAYMENTS_MODE = 'disabled';
 
+let exitCode = 0;
+
 function run(args) {
   const result = spawnSync(process.execPath, args, { env, stdio: 'inherit', timeout: 240000 });
-  if (result.status !== 0) process.exit(result.status || 1);
+  if (result.status !== 0) {
+    const code = result.status ?? (result.signal ? 1 : 1);
+    const err = new Error(`Command failed with status ${code}`);
+    err.exitCode = code;
+    throw err;
+  }
 }
 
 try {
   console.log(`Disposable test database: ${directory}`);
   run(['node_modules/prisma/build/index.js', 'migrate', 'deploy']);
   const selected = process.argv[2];
-  if (selected && selected !== 'startup') run(['node_modules/ts-node/dist/bin.js', 'src/database/seed.ts']);
+  if (selected && selected !== 'startup' && selected !== 'test-failure-injection') {
+    run(['node_modules/ts-node/dist/bin.js', 'src/database/seed.ts']);
+  }
   if (!selected || selected === 'startup') run(['node_modules/ts-node/dist/bin.js', 'src/test/startup_persistence_suite.ts']);
   else if (selected === 'spa') run(['node_modules/ts-node/dist/bin.js', 'src/test/spa_routing_suite.ts']);
   else if (selected === 'characters') run(['node_modules/ts-node/dist/bin.js', 'src/test/raiderio_booster_character_suite.ts']);
@@ -50,10 +59,24 @@ try {
   else if (selected === 'rules-cms') run(['node_modules/ts-node/dist/bin.js', 'src/test/dynamic_rules_and_policies_cms_suite.ts']);
   else if (selected === 'discord-commands') run(['node_modules/ts-node/dist/bin.js', 'src/test/private_discord_commands_guide_suite.ts']);
   else if (selected === 'permissions') run(['node_modules/ts-node/dist/bin.js', 'src/test/permission_authorization_suite.ts']);
+  else if (selected === 'test-failure-injection') {
+    const err = new Error('SIMULATED_TEST_SUITE_CRASH');
+    err.exitCode = 88;
+    throw err;
+  }
   else if (selected.endsWith('.ts')) run(['node_modules/ts-node/dist/bin.js', selected]);
-  else console.error(`Unknown suite: ${selected}`);
+  else {
+    console.error(`Unknown suite: ${selected}`);
+    exitCode = 1;
+  }
+} catch (err) {
+  exitCode = err.exitCode || 1;
 } finally {
   try {
     fs.rmSync(directory, { recursive: true, force: true });
   } catch {}
+}
+
+if (exitCode !== 0) {
+  process.exit(exitCode);
 }
