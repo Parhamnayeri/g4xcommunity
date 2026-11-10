@@ -29,9 +29,11 @@ import {
 import { createDisposableLabDatabase } from '../discord-lab/discordLabDatabase';
 import { DiscordLabLifecycleManager } from '../discord-lab/discordLabRunner';
 import { validateStagingEnvironment } from '../web/staging/validateStagingEnv';
+import { prisma, setGlobalPrismaClient, isGlobalPrismaOverridden } from '../database/db';
 
 const VALID_TEST_GUILD_ID = '123456789098765432';
 const FOREIGN_GUILD_ID = '987654321012345678';
+const VALID_TEST_APP_ID = '100000000000000001';
 const VALID_SYNTHETIC_TOKEN = [
   'mock_synthetic_discord_lab_token_part1',
   'part2_validation_segment',
@@ -44,6 +46,7 @@ function getBaselineValidEnv(): Record<string, string> {
     HOST: '127.0.0.1',
     DATABASE_URL: 'file:./staging/discord_lab_test.db',
     DISCORD_LAB_ALLOWED_GUILD_ID: VALID_TEST_GUILD_ID,
+    DISCORD_LAB_APPLICATION_ID: VALID_TEST_APP_ID,
     DISCORD_LAB_BOT_TOKEN: VALID_SYNTHETIC_TOKEN,
     ESCROW_RELEASE_ENABLED: 'false',
     FINANCE_V2_LIVE_CREDITS_ENABLED: 'false',
@@ -380,6 +383,315 @@ async function runDiscordLabSafetyTests(): Promise<void> {
     const res = validateStagingEnvironment(stagingEnv);
     assert.strictEqual(res.valid, false);
     assert(res.errors.some((e) => e.includes('DISCORD_TOKEN appears to be a live Discord bot token')));
+  });
+
+  // ─── 8. Database Routing & Isolation Proof ─────────────────────────────────
+  console.log('\n[Category 8: Database Routing & Isolation Proof]');
+
+  await test('8.1 Global prisma proxy dynamically delegates to disposable lab database when setGlobalPrismaClient is active', async () => {
+    const db = await createDisposableLabDatabase();
+    try {
+      setGlobalPrismaClient(db.prismaClient);
+      assert.strictEqual(isGlobalPrismaOverridden(), true);
+
+      // Verify PRAGMA database_list via global prisma singleton
+      const dbList: Array<{ seq: number; name: string; file: string }> = await prisma.$queryRawUnsafe(
+        'PRAGMA database_list;'
+      );
+      const mainDb = dbList.find((d) => d.name === 'main');
+      const activeFile = path.normalize(mainDb?.file || '').toLowerCase();
+      const expectedFile = path.normalize(db.dbPath).toLowerCase();
+
+      assert.strictEqual(activeFile, expectedFile, 'Global prisma must be bound strictly to the disposable database file');
+      assert(!activeFile.includes('g4x.db'), 'Must NOT point to production g4x.db');
+      assert(!activeFile.includes('g4x_dev.db'), 'Must NOT point to g4x_dev.db');
+      assert(!activeFile.includes('dev.db'), 'Must NOT point to dev.db');
+    } finally {
+      setGlobalPrismaClient(null);
+      await db.cleanup();
+      assert.strictEqual(isGlobalPrismaOverridden(), false);
+    }
+  });
+
+  await test('8.2 Database mutations via prisma singleton write strictly to disposable database', async () => {
+    const db = await createDisposableLabDatabase();
+    try {
+      setGlobalPrismaClient(db.prismaClient);
+
+      // Execute a write using the global prisma singleton on the users table
+      const testDiscordId = `999${Date.now()}`.slice(0, 18);
+      await prisma.$executeRawUnsafe(
+        "INSERT INTO users (discord_id, username, is_active, created_at, updated_at) VALUES (?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);",
+        testDiscordId,
+        'lab_tester'
+      );
+
+      // Verify record exists in disposable DB
+      const rows: Array<{ discord_id: string; username: string }> = await prisma.$queryRawUnsafe(
+        "SELECT discord_id, username FROM users WHERE discord_id = ?;",
+        testDiscordId
+      );
+      assert.strictEqual(rows.length, 1);
+      assert.strictEqual(rows[0].username, 'lab_tester');
+
+      // Verify forbidden database basenames cannot be mutated or accessed
+      const repoRoot = path.resolve(__dirname, '../../');
+      const forbiddenPaths = [
+        path.join(repoRoot, 'prisma/dev.db'),
+        path.join(repoRoot, 'prisma/g4x.db'),
+        path.join(repoRoot, 'prisma/g4x_dev.db'),
+      ];
+      for (const fp of forbiddenPaths) {
+        if (fs.existsSync(fp)) {
+          const stat = fs.statSync(fp);
+          const ageMs = Date.now() - stat.mtimeMs;
+          assert(ageMs > 2000, `Forbidden database file '${fp}' was modified during lab test!`);
+        }
+      }
+    } finally {
+      setGlobalPrismaClient(null);
+      await db.cleanup();
+    }
+  });
+
+  await test('8.3 DiscordLabLifecycleManager automatically sets and resets global prisma client', async () => {
+    assert.strictEqual(isGlobalPrismaOverridden(), false);
+
+    // Create an isolated temporary external env file in os.tmpdir()
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'g4x-lab-env-'));
+    const tmpEnvFile = path.join(tmpDir, '.env.discord-lab');
+    const envVars = getBaselineValidEnv();
+    const envContent = Object.entries(envVars)
+      .map(([k, v]) => `${k}="${v}"`)
+      .join('\n');
+    fs.writeFileSync(tmpEnvFile, envContent, 'utf8');
+
+    const manager = new DiscordLabLifecycleManager();
+
+    try {
+      const running = await manager.start({
+        skipLogin: true,
+        authorizedOperatorApproval: true,
+        customEnvPath: tmpEnvFile,
+        portOverride: 3099,
+      });
+
+      try {
+        assert.strictEqual(isGlobalPrismaOverridden(), true, 'Global prisma must be overridden while Lab is running');
+        const dbList: Array<{ seq: number; name: string; file: string }> = await prisma.$queryRawUnsafe(
+          'PRAGMA database_list;'
+        );
+        const activeFile = path.normalize(dbList.find((d) => d.name === 'main')?.file || '').toLowerCase();
+        assert(activeFile.includes('staging'), 'Must be running in staging');
+      } finally {
+        await running.stop();
+      }
+    } finally {
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    }
+
+    assert.strictEqual(isGlobalPrismaOverridden(), false, 'Global prisma must be reset to null after Lab stop');
+  });
+
+  // ─── 9. Outgoing Discord REST Operations Firewall ──────────────────────────
+  console.log('\n[Category 9: Outgoing Discord REST Operations Firewall]');
+
+  await test('9.1 REST firewall blocks outgoing operations to foreign guilds', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    // Call targeting foreign guild must be rejected
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/guilds/${FOREIGN_GUILD_ID}/channels`,
+          method: 'POST',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes(FOREIGN_GUILD_ID));
+        return true;
+      }
+    );
+  });
+
+  await test('9.2 REST firewall blocks outgoing operations before ACTIVE state (except bot login routes)', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    assert.strictEqual(firewall.state, DiscordLabState.BLOCKED);
+
+    let requestExecuted = false;
+    const mockClient = {
+      rest: {
+        request: async () => {
+          requestExecuted = true;
+          return { id: 'bot_user' };
+        },
+      },
+    };
+    firewall.attachRestFirewall(mockClient as any);
+
+    // 1. Bot startup identity route /gateway/bot is allowed while BLOCKED
+    requestExecuted = false;
+    await (mockClient.rest as any).request({ fullRoute: '/gateway/bot', method: 'GET' });
+    assert.strictEqual(requestExecuted, true);
+
+    // 2. Bot startup route /users/@me is allowed while BLOCKED
+    requestExecuted = false;
+    await (mockClient.rest as any).request({ fullRoute: '/users/@me', method: 'GET' });
+    assert.strictEqual(requestExecuted, true);
+
+    // 3. Normal guild/channel operations are strictly BLOCKED before ACTIVE
+    await assert.rejects(
+      async () => {
+        await (mockClient.rest as any).request({
+          fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/channels`,
+          method: 'GET',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('must be ACTIVE'));
+        return true;
+      }
+    );
+  });
+
+  await test('9.3 REST firewall blocks mutations on unknown or foreign channels', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([
+          [
+            VALID_TEST_GUILD_ID,
+            {
+              id: VALID_TEST_GUILD_ID,
+              channels: { cache: new Map([['allowed_chan_1', { id: 'allowed_chan_1' }]]) },
+            },
+          ],
+        ]),
+      },
+      channels: {
+        cache: new Map([
+          ['foreign_chan_99', { id: 'foreign_chan_99', guildId: FOREIGN_GUILD_ID }],
+        ]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    // 1. Channel belonging to foreign guild
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/foreign_chan_99/messages',
+          method: 'POST',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('foreign guild'));
+        return true;
+      }
+    );
+
+    // 2. Unknown channel mutation not in allowed guild channel cache
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: '/channels/completely_unknown_chan/messages',
+          method: 'POST',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('not found in allowed test guild'));
+        return true;
+      }
+    );
+  });
+
+  await test('9.4 REST firewall permits operations targeting allowed test guild when ACTIVE', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      rest: {
+        request: async () => ({ id: 'new_chan_id', guild_id: VALID_TEST_GUILD_ID }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    const res: any = await (mockVerifiedClient.rest as any).request({
+      fullRoute: `/guilds/${VALID_TEST_GUILD_ID}/channels`,
+      method: 'POST',
+    });
+    assert.strictEqual(res.id, 'new_chan_id');
+  });
+
+  // ─── 10. Startup Hardening & Live Environment Enforcement ───────────────────
+  console.log('\n[Category 10: Startup Hardening & Credential Enforcement]');
+
+  await test('10.1 Live connection validation strictly requires DISCORD_LAB_APPLICATION_ID', () => {
+    const envWithoutAppId = { ...getBaselineValidEnv() };
+    delete envWithoutAppId.DISCORD_LAB_APPLICATION_ID;
+
+    const res = validateDiscordLabEnvironment(envWithoutAppId, { requireToken: true });
+    assert.strictEqual(res.valid, false);
+    assert(res.errors.some((e) => e.includes('DISCORD_LAB_APPLICATION_ID is required for live connection')));
+  });
+
+  await test('10.2 Live startup fails closed if operator-managed external environment file is missing', async () => {
+    const manager = new DiscordLabLifecycleManager();
+    await assert.rejects(
+      async () => {
+        await manager.start({
+          authorizedOperatorApproval: true,
+          skipLogin: false,
+          customEnvPath: 'non_existent_env_file_location_12345.env',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('external environment file is missing'));
+        return true;
+      }
+    );
+  });
+
+  await test('10.3 Containment verification rejects if authenticated client ID does not match expected DISCORD_LAB_APPLICATION_ID', () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID, {
+      expectedApplicationId: VALID_TEST_APP_ID,
+    });
+    const mockMismatchClient = {
+      user: { id: '999999999999999999', tag: 'FakeBot#9999' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      destroy: () => {},
+    };
+
+    const result = firewall.verifyBotAndGuildContainment(mockMismatchClient as any);
+    assert.strictEqual(result.valid, false);
+    assert(result.reason?.includes('does not match expected DISCORD_LAB_APPLICATION_ID'));
+    assert.strictEqual(firewall.state, DiscordLabState.TERMINATED);
   });
 
   console.log('\n============================================================');

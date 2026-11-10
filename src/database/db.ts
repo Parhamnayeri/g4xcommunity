@@ -3,11 +3,44 @@
  *
  * اتصال به دیتابیس SQLite با استفاده از Prisma Client
  */
-
 import { PrismaClient } from '@prisma/client';
 
-const prisma = new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+let activePrismaOverride: PrismaClient | null = null;
+let defaultPrismaInstance: PrismaClient | null = null;
+
+export function setGlobalPrismaClient(client: PrismaClient | null): void {
+  activePrismaOverride = client;
+}
+
+export function getGlobalPrismaClient(): PrismaClient {
+  if (activePrismaOverride) {
+    return activePrismaOverride;
+  }
+  if (!defaultPrismaInstance) {
+    defaultPrismaInstance = new PrismaClient({
+      log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
+    });
+  }
+  return defaultPrismaInstance;
+}
+
+export function isGlobalPrismaOverridden(): boolean {
+  return activePrismaOverride !== null;
+}
+
+const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop, receiver) {
+    const client = getGlobalPrismaClient();
+    const value = Reflect.get(client, prop, receiver);
+    if (typeof value === 'function') {
+      return value.bind(client);
+    }
+    return value;
+  },
+  set(_target, prop, value, receiver) {
+    const client = getGlobalPrismaClient();
+    return Reflect.set(client, prop, value, receiver);
+  },
 });
 
 export default prisma;

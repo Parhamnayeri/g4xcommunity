@@ -114,6 +114,88 @@ export class DiscordLabFirewall {
   }
 
   /**
+   * Authoritative gate for all outgoing Discord HTTP REST calls.
+   * Intercepts client.rest.request to guarantee fail-closed containment.
+   */
+  public assertOutgoingRestPermitted(options: any, client?: Client): void {
+    const fullRoute = String(options?.fullRoute || options?.path || '').trim();
+    const method = String(options?.method || 'GET').toUpperCase();
+
+    // 1. Allow bot login & identity read routes during startup/verification
+    const isBotLoginRoute =
+      fullRoute === '/gateway/bot' ||
+      fullRoute === '/users/@me' ||
+      fullRoute === '/oauth2/applications/@me' ||
+      fullRoute === '/users/@me/guilds';
+
+    if (isBotLoginRoute) {
+      return;
+    }
+
+    // 2. State Check: All other outgoing operations require ACTIVE (or VERIFIED during verification)
+    if (this._state !== DiscordLabState.ACTIVE && this._state !== DiscordLabState.VERIFIED) {
+      this.totalEventsRejected++;
+      throw new DiscordLabSecurityError(
+        `Outgoing REST operation '${method} ${fullRoute}' rejected: Discord Lab state is '${this._state}' (must be ACTIVE).`
+      );
+    }
+
+    // 3. Guild-targeted routes: /guilds/:guildId/...
+    const guildMatch = fullRoute.match(/^\/guilds\/([^\/]+)/);
+    if (guildMatch) {
+      const targetGuildId = guildMatch[1];
+      if (targetGuildId !== this.allowedGuildId) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing REST operation '${method} ${fullRoute}' strictly blocked: target guild '${targetGuildId}' is not the allowed test guild '${this.allowedGuildId}'.`
+        );
+      }
+    }
+
+    // 4. Channel-targeted routes: /channels/:channelId/...
+    const channelMatch = fullRoute.match(/^\/channels\/([^\/]+)/);
+    if (channelMatch && client) {
+      const targetChannelId = channelMatch[1];
+      const cachedChannel: any = client.channels?.cache?.get(targetChannelId);
+
+      if (cachedChannel) {
+        if (cachedChannel.guildId && cachedChannel.guildId !== this.allowedGuildId) {
+          this.totalEventsRejected++;
+          throw new DiscordLabSecurityError(
+            `Outgoing REST operation '${method} ${fullRoute}' strictly blocked: channel '${targetChannelId}' belongs to foreign guild '${cachedChannel.guildId}'.`
+          );
+        }
+      } else {
+        const allowedGuild = client.guilds?.cache?.get(this.allowedGuildId);
+        if (allowedGuild && allowedGuild.channels?.cache) {
+          const inGuildCache = allowedGuild.channels.cache.has(targetChannelId);
+          if (!inGuildCache && method !== 'GET') {
+            this.totalEventsRejected++;
+            throw new DiscordLabSecurityError(
+              `Outgoing REST mutation '${method} ${fullRoute}' strictly blocked: target channel '${targetChannelId}' is not found in allowed test guild '${this.allowedGuildId}'.`
+            );
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Attaches outgoing REST interception to client.rest.request.
+   * Ensures every outgoing Discord API call is inspected and enforced fail-closed.
+   */
+  public attachRestFirewall(client: Client): void {
+    if (!client.rest || typeof client.rest.request !== 'function') {
+      return;
+    }
+    const originalRequest = client.rest.request.bind(client.rest);
+    client.rest.request = async (options: any) => {
+      this.assertOutgoingRestPermitted(options, client);
+      return originalRequest(options);
+    };
+  }
+
+  /**
    * Startup Verification Procedure:
    *  1. Checks authenticated user identity and application ID.
    *  2. Verifies bot is in allowed test guild.

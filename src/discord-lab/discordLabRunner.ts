@@ -40,6 +40,7 @@ import {
   createDisposableLabDatabase,
   DisposableLabDatabase,
 } from './discordLabDatabase';
+import { setGlobalPrismaClient } from '../database/db';
 import { setGlobalDiscordClient } from '../services/orderDiscordService';
 import { createStagingApp } from '../web/staging/stagingApp';
 
@@ -86,6 +87,15 @@ export class DiscordLabLifecycleManager {
         );
       }
 
+      // For live startup (skipLogin is false), operator-managed external file MUST exist
+      if (!options.skipLogin) {
+        if (!envResolution.exists || !envResolution.filePath) {
+          throw new DiscordLabSecurityError(
+            `Refusing live Discord startup: operator-managed external environment file is missing. Looked in: ${envResolution.error || 'default locations'}. Live credentials must never be loaded from unintended fallback environments.`
+          );
+        }
+      }
+
       loadDiscordLabEnvironment(options.customEnvPath);
       process.env.DISCORD_LAB_MODE = 'true';
 
@@ -122,6 +132,7 @@ export class DiscordLabLifecycleManager {
       if (!isolationProof.isolated) {
         throw new DiscordLabSecurityError('Disposable database failed isolation verification!');
       }
+      setGlobalPrismaClient(this.disposableDb.prismaClient);
       console.log(`[DiscordLabRunner] ✅ Database isolated & verified at: ${this.disposableDb.databaseUrl}`);
 
       // 5. Start Local Loopback HTTP Web Server
@@ -146,6 +157,9 @@ export class DiscordLabLifecycleManager {
         ],
         partials: [Partials.Message, Partials.Channel, Partials.Reaction],
       });
+
+      // Intercept all outgoing REST requests to enforce fail-closed containment
+      firewall.attachRestFirewall(this.discordClient);
 
       // Attach Firewall to incoming events (starts in BLOCKED state)
       firewall.attachClientFirewall(this.discordClient, {
@@ -299,6 +313,7 @@ export class DiscordLabLifecycleManager {
       this.disposableDb = null;
     }
 
+    setGlobalPrismaClient(null);
     setGlobalDiscordClient(null);
     this.shutdownCompleted = true;
     console.log('[DiscordLabRunner] Clean shutdown complete.');

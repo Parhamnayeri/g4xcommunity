@@ -198,9 +198,15 @@ export function validateDiscordLabEnvironment(
     );
   }
 
-  // 7. Application ID (if provided)
-  const appId = (env.DISCORD_LAB_APPLICATION_ID || '').trim();
-  if (appId && !DISCORD_SNOWFLAKE_REGEX.test(appId)) {
+  // 7. Application ID (Mandatory for live connection)
+  const appId = (env.DISCORD_LAB_APPLICATION_ID || env.DISCORD_APPLICATION_ID || '').trim();
+  if (!appId) {
+    if (options.requireToken) {
+      errors.push(
+        'DISCORD_LAB_APPLICATION_ID is required for live connection to verify authenticated bot identity before handling events.'
+      );
+    }
+  } else if (!DISCORD_SNOWFLAKE_REGEX.test(appId)) {
     errors.push(
       `DISCORD_LAB_APPLICATION_ID ('${appId}') is not a valid Discord snowflake ID (must be 17-20 digits).`
     );

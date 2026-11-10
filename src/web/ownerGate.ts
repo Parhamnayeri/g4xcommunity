@@ -106,7 +106,7 @@ export async function resolveDatabaseOwner(client = prisma): Promise<{
 
   // فیلتر صرفاً کاربران فعال با شناسه اسنوفلیک عددی دیسکورد (۱۷ الی ۲۰ رقم)
   const validOwners = ownerRoles.filter(
-    (r) => r.user && r.user.isActive && /^\d{17,20}$/.test(r.userId)
+    (r: any) => r.user && r.user.isActive && /^\d{17,20}$/.test(r.userId)
   );
 
   if (validOwners.length === 0) {
@@ -531,7 +531,7 @@ export async function handleGetOwnerGate(req: Request, res: Response): Promise<v
       where: { discordId: req.session.userId },
       include: { userRoles: true },
     });
-    if (existingUser && existingUser.isActive && existingUser.userRoles.some((r) => r.roleKey === 'owner')) {
+    if (existingUser && existingUser.isActive && existingUser.userRoles.some((r: any) => r.roleKey === 'owner')) {
       res.redirect('/?tab=admin');
       return;
     }
