@@ -1,17 +1,31 @@
 /**
  * src/discord-lab/discordLabFirewall.ts
  *
- * Strict Event Firewall & Guild Allowlist Enforcement for Discord Lab Mode.
+ * Strict Event Firewall, Startup State Machine & Guild Allowlist Enforcement.
+ *
+ * STATE MACHINE:
+ *  BLOCKED (initial) -> VERIFYING -> VERIFIED -> ACTIVE (ready) -> SHUTTING_DOWN -> TERMINATED
  *
  * FAIL-CLOSED INVARIANTS:
  *  1. Exactly one dedicated test Guild ID is permitted.
- *  2. All events (messages, interactions, member updates) with missing or foreign guild IDs are dropped immediately.
- *  3. Direct messages (DMs) are rejected.
- *  4. Incoming command arguments specifying foreign guild IDs are rejected/ignored — authorization is NEVER derived from user input.
- *  5. Bot connection fails closed if the authenticated bot is not in the permitted guild or is joined to unauthorized guilds.
+ *  2. All events received while state is NOT 'ACTIVE' are immediately rejected.
+ *  3. Bot identity and guild containment (guilds.cache.size === 1) MUST be verified before state becomes 'ACTIVE'.
+ *  4. If verification fails, the client is destroyed immediately; zero commands or interactions are processed.
+ *  5. Incoming command arguments specifying foreign guild IDs are rejected — authorization is NEVER derived from user input.
+ *  6. Outgoing operations (channel creation, messages) are strictly validated against the allowed test guild.
+ *  7. Note: Discord WebSocket Gateway connects at account level; containment is strictly enforced at application boundaries.
  */
 
 import { Client, Message, Interaction } from 'discord.js';
+
+export enum DiscordLabState {
+  BLOCKED = 'BLOCKED',
+  VERIFYING = 'VERIFYING',
+  VERIFIED = 'VERIFIED',
+  ACTIVE = 'ACTIVE',
+  SHUTTING_DOWN = 'SHUTTING_DOWN',
+  TERMINATED = 'TERMINATED',
+}
 
 export interface DiscordLabFirewallOptions {
   onRejectedEvent?: (details: {
@@ -20,8 +34,9 @@ export interface DiscordLabFirewallOptions {
     channelId?: string;
     userId?: string;
     reason: string;
+    state: DiscordLabState;
   }) => void;
-  strictSingleGuildCheck?: boolean;
+  expectedApplicationId?: string;
 }
 
 export class DiscordLabSecurityError extends Error {
@@ -35,6 +50,7 @@ export class DiscordLabSecurityError extends Error {
 export class DiscordLabFirewall {
   public readonly allowedGuildId: string;
   private readonly options: DiscordLabFirewallOptions;
+  private _state: DiscordLabState = DiscordLabState.BLOCKED;
   public totalEventsProcessed: number = 0;
   public totalEventsRejected: number = 0;
 
@@ -45,23 +61,18 @@ export class DiscordLabFirewall {
       );
     }
     this.allowedGuildId = allowedGuildId;
-    this.options = {
-      strictSingleGuildCheck: true,
-      ...options,
-    };
+    this.options = options;
   }
 
-  /**
-   * Checks whether a guildId matches the single permitted test guild.
-   */
+  public get state(): DiscordLabState {
+    return this._state;
+  }
+
   public isGuildPermitted(guildId: string | null | undefined): boolean {
     if (!guildId) return false;
     return guildId.trim() === this.allowedGuildId;
   }
 
-  /**
-   * Asserts that a guildId is permitted, throwing DiscordLabSecurityError otherwise.
-   */
   public assertGuildPermitted(guildId: string | null | undefined, context?: string): void {
     if (!this.isGuildPermitted(guildId)) {
       this.totalEventsRejected++;
@@ -86,32 +97,92 @@ export class DiscordLabFirewall {
   }
 
   /**
-   * Verifies that the connected Discord client is in the allowed guild,
-   * and optionally confirms it is NOT in any unauthorized guild.
+   * Guards outgoing operations (e.g. channel creation, messages, role modification).
+   * Refuses to operate on any guild other than allowedGuildId.
    */
-  public verifyConnectedGuilds(client: Client): { valid: boolean; reason?: string } {
+  public assertOutgoingOperationPermitted(targetGuildId: string | null | undefined, operation: string): void {
+    if (this._state !== DiscordLabState.ACTIVE && this._state !== DiscordLabState.VERIFIED) {
+      throw new DiscordLabSecurityError(
+        `Outgoing operation '${operation}' rejected: Discord Lab state is '${this._state}' (must be VERIFIED or ACTIVE).`
+      );
+    }
+    if (!this.isGuildPermitted(targetGuildId)) {
+      throw new DiscordLabSecurityError(
+        `Outgoing operation '${operation}' on foreign guild '${targetGuildId ?? 'UNKNOWN'}' strictly blocked. Allowed guild: '${this.allowedGuildId}'.`
+      );
+    }
+  }
+
+  /**
+   * Startup Verification Procedure:
+   *  1. Checks authenticated user identity and application ID.
+   *  2. Verifies bot is in allowed test guild.
+   *  3. Verifies complete guild containment (bot must NOT be in any other guild, guilds.cache.size === 1).
+   *  4. If successful, transitions to VERIFIED -> ACTIVE.
+   *  5. If failed, transitions to TERMINATED, destroys client, and throws.
+   */
+  public verifyBotAndGuildContainment(client: Client): { valid: boolean; reason?: string } {
+    this._state = DiscordLabState.VERIFYING;
+
+    if (!client.user) {
+      this._state = DiscordLabState.TERMINATED;
+      try { client.destroy(); } catch {}
+      return {
+        valid: false,
+        reason: 'Client user is not authenticated or ready.',
+      };
+    }
+
+    if (this.options.expectedApplicationId && client.user.id !== this.options.expectedApplicationId) {
+      this._state = DiscordLabState.TERMINATED;
+      try { client.destroy(); } catch {}
+      return {
+        valid: false,
+        reason: `Authenticated bot ID ('${client.user.id}') does not match expected DISCORD_LAB_APPLICATION_ID ('${this.options.expectedApplicationId}').`,
+      };
+    }
+
     const cachedGuilds = client.guilds.cache;
 
     if (!cachedGuilds.has(this.allowedGuildId)) {
+      this._state = DiscordLabState.TERMINATED;
+      try { client.destroy(); } catch {}
       return {
         valid: false,
         reason: `Authenticated bot is NOT a member of allowed test guild '${this.allowedGuildId}'. Bot is in ${cachedGuilds.size} other guild(s).`,
       };
     }
 
-    if (this.options.strictSingleGuildCheck && cachedGuilds.size > 1) {
+    if (cachedGuilds.size > 1) {
       const foreignGuildIds = Array.from(cachedGuilds.keys()).filter((id) => id !== this.allowedGuildId);
+      this._state = DiscordLabState.TERMINATED;
+      try { client.destroy(); } catch {}
       return {
         valid: false,
         reason: `CRITICAL ISOLATION ALERT: Bot is joined to ${foreignGuildIds.length} foreign guild(s) (${foreignGuildIds.join(', ')}). In Staging Lab mode, the bot must be confined strictly to test guild '${this.allowedGuildId}'.`,
       };
     }
 
+    // Success: Transition to VERIFIED, then ACTIVE
+    this._state = DiscordLabState.VERIFIED;
+    this.activate();
     return { valid: true };
+  }
+
+  public activate(): void {
+    if (this._state !== DiscordLabState.VERIFIED && this._state !== DiscordLabState.ACTIVE) {
+      throw new DiscordLabSecurityError(`Cannot activate firewall from state '${this._state}'. Must be VERIFIED first.`);
+    }
+    this._state = DiscordLabState.ACTIVE;
+  }
+
+  public terminate(reason: string = 'Manual termination'): void {
+    this._state = DiscordLabState.TERMINATED;
   }
 
   /**
    * Attaches firewall guards to incoming client events.
+   * STRICT ENFORCEMENT: All events are dropped while state is not ACTIVE.
    */
   public attachClientFirewall(
     client: Client,
@@ -125,6 +196,20 @@ export class DiscordLabFirewall {
       this.totalEventsProcessed++;
       const guildId = message.guildId;
 
+      // Gate check: Must be in ACTIVE state
+      if (this._state !== DiscordLabState.ACTIVE) {
+        this.totalEventsRejected++;
+        this.options.onRejectedEvent?.({
+          eventType: 'messageCreate',
+          receivedGuildId: guildId,
+          channelId: message.channelId,
+          userId: message.author?.id,
+          reason: `Event dropped: Firewall is in '${this._state}' state (not ACTIVE)`,
+          state: this._state,
+        });
+        return;
+      }
+
       if (!this.isGuildPermitted(guildId)) {
         this.totalEventsRejected++;
         this.options.onRejectedEvent?.({
@@ -133,8 +218,9 @@ export class DiscordLabFirewall {
           channelId: message.channelId,
           userId: message.author?.id,
           reason: guildId ? 'Foreign guild event dropped' : 'DM event dropped',
+          state: this._state,
         });
-        return; // Silent drop of unauthorized event
+        return;
       }
 
       try {
@@ -149,6 +235,20 @@ export class DiscordLabFirewall {
       this.totalEventsProcessed++;
       const guildId = interaction.guildId;
 
+      // Gate check: Must be in ACTIVE state
+      if (this._state !== DiscordLabState.ACTIVE) {
+        this.totalEventsRejected++;
+        this.options.onRejectedEvent?.({
+          eventType: 'interactionCreate',
+          receivedGuildId: guildId,
+          channelId: interaction.channelId ?? undefined,
+          userId: interaction.user?.id,
+          reason: `Interaction dropped: Firewall is in '${this._state}' state (not ACTIVE)`,
+          state: this._state,
+        });
+        return;
+      }
+
       if (!this.isGuildPermitted(guildId)) {
         this.totalEventsRejected++;
         this.options.onRejectedEvent?.({
@@ -157,9 +257,9 @@ export class DiscordLabFirewall {
           channelId: interaction.channelId ?? undefined,
           userId: interaction.user?.id,
           reason: guildId ? 'Foreign guild interaction dropped' : 'DM interaction dropped',
+          state: this._state,
         });
 
-        // Fail-safe response if interaction supports reply
         if ('reply' in interaction && typeof (interaction as any).reply === 'function') {
           try {
             await (interaction as any).reply({

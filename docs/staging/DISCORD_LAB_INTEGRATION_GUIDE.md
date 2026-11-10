@@ -147,3 +147,45 @@ When ready to test again:
 ```bash
 Remove-Item -Force .discord-lab.kill
 ```
+
+---
+
+## 6. Discord Gateway Intents Configuration
+
+In the Discord Developer Portal under your application's **Bot** settings:
+
+| Gateway Intent | Type | Required for Discord Lab? | Configuration in Portal |
+| :--- | :--- | :--- | :--- |
+| **Guilds** | Standard | Yes (channel/role structure) | Always enabled |
+| **GuildMessages** | Standard | Yes (listening in test guild) | Always enabled |
+| **GuildMessageReactions** | Standard | Yes (reactions on order cards) | Always enabled |
+| **Message Content Intent** | **Privileged** | **Yes** (parsing `G4!` command prefix) | **MUST BE TOGGLED ON** |
+| **Server Members Intent** | Privileged | **No (Removed)** | Leave OFF |
+| **Presence Intent** | Privileged | **No** | Leave OFF |
+
+> [!NOTE]
+> `GuildMembers` intent has been explicitly removed from the test client to prevent `DisallowedIntents` crashes during startup. Only the **Message Content Intent** is privileged and required.
+
+---
+
+## 7. Deterministic State Machine
+
+The runner lifecycle transitions strictly through these explicit states:
+
+```
+[BLOCKED] (Events rejected)
+    │
+    ▼ (Client connected to Discord)
+[VERIFYING] (Check bot user ID & verify guilds.cache.size === 1)
+    │
+    ├─► Failure ──► [TERMINATED] (client.destroy(), zero commands dispatched)
+    │
+    ▼ Success
+[VERIFIED]
+    │
+    ▼
+[ACTIVE] (Firewall permits events matching allowed test guild)
+    │
+    ▼ (Kill switch / SIGINT / Error)
+[SHUTTING_DOWN] ──► [TERMINATED] (Server closed, disposable DB cleaned)
+```
