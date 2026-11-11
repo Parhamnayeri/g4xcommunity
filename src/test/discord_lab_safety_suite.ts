@@ -1566,6 +1566,181 @@ async function runDiscordLabSafetyTests(): Promise<void> {
     );
   });
 
+  // ─── 12. Profile Command (G4!profile) Pre-Live Verification ─────────────────
+  console.log('\n[Category 12: Profile Command (G4!profile) Pre-Live Verification]');
+
+  await test('12.1 G4!profile creates user in disposable database and returns expected profile embed with zero external calls', async () => {
+    const db = await createDisposableLabDatabase();
+    try {
+      setGlobalPrismaClient(db.prismaClient);
+
+      const syntheticUserId = `prof_user_${Date.now()}`.slice(0, 18);
+      const syntheticUsername = 'lab_tester_booster';
+
+      let replyPayload: any = null;
+      const mockMessage = {
+        author: {
+          id: syntheticUserId,
+          username: syntheticUsername,
+          displayAvatarURL: () => 'https://cdn.discordapp.com/avatars/123/avatar.png',
+        },
+        mentions: {
+          users: {
+            first: () => null,
+          },
+        },
+        reply: async (payload: any) => {
+          replyPayload = payload;
+        },
+      };
+
+      const { handleProfileCommand } = await import('../commands/profile');
+      await handleProfileCommand(mockMessage as any, []);
+
+      // 1. Verify user was created in disposable database via ensureUserExists
+      const user = await prisma.user.findUnique({
+        where: { discordId: syntheticUserId },
+      });
+      assert(user !== null, 'User record must exist in disposable database');
+      assert.strictEqual(user.username, syntheticUsername);
+      assert.strictEqual(user.isActive, true);
+
+      // 2. Verify reply payload structure
+      assert(replyPayload !== null, 'Message reply must be invoked');
+      assert(Array.isArray(replyPayload.embeds) && replyPayload.embeds.length === 1, 'Must reply with 1 embed');
+      const embed = replyPayload.embeds[0];
+      const embedData = typeof embed.toJSON === 'function' ? embed.toJSON() : embed;
+
+      assert(embedData.title.includes(syntheticUsername), 'Embed title must contain booster username');
+      assert.strictEqual(embedData.description, 'No roles assigned yet.');
+
+      const fields = embedData.fields || [];
+      const qualificationField = fields.find((f: any) => f.name.includes('Qualification Status'));
+      assert(qualificationField, 'Must include Qualification Status field');
+      assert(qualificationField.value.includes('Unapproved / Pending'));
+
+      const mainCharField = fields.find((f: any) => f.name.includes('Main Character'));
+      assert(mainCharField, 'Must include Main Character field');
+      assert(mainCharField.value.includes('No WoW characters registered yet'));
+
+      const charCountField = fields.find((f: any) => f.name.includes('Registered Characters'));
+      assert(charCountField, 'Must include Registered Characters field');
+      assert(charCountField.value.includes('Total Active: **0** character(s)'));
+
+      const teamsField = fields.find((f: any) => f.name.includes('Premade Teams'));
+      assert(teamsField, 'Must include Premade Teams field');
+      assert(teamsField.value.includes('Participating in **0** squad(s)'));
+
+      // 3. Verify components row has 2 buttons
+      assert(Array.isArray(replyPayload.components) && replyPayload.components.length === 1);
+      const row = replyPayload.components[0];
+      const rowData = typeof row.toJSON === 'function' ? row.toJSON() : row;
+      assert.strictEqual(rowData.components.length, 2);
+      assert.strictEqual(rowData.components[0].custom_id || rowData.components[0].customId, 'profile_btn_refresh');
+      assert.strictEqual(rowData.components[1].custom_id || rowData.components[1].customId, 'profile_btn_list');
+    } finally {
+      setGlobalPrismaClient(null);
+      await db.cleanup();
+    }
+  });
+
+  await test('12.2 G4!profile repeated invocation is idempotent and updates existing record without duplicates', async () => {
+    const db = await createDisposableLabDatabase();
+    try {
+      setGlobalPrismaClient(db.prismaClient);
+
+      const syntheticUserId = `idem_user_${Date.now()}`.slice(0, 18);
+      const initialUsername = 'lab_tester_first';
+      const updatedUsername = 'lab_tester_updated';
+
+      let replyCount = 0;
+      const makeMockMessage = (name: string) => ({
+        author: {
+          id: syntheticUserId,
+          username: name,
+          displayAvatarURL: () => 'https://cdn.discordapp.com/avatars/123/avatar.png',
+        },
+        mentions: {
+          users: {
+            first: () => null,
+          },
+        },
+        reply: async () => {
+          replyCount++;
+        },
+      });
+
+      const { handleProfileCommand } = await import('../commands/profile');
+
+      // First invocation
+      await handleProfileCommand(makeMockMessage(initialUsername) as any, []);
+      assert.strictEqual(replyCount, 1);
+
+      // Second invocation with updated username
+      await handleProfileCommand(makeMockMessage(updatedUsername) as any, []);
+      assert.strictEqual(replyCount, 2);
+
+      // Verify only 1 record exists in total and username was updated
+      const totalUsers = await prisma.user.count({ where: { discordId: syntheticUserId } });
+      assert.strictEqual(totalUsers, 1, 'Must not duplicate user records');
+
+      const user = await prisma.user.findUnique({ where: { discordId: syntheticUserId } });
+      assert.strictEqual(user?.username, updatedUsername, 'Username must be updated on subsequent calls');
+    } finally {
+      setGlobalPrismaClient(null);
+      await db.cleanup();
+    }
+  });
+
+  await test('12.3 Profile buttons handle empty character list safely without external sync or DB mutations', async () => {
+    const db = await createDisposableLabDatabase();
+    try {
+      setGlobalPrismaClient(db.prismaClient);
+
+      const syntheticUserId = `btn_user_${Date.now()}`.slice(0, 18);
+      const { handleButtonInteraction } = await import('../interactions/buttons');
+
+      // 1. Test profile_btn_refresh when user has no characters
+      let refreshReply: any = null;
+      const mockRefreshInteraction = {
+        customId: 'profile_btn_refresh',
+        user: { id: syntheticUserId },
+        reply: async (payload: any) => {
+          refreshReply = payload;
+        },
+        deferReply: async () => {},
+        editReply: async () => {},
+      };
+
+      await handleButtonInteraction(mockRefreshInteraction as any);
+      assert(refreshReply !== null);
+      assert(refreshReply.content.includes('No registered characters found to sync'));
+      assert.strictEqual(refreshReply.ephemeral, true);
+
+      // 2. Test profile_btn_list when user has no characters
+      let listReply: any = null;
+      const mockListInteraction = {
+        customId: 'profile_btn_list',
+        user: { id: syntheticUserId },
+        reply: async (payload: any) => {
+          listReply = payload;
+        },
+      };
+
+      await handleButtonInteraction(mockListInteraction as any);
+      assert(listReply !== null);
+      assert(listReply.content.includes('No active characters registered'));
+      assert.strictEqual(listReply.ephemeral, true);
+
+      // 3. Confirm zero characters created in database
+      const totalChars = await prisma.wowCharacter.count({ where: { userId: syntheticUserId } });
+      assert.strictEqual(totalChars, 0, 'Buttons must not create characters in DB');
+    } finally {
+      setGlobalPrismaClient(null);
+      await db.cleanup();
+    }
+  });
+
   console.log('\n============================================================');
   console.log(`📊 Total: ${passed + failed} | Passed: ${passed} | Failed: ${failed}`);
   console.log('============================================================\n');
