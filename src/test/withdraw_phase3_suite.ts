@@ -84,11 +84,12 @@ async function runWithdrawPhase3Suite() {
   const uTestB = `u_wdr_b_${Date.now()}`;
   const uAdmin = `u_wdr_admin_${Date.now()}`;
   const uAdmin2 = `u_wdr_admin2_${Date.now()}`;
+  const uManagerReviewer = `u_wdr_mgr_${Date.now()}`;
 
   try {
     // ─── ۰. تمیزکاری اولیه ───────────────────────────────────────────────────
     await prisma.user.deleteMany({
-      where: { discordId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } },
+      where: { discordId: { in: [uTestA, uTestB, uAdmin, uAdmin2, uManagerReviewer] } },
     });
 
     // ─── ۱. آزمون‌های دسترسی تاییدنشده (Unauthenticated Rejection) ───────────
@@ -147,12 +148,22 @@ async function runWithdrawPhase3Suite() {
       },
     });
 
+    await prisma.user.create({
+      data: {
+        discordId: uManagerReviewer,
+        username: 'ManagerReviewer',
+        displayName: 'ReadOnly Withdrawal Manager',
+        isActive: true,
+      },
+    });
+
     await prisma.userRole.createMany({
       data: [
         { userId: uTestA, roleKey: 'booster' },
         { userId: uTestB, roleKey: 'booster' },
         { userId: uAdmin, roleKey: 'owner' },
-        { userId: uAdmin2, roleKey: 'manager' },
+        { userId: uAdmin2, roleKey: 'owner' },
+        { userId: uManagerReviewer, roleKey: 'manager' },
       ],
     });
 
@@ -917,6 +928,16 @@ async function runWithdrawPhase3Suite() {
       '84. IRT bank settlement rejected when secondary reviewer lacks FINANCE_ADJUST permission'
     );
 
+    const irtManagerDenied = await reconcileIrtBankPayout(
+      { id: 1130, destinationAddress: 'IR020170000000109968843003', quotedNetPayoutAmount: '3500000' },
+      'TRACK-12345678',
+      { actorId: uAdmin, secondReviewerId: uManagerReviewer } // Manager lacks Owner-only FINANCE_ADJUST
+    );
+    assert(
+      irtManagerDenied.verified === false && Boolean(irtManagerDenied.reason?.includes('INVALID_SECONDARY_REVIEWER')),
+      '84b. IRT bank settlement rejected when secondary reviewer is manager lacking Owner-only FINANCE_ADJUST'
+    );
+
     const irtMissingRecord = await reconcileIrtBankPayout(
       { id: 114, destinationAddress: 'IR020170000000109968843003', quotedNetPayoutAmount: '3500000' },
       'TRACK-12345678',
@@ -1202,12 +1223,13 @@ async function runWithdrawPhase3Suite() {
     failed++;
   } finally {
     // تمیزکاری نهایی
-    await prisma.userPayoutPreference.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
-    await prisma.ledgerEntryV2.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
-    await prisma.boosterWithdrawalRequest.deleteMany({ where: { boosterId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
-    await prisma.walletV2.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
-    await prisma.userRole.deleteMany({ where: { userId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
-    await prisma.user.deleteMany({ where: { discordId: { in: [uTestA, uTestB, uAdmin, uAdmin2] } } });
+    const cleanupUsers = [uTestA, uTestB, uAdmin, uAdmin2, uManagerReviewer];
+    await prisma.userPayoutPreference.deleteMany({ where: { userId: { in: cleanupUsers } } });
+    await prisma.ledgerEntryV2.deleteMany({ where: { userId: { in: cleanupUsers } } });
+    await prisma.boosterWithdrawalRequest.deleteMany({ where: { boosterId: { in: cleanupUsers } } });
+    await prisma.walletV2.deleteMany({ where: { userId: { in: cleanupUsers } } });
+    await prisma.userRole.deleteMany({ where: { userId: { in: cleanupUsers } } });
+    await prisma.user.deleteMany({ where: { discordId: { in: cleanupUsers } } });
   }
 
   console.log('\n======================================================');

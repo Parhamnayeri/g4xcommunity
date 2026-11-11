@@ -27,6 +27,7 @@
  * 20. No financial ledger or wallet mutation occurs.
  */
 
+import { PermissionFlagsBits } from 'discord.js';
 import prisma from '../database/db';
 import { handleOrderCommand } from '../commands/order';
 import { handleSetupCommand } from '../commands/setup';
@@ -641,6 +642,8 @@ async function runDiscordOrderSuite() {
     };
 
     await handleButtonInteraction(mockRestartTankInteraction);
+    // Wait deterministically for Test 17's fire-and-forget card refresh before starting Test 18
+    await publishOrRefreshOrderCard(freshMockClient, testOrder1.id, mockChannel.id);
     const rePresignedTank = await prisma.orderPresign.findFirst({
       where: { orderId: testOrder1.id, userId: uBoosterTank, status: 'registered' },
     });
@@ -651,8 +654,40 @@ async function runDiscordOrderSuite() {
     );
 
     // ─── TEST 18: Failed Discord API calls are recoverable ────────────────
+    const failingOrder = await prisma.order.create({
+      data: {
+        orderRef: `ORD_TEST_FAIL_018_${Date.now()}`,
+        gameSlug: 'wow_midnight',
+        serviceId: mplusService.id,
+        creatorId: uAdvertiser,
+        creatorType: 'advertiser',
+        advertiserId: uAdvertiser,
+        orderType: 'group',
+        orderMode: 'non_pilot',
+        currency: 'USD',
+        grossAmountMinor: 7500,
+        boosterPoolMinor: 7500,
+        paymentStatus: 'verified',
+        status: 'open_presign',
+      },
+    });
+
+    const botPermsGranted = new Set<bigint>([
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.SendMessages,
+      PermissionFlagsBits.EmbedLinks,
+      PermissionFlagsBits.ReadMessageHistory,
+    ]);
     const failingMockChannel: any = {
       id: 'chan_failing_9902',
+      name: 'orders-failing-mock',
+      guild: {
+        id: 'guild_orders_test_9901',
+        members: { me: { id: 'bot_orders_test_9901' } },
+      },
+      permissionsFor: () => ({
+        has: (perm: bigint) => botPermsGranted.has(perm),
+      }),
       isTextBased: () => true,
       send: async () => {
         throw new Error('SIMULATED_DISCORD_500_ERROR: Discord API is down');
@@ -661,14 +696,30 @@ async function runDiscordOrderSuite() {
     };
     const failingMockClient: any = {
       channels: {
-        fetch: async () => failingMockChannel,
+        fetch: async (id: string) => (id === failingMockChannel.id ? failingMockChannel : null),
         cache: new Map([[failingMockChannel.id, failingMockChannel]]),
       },
     };
 
-    const failedPub = await publishOrRefreshOrderCard(failingMockClient, testOrder1.id, failingMockChannel.id);
+    const failedPub = await publishOrRefreshOrderCard(failingMockClient, failingOrder.id, failingMockChannel.id);
+    // Also verify recovery on the same order when channel recovers cleanly
+    const recoveredMockChannel: any = {
+      ...failingMockChannel,
+      send: async () => ({ id: 'msg_recovered_1801', edit: async () => {} }),
+    };
+    const recoveredMockClient: any = {
+      channels: {
+        fetch: async (id: string) => (id === recoveredMockChannel.id ? recoveredMockChannel : null),
+        cache: new Map([[recoveredMockChannel.id, recoveredMockChannel]]),
+      },
+    };
+    const recoveredPub = await publishOrRefreshOrderCard(recoveredMockClient, failingOrder.id, recoveredMockChannel.id);
+
     assert(
-      failedPub.success === false && failedPub.error?.includes('DISCORD_API_ERROR'),
+      failedPub.success === false &&
+        Boolean(failedPub.error?.includes('DISCORD_API_ERROR')) &&
+        recoveredPub.success === true &&
+        recoveredPub.messageId === 'msg_recovered_1801',
       '18. Failed Discord API calls are handled safely and are recoverable'
     );
 

@@ -144,5 +144,39 @@ jobs:
       - name: Run Operational Closed Beta v0.001 regression suite
         run: npm run test:beta:operational
 
+      - name: Run withdrawal workflow and security suite
+        env:
+          DATABASE_URL: file:./staging/ci_withdraw.db
+          ESCROW_RELEASE_ENABLED: 'false'
+          FINANCE_V2_LIVE_CREDITS_ENABLED: 'false'
+          FINANCE_V2_LIVE_PAYOUTS_ENABLED: 'false'
+          FINANCE_V2_P2P_SETTLEMENT_ENABLED: 'false'
+          NOWPAYMENTS_LIVE_COLLECTION_ENABLED: 'false'
+          RAIDERIO_LIVE_SYNC_ENABLED: 'false'
+          NOWPAYMENTS_MODE: disabled
+        run: |
+          trap 'rm -f prisma/staging/ci_withdraw.db*' EXIT
+          rm -f prisma/staging/ci_withdraw.db*
+          npx prisma migrate deploy --schema=prisma/schema.prisma
+          npx ts-node src/database/seed.ts
+          npm run test:withdraw
+
+      - name: Run Discord order publication and presign suite
+        env:
+          DATABASE_URL: file:./staging/ci_orders.db
+          ESCROW_RELEASE_ENABLED: 'false'
+          FINANCE_V2_LIVE_CREDITS_ENABLED: 'false'
+          FINANCE_V2_LIVE_PAYOUTS_ENABLED: 'false'
+          FINANCE_V2_P2P_SETTLEMENT_ENABLED: 'false'
+          NOWPAYMENTS_LIVE_COLLECTION_ENABLED: 'false'
+          RAIDERIO_LIVE_SYNC_ENABLED: 'false'
+          NOWPAYMENTS_MODE: disabled
+        run: |
+          trap 'rm -f prisma/staging/ci_orders.db*' EXIT
+          rm -f prisma/staging/ci_orders.db*
+          npx prisma migrate deploy --schema=prisma/schema.prisma
+          npx ts-node src/database/seed.ts
+          npm run test:orders
+
       - name: Run production dependency vulnerability audit
         run: npm audit --omit=dev
