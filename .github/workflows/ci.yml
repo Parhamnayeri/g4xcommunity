@@ -141,5 +141,8 @@ jobs:
       - name: Run safe Discord Lab integration safety suite
         run: npm run test:discord-lab:safety
 
+      - name: Run Operational Closed Beta v0.001 regression suite
+        run: npm run test:beta:operational
+
       - name: Run production dependency vulnerability audit
         run: npm audit --omit=dev

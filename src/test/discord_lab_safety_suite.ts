@@ -1925,6 +1925,215 @@ async function runDiscordLabSafetyTests(): Promise<void> {
     );
   });
 
+  await test('12.6 Verified interaction deferReply, editReply (%40original / @original), fetchReply, and followUp webhook routes pass for allowed guild', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID, {
+      expectedApplicationId: VALID_TEST_APP_ID,
+    });
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      application: { id: VALID_TEST_APP_ID },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      channels: {
+        cache: new Map([
+          ['101010101010101010', { id: '101010101010101010', guildId: VALID_TEST_GUILD_ID }],
+        ]),
+      },
+      rest: {
+        request: async () => ({ id: '888888888888888888' }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    let interactionHandler: Function = () => {};
+    const dummyClient = {
+      on: (event: string, handler: Function) => {
+        if (event === 'interactionCreate') interactionHandler = handler;
+      },
+    };
+
+    const allowedInteractionId = '777777777777777778';
+    const allowedToken = 'verified.token_segment-abc123';
+    const executedRoutes: string[] = [];
+
+    firewall.attachClientFirewall(dummyClient as any, {
+      onPermittedMessage: async () => {},
+      onPermittedInteraction: async (interaction: any) => {
+        // deferReply -> POST /interactions/:id/:token/callback
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/interactions/${interaction.id}/${interaction.token}/callback`,
+          method: 'POST',
+          body: { type: 5 },
+        });
+        executedRoutes.push('deferReply');
+
+        // editReply -> PATCH /webhooks/:appId/:token/messages/%40original
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/webhooks/${VALID_TEST_APP_ID}/${interaction.token}/messages/%40original`,
+          method: 'PATCH',
+          body: { content: 'Updated deferred response' },
+        });
+        executedRoutes.push('editReply_encoded');
+
+        // fetchReply -> GET /webhooks/:appId/:token/messages/@original
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/webhooks/${VALID_TEST_APP_ID}/${interaction.token}/messages/@original`,
+          method: 'GET',
+        });
+        executedRoutes.push('fetchReply');
+
+        // followUp -> POST /webhooks/:appId/:token
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/webhooks/${VALID_TEST_APP_ID}/${interaction.token}`,
+          method: 'POST',
+          body: { content: 'Follow-up message' },
+        });
+        executedRoutes.push('followUp');
+
+        // edit follow-up by message snowflake
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/webhooks/${VALID_TEST_APP_ID}/${interaction.token}/messages/888888888888888888`,
+          method: 'PATCH',
+          body: { content: 'Edited follow-up' },
+        });
+        executedRoutes.push('editFollowUp');
+      },
+    });
+
+    await interactionHandler({
+      id: allowedInteractionId,
+      applicationId: VALID_TEST_APP_ID,
+      token: allowedToken,
+      guildId: VALID_TEST_GUILD_ID,
+      channelId: '101010101010101010',
+      user: { id: '222222222222222222' },
+    });
+
+    assert.deepStrictEqual(executedRoutes, [
+      'deferReply',
+      'editReply_encoded',
+      'fetchReply',
+      'followUp',
+      'editFollowUp',
+    ]);
+    assert.strictEqual(firewall.isInteractionTokenPermitted(allowedToken), true);
+  });
+
+  await test('12.7 Firewall rejects unverified, foreign-app, arbitrary webhook, and foreign/DM webhook interaction tokens fail-closed', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID, {
+      expectedApplicationId: VALID_TEST_APP_ID,
+    });
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      application: { id: VALID_TEST_APP_ID },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      channels: { cache: new Map() },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    let interactionHandler: Function = () => {};
+    firewall.attachClientFirewall(
+      {
+        on: (event: string, handler: Function) => {
+          if (event === 'interactionCreate') interactionHandler = handler;
+        },
+      } as any,
+      {
+        onPermittedMessage: async () => {},
+        onPermittedInteraction: async () => {},
+      }
+    );
+
+    const validToken = 'allowed_tok_999';
+    await interactionHandler({
+      id: '777777777777777779',
+      applicationId: VALID_TEST_APP_ID,
+      token: validToken,
+      guildId: VALID_TEST_GUILD_ID,
+      channelId: '101010101010101010',
+      user: { id: '222222222222222222' },
+    });
+
+    // Trigger foreign guild & DM interactions (their tokens must NOT become registered)
+    await interactionHandler({
+      id: '666666666666666669',
+      applicationId: VALID_TEST_APP_ID,
+      token: 'foreign_tok_abc',
+      guildId: FOREIGN_GUILD_ID,
+      user: { id: '333333333333333333' },
+    });
+    await interactionHandler({
+      id: '555555555555555559',
+      applicationId: VALID_TEST_APP_ID,
+      token: 'dm_tok_xyz',
+      guildId: null,
+      user: { id: '444444444444444444' },
+    });
+
+    // 1. Valid token with WRONG application ID -> BLOCKED
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/webhooks/999000111222333444/${validToken}/messages/%40original`,
+          method: 'PATCH',
+        });
+      },
+      (err: any) => err instanceof DiscordLabSecurityError && err.message.includes('does not match verified bot application')
+    );
+
+    // 2. Right app ID with foreign guild token -> BLOCKED
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/webhooks/${VALID_TEST_APP_ID}/foreign_tok_abc/messages/%40original`,
+          method: 'PATCH',
+        });
+      },
+      (err: any) => err instanceof DiscordLabSecurityError && err.message.includes('not registered from an allowed test guild')
+    );
+
+    // 3. Right app ID with DM token -> BLOCKED
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/webhooks/${VALID_TEST_APP_ID}/dm_tok_xyz`,
+          method: 'POST',
+        });
+      },
+      (err: any) => err instanceof DiscordLabSecurityError && err.message.includes('not registered from an allowed test guild')
+    );
+
+    // 4. Arbitrary webhook ID/token (non-interaction webhook post/read/delete) -> BLOCKED
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/webhooks/123456789012345678/arbitrary_webhook_secret`,
+          method: 'POST',
+        });
+      },
+      (err: any) => err instanceof DiscordLabSecurityError
+    );
+
+    // 5. Disallowed DELETE on /webhooks/:appId/:token -> BLOCKED
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/webhooks/${VALID_TEST_APP_ID}/${validToken}`,
+          method: 'DELETE',
+        });
+      },
+      (err: any) => err instanceof DiscordLabSecurityError && err.message.includes('not permitted')
+    );
+  });
+
   console.log('\n============================================================');
   console.log(`📊 Total: ${passed + failed} | Passed: ${passed} | Failed: ${failed}`);
   console.log('============================================================\n');

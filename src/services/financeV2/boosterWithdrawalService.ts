@@ -102,6 +102,27 @@ export interface PayoutScheduleResult {
  * بازیابی امن کلید اختصاصی امضای پیش‌فاکتورهای تسویه با اعتبارسنجی حداقل ۳۲ کاراکتر انتروپی
  * در صورت فقدان یا ناکافی بودن انتروپی، سامانه Fail-Closed شده و خطای صریح صادر می‌کند.
  */
+export function validateWithdrawalQuoteSigningConfig(
+  secretValue?: string
+): { valid: boolean; reason?: string } {
+  const secret = (secretValue !== undefined ? secretValue : process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET) || '';
+  const trimmed = secret.trim();
+  if (!trimmed || trimmed.length < 32) {
+    return {
+      valid: false,
+      reason: 'WITHDRAWAL_QUOTE_SIGNING_SECRET must be set with at least 32 characters of entropy.',
+    };
+  }
+  const weakPlaceholders = ['change_me', 'secret', 'test_secret_32_characters_minimum', 'example'];
+  if (weakPlaceholders.some((p) => trimmed.toLowerCase() === p)) {
+    return {
+      valid: false,
+      reason: 'WITHDRAWAL_QUOTE_SIGNING_SECRET cannot use a template placeholder.',
+    };
+  }
+  return { valid: true };
+}
+
 export function getWithdrawalQuoteSigningSecret(): string {
   const secret = process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET;
   if (!secret || secret.trim().length < 32) {
@@ -656,6 +677,7 @@ export async function confirmAndSubmitWithdrawalRequest(
         postingGroupId: `POSTING_GRP_WDR_${request.withdrawalRef}`,
         accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
         entryRef: `LEDGER_WDR_RES_${request.withdrawalRef}`,
+        idempotencyKey: `WDR_RES_${request.id}`,
         description: `Reserved funds for ${request.payoutMethod} withdrawal (#${request.id})`,
       },
       tx
@@ -929,6 +951,7 @@ export async function adminExecuteManualPayout(
         postingGroupId,
         accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_RESERVED,
         entryRef: `LEDGER_WDR_PAID_${request.withdrawalRef}`,
+        idempotencyKey: `WDR_SETTLE_${request.id}`,
         description: `Settled ${request.payoutMethod} payout for withdrawal #${request.id}`,
         metadata: {
           maskedTxHash: request.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20 ? maskCryptoAddress(normalizedRef) : null,
@@ -972,14 +995,95 @@ export async function adminExecuteManualPayout(
 }
 
 /**
- * ۷. رد درخواست برداشت توسط ادمین و استرداد وجوه به موجودی در دسترس (Admin Reject)
+ * ۶.۵ تایید بررسی اداری و آماده‌سازی برای انتقال دستی برون‌سیستمی (Approve for Processing)
+ * بدون آزادسازی/کاهش موجودی رزروشده و بدون ثبت PAID پیش از تایید مستقل انتقال واقعی
+ */
+export async function adminApproveWithdrawalForProcessing(
+  requestId: number,
+  actorId: string,
+  notes?: string
+) {
+  const auth = await authorize(actorId, Permission.WITHDRAWAL_REVIEW);
+  if (!auth.allowed) {
+    throw new Error(
+      `UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions (WITHDRAWAL_REVIEW required)'}`
+    );
+  }
+
+  return await prisma.$transaction(async (tx) => {
+    const request = await tx.boosterWithdrawalRequest.findUnique({
+      where: { id: requestId },
+    });
+
+    if (!request) {
+      throw new Error(`WITHDRAWAL_NOT_FOUND: Request #${requestId} not found`);
+    }
+
+    if (request.status === BoosterWithdrawalStatus.PAID) {
+      throw new Error(`ALREADY_PAID: Withdrawal #${requestId} has already been settled and paid`);
+    }
+
+    if (request.status === BoosterWithdrawalStatus.PROCESSING) {
+      return { request, alreadyProcessing: true };
+    }
+
+    const casUpdate = await tx.boosterWithdrawalRequest.updateMany({
+      where: {
+        id: requestId,
+        status: {
+          in: [
+            BoosterWithdrawalStatus.RESERVED,
+            BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
+          ],
+        },
+      },
+      data: {
+        status: BoosterWithdrawalStatus.PROCESSING,
+        approvedBy: actorId,
+        approvedAt: new Date(),
+      },
+    });
+
+    if (casUpdate.count === 0) {
+      throw new Error(
+        `INVALID_STATUS: Cannot approve withdrawal #${requestId} in status '${request.status}' for processing`
+      );
+    }
+
+    const updatedRequest = await tx.boosterWithdrawalRequest.findUniqueOrThrow({
+      where: { id: requestId },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId,
+        action: 'BOOSTER_WITHDRAWAL_APPROVED_FOR_PROCESSING',
+        entityType: 'BoosterWithdrawalRequest',
+        entityId: String(requestId),
+        reason: notes?.trim() || 'Approved for manual external transfer (Processing)',
+        previousValues: JSON.stringify({ status: request.status }),
+        newValues: JSON.stringify({
+          status: BoosterWithdrawalStatus.PROCESSING,
+          withdrawalRef: request.withdrawalRef,
+          payoutMethod: request.payoutMethod,
+          requestedUsdCents: request.requestedUsdCents,
+        }),
+      },
+    });
+
+    return { request: updatedRequest, alreadyProcessing: false };
+  });
+}
+
+/**
+ * ۷. رد درخواست برداشت توسط ادمین یا مالک و استرداد وجوه به موجودی در دسترس (Admin Reject)
  */
 export async function adminRejectWithdrawal(
   requestId: number,
   actorId: string,
   rejectionReason: string
 ) {
-  const auth = await authorize(actorId, Permission.FINANCE_ADJUST);
+  const auth = await authorize(actorId, Permission.WITHDRAWAL_REVIEW);
   if (!auth.allowed) {
     throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions to reject withdrawals'}`);
   }
@@ -1041,6 +1145,7 @@ export async function adminRejectWithdrawal(
         {
           withdrawalRequestId: request.id,
           entryRef: `LEDGER_WDR_REJ_${request.withdrawalRef}`,
+          idempotencyKey: `WDR_REV_${request.id}`,
           createdBy: actorId,
         },
         tx
@@ -1059,6 +1164,13 @@ export async function adminRejectWithdrawal(
         entityType: 'BoosterWithdrawalRequest',
         entityId: String(requestId),
         reason: rejectionReason,
+        previousValues: JSON.stringify({ status: request.status }),
+        newValues: JSON.stringify({
+          status: BoosterWithdrawalStatus.REJECTED,
+          withdrawalRef: request.withdrawalRef,
+          refundedUsdCents: request.requestedUsdCents,
+          rejectionReason,
+        }),
       },
     });
 
@@ -1129,6 +1241,7 @@ export async function boosterCancelWithdrawal(
         {
           withdrawalRequestId: request.id,
           entryRef: `LEDGER_WDR_CANCEL_${request.withdrawalRef}`,
+          idempotencyKey: `WDR_REV_${request.id}`,
           createdBy: boosterId,
         },
         tx

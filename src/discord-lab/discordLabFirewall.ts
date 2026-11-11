@@ -50,9 +50,13 @@ export class DiscordLabSecurityError extends Error {
 export class DiscordLabFirewall {
   public readonly allowedGuildId: string;
   private readonly options: DiscordLabFirewallOptions;
+  private verifiedApplicationId: string | null = null;
   private _state: DiscordLabState = DiscordLabState.BLOCKED;
   public totalEventsProcessed: number = 0;
   public totalEventsRejected: number = 0;
+
+  private static readonly INTERACTION_TOKEN_TTL_MS = 15 * 60 * 1000;
+  private static readonly MAX_TRACKED_INTERACTION_TOKENS = 5000;
 
   constructor(allowedGuildId: string, options: DiscordLabFirewallOptions = {}) {
     if (!allowedGuildId || !/^[1-9][0-9]{16,19}$/.test(allowedGuildId)) {
@@ -62,6 +66,9 @@ export class DiscordLabFirewall {
     }
     this.allowedGuildId = allowedGuildId;
     this.options = options;
+    if (options.expectedApplicationId) {
+      this.verifiedApplicationId = options.expectedApplicationId;
+    }
   }
 
   public get state(): DiscordLabState {
@@ -115,6 +122,8 @@ export class DiscordLabFirewall {
 
   public readonly permittedChannelIds: Set<string> = new Set();
   public readonly permittedInteractionIds: Set<string> = new Set();
+  public readonly permittedInteractionTokens: Map<string, number> = new Map();
+  private readonly permittedInteractionTokenById: Map<string, string> = new Map();
 
   public registerPermittedChannel(channelId: string | null | undefined): void {
     if (channelId && /^[1-9][0-9]{16,19}$/.test(channelId)) {
@@ -122,10 +131,56 @@ export class DiscordLabFirewall {
     }
   }
 
-  public registerPermittedInteraction(interactionId: string | null | undefined): void {
+  public registerPermittedInteraction(
+    interactionId: string | null | undefined,
+    interactionToken?: string | null
+  ): void {
     if (interactionId && /^[1-9][0-9]{16,19}$/.test(interactionId)) {
       this.permittedInteractionIds.add(interactionId);
+      if (
+        typeof interactionToken === 'string' &&
+        interactionToken.length > 0 &&
+        !interactionToken.includes('..') &&
+        /^[a-zA-Z0-9_.\-]+$/.test(interactionToken)
+      ) {
+        this.registerPermittedInteractionToken(interactionToken, interactionId);
+      }
     }
+  }
+
+  private registerPermittedInteractionToken(interactionToken: string, interactionId?: string): void {
+    const now = Date.now();
+    for (const [tok, expiresAt] of this.permittedInteractionTokens.entries()) {
+      if (expiresAt <= now) {
+        this.permittedInteractionTokens.delete(tok);
+      }
+    }
+    if (this.permittedInteractionTokens.size >= DiscordLabFirewall.MAX_TRACKED_INTERACTION_TOKENS) {
+      const oldestKey = this.permittedInteractionTokens.keys().next().value;
+      if (oldestKey) this.permittedInteractionTokens.delete(oldestKey);
+    }
+    this.permittedInteractionTokens.set(
+      interactionToken,
+      now + DiscordLabFirewall.INTERACTION_TOKEN_TTL_MS
+    );
+    if (interactionId) {
+      this.permittedInteractionTokenById.set(interactionId, interactionToken);
+      if (this.permittedInteractionTokenById.size > DiscordLabFirewall.MAX_TRACKED_INTERACTION_TOKENS) {
+        const oldestId = this.permittedInteractionTokenById.keys().next().value;
+        if (oldestId) this.permittedInteractionTokenById.delete(oldestId);
+      }
+    }
+  }
+
+  public isInteractionTokenPermitted(interactionToken: string | null | undefined): boolean {
+    if (!interactionToken || interactionToken.includes('..')) return false;
+    const expiresAt = this.permittedInteractionTokens.get(interactionToken);
+    if (!expiresAt) return false;
+    if (Date.now() > expiresAt) {
+      this.permittedInteractionTokens.delete(interactionToken);
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -323,7 +378,7 @@ export class DiscordLabFirewall {
     }
 
     // 5. Interaction callbacks: /interactions/:interactionId/:token/callback
-    const interactionMatch = pathOnly.match(/^\/interactions\/([a-zA-Z0-9_\-]+)\/([a-zA-Z0-9_\-]+)\/callback$/);
+    const interactionMatch = pathOnly.match(/^\/interactions\/([a-zA-Z0-9_\-]+)\/([a-zA-Z0-9_.\-]+)\/callback$/);
     if (interactionMatch) {
       if (method !== 'POST') {
         this.totalEventsRejected++;
@@ -333,17 +388,83 @@ export class DiscordLabFirewall {
       }
 
       const interactionId = interactionMatch[1];
-      if (!this.permittedInteractionIds.has(interactionId)) {
+      const interactionToken = interactionMatch[2];
+      if (!interactionToken || interactionToken.includes('..') || !this.permittedInteractionIds.has(interactionId)) {
         this.totalEventsRejected++;
         throw new DiscordLabSecurityError(
           `Outgoing interaction callback for interaction '${interactionId}' strictly blocked: interaction was not verified from allowed test guild '${this.allowedGuildId}'.`
         );
       }
 
+      const expectedToken = this.permittedInteractionTokenById.get(interactionId);
+      if (expectedToken && expectedToken !== interactionToken) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing interaction callback for interaction '${interactionId}' strictly blocked: mismatched interaction token.`
+        );
+      }
+
       return;
     }
 
-    // 6. Strict Default Fail-Closed: Any unclassified route is immediately rejected
+    // 6. Verified interaction webhook follow-up / editReply / fetchReply / deleteReply:
+    //    - POST /webhooks/:applicationId/:interactionToken (followUp)
+    //    - GET|PATCH|DELETE /webhooks/:applicationId/:interactionToken/messages/(%40original|@original|<messageId>)
+    const webhookFollowupMatch = pathOnly.match(
+      /^\/webhooks\/([a-zA-Z0-9_\-]+)\/([a-zA-Z0-9_.\-]+)$/
+    );
+    const webhookMessageMatch = pathOnly.match(
+      /^\/webhooks\/([a-zA-Z0-9_\-]+)\/([a-zA-Z0-9_.\-]+)\/messages\/(@original|%40original|[1-9][0-9]{16,19})$/
+    );
+
+    if (webhookFollowupMatch || webhookMessageMatch) {
+      const match = (webhookMessageMatch || webhookFollowupMatch)!;
+      const targetAppId = match[1];
+      const interactionToken = match[2];
+
+      if (!interactionToken || interactionToken.includes('..')) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing webhook operation '${method} ${pathOnly}' rejected: invalid interaction token format.`
+        );
+      }
+
+      const isAllowedMethod = webhookFollowupMatch
+        ? method === 'POST'
+        : method === 'GET' || method === 'PATCH' || method === 'DELETE';
+
+      if (!isAllowedMethod) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing interaction webhook route '${method} ${pathOnly}' rejected: method '${method}' is not permitted.`
+        );
+      }
+
+      const authorizedAppId =
+        this.verifiedApplicationId ||
+        this.options.expectedApplicationId ||
+        client?.application?.id ||
+        client?.user?.id ||
+        null;
+
+      if (!authorizedAppId || targetAppId !== authorizedAppId) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing webhook operation '${method} ${pathOnly}' strictly blocked: application ID '${targetAppId}' does not match verified bot application '${authorizedAppId ?? 'UNVERIFIED'}'.`
+        );
+      }
+
+      if (!this.isInteractionTokenPermitted(interactionToken)) {
+        this.totalEventsRejected++;
+        throw new DiscordLabSecurityError(
+          `Outgoing webhook operation '${method} ${pathOnly}' strictly blocked: interaction token was not registered from an allowed test guild '${this.allowedGuildId}' interaction.`
+        );
+      }
+
+      return;
+    }
+
+    // 7. Strict Default Fail-Closed: Any unclassified route is immediately rejected
     this.totalEventsRejected++;
     throw new DiscordLabSecurityError(
       `Outgoing REST route '${method} ${pathOnly}' is unclassified or unauthorized. Fail-closed containment strictly rejects unknown routes by default.`
@@ -415,7 +536,8 @@ export class DiscordLabFirewall {
       };
     }
 
-    // Success: Transition to VERIFIED, then ACTIVE
+    // Success: Record verified application ID and transition to VERIFIED -> ACTIVE
+    this.verifiedApplicationId = client.application?.id || client.user.id;
     this._state = DiscordLabState.VERIFIED;
     this.activate();
     return { valid: true };
@@ -524,7 +646,28 @@ export class DiscordLabFirewall {
         return;
       }
 
-      this.registerPermittedInteraction(interaction.id);
+      if (
+        (interaction as any).applicationId &&
+        this.verifiedApplicationId &&
+        String((interaction as any).applicationId) !== this.verifiedApplicationId
+      ) {
+        this.totalEventsRejected++;
+        this.options.onRejectedEvent?.({
+          eventType: 'interactionCreate',
+          receivedGuildId: guildId,
+          channelId: interaction.channelId ?? undefined,
+          userId: interaction.user?.id,
+          reason: `Interaction applicationId '${(interaction as any).applicationId}' mismatches verified application '${this.verifiedApplicationId}'`,
+          state: this._state,
+        });
+        return;
+      }
+
+      if (!this.verifiedApplicationId && (interaction as any).applicationId) {
+        this.verifiedApplicationId = String((interaction as any).applicationId);
+      }
+
+      this.registerPermittedInteraction(interaction.id, (interaction as any).token);
       if (interaction.channelId) {
         this.registerPermittedChannel(interaction.channelId);
       }

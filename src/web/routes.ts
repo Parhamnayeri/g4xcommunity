@@ -77,6 +77,7 @@ import {
   confirmAndSubmitWithdrawalRequest,
   boosterCancelWithdrawal,
   adminExecuteManualPayout,
+  adminApproveWithdrawalForProcessing,
   adminRejectWithdrawal,
   updateWithdrawalMetadata,
   getWithdrawalAuditHistory,
@@ -89,6 +90,7 @@ import {
   recordProofSubmitted,
   recordStaffReview,
   recordAdminFinalApproval,
+  executeG4XBoostRelease,
 } from '../services/financeV2/g4xBoostReleaseService';
 import {
   registerBooster,
@@ -1688,10 +1690,23 @@ router.get(
   '/admin/withdrawals',
   requireAuth,
   requireRole('owner', 'manager', 'admin'),
-  async (_req: Request, res: Response): Promise<void> => {
+  async (req: Request, res: Response): Promise<void> => {
     try {
+      const statusParam = req.query.status ? String(req.query.status).trim().toUpperCase() : '';
+      let whereClause: any = {
+        status: { in: ['RESERVED', 'UNDER_ADMIN_REVIEW', 'PROCESSING', 'QUOTED'] },
+      };
+      if (statusParam === 'ALL') {
+        whereClause = {};
+      } else if (statusParam) {
+        const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
+        if (statuses.length > 0) {
+          whereClause = { status: { in: statuses } };
+        }
+      }
+
       const requests = await prisma.boosterWithdrawalRequest.findMany({
-        where: { status: { in: ['RESERVED', 'PROCESSING', 'QUOTED'] } },
+        where: whereClause,
         include: {
           booster: {
             select: { discordId: true, username: true, displayName: true },
@@ -1727,7 +1742,17 @@ router.post(
       const id = Number(req.params.id);
       const { decision, txHash, bankReceiptRef, reason, secondReviewerId } = req.body;
 
-      if (decision === 'approve_paid') {
+      if (decision === 'approve_processing') {
+        const { request: processingReq } = await adminApproveWithdrawalForProcessing(
+          id,
+          user.discordId,
+          req.body.notes || reason
+        );
+        res.json({
+          success: true,
+          request: serializeAdminWithdrawal(processingReq),
+        });
+      } else if (decision === 'approve_paid') {
         const tx = txHash ? String(txHash).trim() : '';
         const receipt = bankReceiptRef ? String(bankReceiptRef).trim() : tx;
         if (!tx && !receipt) {
@@ -1756,11 +1781,12 @@ router.post(
           request: serializeAdminWithdrawal(request),
         });
       } else {
-        res.status(400).json({ error: "Invalid decision. Must be 'approve_paid' or 'reject'." });
+        res.status(400).json({ error: "Invalid decision. Must be 'approve_processing', 'approve_paid', or 'reject'." });
       }
     } catch (err: any) {
-      const status = err.message?.includes('LIVE_PAYOUTS_DISABLED') ? 403 : 400;
-      res.status(status).json({ error: err.message || 'Withdrawal review failed' });
+      const msg = err.message || 'Withdrawal review failed';
+      const status = msg.includes('LIVE_PAYOUTS_DISABLED') || msg.includes('UNAUTHORIZED') ? 403 : 400;
+      res.status(status).json({ error: msg });
     }
   }
 );
@@ -1818,7 +1844,31 @@ router.get(
     try {
       const id = Number(req.params.id);
       const logs = await getWithdrawalAuditHistory(id);
-      res.json({ success: true, logs });
+      const history = logs.map((l) => {
+        let parsedDetails: any = null;
+        if (l.newValues) {
+          try {
+            parsedDetails = JSON.parse(l.newValues);
+          } catch {
+            parsedDetails = l.newValues;
+          }
+        }
+        return {
+          id: l.id,
+          action: l.action,
+          reason: l.reason,
+          createdAt: l.createdAt,
+          details: parsedDetails,
+          actor: l.actor
+            ? {
+                id: l.actor.discordId,
+                username: l.actor.username,
+                displayName: l.actor.displayName,
+              }
+            : null,
+        };
+      });
+      res.json({ success: true, logs, history });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to fetch withdrawal audit history' });
     }
@@ -2269,6 +2319,46 @@ router.post(
       });
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Admin final approval failed' });
+    }
+  }
+);
+
+router.post(
+  '/orders/:id/release-earnings',
+  requireAuth,
+  requireRole('owner', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      if (isNaN(orderId) || orderId <= 0) {
+        res.status(400).json({ error: 'Invalid order ID' });
+        return;
+      }
+
+      const releaseRes = await executeG4XBoostRelease(orderId, user.discordId);
+      if (releaseRes.blockedByConfig || !('tracker' in releaseRes)) {
+        res.status(403).json({
+          success: false,
+          blockedByConfig: true,
+          gate: 'ESCROW_RELEASE_ENABLED',
+          stage: releaseRes.stage,
+          error: 'ESCROW_RELEASE_DISABLED',
+          message: 'message' in releaseRes ? releaseRes.message : 'ESCROW_RELEASE_ENABLED is disabled.',
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        stage: releaseRes.stage,
+        tracker: releaseRes.tracker,
+      });
+    } catch (err: any) {
+      const msg = err.message || 'Release execution failed';
+      const status = msg.startsWith('UNAUTHORIZED') ? 403 : 400;
+      res.status(status).json({ error: msg });
     }
   }
 );

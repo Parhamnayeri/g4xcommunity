@@ -279,13 +279,12 @@ export async function creditAvailableCents(
   }
 
   const runWithTx = async (tx: Prisma.TransactionClient) => {
-    const wallet = await getOrCreateWalletV2(userId, tx);
+    await getOrCreateWalletV2(userId, tx);
 
-    const newAvailable = wallet.availableCents + amountCents;
     const updatedWallet = await tx.walletV2.update({
       where: { userId },
       data: {
-        availableCents: newAvailable,
+        availableCents: { increment: amountCents },
       },
     });
 
@@ -314,7 +313,7 @@ export async function creditAvailableCents(
         amountCents,
         entryType,
         direction: LedgerV2Direction.CREDIT,
-        balanceAfterAvailableCents: newAvailable,
+        balanceAfterAvailableCents: updatedWallet.availableCents,
         balanceAfterReservedCents: updatedWallet.reservedCents,
         reversalOfEntryRef: options.reversalOfEntryRef || null,
         idempotencyKey: options.idempotencyKey || null,
@@ -351,23 +350,24 @@ export async function reserveAvailableCents(
   const runWithTx = async (tx: Prisma.TransactionClient) => {
     const wallet = await getOrCreateWalletV2(userId, tx);
 
-    if (wallet.availableCents < amountCents) {
+    const atomicRes = await tx.walletV2.updateMany({
+      where: {
+        userId,
+        availableCents: { gte: amountCents },
+      },
+      data: {
+        availableCents: { decrement: amountCents },
+        reservedCents: { increment: amountCents },
+      },
+    });
+
+    if (atomicRes.count === 0) {
       throw new Error(
         `INSUFFICIENT_AVAILABLE_FUNDS: Available balance ($${(wallet.availableCents / 100).toFixed(2)}) is less than requested reservation ($${(amountCents / 100).toFixed(2)})`
       );
     }
 
-    const newAvailable = wallet.availableCents - amountCents;
-    const newReserved = wallet.reservedCents + amountCents;
-
-    const updatedWallet = await tx.walletV2.update({
-      where: { userId },
-      data: {
-        availableCents: newAvailable,
-        reservedCents: newReserved,
-      },
-    });
-
+    const updatedWallet = await tx.walletV2.findUniqueOrThrow({ where: { userId } });
     assertWalletInvariants(updatedWallet);
 
     const entryRef = options.entryRef || `LEDGER_RES_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
@@ -392,8 +392,8 @@ export async function reserveAvailableCents(
         amountCents,
         entryType,
         direction: LedgerV2Direction.DEBIT,
-        balanceAfterAvailableCents: newAvailable,
-        balanceAfterReservedCents: newReserved,
+        balanceAfterAvailableCents: updatedWallet.availableCents,
+        balanceAfterReservedCents: updatedWallet.reservedCents,
         reversalOfEntryRef: options.reversalOfEntryRef || null,
         idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Reserved ${amountCents} cents for withdrawal`,
@@ -428,23 +428,24 @@ export async function settleReservedCents(
   const runWithTx = async (tx: Prisma.TransactionClient) => {
     const wallet = await getOrCreateWalletV2(userId, tx);
 
-    if (wallet.reservedCents < amountCents) {
+    const atomicRes = await tx.walletV2.updateMany({
+      where: {
+        userId,
+        reservedCents: { gte: amountCents },
+      },
+      data: {
+        reservedCents: { decrement: amountCents },
+        paidCents: { increment: amountCents },
+      },
+    });
+
+    if (atomicRes.count === 0) {
       throw new Error(
         `INSUFFICIENT_RESERVED_FUNDS: Reserved balance ($${(wallet.reservedCents / 100).toFixed(2)}) is less than settlement amount ($${(amountCents / 100).toFixed(2)})`
       );
     }
 
-    const newReserved = wallet.reservedCents - amountCents;
-    const newPaid = wallet.paidCents + amountCents;
-
-    const updatedWallet = await tx.walletV2.update({
-      where: { userId },
-      data: {
-        reservedCents: newReserved,
-        paidCents: newPaid,
-      },
-    });
-
+    const updatedWallet = await tx.walletV2.findUniqueOrThrow({ where: { userId } });
     assertWalletInvariants(updatedWallet);
 
     const entryRef = options.entryRef || `LEDGER_SETTLE_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
@@ -469,7 +470,7 @@ export async function settleReservedCents(
         entryType: LedgerV2EntryType.WITHDRAWAL_SETTLE,
         direction: LedgerV2Direction.DEBIT,
         balanceAfterAvailableCents: updatedWallet.availableCents,
-        balanceAfterReservedCents: newReserved,
+        balanceAfterReservedCents: updatedWallet.reservedCents,
         reversalOfEntryRef: options.reversalOfEntryRef || null,
         idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Settled ${amountCents} cents withdrawal payout`,
@@ -504,23 +505,24 @@ export async function reverseReservedCents(
   const runWithTx = async (tx: Prisma.TransactionClient) => {
     const wallet = await getOrCreateWalletV2(userId, tx);
 
-    if (wallet.reservedCents < amountCents) {
+    const atomicRes = await tx.walletV2.updateMany({
+      where: {
+        userId,
+        reservedCents: { gte: amountCents },
+      },
+      data: {
+        reservedCents: { decrement: amountCents },
+        availableCents: { increment: amountCents },
+      },
+    });
+
+    if (atomicRes.count === 0) {
       throw new Error(
         `INSUFFICIENT_RESERVED_FUNDS: Reserved balance ($${(wallet.reservedCents / 100).toFixed(2)}) is less than reversal amount ($${(amountCents / 100).toFixed(2)})`
       );
     }
 
-    const newReserved = wallet.reservedCents - amountCents;
-    const newAvailable = wallet.availableCents + amountCents;
-
-    const updatedWallet = await tx.walletV2.update({
-      where: { userId },
-      data: {
-        reservedCents: newReserved,
-        availableCents: newAvailable,
-      },
-    });
-
+    const updatedWallet = await tx.walletV2.findUniqueOrThrow({ where: { userId } });
     assertWalletInvariants(updatedWallet);
 
     const entryRef = options.entryRef || `LEDGER_REV_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
@@ -544,8 +546,8 @@ export async function reverseReservedCents(
         amountCents,
         entryType: LedgerV2EntryType.WITHDRAWAL_REVERSE,
         direction: LedgerV2Direction.CREDIT,
-        balanceAfterAvailableCents: newAvailable,
-        balanceAfterReservedCents: newReserved,
+        balanceAfterAvailableCents: updatedWallet.availableCents,
+        balanceAfterReservedCents: updatedWallet.reservedCents,
         reversalOfEntryRef: options.reversalOfEntryRef || null,
         idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Reversed ${amountCents} cents to available balance: ${reason}`,
@@ -577,13 +579,12 @@ export async function recordPendingEarnings(
   }
 
   const runWithTx = async (tx: Prisma.TransactionClient) => {
-    const wallet = await getOrCreateWalletV2(userId, tx);
+    await getOrCreateWalletV2(userId, tx);
 
-    const newPending = wallet.pendingEarningsCents + amountCents;
     const updatedWallet = await tx.walletV2.update({
       where: { userId },
       data: {
-        pendingEarningsCents: newPending,
+        pendingEarningsCents: { increment: amountCents },
       },
     });
 
@@ -610,8 +611,8 @@ export async function recordPendingEarnings(
         amountCents,
         entryType: LedgerV2EntryType.EARNING_PENDING,
         direction: LedgerV2Direction.CREDIT,
-        balanceAfterAvailableCents: wallet.availableCents,
-        balanceAfterReservedCents: wallet.reservedCents,
+        balanceAfterAvailableCents: updatedWallet.availableCents,
+        balanceAfterReservedCents: updatedWallet.reservedCents,
         reversalOfEntryRef: options.reversalOfEntryRef || null,
         idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Recorded pending earnings: ${amountCents} cents`,
@@ -645,23 +646,24 @@ export async function confirmPendingEarnings(
   const runWithTx = async (tx: Prisma.TransactionClient) => {
     const wallet = await getOrCreateWalletV2(userId, tx);
 
-    if (wallet.pendingEarningsCents < amountCents) {
+    const atomicRes = await tx.walletV2.updateMany({
+      where: {
+        userId,
+        pendingEarningsCents: { gte: amountCents },
+      },
+      data: {
+        pendingEarningsCents: { decrement: amountCents },
+        confirmedEarningsCents: { increment: amountCents },
+      },
+    });
+
+    if (atomicRes.count === 0) {
       throw new Error(
         `INSUFFICIENT_PENDING_EARNINGS: Pending earnings ($${(wallet.pendingEarningsCents / 100).toFixed(2)}) is less than confirmation amount ($${(amountCents / 100).toFixed(2)})`
       );
     }
 
-    const newPending = wallet.pendingEarningsCents - amountCents;
-    const newConfirmed = wallet.confirmedEarningsCents + amountCents;
-
-    const updatedWallet = await tx.walletV2.update({
-      where: { userId },
-      data: {
-        pendingEarningsCents: newPending,
-        confirmedEarningsCents: newConfirmed,
-      },
-    });
-
+    const updatedWallet = await tx.walletV2.findUniqueOrThrow({ where: { userId } });
     assertWalletInvariants(updatedWallet);
 
     const entryRef = options.entryRef || `LEDGER_CONF_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
@@ -685,8 +687,8 @@ export async function confirmPendingEarnings(
         amountCents,
         entryType: LedgerV2EntryType.EARNING_CONFIRMED,
         direction: LedgerV2Direction.CREDIT,
-        balanceAfterAvailableCents: wallet.availableCents,
-        balanceAfterReservedCents: wallet.reservedCents,
+        balanceAfterAvailableCents: updatedWallet.availableCents,
+        balanceAfterReservedCents: updatedWallet.reservedCents,
         reversalOfEntryRef: options.reversalOfEntryRef || null,
         idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Confirmed earnings: ${amountCents} cents`,
@@ -723,23 +725,24 @@ export async function releaseConfirmedEarningsToAvailable(
   const runWithTx = async (tx: Prisma.TransactionClient) => {
     const wallet = await getOrCreateWalletV2(userId, tx);
 
-    if (wallet.confirmedEarningsCents < amountCents) {
+    const atomicRes = await tx.walletV2.updateMany({
+      where: {
+        userId,
+        confirmedEarningsCents: { gte: amountCents },
+      },
+      data: {
+        confirmedEarningsCents: { decrement: amountCents },
+        availableCents: { increment: amountCents },
+      },
+    });
+
+    if (atomicRes.count === 0) {
       throw new Error(
         `INSUFFICIENT_CONFIRMED_EARNINGS: Confirmed earnings ($${(wallet.confirmedEarningsCents / 100).toFixed(2)}) is less than release amount ($${(amountCents / 100).toFixed(2)})`
       );
     }
 
-    const newConfirmed = wallet.confirmedEarningsCents - amountCents;
-    const newAvailable = wallet.availableCents + amountCents;
-
-    const updatedWallet = await tx.walletV2.update({
-      where: { userId },
-      data: {
-        confirmedEarningsCents: newConfirmed,
-        availableCents: newAvailable,
-      },
-    });
-
+    const updatedWallet = await tx.walletV2.findUniqueOrThrow({ where: { userId } });
     assertWalletInvariants(updatedWallet);
 
     const entryRef = options.entryRef || `LEDGER_REL_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
@@ -763,8 +766,8 @@ export async function releaseConfirmedEarningsToAvailable(
         amountCents,
         entryType: LedgerV2EntryType.AVAILABLE_RELEASE,
         direction: LedgerV2Direction.CREDIT,
-        balanceAfterAvailableCents: newAvailable,
-        balanceAfterReservedCents: wallet.reservedCents,
+        balanceAfterAvailableCents: updatedWallet.availableCents,
+        balanceAfterReservedCents: updatedWallet.reservedCents,
         reversalOfEntryRef: options.reversalOfEntryRef || null,
         idempotencyKey: options.idempotencyKey || null,
         description: options.description || `Released ${amountCents} cents to available balance`,

@@ -51,7 +51,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
 
   // Review Modal State
   const [selectedWithdrawal, setSelectedWithdrawal] = useState<WithdrawalItem | null>(null);
-  const [decision, setDecision] = useState<'approve_paid' | 'reject'>('approve_paid');
+  const [decision, setDecision] = useState<'approve_processing' | 'approve_paid' | 'reject'>('approve_processing');
   const [txHash, setTxHash] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
@@ -208,7 +208,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                           style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
                           onClick={() => {
                             setSelectedWithdrawal(w);
-                            setDecision('approve_paid');
+                            setDecision('approve_processing');
                             setTxHash('');
                             setReviewNotes('');
                             setReviewFeedback(null);
@@ -254,7 +254,16 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
               <div>Destination: <span style={{ fontFamily: 'monospace' }}>{selectedWithdrawal.destinationAddress}</span></div>
             </div>
 
-            <div style={{ display: 'flex', gap: '1.5rem', marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="decision"
+                  checked={decision === 'approve_processing'}
+                  onChange={() => setDecision('approve_processing')}
+                />
+                Approve for Manual Transfer (Processing)
+              </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                 <input
                   type="radio"
@@ -262,7 +271,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                   checked={decision === 'approve_paid'}
                   onChange={() => setDecision('approve_paid')}
                 />
-                Confirm Disbursement
+                Confirm Disbursement (Paid + Tx Proof)
               </label>
               <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                 <input
@@ -337,7 +346,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                   setReviewFeedback(null);
                   try {
                     await reviewAdminWithdrawal(selectedWithdrawal.id, decision, {
-                      txHash: txHash.trim() || undefined,
+                      txHash: decision === 'approve_paid' && txHash.trim() ? txHash.trim() : undefined,
                       reason: reviewNotes.trim() || undefined,
                       notes: reviewNotes.trim() || undefined,
                     });

@@ -24,6 +24,8 @@ prisma/staging/*.db
 prisma/staging/*.db-journal
 prisma/staging/*.db-shm
 prisma/staging/*.db-wal
+prisma/staging/backups/
+*.bak
 !prisma/staging/.gitkeep
 storage/**
 !storage/

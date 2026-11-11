@@ -24,6 +24,10 @@ import {
   FINANCE_V2_CONSTANTS,
 } from './financeV2Types';
 import { releaseConfirmedEarningsToAvailable } from './financeV2WalletService';
+import {
+  syncOrderPendingEarnings,
+  confirmOrderBoosterEarnings,
+} from './boosterEarningsSyncService';
 
 export interface EligibilityEvaluationResult {
   orderId: number;
@@ -103,13 +107,16 @@ export async function recordProofSubmitted(orderId: number, actorId?: string) {
     throw new Error(`INVALID_STAGE_TRANSITION: Cannot resubmit proof when order is already in '${tracker.stage}'`);
   }
 
-  return await prisma.g4XBoostReleaseTracker.update({
+  const updated = await prisma.g4XBoostReleaseTracker.update({
     where: { id: tracker.id },
     data: {
       stage: G4XBoostReleaseStage.PROOF_SUBMITTED,
       proofSubmittedAt: new Date(),
     },
   });
+
+  await syncOrderPendingEarnings(orderId, actorId);
+  return updated;
 }
 
 /**
@@ -148,7 +155,7 @@ export async function recordStaffReview(
     );
   }
 
-  return await prisma.g4XBoostReleaseTracker.update({
+  const updated = await prisma.g4XBoostReleaseTracker.update({
     where: { id: tracker.id },
     data: {
       stage: G4XBoostReleaseStage.STAFF_REVIEW,
@@ -157,6 +164,9 @@ export async function recordStaffReview(
       notes: notes ? `${tracker.notes || ''} | Staff: ${notes}`.trim() : tracker.notes,
     },
   });
+
+  await confirmOrderBoosterEarnings(orderId, staffId);
+  return updated;
 }
 
 /**
@@ -269,6 +279,8 @@ export async function recordAdminFinalApproval(
       }),
     },
   });
+
+  await confirmOrderBoosterEarnings(orderId, adminId);
 
   return updatedTracker;
 }
@@ -448,18 +460,27 @@ export async function executeG4XBoostRelease(orderId: number, actorId: string) {
   }
 
   // در صورت فعال بودن واقعی در آینده، واریز به ازای تخصیص‌های استخر انجام می‌شود
-  const allocations = await prisma.boosterPayoutAllocation.findMany({
-    where: { orderId },
-  });
-
   return await prisma.$transaction(async (tx) => {
+    await confirmOrderBoosterEarnings(orderId, actorId, tx);
+
+    const allocations = await tx.boosterPayoutAllocation.findMany({
+      where: { orderId },
+      orderBy: { id: 'asc' },
+    });
+
     for (const alloc of allocations) {
+      if (alloc.allocatedMinor <= 0) continue;
+      const releaseKey = `EARN_REL_G4X_ORD_${orderId}_BOOSTER_${alloc.boosterId}`;
+      const alreadyRel = await tx.ledgerEntryV2.findUnique({ where: { idempotencyKey: releaseKey } });
+      if (alreadyRel) continue;
+
       await releaseConfirmedEarningsToAvailable(
         alloc.boosterId,
         alloc.allocatedMinor,
         {
           orderId,
           entryRef: `LEDGER_REL_G4X_ORD_${orderId}_${alloc.boosterId}`,
+          idempotencyKey: releaseKey,
           description: `Released G4X boost earnings for order #${orderId}`,
           createdBy: actorId,
         },

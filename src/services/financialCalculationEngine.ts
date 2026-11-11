@@ -23,6 +23,7 @@ import prisma from '../database/db';
 import { Prisma } from '@prisma/client';
 import { authorize } from './authorizationService';
 import { Permission } from './permissionTypes';
+import { syncOrderPendingEarnings } from './financeV2/boosterEarningsSyncService';
 import {
   getFeePolicy,
   getPlatformWithdrawalThreshold,
@@ -1171,25 +1172,36 @@ export async function finalizeOrderFinancialsAndBoosterAllocation(input: Finaliz
   // ۶. تقسیم کاملاً مساوی استخر بوسترها همراه با توزیع دقیق باقیمانده تک‌سنتی
   const allocations = splitPoolEquallyWithRemainder(snapshot.boosterPoolMinor, boosterIds);
 
-  // ۷. ثبت تخصیص‌ها و قطعی‌سازی وضعیت اسنپ‌شات در تراکنش بدون واریز والت
+  // ۷. ثبت تخصیص‌ها و قطعی‌سازی وضعیت اسنپ‌شات در تراکنش بدون واریز موجودی قابل برداشت
   const result = await prisma.$transaction(async (tx) => {
-    // حذف تخصیص‌های احتمالی قبلی برای این سفارش جهت تضمین Idempotency
-    await tx.boosterPayoutAllocation.deleteMany({
-      where: { orderId },
+    const alreadyPendingLedgerCount = await tx.ledgerEntryV2.count({
+      where: { orderId, entryType: 'EARNING_PENDING' },
     });
 
-    const createdAllocations = [];
-    for (const alloc of allocations) {
-      const record = await tx.boosterPayoutAllocation.create({
-        data: {
-          orderId,
-          boosterId: alloc.boosterId,
-          allocatedMinor: alloc.allocatedMinor,
-          currency: snapshot.currency,
-          payoutRole: boosterIds.length === 1 ? 'solo' : 'team_member',
-        },
+    let createdAllocations = await tx.boosterPayoutAllocation.findMany({
+      where: { orderId },
+      orderBy: { id: 'asc' },
+    });
+
+    if (alreadyPendingLedgerCount === 0) {
+      // حذف تخصیص‌های احتمالی قبلی صرفاً پیش از ثبت دفترکل جهت تضمین Idempotency
+      await tx.boosterPayoutAllocation.deleteMany({
+        where: { orderId },
       });
-      createdAllocations.push(record);
+
+      createdAllocations = [];
+      for (const alloc of allocations) {
+        const record = await tx.boosterPayoutAllocation.create({
+          data: {
+            orderId,
+            boosterId: alloc.boosterId,
+            allocatedMinor: alloc.allocatedMinor,
+            currency: snapshot.currency,
+            payoutRole: boosterIds.length === 1 ? 'solo' : 'team_member',
+          },
+        });
+        createdAllocations.push(record);
+      }
     }
 
     // به‌روزرسانی وضعیت اسنپ‌شات به finalized
@@ -1217,7 +1229,11 @@ export async function finalizeOrderFinancialsAndBoosterAllocation(input: Finaliz
       },
     });
 
-    // نکته امنیتی: هیچ افزایش موجودی در والت اعضا ایجاد نمی‌شود (No withdrawable wallet balance credits in Phase 3.3)
+    if (orderForFinalize.status === 'completed') {
+      await syncOrderPendingEarnings(orderId, actorId, tx);
+    }
+
+    // نکته امنیتی: هیچ افزایش موجودی قابل برداشت (availableCents) در این مرحله ایجاد نمی‌شود
     return {
       snapshot: updatedSnapshot,
       allocations: createdAllocations,

@@ -204,7 +204,7 @@ export async function fetchAdminWithdrawals(params?: {
 
 export async function reviewAdminWithdrawal(
   id: number,
-  decision: 'approve_paid' | 'reject',
+  decision: 'approve_processing' | 'approve_paid' | 'reject',
   data: {
     txHash?: string;
     bankReceiptRef?: string;
