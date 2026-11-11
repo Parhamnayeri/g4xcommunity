@@ -504,6 +504,145 @@ async function runDiscordLabSafetyTests(): Promise<void> {
     assert.strictEqual(isGlobalPrismaOverridden(), false);
   });
 
+  await test('8.5 Interactive transaction rollback via dynamic Prisma proxy on disposable database', async () => {
+    const db = await createDisposableLabDatabase();
+    try {
+      setGlobalPrismaClient(db.prismaClient);
+      assert.strictEqual(isGlobalPrismaOverridden(), true);
+
+      const rollbackTestId = `rollback_${Date.now()}`.slice(0, 18);
+
+      // Perform a write inside an interactive transaction that aborts
+      let txErrorThrown = false;
+      try {
+        await prisma.$transaction(async (tx) => {
+          // Write synthetic test record inside transaction
+          await tx.user.create({
+            data: {
+              discordId: rollbackTestId,
+              username: 'rollback_synthetic_user',
+              isActive: true,
+            },
+          });
+
+          // Verify the record is visible inside the uncommitted transaction
+          const insideTx = await tx.user.findUnique({
+            where: { discordId: rollbackTestId },
+          });
+          assert(insideTx !== null, 'Record must be visible within active transaction');
+          assert.strictEqual(insideTx.username, 'rollback_synthetic_user');
+
+          // Abort transaction intentionally
+          throw new Error('TEST_ABORT_ROLLBACK');
+        });
+      } catch (err: any) {
+        if (err.message === 'TEST_ABORT_ROLLBACK') {
+          txErrorThrown = true;
+        } else {
+          throw err;
+        }
+      }
+
+      assert.strictEqual(txErrorThrown, true, 'Transaction must have thrown the test abort error');
+
+      // Verify outside the transaction that the record was rolled back completely
+      const outsideTx = await prisma.user.findUnique({
+        where: { discordId: rollbackTestId },
+      });
+      assert.strictEqual(outsideTx, null, 'Aborted transaction must be rolled back completely with zero dirty state');
+
+      // Also verify via raw query for direct database confirmation
+      const rawRows: any[] = await prisma.$queryRawUnsafe(
+        'SELECT * FROM users WHERE discord_id = ?;',
+        rollbackTestId
+      );
+      assert.strictEqual(rawRows.length, 0, 'No rows must exist in SQLite table after rollback');
+    } finally {
+      setGlobalPrismaClient(null);
+      await db.cleanup();
+    }
+  });
+
+  await test('8.6 Disposable database safe cleanup, file erasure, and production-file non-interference proof', async () => {
+    // Record baseline mtimes of any forbidden production or dev database files
+    const repoRoot = path.resolve(__dirname, '../../');
+    const forbiddenPaths = [
+      path.join(repoRoot, 'prisma/dev.db'),
+      path.join(repoRoot, 'prisma/g4x.db'),
+      path.join(repoRoot, 'prisma/g4x_dev.db'),
+    ];
+    const initialMtimes = new Map<string, number>();
+    for (const fp of forbiddenPaths) {
+      if (fs.existsSync(fp)) {
+        initialMtimes.set(fp, fs.statSync(fp).mtimeMs);
+      }
+    }
+
+    // 1. Provision disposable database
+    const db = await createDisposableLabDatabase();
+    assert(fs.existsSync(db.dbPath), 'Disposable SQLite file must exist on disk after provisioning');
+    assert(db.dbPath.includes('staging'), 'Must be in staging directory');
+
+    try {
+      setGlobalPrismaClient(db.prismaClient);
+
+      // 2. Perform synthetic write using test-only records
+      const syntheticTestId = `cleanup_syn_${Date.now()}`.slice(0, 18);
+      await prisma.user.create({
+        data: {
+          discordId: syntheticTestId,
+          username: 'cleanup_verifier',
+          isActive: true,
+        },
+      });
+
+      // 3. Read it back to verify persistence in disposable DB
+      const readBack = await prisma.user.findUnique({
+        where: { discordId: syntheticTestId },
+      });
+      assert(readBack !== null, 'Synthetic record must be readable from disposable database');
+      assert.strictEqual(readBack.username, 'cleanup_verifier');
+      assert.strictEqual(readBack.discordId, syntheticTestId);
+
+      // 4. Verify PRAGMA database_list confirms active attachment is strictly the disposable file
+      const dbList: Array<{ seq: number; name: string; file: string }> = await prisma.$queryRawUnsafe(
+        'PRAGMA database_list;'
+      );
+      const mainDb = dbList.find((d) => d.name === 'main');
+      const activeFile = path.normalize(mainDb?.file || '').toLowerCase();
+      assert.strictEqual(
+        activeFile,
+        path.normalize(db.dbPath).toLowerCase(),
+        'Database connection must be strictly attached to disposable file'
+      );
+    } finally {
+      // Reset global prisma
+      setGlobalPrismaClient(null);
+
+      // 5. Cleanup the disposable database
+      await db.cleanup();
+
+      // 6. Verify disposable file and all related WAL/SHM/journal files are completely deleted
+      assert.strictEqual(fs.existsSync(db.dbPath), false, 'Disposable database file must be deleted on cleanup');
+      assert.strictEqual(fs.existsSync(`${db.dbPath}-wal`), false, 'WAL file must be deleted on cleanup');
+      assert.strictEqual(fs.existsSync(`${db.dbPath}-shm`), false, 'SHM file must be deleted on cleanup');
+      assert.strictEqual(fs.existsSync(`${db.dbPath}-journal`), false, 'Journal file must be deleted on cleanup');
+
+      // 7. Verify that no forbidden database was touched or modified
+      for (const fp of forbiddenPaths) {
+        if (fs.existsSync(fp)) {
+          const currentMtime = fs.statSync(fp).mtimeMs;
+          const initial = initialMtimes.get(fp);
+          assert.strictEqual(
+            currentMtime,
+            initial,
+            `Forbidden database '${fp}' was modified during test!`
+          );
+        }
+      }
+    }
+  });
+
   // ─── 9. Outgoing Discord REST Operations Firewall ──────────────────────────
   console.log('\n[Category 9: Outgoing Discord REST Operations Firewall]');
 
