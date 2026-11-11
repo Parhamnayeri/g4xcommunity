@@ -1741,6 +1741,190 @@ async function runDiscordLabSafetyTests(): Promise<void> {
     }
   });
 
+  await test('12.4 profile_btn_list end-to-end integration through client and REST firewalls in allowed test guild', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      channels: {
+        cache: new Map([
+          ['test_chan_101', { id: 'test_chan_101', guildId: VALID_TEST_GUILD_ID }],
+        ]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    const db = await createDisposableLabDatabase();
+    try {
+      setGlobalPrismaClient(db.prismaClient);
+
+      let interactionHandler: Function = () => {};
+      const dummyClient = {
+        on: (event: string, handler: Function) => {
+          if (event === 'interactionCreate') interactionHandler = handler;
+        },
+      };
+
+      const { handleButtonInteraction } = await import('../interactions/buttons');
+      firewall.attachClientFirewall(dummyClient as any, {
+        onPermittedMessage: async () => {},
+        onPermittedInteraction: async (interaction: any) => {
+          if (interaction.isButton()) {
+            await handleButtonInteraction(interaction);
+          }
+        },
+      });
+
+      const syntheticInteractionId = '777777777777777777';
+      const syntheticToken = 'token_test_segment_12345';
+      const syntheticUserId = `btn_user_${Date.now()}`.slice(0, 18);
+
+      let replyPayload: any = null;
+      let restCallbackExecuted = false;
+
+      const mockInteraction = {
+        id: syntheticInteractionId,
+        token: syntheticToken,
+        guildId: VALID_TEST_GUILD_ID,
+        channelId: 'test_chan_101',
+        customId: 'profile_btn_list',
+        user: { id: syntheticUserId },
+        isButton: () => true,
+        reply: async (payload: any) => {
+          replyPayload = payload;
+          // Discord.js internally invokes client.rest.request for interaction callback:
+          await (mockVerifiedClient.rest as any).request({
+            fullRoute: `/interactions/${syntheticInteractionId}/${syntheticToken}/callback`,
+            method: 'POST',
+            body: payload,
+          });
+          restCallbackExecuted = true;
+        },
+      };
+
+      await interactionHandler(mockInteraction);
+
+      // 1. Verify permitted interaction ID was registered
+      assert(firewall.permittedInteractionIds.has(syntheticInteractionId));
+
+      // 2. Verify interaction.reply was called with ephemeral flag and exact expected text
+      assert(replyPayload !== null, 'interaction.reply must be called');
+      assert.strictEqual(replyPayload.ephemeral, true, 'Response must be strictly ephemeral');
+      assert(
+        replyPayload.content.includes('No active characters registered. Use `G4!profile add-char` to add one.'),
+        'Reply content must match expected empty-character notice'
+      );
+
+      // 3. Verify outbound REST callback passed the REST firewall without exception
+      assert.strictEqual(restCallbackExecuted, true, 'Outbound REST callback must be permitted');
+
+      // 4. Verify database state is untouched (zero characters created, zero user mutations)
+      const charCount = await prisma.wowCharacter.count({ where: { userId: syntheticUserId } });
+      assert.strictEqual(charCount, 0, 'Must not create characters in database');
+    } finally {
+      setGlobalPrismaClient(null);
+      await db.cleanup();
+    }
+  });
+
+  await test('12.5 profile_btn_list interaction from foreign guild or DM is dropped and callback blocked', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      channels: {
+        cache: new Map([]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    let interactionHandler: Function = () => {};
+    const dummyClient = {
+      on: (event: string, handler: Function) => {
+        if (event === 'interactionCreate') interactionHandler = handler;
+      },
+    };
+
+    let onPermittedInteractionCalled = false;
+    firewall.attachClientFirewall(dummyClient as any, {
+      onPermittedMessage: async () => {},
+      onPermittedInteraction: async () => {
+        onPermittedInteractionCalled = true;
+      },
+    });
+
+    // 1. Foreign guild interaction
+    const foreignInteractionId = '666666666666666666';
+    const mockForeignInteraction = {
+      id: foreignInteractionId,
+      token: 'tok_foreign',
+      guildId: FOREIGN_GUILD_ID,
+      customId: 'profile_btn_list',
+      user: { id: 'foreign_user' },
+      isButton: () => true,
+    };
+
+    await interactionHandler(mockForeignInteraction);
+    assert.strictEqual(onPermittedInteractionCalled, false, 'Foreign guild interaction must not be dispatched');
+    assert.strictEqual(firewall.permittedInteractionIds.has(foreignInteractionId), false);
+
+    // Attempting REST callback for foreign interaction must throw DiscordLabSecurityError
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/interactions/${foreignInteractionId}/tok_foreign/callback`,
+          method: 'POST',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('interaction was not verified from allowed test guild'));
+        return true;
+      }
+    );
+
+    // 2. DM interaction (null guildId)
+    const dmInteractionId = '555555555555555555';
+    const mockDmInteraction = {
+      id: dmInteractionId,
+      token: 'tok_dm',
+      guildId: null,
+      customId: 'profile_btn_list',
+      user: { id: 'dm_user' },
+      isButton: () => true,
+    };
+
+    await interactionHandler(mockDmInteraction);
+    assert.strictEqual(onPermittedInteractionCalled, false, 'DM interaction must not be dispatched');
+    assert.strictEqual(firewall.permittedInteractionIds.has(dmInteractionId), false);
+
+    await assert.rejects(
+      async () => {
+        await (mockVerifiedClient.rest as any).request({
+          fullRoute: `/interactions/${dmInteractionId}/tok_dm/callback`,
+          method: 'POST',
+        });
+      },
+      (err: any) => {
+        assert(err instanceof DiscordLabSecurityError);
+        assert(err.message.includes('interaction was not verified from allowed test guild'));
+        return true;
+      }
+    );
+  });
+
   console.log('\n============================================================');
   console.log(`📊 Total: ${passed + failed} | Passed: ${passed} | Failed: ${failed}`);
   console.log('============================================================\n');
