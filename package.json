@@ -96,11 +96,14 @@
     "test:dependency-compatibility": "node scripts/test-dependency-compatibility.cjs",
     "test:characters": "node scripts/test-release-blockers.cjs characters",
     "test:overhaul": "node scripts/test-release-blockers.cjs src/test/role_hierarchy_and_portal_overhaul_suite.ts",
+    "beta:preflight": "ts-node scripts/beta-preflight.ts",
     "beta:start": "ts-node scripts/beta-runner.ts",
     "beta:backup": "ts-node scripts/beta-backup.ts",
     "beta:restore": "ts-node scripts/beta-restore.ts",
     "beta:import-orders": "ts-node scripts/import-beta-orders.ts",
-    "test:beta:operational": "ts-node src/test/beta_operational_regression_suite.ts"
+    "test:beta:operational": "ts-node src/test/beta_operational_regression_suite.ts",
+    "test:beta:smoke": "ts-node src/test/beta_runner_smoke_suite.ts",
+    "test:beta:acceptance": "ts-node src/test/beta_web_and_core_acceptance_suite.ts"
   },
   "prisma": {
     "seed": "ts-node src/database/seed.ts"

@@ -144,6 +144,9 @@ jobs:
       - name: Run Operational Closed Beta v0.001 regression suite
         run: npm run test:beta:operational
 
+      - name: Run Operational Closed Beta web & core acceptance suite
+        run: npm run test:beta:acceptance
+
       - name: Run withdrawal workflow and security suite
         env:
           DATABASE_URL: file:./staging/ci_withdraw.db
