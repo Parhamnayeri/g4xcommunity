@@ -43,6 +43,7 @@ import {
 import { setGlobalPrismaClient } from '../database/db';
 import { setGlobalDiscordClient } from '../services/orderDiscordService';
 import { createStagingApp } from '../web/staging/stagingApp';
+import { handleDiscordLabPingCommand } from './discordLabPingCommand';
 
 export interface RunningDiscordLab {
   server: http.Server;
@@ -171,7 +172,10 @@ export class DiscordLabLifecycleManager {
           const command = rawArgs.shift()?.toLowerCase();
 
           try {
-            if (command === 'setup') {
+            if (command === 'ping') {
+              await handleDiscordLabPingCommand(message);
+              return;
+            } else if (command === 'setup') {
               const { handleSetupCommand } = await import('../commands/setup');
               await handleSetupCommand(message, rawArgs);
             } else if (command === 'order') {

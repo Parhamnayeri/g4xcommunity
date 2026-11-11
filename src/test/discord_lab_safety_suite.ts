@@ -30,6 +30,7 @@ import { createDisposableLabDatabase } from '../discord-lab/discordLabDatabase';
 import { DiscordLabLifecycleManager } from '../discord-lab/discordLabRunner';
 import { validateStagingEnvironment } from '../web/staging/validateStagingEnv';
 import { prisma, setGlobalPrismaClient, isGlobalPrismaOverridden } from '../database/db';
+import { handleDiscordLabPingCommand, DISCORD_LAB_PING_RESPONSE } from '../discord-lab/discordLabPingCommand';
 
 const VALID_TEST_GUILD_ID = '123456789098765432';
 const FOREIGN_GUILD_ID = '987654321012345678';
@@ -1235,6 +1236,195 @@ async function runDiscordLabSafetyTests(): Promise<void> {
     const res = validateDiscordLabEnvironment(envWithOnlyLegacyToken, { requireToken: true });
     assert.strictEqual(res.valid, false);
     assert(res.errors.some((e) => e.includes('DISCORD_LAB_BOT_TOKEN is missing')));
+  });
+
+  // ─── 11. Discord Lab G4!ping Smoke Test Command ─────────────────────────────
+  console.log('\n[Category 11: Discord Lab G4!ping Smoke Test Command]');
+
+  await test('11.1 G4!ping responds with exact string "G4X Staging Lab: pong" when executed in allowed test guild with ACTIVE firewall', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+      channels: {
+        cache: new Map([
+          ['test_chan_101', { id: 'test_chan_101', guildId: VALID_TEST_GUILD_ID }],
+        ]),
+      },
+      rest: {
+        request: async () => ({ success: true }),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+    firewall.attachRestFirewall(mockVerifiedClient as any);
+
+    let messageHandler: Function = () => {};
+    const dummyClient = {
+      on: (event: string, handler: Function) => {
+        if (event === 'messageCreate') messageHandler = handler;
+      },
+    };
+
+    let replyContent: string | null = null;
+    firewall.attachClientFirewall(dummyClient as any, {
+      onPermittedMessage: async (message: any) => {
+        if (!message.content.startsWith('G4!')) return;
+        const rawArgs = message.content.slice(3).trim().split(/\s+/);
+        const command = rawArgs.shift()?.toLowerCase();
+        if (command === 'ping') {
+          await handleDiscordLabPingCommand(message);
+        }
+      },
+      onPermittedInteraction: async () => {},
+    });
+
+    const mockMessage = {
+      guildId: VALID_TEST_GUILD_ID,
+      channelId: 'test_chan_101',
+      content: 'G4!ping',
+      author: { bot: false },
+      reply: async (payload: any) => {
+        replyContent = typeof payload === 'string' ? payload : payload.content;
+      },
+    };
+
+    const prevLabMode = process.env.DISCORD_LAB_MODE;
+    process.env.DISCORD_LAB_MODE = 'true';
+    try {
+      await messageHandler(mockMessage);
+      assert.strictEqual(replyContent, 'G4X Staging Lab: pong');
+    } finally {
+      process.env.DISCORD_LAB_MODE = prevLabMode;
+    }
+  });
+
+  await test('11.2 G4!ping drops foreign guild message without responding or calling reply', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+
+    let messageHandler: Function = () => {};
+    const dummyClient = {
+      on: (event: string, handler: Function) => {
+        if (event === 'messageCreate') messageHandler = handler;
+      },
+    };
+
+    let replyCalled = false;
+    firewall.attachClientFirewall(dummyClient as any, {
+      onPermittedMessage: async () => { replyCalled = true; },
+      onPermittedInteraction: async () => {},
+    });
+
+    const mockMessage = {
+      guildId: FOREIGN_GUILD_ID,
+      channelId: 'foreign_chan_999',
+      content: 'G4!ping',
+      author: { bot: false },
+      reply: async () => { replyCalled = true; },
+    };
+
+    await messageHandler(mockMessage);
+    assert.strictEqual(replyCalled, false, 'Foreign guild G4!ping must be dropped with zero reply');
+  });
+
+  await test('11.3 G4!ping drops DM message (null/undefined guildId) without responding or calling reply', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    const mockVerifiedClient = {
+      user: { id: VALID_TEST_APP_ID, tag: 'G4XStagingBot#0001' },
+      guilds: {
+        cache: new Map([[VALID_TEST_GUILD_ID, { id: VALID_TEST_GUILD_ID }]]),
+      },
+    };
+    firewall.verifyBotAndGuildContainment(mockVerifiedClient as any);
+
+    let messageHandler: Function = () => {};
+    const dummyClient = {
+      on: (event: string, handler: Function) => {
+        if (event === 'messageCreate') messageHandler = handler;
+      },
+    };
+
+    let replyCalled = false;
+    firewall.attachClientFirewall(dummyClient as any, {
+      onPermittedMessage: async () => { replyCalled = true; },
+      onPermittedInteraction: async () => {},
+    });
+
+    const mockDmMessage = {
+      guildId: null,
+      channelId: 'dm_chan_999',
+      content: 'G4!ping',
+      author: { bot: false },
+      reply: async () => { replyCalled = true; },
+    };
+
+    await messageHandler(mockDmMessage);
+    assert.strictEqual(replyCalled, false, 'DM message G4!ping must be dropped with zero reply');
+  });
+
+  await test('11.4 G4!ping is blocked if firewall is in BLOCKED state prior to verification', async () => {
+    const firewall = new DiscordLabFirewall(VALID_TEST_GUILD_ID);
+    assert.strictEqual(firewall.state, DiscordLabState.BLOCKED);
+
+    let messageHandler: Function = () => {};
+    const dummyClient = {
+      on: (event: string, handler: Function) => {
+        if (event === 'messageCreate') messageHandler = handler;
+      },
+    };
+
+    let replyCalled = false;
+    firewall.attachClientFirewall(dummyClient as any, {
+      onPermittedMessage: async () => { replyCalled = true; },
+      onPermittedInteraction: async () => {},
+    });
+
+    const mockMessage = {
+      guildId: VALID_TEST_GUILD_ID,
+      channelId: 'test_chan_101',
+      content: 'G4!ping',
+      author: { bot: false },
+      reply: async () => { replyCalled = true; },
+    };
+
+    await messageHandler(mockMessage);
+    assert.strictEqual(replyCalled, false, 'Pre-verification G4!ping must be dropped with zero reply');
+  });
+
+  await test('11.5 handleDiscordLabPingCommand refuses execution if DISCORD_LAB_MODE !== "true"', async () => {
+    const prevMode = process.env.DISCORD_LAB_MODE;
+    process.env.DISCORD_LAB_MODE = 'false';
+
+    let replyCalled = false;
+    const mockMessage: any = {
+      content: 'G4!ping',
+      reply: async () => { replyCalled = true; },
+    };
+
+    try {
+      const handled = await handleDiscordLabPingCommand(mockMessage);
+      assert.strictEqual(handled, false);
+      assert.strictEqual(replyCalled, false);
+    } finally {
+      process.env.DISCORD_LAB_MODE = prevMode;
+    }
+  });
+
+  await test('11.6 Production bot (src/index.ts) does not register or handle G4!ping command', () => {
+    const indexPath = path.join(__dirname, '../index.ts');
+    const indexSource = fs.readFileSync(indexPath, 'utf-8');
+    assert(
+      !indexSource.includes("'ping'") && !indexSource.includes('"ping"'),
+      'Production bot entrypoint (src/index.ts) must NOT register ping command'
+    );
   });
 
   console.log('\n============================================================');
