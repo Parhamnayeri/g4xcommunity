@@ -45,10 +45,22 @@ import {
   generateUsdtWithdrawalQuote,
   createWithdrawalRequestFromQuote,
   confirmAndSubmitWithdrawalRequest,
+  adminApproveWithdrawalForProcessing,
+  adminExecuteManualPayout,
   adminRejectWithdrawal,
   validateWithdrawalQuoteSigningConfig,
 } from '../services/financeV2/boosterWithdrawalService';
+import {
+  recordProofSubmitted,
+  recordStaffReview,
+  recordAdminFinalApproval,
+  executeG4XBoostRelease,
+} from '../services/financeV2/g4xBoostReleaseService';
+import { finalizeOrderFinancialsAndBoosterAllocation } from '../services/financialCalculationEngine';
+import { confirmOrderBoosterEarnings } from '../services/financeV2/boosterEarningsSyncService';
 import { getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
+import { validateOwnerAccessKeyConfig, resolveDatabaseOwner } from '../web/ownerGate';
+import { validateBetaEnvironment } from '../beta/validateBetaEnv';
 import { findPrismaSchemaDir } from '../database/canonicalDbPath';
 
 const TEST_PORT = 3005;
@@ -450,7 +462,79 @@ async function runAcceptanceSuite() {
 
     let createdOrderId: number;
 
-    await test('3.2 Synthetic Order Creation & Full Lifecycle Tracking (Pending -> Assigned -> Completed)', async () => {
+    await test('3.2 OwnerGate Configuration Consistency & Single Authoritative Owner Invariant', async () => {
+      // 1. Missing, short (<32), placeholder, and low-entropy keys must fail closed
+      const missingCheck = validateOwnerAccessKeyConfig(undefined);
+      if (missingCheck.valid || missingCheck.reason !== 'MISSING_CONFIGURATION') {
+        throw new Error(`Expected MISSING_CONFIGURATION for undefined key, got ${JSON.stringify(missingCheck)}`);
+      }
+
+      const shortCheck = validateOwnerAccessKeyConfig('short_key_under_32_chars');
+      if (shortCheck.valid || !shortCheck.reason?.includes('INSUFFICIENT_LENGTH')) {
+        throw new Error(`Expected INSUFFICIENT_LENGTH for short key, got ${JSON.stringify(shortCheck)}`);
+      }
+
+      const placeholderCheck = validateOwnerAccessKeyConfig('your_owner_access_key_here_padded_to_over_32_chars');
+      if (placeholderCheck.valid || placeholderCheck.reason !== 'PLACEHOLDER_KEY_DETECTED') {
+        throw new Error(`Expected PLACEHOLDER_KEY_DETECTED for placeholder key, got ${JSON.stringify(placeholderCheck)}`);
+      }
+
+      const lowEntropyCheck = validateOwnerAccessKeyConfig('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+      if (lowEntropyCheck.valid || !lowEntropyCheck.reason) {
+        throw new Error(`Expected failure for low-entropy key, got ${JSON.stringify(lowEntropyCheck)}`);
+      }
+
+      const validCheck = validateOwnerAccessKeyConfig(TEST_OWNER_ACCESS_KEY);
+      if (!validCheck.valid) {
+        throw new Error(`Expected valid result for test owner key, got ${JSON.stringify(validCheck)}`);
+      }
+
+      // 2. validateBetaEnvironment fails closed with weak key
+      const weakEnvRes = validateBetaEnvironment({
+        ...process.env,
+        G4X_OWNER_ACCESS_KEY: 'weak_short_key',
+      });
+      if (weakEnvRes.valid || !weakEnvRes.errors.some((e) => e.includes('G4X_OWNER_ACCESS_KEY'))) {
+        throw new Error('validateBetaEnvironment did not fail closed on weak G4X_OWNER_ACCESS_KEY');
+      }
+
+      // 3. Exactly one active database Owner exists and matches OWNER_DISCORD_ID / invite allowlist
+      const resolvedOwner = await resolveDatabaseOwner(prisma);
+      if (!resolvedOwner.owner || resolvedOwner.reason) {
+        throw new Error(`Expected single authoritative database owner, got: ${resolvedOwner.reason}`);
+      }
+      if (resolvedOwner.owner.discordId !== SYNTH_OWNER_ID) {
+        throw new Error(`Resolved owner discordId mismatch: expected ${SYNTH_OWNER_ID}, got ${resolvedOwner.owner.discordId}`);
+      }
+
+      // 4. Multiple active owners must fail closed with AMBIGUOUS_MULTIPLE_OWNERS
+      const secondOwnerUser = await prisma.user.create({
+        data: {
+          discordId: '900000000000000099',
+          username: 'SecondSyntheticOwner',
+          displayName: 'Second Owner',
+          userRoles: { create: { roleKey: 'owner' } },
+        },
+      });
+
+      try {
+        const ambiguousRes = await resolveDatabaseOwner(prisma);
+        if (ambiguousRes.owner !== null || ambiguousRes.reason !== 'AMBIGUOUS_MULTIPLE_OWNERS') {
+          throw new Error(`Expected AMBIGUOUS_MULTIPLE_OWNERS when multiple active owners exist, got: ${JSON.stringify(ambiguousRes)}`);
+        }
+      } finally {
+        await prisma.userRole.deleteMany({ where: { userId: secondOwnerUser.discordId } });
+        await prisma.user.delete({ where: { discordId: secondOwnerUser.discordId } });
+      }
+
+      const restoredOwner = await resolveDatabaseOwner(prisma);
+      if (!restoredOwner.owner || restoredOwner.owner.discordId !== SYNTH_OWNER_ID) {
+        throw new Error('Failed to restore single authoritative owner');
+      }
+    });
+
+    await test('3.3 Order-to-Wallet End-to-End Real Service Workflow (No Manual Balance Insert)', async () => {
+      // 1. Create synthetic order with creatorType 'g4x' and paymentStatus 'verified'
       const order = await prisma.order.create({
         data: {
           orderRef: 'SYNTH_ORD_001',
@@ -458,15 +542,17 @@ async function runAcceptanceSuite() {
           serviceId: gameService.id,
           customerId: SYNTH_CLIENT_ID,
           creatorId: SYNTH_CLIENT_ID,
+          creatorType: 'g4x',
           orderType: 'group',
           currency: 'USD',
           grossAmountMinor: 10000, // $100.00
           status: 'completed',
+          paymentStatus: 'verified',
         },
       });
-
       createdOrderId = order.id;
 
+      // 2. Create OrderFinancialSnapshot with boosterPoolMinor = 7500 ($75.00)
       await prisma.orderFinancialSnapshot.create({
         data: {
           orderId: order.id,
@@ -479,37 +565,157 @@ async function runAcceptanceSuite() {
           advertiserFeeMinor: 1000,
           boosterPoolMinor: 7500,
           currency: 'USD',
+          calculationStatus: 'provisional',
         },
       });
 
-      const fetchedOrder = await prisma.order.findUnique({
-        where: { id: createdOrderId },
-        include: { financialSnapshot: true },
+      // 3. Create completed OrderRun
+      const run = await prisma.orderRun.create({
+        data: {
+          orderId: order.id,
+          runNumber: 1,
+          status: 'completed',
+          completedAt: new Date(),
+          completedBy: SYNTH_BOOSTER_ID,
+        },
       });
 
-      if (!fetchedOrder || fetchedOrder.financialSnapshot?.boosterPoolMinor !== 7500) {
-        throw new Error('Order snapshot calculation mismatch');
-      }
-    });
+      // 4. Create OrderAssignment and RunAssignment
+      const assignment = await prisma.orderAssignment.create({
+        data: {
+          orderId: order.id,
+          userId: SYNTH_BOOSTER_ID,
+          assignedById: SYNTH_OWNER_ID,
+          assignedRole: 'booster',
+          status: 'completed',
+        },
+      });
 
-    await test('3.3 WalletV2 Balances & Ledger Setup for Booster', async () => {
-      const boosterWallet = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
-      if (boosterWallet.availableCents !== 0 || boosterWallet.confirmedEarningsCents !== 0) {
+      await prisma.runAssignment.create({
+        data: {
+          runId: run.id,
+          assignmentId: assignment.id,
+          roleName: 'booster',
+          status: 'completed',
+        },
+      });
+
+      // 5. Initial booster wallet state check: zero balances
+      const initialWallet = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
+      if (initialWallet.availableCents !== 0 || initialWallet.confirmedEarningsCents !== 0 || initialWallet.pendingEarningsCents !== 0) {
         throw new Error('Booster wallet should initialize with zero balance');
       }
 
-      // Credit synthetic balance in isolated DB for withdrawal testing ($100.00 / 10,000 cents)
-      await prisma.walletV2.update({
-        where: { userId: SYNTH_BOOSTER_ID },
-        data: {
-          availableCents: 10000,
-          confirmedEarningsCents: 10000,
-        },
+      // 6. Step 1: recordProofSubmitted
+      await recordProofSubmitted(order.id, SYNTH_BOOSTER_ID);
+      const trackerAfterProof = await prisma.g4XBoostReleaseTracker.findUniqueOrThrow({ where: { orderId: order.id } });
+      if (trackerAfterProof.stage !== 'PROOF_SUBMITTED') {
+        throw new Error(`Expected stage PROOF_SUBMITTED, got ${trackerAfterProof.stage}`);
+      }
+
+      // 7. Step 2: finalizeOrderFinancialsAndBoosterAllocation (computes allocations & syncs pending earnings)
+      const finalizeRes = await finalizeOrderFinancialsAndBoosterAllocation({
+        orderId: order.id,
+        actorId: SYNTH_OWNER_ID,
+        participatingBoosterIds: [SYNTH_BOOSTER_ID],
+        serviceType: 'solo',
+      });
+      if (finalizeRes.allocations.length !== 1 || finalizeRes.allocations[0].allocatedMinor !== 7500) {
+        throw new Error(`Expected 1 allocation of 7500 minor, got ${JSON.stringify(finalizeRes.allocations)}`);
+      }
+
+      // Verify pending earnings in WalletV2
+      const walletPending = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
+      if (walletPending.pendingEarningsCents !== 7500 || walletPending.confirmedEarningsCents !== 0 || walletPending.availableCents !== 0) {
+        throw new Error(`Wallet balance mismatch after pending sync: pending=${walletPending.pendingEarningsCents}, confirmed=${walletPending.confirmedEarningsCents}, available=${walletPending.availableCents}`);
+      }
+
+      const pendingLedgers = await prisma.ledgerEntryV2.findMany({
+        where: { orderId: order.id, entryType: 'EARNING_PENDING' },
+      });
+      if (pendingLedgers.length !== 1 || pendingLedgers[0].amountCents !== 7500) {
+        throw new Error(`Expected 1 EARNING_PENDING ledger entry for 7500 cents, found ${pendingLedgers.length}`);
+      }
+
+      // 8. Step 3: recordStaffReview (moves pending -> confirmed)
+      await recordStaffReview(order.id, SYNTH_OWNER_ID, 'Staff verified dungeon completion logs');
+      const trackerAfterStaff = await prisma.g4XBoostReleaseTracker.findUniqueOrThrow({ where: { orderId: order.id } });
+      if (trackerAfterStaff.stage !== 'STAFF_REVIEW') {
+        throw new Error(`Expected stage STAFF_REVIEW, got ${trackerAfterStaff.stage}`);
+      }
+
+      const walletConfirmed = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
+      if (walletConfirmed.pendingEarningsCents !== 0 || walletConfirmed.confirmedEarningsCents !== 7500 || walletConfirmed.availableCents !== 0) {
+        throw new Error(`Wallet balance mismatch after staff review: pending=${walletConfirmed.pendingEarningsCents}, confirmed=${walletConfirmed.confirmedEarningsCents}, available=${walletConfirmed.availableCents}`);
+      }
+
+      const confirmedLedgers = await prisma.ledgerEntryV2.findMany({
+        where: { orderId: order.id, entryType: 'EARNING_CONFIRMED' },
+      });
+      if (confirmedLedgers.length !== 1 || confirmedLedgers[0].amountCents !== 7500) {
+        throw new Error(`Expected 1 EARNING_CONFIRMED ledger entry for 7500 cents, found ${confirmedLedgers.length}`);
+      }
+
+      // 9. Step 4: recordAdminFinalApproval (enters 24h hold)
+      await recordAdminFinalApproval(order.id, SYNTH_OWNER_ID, 'Admin final approval granted');
+      const trackerAfterAdmin = await prisma.g4XBoostReleaseTracker.findUniqueOrThrow({ where: { orderId: order.id } });
+      if (trackerAfterAdmin.stage !== 'HOLD_24_HOURS' || !trackerAfterAdmin.adminFinalApprovedAt) {
+        throw new Error(`Expected stage HOLD_24_HOURS, got ${trackerAfterAdmin.stage}`);
+      }
+
+      // 10. Verify Idempotency: re-running finalize or confirm does NOT create duplicate allocations or earnings
+      await finalizeOrderFinancialsAndBoosterAllocation({
+        orderId: order.id,
+        actorId: SYNTH_OWNER_ID,
+        participatingBoosterIds: [SYNTH_BOOSTER_ID],
+        serviceType: 'solo',
+      });
+      await confirmOrderBoosterEarnings(order.id, SYNTH_OWNER_ID);
+
+      const walletIdempotent = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
+      if (walletIdempotent.pendingEarningsCents !== 0 || walletIdempotent.confirmedEarningsCents !== 7500 || walletIdempotent.availableCents !== 0) {
+        throw new Error(`Idempotency failure: duplicate balance recorded! confirmed=${walletIdempotent.confirmedEarningsCents}`);
+      }
+
+      // 11. Verify locked escrow / financial gates cannot be bypassed
+      // Fast forward hold timestamp to satisfy 24h condition
+      await prisma.g4XBoostReleaseTracker.update({
+        where: { orderId: order.id },
+        data: { holdExpiresAt: new Date(Date.now() - 1000) },
       });
 
-      const updated = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
-      if (updated.availableCents !== 10000) {
-        throw new Error(`Expected 10000 cents availableCents, got ${updated.availableCents}`);
+      // Attempt release while ESCROW_RELEASE_ENABLED = false
+      const blockedRelease = await executeG4XBoostRelease(order.id, SYNTH_OWNER_ID);
+      if (!blockedRelease.blockedByConfig || blockedRelease.success) {
+        throw new Error('executeG4XBoostRelease should be blocked when ESCROW_RELEASE_ENABLED is false');
+      }
+
+      const walletStillLocked = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
+      if (walletStillLocked.availableCents !== 0) {
+        throw new Error(`Security breach: earnings became available despite locked release gate! availableCents=${walletStillLocked.availableCents}`);
+      }
+
+      // 12. Execute legitimate release to available under controlled test gate
+      process.env.ESCROW_RELEASE_ENABLED = 'true';
+      try {
+        const successfulRelease = await executeG4XBoostRelease(order.id, SYNTH_OWNER_ID);
+        if (!successfulRelease.success || successfulRelease.stage !== 'AVAILABLE') {
+          throw new Error(`Release execution failed: ${JSON.stringify(successfulRelease)}`);
+        }
+      } finally {
+        process.env.ESCROW_RELEASE_ENABLED = 'false'; // Immediately lock back
+      }
+
+      const walletReleased = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
+      if (walletReleased.availableCents !== 7500 || walletReleased.confirmedEarningsCents !== 0) {
+        throw new Error(`Wallet balance mismatch after release: available=${walletReleased.availableCents}, confirmed=${walletReleased.confirmedEarningsCents}`);
+      }
+
+      const releaseLedgers = await prisma.ledgerEntryV2.findMany({
+        where: { orderId: order.id, entryType: 'AVAILABLE_RELEASE' },
+      });
+      if (releaseLedgers.length !== 1 || releaseLedgers[0].amountCents !== 7500) {
+        throw new Error(`Expected 1 AVAILABLE_RELEASE ledger entry, got ${releaseLedgers.length}`);
       }
     });
 
@@ -519,9 +725,10 @@ async function runAcceptanceSuite() {
       const quoteConfig = validateWithdrawalQuoteSigningConfig(TEST_QUOTE_SECRET);
       if (!quoteConfig.valid) throw new Error('Quote signing config validation failed');
 
+      // Request $50.00 (5000 cents) from legitimate released earnings ($75.00 / 7500 cents)
       const quote = await generateUsdtWithdrawalQuote({
         boosterId: SYNTH_BOOSTER_ID,
-        requestedUsdCents: 5000, // $50.00
+        requestedUsdCents: 5000,
         destinationAddress: '0x1234567890123456789012345678901234567890',
       });
 
@@ -545,20 +752,20 @@ async function runAcceptanceSuite() {
 
     await test('3.5 Atomic Balance Reservation & Overdraft Protection', async () => {
       const walletAfter = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
-      // Originally 10,000 cents; 5,000 cents reserved
-      if (walletAfter.availableCents !== 5000) {
-        throw new Error(`Expected availableCents 5000, got ${walletAfter.availableCents}`);
+      // Originally 7,500 cents; 5,000 cents reserved -> 2,500 available
+      if (walletAfter.availableCents !== 2500) {
+        throw new Error(`Expected availableCents 2500, got ${walletAfter.availableCents}`);
       }
       if (walletAfter.reservedCents !== 5000) {
         throw new Error(`Expected reservedCents 5000, got ${walletAfter.reservedCents}`);
       }
 
-      // Attempt concurrent overdraft withdrawal for $60.00 (6,000 cents) when only 5,000 cents remain
+      // Attempt concurrent overdraft withdrawal for $30.00 (3,000 cents) when only 2,500 cents remain
       let overdraftPrevented = false;
       try {
         const excessQuote = await generateUsdtWithdrawalQuote({
           boosterId: SYNTH_BOOSTER_ID,
-          requestedUsdCents: 6000,
+          requestedUsdCents: 3000,
           destinationAddress: '0x1234567890123456789012345678901234567890',
         });
         const excessDraft = await createWithdrawalRequestFromQuote(excessQuote);
@@ -581,7 +788,7 @@ async function runAcceptanceSuite() {
       }
     });
 
-    await test('3.6 Withdrawal Review & Rejection with Atomic Balance Reversal', async () => {
+    await test('3.6 Authorized Withdrawal Review, approve_processing Transition & Fail-Closed Payout Guards', async () => {
       // 1. Manager attempting to review/reject withdrawal -> strictly blocked by RBAC
       let managerBlockedByRbac = false;
       try {
@@ -611,7 +818,59 @@ async function runAcceptanceSuite() {
         },
       });
 
-      // 3. Authorized Owner rejects withdrawal (Safe non-payout workflow)
+      // 3. Authorized Owner approves withdrawal for external manual processing (approve_processing)
+      const approveRes = await adminApproveWithdrawalForProcessing(
+        createdWithdrawalId,
+        SYNTH_OWNER_ID,
+        'Booster verified on Discord; approved for manual processing'
+      );
+
+      if (approveRes.request.status !== 'PROCESSING') {
+        throw new Error(`Expected status PROCESSING, got ${approveRes.request.status}`);
+      }
+
+      const processingAudit = await prisma.auditLog.findFirst({
+        where: {
+          action: 'BOOSTER_WITHDRAWAL_APPROVED_FOR_PROCESSING',
+          entityId: String(createdWithdrawalId),
+        },
+      });
+      if (!processingAudit) {
+        throw new Error('Missing BOOSTER_WITHDRAWAL_APPROVED_FOR_PROCESSING audit log entry');
+      }
+
+      // 4. Attempt to execute real payout while FINANCE_V2_LIVE_PAYOUTS_ENABLED is false -> strictly fails closed
+      let payoutBlockedByGate = false;
+      try {
+        await adminExecuteManualPayout(
+          createdWithdrawalId,
+          SYNTH_OWNER_ID,
+          {
+            externalTxHash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+            notes: 'Attempted synthetic payout execution',
+          }
+        );
+      } catch (err: any) {
+        if (err.message.includes('LIVE_PAYOUTS_DISABLED') || err.message.includes('FINANCE_V2_LIVE_PAYOUTS_ENABLED')) {
+          payoutBlockedByGate = true;
+        } else {
+          throw err;
+        }
+      }
+
+      if (!payoutBlockedByGate) {
+        throw new Error('Payout execution was not blocked by FINANCE_V2_LIVE_PAYOUTS_ENABLED gate!');
+      }
+
+      // Verify request status remained PROCESSING and did not transition to PAID
+      const reqAfterFailedPayout = await prisma.boosterWithdrawalRequest.findUniqueOrThrow({
+        where: { id: createdWithdrawalId },
+      });
+      if (reqAfterFailedPayout.status !== 'PROCESSING') {
+        throw new Error(`Expected status to remain PROCESSING after blocked payout, got ${reqAfterFailedPayout.status}`);
+      }
+
+      // 5. Authorized Owner rejects withdrawal (Safe non-payout workflow with atomic balance reversal)
       const rejectResult = await adminRejectWithdrawal(
         createdWithdrawalId,
         SYNTH_OWNER_ID,
@@ -622,13 +881,25 @@ async function runAcceptanceSuite() {
         throw new Error(`Expected status REJECTED, got ${rejectResult.request.status}`);
       }
 
-      // Verify atomic balance refund: 5,000 returned to availableCents
+      // Verify atomic balance refund: 5,000 returned to availableCents (2,500 + 5,000 = 7,500)
       const refundedWallet = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
-      if (refundedWallet.availableCents !== 10000) {
-        throw new Error(`Expected refunded availableCents 10000, got ${refundedWallet.availableCents}`);
+      if (refundedWallet.availableCents !== 7500) {
+        throw new Error(`Expected refunded availableCents 7500, got ${refundedWallet.availableCents}`);
       }
       if (refundedWallet.reservedCents !== 0) {
         throw new Error(`Expected reservedCents 0, got ${refundedWallet.reservedCents}`);
+      }
+
+      // 6. Verify idempotency: repeated rejection returns alreadyRejected: true without duplicate fund restoration
+      const repeatReject = await adminRejectWithdrawal(createdWithdrawalId, SYNTH_OWNER_ID, 'Repeat rejection attempt');
+      if (!repeatReject.alreadyRejected) {
+        throw new Error('Repeated rejection should return alreadyRejected: true');
+      }
+
+      // Verify balances are still exactly 7500 and 0 (funds were not restored twice)
+      const walletAfterRepeatReject = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
+      if (walletAfterRepeatReject.availableCents !== 7500 || walletAfterRepeatReject.reservedCents !== 0) {
+        throw new Error(`Double refund detected: available=${walletAfterRepeatReject.availableCents}, reserved=${walletAfterRepeatReject.reservedCents}`);
       }
     });
 
@@ -640,6 +911,9 @@ async function runAcceptanceSuite() {
       const actions = logs.map((l) => l.action);
       const expectedActions = [
         'BOOSTER_WITHDRAWAL_REJECTED',
+        'BOOSTER_WITHDRAWAL_APPROVED_FOR_PROCESSING',
+        'G4X_BOOST_ADMIN_FINAL_APPROVED',
+        'ORDER_FINANCIALS_FINALIZED',
         'AUTH_OWNER_GATE_SUCCESS',
         'AUTH_OWNER_GATE_FAILED',
       ];
