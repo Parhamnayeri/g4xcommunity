@@ -1,6 +1,22 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { LoadingState } from '../components/ui/LoadingState';
+import {
+  Card,
+  Button,
+  DataTable,
+  Column,
+  Pagination,
+  StatusBadge,
+  Tabs,
+  TabItem,
+  KpiCard,
+  Modal,
+  Input,
+  Textarea,
+  LoadingState,
+} from '../components/ui';
+import { normalizePagination } from '../utils/pagination';
 import {
   OwnerOverviewResponse,
   FeatureGateItem,
@@ -8,6 +24,7 @@ import {
   WalletsLedgersResponse,
   OwnerAuditLogItem,
   SecurityHealthResponse,
+  LedgerEntryItem,
 } from '../types/ownerPortal';
 import {
   fetchOwnerOverview,
@@ -18,7 +35,6 @@ import {
   fetchOwnerAuditLogs,
   fetchOwnerSecurityHealth,
 } from '../services/ownerPortal';
-import { useSearchParams } from 'react-router-dom';
 import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
 import { UserManagementWorkspace } from '../components/admin/UserManagementWorkspace';
 import { WithdrawalQueueWorkspace } from '../components/admin/WithdrawalQueueWorkspace';
@@ -66,6 +82,24 @@ const VALID_OWNER_TABS: OwnerTab[] = [
   'security',
 ];
 
+const OWNER_TABS: TabItem[] = [
+  { id: 'overview', label: 'Executive Overview', icon: <span>🏛️</span> },
+  { id: 'orders', label: 'Order Workspace', icon: <span>📦</span> },
+  { id: 'users', label: 'User Management', icon: <span>👥</span> },
+  { id: 'deposits', label: 'Manual IRT Deposits', icon: <span>💳</span> },
+  { id: 'withdrawals', label: 'Withdrawal Queue', icon: <span>💸</span> },
+  { id: 'applications', label: 'Member Applications', icon: <span>📋</span> },
+  { id: 'kyc', label: 'KYC Management', icon: <span>🪪</span> },
+  { id: 'games', label: 'Games & Services', icon: <span>🎮</span> },
+  { id: 'discord', label: 'Discord Channels', icon: <span>💬</span> },
+  { id: 'rules', label: 'Rules & Policies', icon: <span>⚖️</span> },
+  { id: 'config', label: 'Financial Configuration', icon: <span>⚙️</span> },
+  { id: 'ledgers', label: 'Wallets & Ledgers', icon: <span>📈</span> },
+  { id: 'gates', label: 'Feature Gates Status', icon: <span>🔒</span> },
+  { id: 'audit', label: 'Executive Audit Logs', icon: <span>📜</span> },
+  { id: 'security', label: 'Security & Health', icon: <span>🛡️</span> },
+];
+
 export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'overview' }) => {
   const { hasRole } = useAuth();
   const isOwner = hasRole('owner');
@@ -83,8 +117,8 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
     }
   }, [tabParam]);
 
-  const handleTabChange = (newTab: OwnerTab) => {
-    setActiveTab(newTab);
+  const handleTabChange = (newTab: string) => {
+    setActiveTab(newTab as OwnerTab);
     setSearchParams({ tab: newTab });
   };
 
@@ -122,7 +156,6 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
   // Security Health state
   const [securityHealth, setSecurityHealth] = useState<SecurityHealthResponse | null>(null);
   const [securityLoading, setSecurityLoading] = useState(false);
-
 
   // Load Overview
   const loadOverview = useCallback(async () => {
@@ -198,7 +231,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
         action: auditActionFilter || undefined,
       });
       setAuditLogs(data?.logs || []);
-      setAuditPagination(data?.pagination || { page: 1, limit: 25, total: 0, totalPages: 1 });
+      setAuditPagination(normalizePagination(data?.pagination || data, page, auditPagination.limit));
     } catch (err) {
       console.error('Failed to load owner audit:', err);
     } finally {
@@ -234,9 +267,114 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
     if (activeTab === 'security') loadSecurity();
   }, [activeTab, isOwner, loadConfig, loadLedgers, loadGates, loadAudit, loadSecurity]);
 
+  const ledgerColumns: Column<LedgerEntryItem>[] = useMemo(
+    () => [
+      {
+        key: 'entryRef',
+        header: 'Entry Ref',
+        render: (e) => <code style={{ fontFamily: 'monospace' }}>{e.entryRef}</code>,
+      },
+      {
+        key: 'user',
+        header: 'User',
+        render: (e) => (
+          <div>
+            <div>{e.username || 'System Account'}</div>
+            {e.userId && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{e.userId}</div>}
+          </div>
+        ),
+      },
+      {
+        key: 'amount',
+        header: 'Direction / Amount',
+        render: (e) => (
+          <span
+            style={{
+              fontWeight: 700,
+              color: e.direction === 'CREDIT' ? 'var(--status-success)' : 'var(--status-danger)',
+            }}
+          >
+            {e.direction === 'CREDIT' ? '+' : '-'} {e.amountFormatted}
+          </span>
+        ),
+      },
+      {
+        key: 'entryType',
+        header: 'Entry Type',
+        render: (e) => <StatusBadge status={e.entryType.toLowerCase()} />,
+      },
+      {
+        key: 'relatedEntity',
+        header: 'Associated Entity',
+        render: (e) => <span style={{ color: 'var(--text-muted)' }}>{e.relatedEntity || '—'}</span>,
+      },
+      {
+        key: 'createdAt',
+        header: 'Timestamp',
+        render: (e) => (
+          <span style={{ color: 'var(--text-muted)' }}>
+            {new Date(e.createdAt).toLocaleString()}
+          </span>
+        ),
+      },
+    ],
+    []
+  );
+
+  const auditColumns: Column<OwnerAuditLogItem>[] = useMemo(
+    () => [
+      {
+        key: 'createdAt',
+        header: 'Time',
+        render: (l) => (
+          <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            {new Date(l.createdAt).toLocaleString()}
+          </span>
+        ),
+      },
+      {
+        key: 'actor',
+        header: 'Actor',
+        render: (l) => (
+          <div>
+            <div>{l.actor}</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.actorId}</div>
+          </div>
+        ),
+      },
+      {
+        key: 'action',
+        header: 'Action',
+        render: (l) => (
+          <span style={{ fontFamily: 'monospace', color: 'var(--accent-lime)' }}>{l.action}</span>
+        ),
+      },
+      {
+        key: 'entity',
+        header: 'Entity',
+        render: (l) => `${l.entityType} #${l.entityId}`,
+      },
+      {
+        key: 'reason',
+        header: 'Reason',
+        render: (l) => (
+          <span style={{ maxWidth: '320px', color: 'var(--text-muted)', display: 'inline-block' }}>
+            {l.reason || '—'}
+          </span>
+        ),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        render: (l) => <StatusBadge status={l.isSuccess ? 'completed' : 'rejected'} />,
+      },
+    ],
+    []
+  );
+
   if (!isOwner) {
     return (
-      <div className="card-surface" style={{ padding: '3.5rem', textAlign: 'center', maxWidth: '650px', margin: '3rem auto' }}>
+      <Card style={{ padding: '3.5rem', textAlign: 'center', maxWidth: '650px', margin: '3rem auto' }}>
         <div style={{ fontSize: '3.5rem', marginBottom: '1rem' }}>👑</div>
         <h2 style={{ fontSize: '1.6rem', color: 'var(--status-danger)', marginBottom: '0.75rem' }}>
           OwnerGate Authorization Required
@@ -248,15 +386,14 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
         <a href="/OwnerGate" className="btn btn-cta" style={{ backgroundColor: 'var(--primary-purple)', color: '#fff' }}>
           Authenticate via OwnerGate &rarr;
         </a>
-      </div>
+      </Card>
     );
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Portal Header */}
-      <div
-        className="card-surface"
+      <Card
         style={{
           padding: '1.75rem 2rem',
           display: 'flex',
@@ -289,9 +426,10 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button
+          <Button
             type="button"
-            className="btn btn-cta btn-sm"
+            variant="primary"
+            size="sm"
             style={{ backgroundColor: 'var(--primary-purple)', color: '#fff' }}
             onClick={() => {
               if (activeTab === 'overview') loadOverview();
@@ -303,61 +441,17 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
             }}
           >
             ↻ Refresh System State
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
 
       {/* Navigation Sub-Tabs */}
-      <div
-        style={{
-          display: 'flex',
-          gap: '0.5rem',
-          overflowX: 'auto',
-          borderBottom: '1px solid var(--border-subtle)',
-          paddingBottom: '0.5rem',
-        }}
-      >
-        {[
-          { key: 'overview', label: 'Executive Overview', icon: '🏛️' },
-          { key: 'orders', label: 'Order Workspace', icon: '📦' },
-          { key: 'users', label: 'User Management', icon: '👥' },
-          { key: 'deposits', label: 'Manual IRT Deposits', icon: '💳' },
-          { key: 'withdrawals', label: 'Withdrawal Queue', icon: '💸' },
-          { key: 'applications', label: 'Member Applications', icon: '📋' },
-          { key: 'kyc', label: 'KYC Management', icon: '🪪' },
-          { key: 'games', label: 'Games & Services', icon: '🎮' },
-          { key: 'discord', label: 'Discord Channels', icon: '💬' },
-          { key: 'rules', label: 'Rules & Policies', icon: '⚖️' },
-          { key: 'config', label: 'Financial Configuration', icon: '⚙️' },
-          { key: 'ledgers', label: 'Wallets & Ledgers', icon: '📈' },
-          { key: 'gates', label: 'Feature Gates Status', icon: '🔒' },
-          { key: 'audit', label: 'Executive Audit Logs', icon: '📜' },
-          { key: 'security', label: 'Security & Health', icon: '🛡️' },
-        ].map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => handleTabChange(t.key as OwnerTab)}
-            style={{
-              padding: '0.55rem 1rem',
-              borderRadius: 'var(--radius-sm)',
-              border: 'none',
-              backgroundColor: activeTab === t.key ? 'var(--bg-surface-hover)' : 'transparent',
-              color: activeTab === t.key ? 'var(--accent-lime)' : 'var(--text-muted)',
-              fontWeight: 600,
-              fontSize: '0.85rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.45rem',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            <span>{t.icon}</span>
-            <span>{t.label}</span>
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={OWNER_TABS}
+        activeTab={activeTab}
+        onChange={handleTabChange}
+        accent="purple"
+      />
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 1: EXECUTIVE OVERVIEW                                                     */}
@@ -367,9 +461,9 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
           {overviewLoading ? (
             <LoadingState message="Connecting to secure OwnerGate data services..." />
           ) : overviewError ? (
-            <div className="card-surface" style={{ padding: '2rem', color: 'var(--status-danger)' }}>
+            <Card style={{ padding: '2rem', color: 'var(--status-danger)' }}>
               Error: {overviewError}
-            </div>
+            </Card>
           ) : overview ? (
             <>
               {/* Identity & Gate Banner */}
@@ -409,57 +503,35 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
                   gap: '1rem',
                 }}
               >
-                <div className="card-surface" style={{ padding: '1.25rem' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                    Total Registered Members
-                  </div>
-                  <div style={{ fontSize: '1.9rem', fontWeight: 800, marginTop: '0.35rem', color: '#fff' }}>
-                    {overview.stats.totalUsers.toLocaleString()}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--status-success)', marginTop: '0.25rem' }}>
-                    {overview.stats.activeUsers} Active Accounts
-                  </div>
-                </div>
+                <KpiCard
+                  label="Total Registered Members"
+                  value={overview.stats.totalUsers.toLocaleString()}
+                  subtext={`${overview.stats.activeUsers} Active Accounts`}
+                />
 
-                <div className="card-surface" style={{ padding: '1.25rem' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                    Published Boost Orders
-                  </div>
-                  <div style={{ fontSize: '1.9rem', fontWeight: 800, marginTop: '0.35rem', color: 'var(--accent-lime)' }}>
-                    {overview.stats.ordersTotal.toLocaleString()}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                    {overview.stats.openDisputes} Active Disputes
-                  </div>
-                </div>
+                <KpiCard
+                  label="Published Boost Orders"
+                  value={overview.stats.ordersTotal.toLocaleString()}
+                  subtext={`${overview.stats.openDisputes} Active Disputes`}
+                  highlight="lime"
+                />
 
-                <div className="card-surface" style={{ padding: '1.25rem' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                    V2 Available Liabilities
-                  </div>
-                  <div style={{ fontSize: '1.9rem', fontWeight: 800, marginTop: '0.35rem', color: '#38bdf8' }}>
-                    ${((overview.stats.walletsOverview.v2.availableCents || 0) / 100).toFixed(2)}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                    Reserved: ${((overview.stats.walletsOverview.v2.reservedCents || 0) / 100).toFixed(2)} USD
-                  </div>
-                </div>
+                <KpiCard
+                  label="V2 Available Liabilities"
+                  value={`$${((overview.stats.walletsOverview.v2.availableCents || 0) / 100).toFixed(2)}`}
+                  subtext={`Reserved: $${((overview.stats.walletsOverview.v2.reservedCents || 0) / 100).toFixed(2)} USD`}
+                />
 
-                <div className="card-surface" style={{ padding: '1.25rem' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                    Total Audit Events
-                  </div>
-                  <div style={{ fontSize: '1.9rem', fontWeight: 800, marginTop: '0.35rem', color: 'var(--primary-purple)' }}>
-                    {overview.stats.auditLogsCount.toLocaleString()}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                    Immutable security trail
-                  </div>
-                </div>
+                <KpiCard
+                  label="Total Audit Events"
+                  value={overview.stats.auditLogsCount.toLocaleString()}
+                  subtext="Immutable security trail"
+                  highlight="purple"
+                />
               </div>
 
               {/* Financial Feature Gates Summary Table */}
-              <div className="card-surface" style={{ padding: '1.5rem' }}>
+              <Card style={{ padding: '1.5rem' }}>
                 <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.5rem' }}>Live Financial Gates Status</h3>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem' }}>
                   Critical switches that govern live automated treasury movements. All switches remain strictly disabled.
@@ -499,7 +571,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
                     </div>
                   ))}
                 </div>
-              </div>
+              </Card>
             </>
           ) : null}
         </div>
@@ -581,7 +653,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'config' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <div className="card-surface" style={{ padding: '1.75rem' }}>
+          <Card style={{ padding: '1.75rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
               <div>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>System Financial Parameters</h2>
@@ -589,13 +661,14 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
                   Controlled form backed by SystemFinancialConfig. Preserves historical quotes and snapshots.
                 </p>
               </div>
-              <button
+              <Button
                 type="button"
-                className="btn btn-cta btn-sm"
+                variant="primary"
+                size="sm"
                 onClick={() => setSaveModalOpen(true)}
               >
                 Save Configuration Changes
-              </button>
+              </Button>
             </div>
 
             {configLoading ? (
@@ -608,60 +681,40 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
                     1. Currency Conversion &amp; Deposit Policy
                   </h3>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
-                    <div>
-                      <label style={{ fontSize: '0.82rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                        Reference USD / IRT Rate (Toman)
-                      </label>
-                      <input
-                        type="number"
-                        value={formInputs.admin_usd_irt_rate || ''}
-                        onChange={(e) => setFormInputs({ ...formInputs, admin_usd_irt_rate: e.target.value })}
-                        style={{ width: '100%', padding: '0.55rem', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)' }}
-                      />
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>E.g. 60000 IRT per 1 USD</span>
-                    </div>
+                    <Input
+                      label="Reference USD / IRT Rate (Toman)"
+                      type="number"
+                      value={formInputs.admin_usd_irt_rate || ''}
+                      onChange={(e) => setFormInputs({ ...formInputs, admin_usd_irt_rate: e.target.value })}
+                      helperText="E.g. 60000 IRT per 1 USD"
+                    />
 
-                    <div>
-                      <label style={{ fontSize: '0.82rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                        Incoming Deposit Fee Rate (Decimal Fraction)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.005"
-                        value={formInputs.incoming_irt_fee_rate || ''}
-                        onChange={(e) => setFormInputs({ ...formInputs, incoming_irt_fee_rate: e.target.value })}
-                        style={{ width: '100%', padding: '0.55rem', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)' }}
-                      />
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>0.02 = 2.00% fee applied to manual deposits</span>
-                    </div>
+                    <Input
+                      label="Incoming Deposit Fee Rate (Decimal Fraction)"
+                      type="number"
+                      step="0.005"
+                      value={formInputs.incoming_irt_fee_rate || ''}
+                      onChange={(e) => setFormInputs({ ...formInputs, incoming_irt_fee_rate: e.target.value })}
+                      helperText="0.02 = 2.00% fee applied to manual deposits"
+                    />
 
-                    <div>
-                      <label style={{ fontSize: '0.82rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                        Deposit Quote TTL (Minutes)
-                      </label>
-                      <input
-                        type="number"
-                        value={formInputs.incoming_irt_quote_ttl_minutes || ''}
-                        onChange={(e) => setFormInputs({ ...formInputs, incoming_irt_quote_ttl_minutes: e.target.value })}
-                        style={{ width: '100%', padding: '0.55rem', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)' }}
-                      />
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Duration before unconfirmed quote expires</span>
-                    </div>
+                    <Input
+                      label="Deposit Quote TTL (Minutes)"
+                      type="number"
+                      value={formInputs.incoming_irt_quote_ttl_minutes || ''}
+                      onChange={(e) => setFormInputs({ ...formInputs, incoming_irt_quote_ttl_minutes: e.target.value })}
+                      helperText="Duration before unconfirmed quote expires"
+                    />
 
-                    <div>
-                      <label style={{ fontSize: '0.82rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                        Weekly Tuesday Payout Cutoff (Hour 0-23)
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="23"
-                        value={formInputs.irt_payout_tuesday_cutoff_hour || ''}
-                        onChange={(e) => setFormInputs({ ...formInputs, irt_payout_tuesday_cutoff_hour: e.target.value })}
-                        style={{ width: '100%', padding: '0.55rem', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)' }}
-                      />
-                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Cutoff hour for weekly booster settlement</span>
-                    </div>
+                    <Input
+                      label="Weekly Tuesday Payout Cutoff (Hour 0-23)"
+                      type="number"
+                      min="0"
+                      max="23"
+                      value={formInputs.irt_payout_tuesday_cutoff_hour || ''}
+                      onChange={(e) => setFormInputs({ ...formInputs, irt_payout_tuesday_cutoff_hour: e.target.value })}
+                      helperText="Cutoff hour for weekly booster settlement"
+                    />
                   </div>
                 </div>
 
@@ -671,29 +724,19 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
                     2. Official Receiving Iranian Bank Credentials
                   </h3>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
-                    <div>
-                      <label style={{ fontSize: '0.82rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                        Bank Name
-                      </label>
-                      <input
-                        type="text"
-                        value={formInputs.irt_bank_name || ''}
-                        onChange={(e) => setFormInputs({ ...formInputs, irt_bank_name: e.target.value })}
-                        style={{ width: '100%', padding: '0.55rem', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)' }}
-                      />
-                    </div>
+                    <Input
+                      label="Bank Name"
+                      type="text"
+                      value={formInputs.irt_bank_name || ''}
+                      onChange={(e) => setFormInputs({ ...formInputs, irt_bank_name: e.target.value })}
+                    />
 
-                    <div>
-                      <label style={{ fontSize: '0.82rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                        Account Holder Name
-                      </label>
-                      <input
-                        type="text"
-                        value={formInputs.irt_bank_card_holder || ''}
-                        onChange={(e) => setFormInputs({ ...formInputs, irt_bank_card_holder: e.target.value })}
-                        style={{ width: '100%', padding: '0.55rem', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)' }}
-                      />
-                    </div>
+                    <Input
+                      label="Account Holder Name"
+                      type="text"
+                      value={formInputs.irt_bank_card_holder || ''}
+                      onChange={(e) => setFormInputs({ ...formInputs, irt_bank_card_holder: e.target.value })}
+                    />
 
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
@@ -706,11 +749,11 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
                           {showSensitiveCard ? 'Hide' : 'Reveal'}
                         </button>
                       </div>
-                      <input
+                      <Input
                         type={showSensitiveCard ? 'text' : 'password'}
                         value={formInputs.irt_bank_card_number || ''}
                         onChange={(e) => setFormInputs({ ...formInputs, irt_bank_card_number: e.target.value })}
-                        style={{ width: '100%', padding: '0.55rem', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)', fontFamily: 'monospace' }}
+                        style={{ fontFamily: 'monospace' }}
                       />
                     </div>
 
@@ -725,11 +768,11 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
                           {showSensitiveIban ? 'Hide' : 'Reveal'}
                         </button>
                       </div>
-                      <input
+                      <Input
                         type={showSensitiveIban ? 'text' : 'password'}
                         value={formInputs.irt_bank_iban || ''}
                         onChange={(e) => setFormInputs({ ...formInputs, irt_bank_iban: e.target.value })}
-                        style={{ width: '100%', padding: '0.55rem', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', color: '#fff', borderRadius: 'var(--radius-sm)', fontFamily: 'monospace' }}
+                        style={{ fontFamily: 'monospace' }}
                       />
                     </div>
                   </div>
@@ -748,137 +791,95 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
                   <div style={{ fontWeight: 700, color: '#38bdf8', marginBottom: '0.35rem' }}>
                     Fixed 3,000-Toman Bank Fee Policy Specification
                   </div>
-                  <div style={{ color: 'var(--text-muted)', lineHeight: '1.5' }}>
-                    {configData?.withdrawalDeductionPolicy?.description ||
-                      'Per-transaction Iranian banking transfer fee of 3,000 Toman deducted solely from Booster IRT withdrawals. Strictly never applied to deposits.'}
-                  </div>
+                  <p style={{ color: 'var(--text-muted)', margin: 0, lineHeight: '1.5' }}>
+                    Per G4X platform policies, an authoritative bank transaction fee of exactly 3,000 Toman is deducted from the disbursed total on Iranian bank transfers. The ledger retains record of both gross entitlement and net bank payload.
+                  </p>
                 </div>
-
-                {/* Advertiser Rank Commission Settings */}
-                {configData?.advertiserRanks && (
-                  <div style={{ backgroundColor: 'var(--bg-main)', padding: '1.25rem', borderRadius: 'var(--radius-sm)' }}>
-                    <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--accent-lime)', marginBottom: '1rem', textTransform: 'uppercase' }}>
-                      3. Advertiser Rank Commission Matrix (Reference)
-                    </h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
-                      {configData.advertiserRanks.map((r) => (
-                        <div key={r.rank} style={{ padding: '0.75rem', backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-sm)' }}>
-                          <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>{r.label}</div>
-                          <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--accent-lime)', marginTop: '0.25rem' }}>
-                            {r.percentageFormatted}
-                          </div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{r.basisPoints} bps</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
-          </div>
+          </Card>
 
-          {/* Save Confirmation Modal with Mandatory Reason */}
-          {saveModalOpen && (
-            <div
-              style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 1000,
-                padding: '1rem',
-              }}
-            >
-              <div className="card-surface" style={{ maxWidth: '480px', width: '100%', padding: '2rem' }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-                  Confirm Financial Configuration Update
-                </h3>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
-                  Modifying platform exchange rates or banking coordinates affects future quote generation.
-                  All changes are immutably audited under your Owner credentials.
-                </p>
+          {/* Modal for Justification & Confirmation */}
+          <Modal
+            isOpen={saveModalOpen}
+            onClose={() => {
+              setSaveModalOpen(false);
+              setSaveReason('');
+              setConfigMsg(null);
+            }}
+            title="Confirm System Financial Parameter Updates"
+            size="md"
+          >
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
+              Modifying platform exchange rates or banking coordinates affects future quote generation.
+              All changes are immutably audited under your Owner credentials.
+            </p>
 
-                <div style={{ marginBottom: '1.25rem' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                    Mandatory Audit Justification (min 5 characters)
-                  </label>
-                  <textarea
-                    rows={3}
-                    placeholder="E.g. Adjusted market reference rate following central bank FX revision..."
-                    value={saveReason}
-                    onChange={(e) => setSaveReason(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-main)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)',
-                      fontSize: '0.85rem',
-                    }}
-                  />
-                </div>
+            <div style={{ marginBottom: '1.25rem' }}>
+              <Textarea
+                rows={3}
+                label="Mandatory Audit Justification (min 5 characters)"
+                placeholder="E.g. Adjusted market reference rate following central bank FX revision..."
+                value={saveReason}
+                onChange={(e) => setSaveReason(e.target.value)}
+              />
+            </div>
 
-                {configMsg && (
-                  <div
-                    style={{
-                      padding: '0.65rem 0.85rem',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '0.82rem',
-                      marginBottom: '1rem',
-                      backgroundColor: configMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                      color: configMsg.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
-                    }}
-                  >
-                    {configMsg.text}
-                  </div>
-                )}
+            {configMsg && (
+              <div
+                style={{
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.82rem',
+                  marginBottom: '1rem',
+                  backgroundColor: configMsg.type === 'success' ? 'var(--status-success-bg)' : 'var(--status-danger-bg)',
+                  color: configMsg.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                }}
+              >
+                {configMsg.text}
+              </div>
+            )}
 
-                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => {
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSaveModalOpen(false);
+                  setSaveReason('');
+                  setConfigMsg(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                disabled={savingConfig || saveReason.trim().length < 5}
+                onClick={async () => {
+                  setSavingConfig(true);
+                  setConfigMsg(null);
+                  try {
+                    const res = await updateOwnerFinancialConfig(formInputs, saveReason);
+                    setConfigMsg({ text: res.message, type: 'success' });
+                    setTimeout(() => {
                       setSaveModalOpen(false);
                       setSaveReason('');
-                      setConfigMsg(null);
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    disabled={savingConfig || saveReason.trim().length < 5}
-                    className="btn btn-cta btn-sm"
-                    onClick={async () => {
-                      setSavingConfig(true);
-                      setConfigMsg(null);
-                      try {
-                        const res = await updateOwnerFinancialConfig(formInputs, saveReason);
-                        setConfigMsg({ text: res.message, type: 'success' });
-                        setTimeout(() => {
-                          setSaveModalOpen(false);
-                          setSaveReason('');
-                          loadConfig();
-                        }, 800);
-                      } catch (err: any) {
-                        setConfigMsg({ text: err.message || 'Update failed', type: 'error' });
-                      } finally {
-                        setSavingConfig(false);
-                      }
-                    }}
-                  >
-                    {savingConfig ? 'Saving...' : 'Confirm & Audit'}
-                  </button>
-                </div>
-              </div>
+                      loadConfig();
+                    }, 800);
+                  } catch (err: any) {
+                    setConfigMsg({ text: err.message || 'Update failed', type: 'error' });
+                  } finally {
+                    setSavingConfig(false);
+                  }
+                }}
+              >
+                {savingConfig ? 'Saving...' : 'Confirm & Audit'}
+              </Button>
             </div>
-          )}
+          </Modal>
         </div>
       )}
 
@@ -886,7 +887,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
       {/* TAB 3: WALLETS & DOUBLE-ENTRY LEDGERS                                         */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'ledgers' && (
-        <div className="card-surface" style={{ padding: '1.75rem' }}>
+        <Card style={{ padding: '1.75rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
             <div>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>Unified Finance V2 Double-Entry Ledgers</h2>
@@ -894,13 +895,14 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
                 Auditable transaction entries in LedgerEntryV2 and total platform liability balance.
               </p>
             </div>
-            <button
+            <Button
               type="button"
-              className="btn btn-secondary btn-sm"
+              variant="outline"
+              size="sm"
               onClick={() => loadLedgers(ledgerPage)}
             >
               Refresh Ledgers
-            </button>
+            </Button>
           </div>
 
           {ledgersLoading ? (
@@ -909,114 +911,49 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
             <>
               {/* Liability Summary Cards */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-                <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Available USD Liabilities</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-lime)', marginTop: '0.25rem' }}>
-                    ${ledgersData.summary.aggregateBalances.availableUsd}
-                  </div>
-                </div>
-                <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Reserved Escrow USD</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#38bdf8', marginTop: '0.25rem' }}>
-                    ${ledgersData.summary.aggregateBalances.reservedUsd}
-                  </div>
-                </div>
-                <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Pending Earnings</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--status-warning)', marginTop: '0.25rem' }}>
-                    ${ledgersData.summary.aggregateBalances.pendingEarningsUsd}
-                  </div>
-                </div>
-                <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', textTransform: 'uppercase' }}>Total Net Liabilities</div>
-                  <div style={{ fontSize: '1.4rem', fontWeight: 800, color: '#fff', marginTop: '0.25rem' }}>
-                    ${ledgersData.summary.aggregateBalances.totalLiabilitiesUsd}
-                  </div>
-                </div>
+                <KpiCard
+                  label="Available USD Liabilities"
+                  value={`$${ledgersData.summary.aggregateBalances.availableUsd}`}
+                  highlight="lime"
+                />
+                <KpiCard
+                  label="Reserved Escrow USD"
+                  value={`$${ledgersData.summary.aggregateBalances.reservedUsd}`}
+                />
+                <KpiCard
+                  label="Pending Earnings"
+                  value={`$${ledgersData.summary.aggregateBalances.pendingEarningsUsd}`}
+                />
+                <KpiCard
+                  label="Total Net Liabilities"
+                  value={`$${ledgersData.summary.aggregateBalances.totalLiabilitiesUsd}`}
+                />
               </div>
 
               {/* Ledger Entries Table */}
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>Entry Ref</th>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>User</th>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>Direction / Amount</th>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>Entry Type</th>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>Associated Entity</th>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>Timestamp</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ledgersData.recentEntries.map((e) => (
-                      <tr key={e.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                        <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace' }}>{e.entryRef}</td>
-                        <td style={{ padding: '0.75rem 0.5rem' }}>
-                          <div>{e.username || 'System Account'}</div>
-                          {e.userId && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{e.userId}</div>}
-                        </td>
-                        <td style={{ padding: '0.75rem 0.5rem' }}>
-                          <span
-                            style={{
-                              fontWeight: 700,
-                              color: e.direction === 'CREDIT' ? 'var(--status-success)' : 'var(--status-danger)',
-                            }}
-                          >
-                            {e.direction === 'CREDIT' ? '+' : '-'} {e.amountFormatted}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.75rem 0.5rem' }}>
-                          <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
-                            {e.entryType}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
-                          {e.relatedEntity || '—'}
-                        </td>
-                        <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
-                          {new Date(e.createdAt).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <DataTable
+                columns={ledgerColumns}
+                data={ledgersData.recentEntries}
+                keyField="id"
+                loading={ledgersLoading}
+                emptyMessage="No ledger entries recorded."
+              />
 
               {/* Pagination */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  Page {ledgersData?.pagination?.page ?? 1} of {ledgersData?.pagination?.totalPages || 1} ({ledgersData?.pagination?.total ?? 0} total)
-                </span>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    type="button"
-                    disabled={(ledgersData?.pagination?.page ?? 1) <= 1}
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => loadLedgers((ledgersData?.pagination?.page ?? 1) - 1)}
-                  >
-                    &larr; Prev
-                  </button>
-                  <button
-                    type="button"
-                    disabled={(ledgersData?.pagination?.page ?? 1) >= (ledgersData?.pagination?.totalPages || 1)}
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => loadLedgers((ledgersData?.pagination?.page ?? 1) + 1)}
-                  >
-                    Next &rarr;
-                  </button>
-                </div>
-              </div>
+              <Pagination
+                pagination={normalizePagination(ledgersData.pagination, ledgerPage, 20)}
+                onPageChange={(page) => loadLedgers(page)}
+              />
             </>
           ) : null}
-        </div>
+        </Card>
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 4: FEATURE GATES STATUS                                                   */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'gates' && (
-        <div className="card-surface" style={{ padding: '1.75rem' }}>
+        <Card style={{ padding: '1.75rem' }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>Financial Feature Gates Status</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem', lineHeight: '1.5' }}>
             Production readiness controls for live treasury movement. Per platform policy, all switches remain statically disabled.
@@ -1063,128 +1000,57 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
               ))}
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 5: EXECUTIVE AUDIT LOG EXPLORATION                                         */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'audit' && (
-        <div className="card-surface" style={{ padding: '1.75rem' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+        <Card style={{ padding: '1.75rem' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
             <div>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>Executive Audit Log Exploration</h2>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0.25rem 0 0' }}>
                 Complete platform event stream with previous and updated state snapshots.
               </p>
             </div>
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
-              <input
-                type="text"
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <Input
                 placeholder="Filter action..."
                 value={auditActionFilter}
                 onChange={(e) => setAuditActionFilter(e.target.value)}
-                style={{
-                  padding: '0.45rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--bg-main)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem',
-                }}
               />
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => loadAudit(1)}
               >
                 Filter
-              </button>
+              </Button>
             </div>
           </div>
 
-          {auditLoading ? (
-            <LoadingState message="Loading audit trail..." />
-          ) : auditLogs.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-              No audit logs matching query.
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Time</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Actor</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Action</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Entity</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Reason</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditLogs.map((l) => (
-                    <tr key={l.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                      <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                        {new Date(l.createdAt).toLocaleString()}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div>{l.actor}</div>
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.actorId}</div>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace', color: 'var(--accent-lime)' }}>
-                        {l.action}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        {l.entityType} #{l.entityId}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', maxWidth: '320px', color: 'var(--text-muted)' }}>
-                        {l.reason || '—'}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <span className={`badge ${l.isSuccess ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.72rem' }}>
-                          {l.isSuccess ? 'SUCCESS' : 'FAILED'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <DataTable
+            columns={auditColumns}
+            data={auditLogs}
+            keyField="id"
+            loading={auditLoading}
+            emptyMessage="No audit logs matching query."
+          />
 
-              {/* Pagination */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  Page {auditPagination?.page ?? 1} of {auditPagination?.totalPages || 1} ({auditPagination?.total ?? 0} total)
-                </span>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    type="button"
-                    disabled={(auditPagination?.page ?? 1) <= 1}
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => loadAudit((auditPagination?.page ?? 1) - 1)}
-                  >
-                    &larr; Prev
-                  </button>
-                  <button
-                    type="button"
-                    disabled={(auditPagination?.page ?? 1) >= (auditPagination?.totalPages || 1)}
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => loadAudit((auditPagination?.page ?? 1) + 1)}
-                  >
-                    Next &rarr;
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+          <Pagination
+            pagination={auditPagination}
+            onPageChange={(page) => loadAudit(page)}
+          />
+        </Card>
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 6: SECURITY & OPERATIONAL HEALTH                                          */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'security' && (
-        <div className="card-surface" style={{ padding: '1.75rem' }}>
+        <Card style={{ padding: '1.75rem' }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>Security Diagnostics &amp; Health</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
             OwnerGate cryptographic authentication status, session validity, and server environment health.
@@ -1235,7 +1101,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
               </div>
             </div>
           ) : null}
-        </div>
+        </Card>
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}

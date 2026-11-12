@@ -1,7 +1,20 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { LoadingState } from '../components/ui/LoadingState';
+import {
+  Card,
+  Button,
+  DataTable,
+  Column,
+  Pagination,
+  StatusBadge,
+  Tabs,
+  TabItem,
+  KpiCard,
+  Input,
+  LoadingState,
+} from '../components/ui';
+import { normalizePagination } from '../utils/pagination';
 import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
 import { UserManagementWorkspace } from '../components/admin/UserManagementWorkspace';
 import { WithdrawalQueueWorkspace } from '../components/admin/WithdrawalQueueWorkspace';
@@ -59,6 +72,22 @@ const VALID_ADMIN_TABS: AdminTab[] = [
   'roles',
 ];
 
+const ADMIN_TABS: TabItem[] = [
+  { id: 'overview', label: 'Overview & KPIs', icon: <span>📊</span> },
+  { id: 'orders', label: 'Order Workspace', icon: <span>📦</span> },
+  { id: 'users', label: 'User Management', icon: <span>👥</span> },
+  { id: 'deposits', label: 'Manual IRT Deposits', icon: <span>💳</span> },
+  { id: 'withdrawals', label: 'Withdrawal Queue', icon: <span>💸</span> },
+  { id: 'applications', label: 'Member Applications', icon: <span>📋</span> },
+  { id: 'kyc', label: 'KYC Management', icon: <span>🪪</span> },
+  { id: 'exchange', label: 'Marketplace Oversight', icon: <span>🪙</span> },
+  { id: 'games', label: 'Games & Services', icon: <span>🎮</span> },
+  { id: 'discord', label: 'Discord Channels', icon: <span>💬</span> },
+  { id: 'rules', label: 'Rules & Policies', icon: <span>⚖️</span> },
+  { id: 'audit', label: 'Audit Trail', icon: <span>📜</span> },
+  { id: 'roles', label: 'Role & Permissions', icon: <span>🛡️</span> },
+];
+
 export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'overview' }) => {
   const { hasRole } = useAuth();
   const isAdminOrOwner = hasRole('owner', 'manager', 'admin');
@@ -76,8 +105,8 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
     }
   }, [tabParam]);
 
-  const handleTabChange = (newTab: AdminTab) => {
-    setActiveTab(newTab);
+  const handleTabChange = (newTab: string) => {
+    setActiveTab(newTab as AdminTab);
     setSearchParams({ tab: newTab });
   };
 
@@ -116,7 +145,6 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
     }
   }, []);
 
-
   // Load Exchange Oversight
   const loadExchange = useCallback(async (page = 1) => {
     setExchangeLoading(true);
@@ -126,7 +154,7 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
         fetchAdminOffers(),
       ]);
       setTrades(tradesData?.trades || []);
-      setTradesPagination(tradesData?.pagination || { page: 1, limit: 15, total: 0, totalPages: 1 });
+      setTradesPagination(normalizePagination(tradesData?.pagination || tradesData, page, tradesPagination.limit));
       setOffers(offersData?.offers || []);
     } catch (err) {
       console.error('Failed to load exchange oversight:', err);
@@ -145,7 +173,7 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
         action: auditActionFilter || undefined,
       });
       setAuditLogs(data?.logs || []);
-      setAuditPagination(data?.pagination || { page: 1, limit: 20, total: 0, totalPages: 1 });
+      setAuditPagination(normalizePagination(data?.pagination || data, page, auditPagination.limit));
     } catch (err) {
       console.error('Failed to load audit logs:', err);
     } finally {
@@ -179,9 +207,134 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
     if (activeTab === 'roles') loadMatrix();
   }, [activeTab, isAdminOrOwner, loadExchange, loadAuditLogs, loadMatrix]);
 
+  const offerColumns: Column<AdminOfferItem>[] = useMemo(
+    () => [
+      {
+        key: 'offerRef',
+        header: 'Offer Ref',
+        render: (o) => <code style={{ fontFamily: 'monospace' }}>{o.offerRef}</code>,
+      },
+      {
+        key: 'exchanger',
+        header: 'Exchanger',
+        render: (o) => o.exchanger,
+      },
+      {
+        key: 'serviceType',
+        header: 'Service Type',
+        render: (o) => o.serviceType,
+      },
+      {
+        key: 'commission',
+        header: 'Commission',
+        render: (o) => <span style={{ color: 'var(--accent-lime)' }}>{o.commissionFormatted}</span>,
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        render: (o) => <StatusBadge status={o.status} />,
+      },
+    ],
+    []
+  );
+
+  const tradeColumns: Column<AdminTradeItem>[] = useMemo(
+    () => [
+      {
+        key: 'tradeRef',
+        header: 'Trade Ref',
+        render: (t) => <code style={{ fontFamily: 'monospace' }}>{t.tradeRef}</code>,
+      },
+      {
+        key: 'seller',
+        header: 'Seller (Adv)',
+        render: (t) => t.seller,
+      },
+      {
+        key: 'buyer',
+        header: 'Buyer (Exchanger)',
+        render: (t) => t.buyer,
+      },
+      {
+        key: 'goldQuantity',
+        header: 'Gold Quantity',
+        render: (t) => `${t.goldQuantity.toLocaleString()} Gold`,
+      },
+      {
+        key: 'valuation',
+        header: 'Valuation',
+        render: (t) => <span style={{ color: 'var(--accent-lime)' }}>{t.valuationFormatted}</span>,
+      },
+      {
+        key: 'method',
+        header: 'Method',
+        render: (t) => t.settlementMethod,
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        render: (t) => <StatusBadge status={t.tradeStatus} />,
+      },
+    ],
+    []
+  );
+
+  const auditColumns: Column<AdminAuditLogItem>[] = useMemo(
+    () => [
+      {
+        key: 'createdAt',
+        header: 'Timestamp',
+        render: (l) => (
+          <span style={{ color: 'var(--text-muted)' }}>
+            {new Date(l.createdAt).toLocaleString()}
+          </span>
+        ),
+      },
+      {
+        key: 'actor',
+        header: 'Actor',
+        render: (l) => (
+          <div>
+            <div>{l.actor}</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.actorId}</div>
+          </div>
+        ),
+      },
+      {
+        key: 'action',
+        header: 'Action',
+        render: (l) => (
+          <span style={{ fontFamily: 'monospace', color: 'var(--accent-lime)' }}>{l.action}</span>
+        ),
+      },
+      {
+        key: 'entity',
+        header: 'Entity',
+        render: (l) => `${l.entityType} #${l.entityId}`,
+      },
+      {
+        key: 'reason',
+        header: 'Reason / Notes',
+        render: (l) => (
+          <span style={{ maxWidth: '280px', color: 'var(--text-muted)', display: 'inline-block' }}>
+            {l.reason || '—'}
+          </span>
+        ),
+      },
+      {
+        key: 'outcome',
+        header: 'Outcome',
+        render: (l) => (
+          <StatusBadge status={l.isSuccess ? 'completed' : 'rejected'} />
+        ),
+      },
+    ],
+    []
+  );
+
   if (!isAdminOrOwner) {
     return (
-      <div className="card-surface" style={{ padding: '3rem', textAlign: 'center', maxWidth: '650px', margin: '3rem auto' }}>
+      <Card style={{ padding: '3rem', textAlign: 'center', maxWidth: '650px', margin: '3rem auto' }}>
         <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🛡️</div>
         <h2 style={{ fontSize: '1.5rem', color: 'var(--status-danger)', marginBottom: '0.75rem' }}>
           Access Denied: Administrative Privilege Required
@@ -193,15 +346,14 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
         <a href="/dashboard" className="btn btn-secondary">
           Return to Member Dashboard
         </a>
-      </div>
+      </Card>
     );
   }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       {/* Portal Header */}
-      <div
-        className="card-surface"
+      <Card
         style={{
           padding: '1.75rem 2rem',
           display: 'flex',
@@ -225,9 +377,10 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button
+          <Button
             type="button"
-            className="btn btn-secondary btn-sm"
+            variant="outline"
+            size="sm"
             onClick={() => {
               if (activeTab === 'overview') loadOverview();
               if (activeTab === 'exchange') loadExchange(tradesPagination.page);
@@ -236,64 +389,22 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
             }}
           >
             ↻ Refresh View
-          </button>
+          </Button>
           {hasRole('owner') && (
             <a href="/owner" className="btn btn-cta btn-sm" style={{ backgroundColor: 'var(--primary-purple)', color: '#fff' }}>
               👑 Open Owner Portal &rarr;
             </a>
           )}
         </div>
-      </div>
+      </Card>
 
       {/* Navigation Sub-Tabs */}
-      <div
-        style={{
-          display: 'flex',
-          gap: '0.5rem',
-          overflowX: 'auto',
-          borderBottom: '1px solid var(--border-subtle)',
-          paddingBottom: '0.5rem',
-        }}
-      >
-        {[
-          { key: 'overview', label: 'Overview & KPIs', icon: '📊' },
-          { key: 'orders', label: 'Order Workspace', icon: '📦' },
-          { key: 'users', label: 'User Management', icon: '👥' },
-          { key: 'deposits', label: 'Manual IRT Deposits', icon: '💳' },
-          { key: 'withdrawals', label: 'Withdrawal Queue', icon: '💸' },
-          { key: 'applications', label: 'Member Applications', icon: '📋' },
-          { key: 'kyc', label: 'KYC Management', icon: '🪪' },
-          { key: 'exchange', label: 'Marketplace Oversight', icon: '🪙' },
-          { key: 'games', label: 'Games & Services', icon: '🎮' },
-          { key: 'discord', label: 'Discord Channels', icon: '💬' },
-          { key: 'rules', label: 'Rules & Policies', icon: '⚖️' },
-          { key: 'audit', label: 'Audit Trail', icon: '📜' },
-          { key: 'roles', label: 'Role & Permissions', icon: '🛡️' },
-        ].map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => handleTabChange(t.key as AdminTab)}
-            style={{
-              padding: '0.55rem 1rem',
-              borderRadius: 'var(--radius-sm)',
-              border: 'none',
-              backgroundColor: activeTab === t.key ? 'var(--bg-surface-hover)' : 'transparent',
-              color: activeTab === t.key ? 'var(--accent-lime)' : 'var(--text-muted)',
-              fontWeight: 600,
-              fontSize: '0.85rem',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.45rem',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            <span>{t.icon}</span>
-            <span>{t.label}</span>
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={ADMIN_TABS}
+        activeTab={activeTab}
+        onChange={handleTabChange}
+        accent="lime"
+      />
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 1: OVERVIEW & REAL KPIS                                                   */}
@@ -303,9 +414,9 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
           {loadingOverview ? (
             <LoadingState message="Fetching live platform metrics..." />
           ) : overviewError ? (
-            <div className="card-surface" style={{ padding: '2rem', color: 'var(--status-danger)' }}>
+            <Card style={{ padding: '2rem', color: 'var(--status-danger)' }}>
               Error: {overviewError}
-            </div>
+            </Card>
           ) : overview ? (
             <>
               {/* Feature Gate Safeguard Notice */}
@@ -353,70 +464,41 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
                   gap: '1rem',
                 }}
               >
-                <div className="card-surface" style={{ padding: '1.25rem' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                    Total Community Members
-                  </div>
-                  <div style={{ fontSize: '1.9rem', fontWeight: 800, marginTop: '0.35rem', color: '#fff' }}>
-                    {overview.kpis.totalUsers.toLocaleString()}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--status-success)', marginTop: '0.25rem' }}>
-                    ● {overview.kpis.activeUsers} active ({overview.kpis.deactivatedUsers} suspended)
-                  </div>
-                </div>
+                <KpiCard
+                  label="Total Community Members"
+                  value={overview.kpis.totalUsers.toLocaleString()}
+                  subtext={`● ${overview.kpis.activeUsers} active (${overview.kpis.deactivatedUsers} suspended)`}
+                />
 
-                <div className="card-surface" style={{ padding: '1.25rem' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                    Pending Applications
-                  </div>
-                  <div style={{ fontSize: '1.9rem', fontWeight: 800, marginTop: '0.35rem', color: 'var(--status-warning)' }}>
-                    {overview.kpis.pendingApplications}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                    Awaiting staff &amp; identity review
-                  </div>
-                </div>
+                <KpiCard
+                  label="Pending Applications"
+                  value={overview.kpis.pendingApplications}
+                  subtext="Awaiting staff & identity review"
+                />
 
-                <div className="card-surface" style={{ padding: '1.25rem' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                    Pending Manual Deposits
-                  </div>
-                  <div style={{ fontSize: '1.9rem', fontWeight: 800, marginTop: '0.35rem', color: 'var(--accent-lime)' }}>
-                    {overview.kpis.pendingDeposits.count}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                    Value: ${(overview.kpis.pendingDeposits.sumUsdCents / 100).toFixed(2)} USD
-                  </div>
-                </div>
+                <KpiCard
+                  label="Pending Manual Deposits"
+                  value={overview.kpis.pendingDeposits.count}
+                  subtext={`Value: $${(overview.kpis.pendingDeposits.sumUsdCents / 100).toFixed(2)} USD`}
+                  highlight="lime"
+                />
 
-                <div className="card-surface" style={{ padding: '1.25rem' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                    Pending Withdrawals
-                  </div>
-                  <div style={{ fontSize: '1.9rem', fontWeight: 800, marginTop: '0.35rem', color: '#38bdf8' }}>
-                    {overview.kpis.pendingWithdrawals.count}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                    Value: ${(overview.kpis.pendingWithdrawals.sumUsdCents / 100).toFixed(2)} USD
-                  </div>
-                </div>
+                <KpiCard
+                  label="Pending Withdrawals"
+                  value={overview.kpis.pendingWithdrawals.count}
+                  subtext={`Value: $${(overview.kpis.pendingWithdrawals.sumUsdCents / 100).toFixed(2)} USD`}
+                />
 
-                <div className="card-surface" style={{ padding: '1.25rem' }}>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
-                    Disputes &amp; Proofs
-                  </div>
-                  <div style={{ fontSize: '1.9rem', fontWeight: 800, marginTop: '0.35rem', color: overview.kpis.openDisputes > 0 ? 'var(--status-danger)' : 'var(--text-primary)' }}>
-                    {overview.kpis.openDisputes} / {overview.kpis.pendingProofs}
-                  </div>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
-                    Active disputes / Pending proofs
-                  </div>
-                </div>
+                <KpiCard
+                  label="Disputes & Proofs"
+                  value={`${overview.kpis.openDisputes} / ${overview.kpis.pendingProofs}`}
+                  subtext="Active disputes / Pending proofs"
+                />
               </div>
 
               {/* Roles Breakdown & Quick Audits */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
-                <div className="card-surface" style={{ padding: '1.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.25rem' }}>
+                <Card style={{ padding: '1.5rem' }}>
                   <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '1rem' }}>Role Distribution</h3>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
                     {Object.entries(overview.kpis.roleCounts).map(([role, count]) => (
@@ -428,9 +510,9 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
                       </div>
                     ))}
                   </div>
-                </div>
+                </Card>
 
-                <div className="card-surface" style={{ padding: '1.5rem' }}>
+                <Card style={{ padding: '1.5rem' }}>
                   <h3 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '1rem' }}>Recent Administrative Audits</h3>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
                     {overview.recentAudits.slice(0, 6).map((a) => (
@@ -440,7 +522,7 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
                       </div>
                     ))}
                   </div>
-                </div>
+                </Card>
               </div>
             </>
           ) : null}
@@ -470,9 +552,6 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
         />
       )}
 
-      {/* ───────────────────────────────────────────────────────────────────────────── */}
-      {/* TAB 3: MANUAL DEPOSITS REVIEW QUEUE                                           */}
-      {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 3: MANUAL DEPOSITS REVIEW QUEUE                                           */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
@@ -529,82 +608,28 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
       {activeTab === 'exchange' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {/* Exchanger Active Offers */}
-          <div className="card-surface" style={{ padding: '1.75rem' }}>
+          <Card style={{ padding: '1.75rem' }}>
             <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem' }}>Exchanger Active Fee Offers</h2>
-            {exchangeLoading ? (
-              <LoadingState message="Loading exchange offers..." />
-            ) : offers.length === 0 ? (
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No fee offers registered.</div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Offer Ref</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Exchanger</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Service Type</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Commission</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {offers.map((o) => (
-                      <tr key={o.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                        <td style={{ padding: '0.65rem 0.5rem', fontFamily: 'monospace' }}>{o.offerRef}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{o.exchanger}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{o.serviceType}</td>
-                        <td style={{ padding: '0.65rem 0.5rem', color: 'var(--accent-lime)' }}>{o.commissionFormatted}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>
-                          <span className="badge badge-success" style={{ fontSize: '0.72rem' }}>{o.status}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+            <DataTable
+              columns={offerColumns}
+              data={offers}
+              keyField="id"
+              loading={exchangeLoading}
+              emptyMessage="No fee offers registered."
+            />
+          </Card>
 
           {/* Gold Trades Oversight */}
-          <div className="card-surface" style={{ padding: '1.75rem' }}>
+          <Card style={{ padding: '1.75rem' }}>
             <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem' }}>Gold Trades Activity</h2>
-            {exchangeLoading ? (
-              <LoadingState message="Loading gold trades..." />
-            ) : trades.length === 0 ? (
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No gold trades executed yet.</div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Trade Ref</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Seller (Adv)</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Buyer (Exchanger)</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Gold Quantity</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Valuation</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Method</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {trades.map((t) => (
-                      <tr key={t.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                        <td style={{ padding: '0.65rem 0.5rem', fontFamily: 'monospace' }}>{t.tradeRef}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{t.seller}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{t.buyer}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{t.goldQuantity.toLocaleString()} Gold</td>
-                        <td style={{ padding: '0.65rem 0.5rem', color: 'var(--accent-lime)' }}>{t.valuationFormatted}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{t.settlementMethod}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>
-                          <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>{t.tradeStatus}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+            <DataTable
+              columns={tradeColumns}
+              data={trades}
+              keyField="id"
+              loading={exchangeLoading}
+              emptyMessage="No gold trades executed yet."
+            />
+          </Card>
         </div>
       )}
 
@@ -612,109 +637,38 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
       {/* TAB 6: AUDIT TRAIL EXPLORATION                                                */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'audit' && (
-        <div className="card-surface" style={{ padding: '1.75rem' }}>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+        <Card style={{ padding: '1.75rem' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
             <h2 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>Administrative Audit Trail</h2>
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
-              <input
-                type="text"
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <Input
                 placeholder="Filter by action name..."
                 value={auditActionFilter}
                 onChange={(e) => setAuditActionFilter(e.target.value)}
-                style={{
-                  padding: '0.45rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--bg-main)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem',
-                }}
               />
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => loadAuditLogs(1)}
               >
                 Filter
-              </button>
+              </Button>
             </div>
           </div>
 
-          {auditLoading ? (
-            <LoadingState message="Loading audit history..." />
-          ) : auditLogs.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-              No audit records matching query.
-            </div>
-          ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Timestamp</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Actor</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Action</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Entity</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Reason / Notes</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Outcome</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditLogs.map((l) => (
-                    <tr key={l.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                      <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
-                        {new Date(l.createdAt).toLocaleString()}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div>{l.actor}</div>
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.actorId}</div>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace', color: 'var(--accent-lime)' }}>
-                        {l.action}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        {l.entityType} #{l.entityId}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', maxWidth: '280px', color: 'var(--text-muted)' }}>
-                        {l.reason || '—'}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <span className={`badge ${l.isSuccess ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.72rem' }}>
-                          {l.isSuccess ? 'SUCCESS' : 'FAILED'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          <DataTable
+            columns={auditColumns}
+            data={auditLogs}
+            keyField="id"
+            loading={auditLoading}
+            emptyMessage="No audit records matching query."
+          />
 
-              {/* Pagination */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
-                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  Page {auditPagination.page} of {auditPagination.totalPages || 1} ({auditPagination.total} total)
-                </span>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    type="button"
-                    disabled={auditPagination.page <= 1}
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => loadAuditLogs(auditPagination.page - 1)}
-                  >
-                    &larr; Prev
-                  </button>
-                  <button
-                    type="button"
-                    disabled={auditPagination.page >= auditPagination.totalPages}
-                    className="btn btn-secondary btn-sm"
-                    onClick={() => loadAuditLogs(auditPagination.page + 1)}
-                  >
-                    Next &rarr;
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+          <Pagination
+            pagination={auditPagination}
+            onPageChange={(page) => loadAuditLogs(page)}
+          />
+        </Card>
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
@@ -726,7 +680,7 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
       {/* TAB 7: ROLE & PERMISSION MATRIX                                               */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'roles' && (
-        <div className="card-surface" style={{ padding: '1.75rem' }}>
+        <Card style={{ padding: '1.75rem' }}>
           <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '0.5rem' }}>System RBAC Permission Matrix</h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
             Authoritative static role-permission assignments evaluated live server-side.
@@ -757,7 +711,7 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
               ))}
             </div>
           ) : null}
-        </div>
+        </Card>
       )}
     </div>
   );
