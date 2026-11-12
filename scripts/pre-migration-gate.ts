@@ -200,29 +200,36 @@ export async function runPreMigrationGate(options: {
         "SELECT name FROM sqlite_master WHERE type='table' AND name='orders';"
       );
       if (ordersTable.length > 0) {
-        const emptyExternalIds: Array<{ id: number }> = await prisma.$queryRawUnsafe(`
-          SELECT id FROM orders
-          WHERE external_order_id IS NOT NULL AND trim(external_order_id) = '';
-        `);
-        const duplicateExternalIds: Array<{ platform_account_id: number | null; external_order_id: string; row_count: number }> =
-          await prisma.$queryRawUnsafe(`
-            SELECT platform_account_id, external_order_id, COUNT(*) AS row_count
-            FROM orders
-            WHERE external_order_id IS NOT NULL AND trim(external_order_id) <> ''
-            GROUP BY platform_account_id, external_order_id
-            HAVING COUNT(*) > 1;
+        const orderColumns: Array<{ name: string }> = await prisma.$queryRawUnsafe(
+          "PRAGMA table_info('orders');"
+        );
+        const hasExternalOrderColumns = new Set(orderColumns.map((column) => column.name)).has('external_order_id') &&
+          new Set(orderColumns.map((column) => column.name)).has('platform_account_id');
+        if (hasExternalOrderColumns) {
+          const emptyExternalIds: Array<{ id: number }> = await prisma.$queryRawUnsafe(`
+            SELECT id FROM orders
+            WHERE external_order_id IS NOT NULL AND trim(external_order_id) = '';
           `);
-        if (emptyExternalIds.length > 0 || duplicateExternalIds.length > 0) {
-          return {
-            databasePath: target.canonicalPath,
-            databaseUrl: target.canonicalUrl,
-            isMigrationAlreadyApplied: isApplied,
-            duplicateActiveCount: duplicateOrderIds.length,
-            duplicateOrderIds,
-            checksumValid: true,
-            canProceed: false,
-            reason: `BLOCKED: external order IDs require manual review before ${externalOrderMigrationName}; empty rows=${emptyExternalIds.map((r) => r.id).join(',') || 'none'}, duplicate groups=${duplicateExternalIds.length}. No order records were changed.`,
-          };
+          const duplicateExternalIds: Array<{ platform_account_id: number | null; external_order_id: string; row_count: number }> =
+            await prisma.$queryRawUnsafe(`
+              SELECT platform_account_id, external_order_id, COUNT(*) AS row_count
+              FROM orders
+              WHERE external_order_id IS NOT NULL AND trim(external_order_id) <> ''
+              GROUP BY platform_account_id, external_order_id
+              HAVING COUNT(*) > 1;
+            `);
+          if (emptyExternalIds.length > 0 || duplicateExternalIds.length > 0) {
+            return {
+              databasePath: target.canonicalPath,
+              databaseUrl: target.canonicalUrl,
+              isMigrationAlreadyApplied: isApplied,
+              duplicateActiveCount: duplicateOrderIds.length,
+              duplicateOrderIds,
+              checksumValid: true,
+              canProceed: false,
+              reason: `BLOCKED: external order IDs require manual review before ${externalOrderMigrationName}; empty rows=${emptyExternalIds.map((r) => r.id).join(',') || 'none'}, duplicate groups=${duplicateExternalIds.length}. No order records were changed.`,
+            };
+          }
         }
       }
     }
