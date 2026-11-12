@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { apiRequest } from '../../services/api';
 import { normalizePagination } from '../../services/operations';
+import { DataTable, Column, Pagination as SharedPagination, StatusBadge } from '../ui';
 
 const grid: React.CSSProperties = {
   display: 'grid',
@@ -221,29 +222,12 @@ function Pagination({
   onChange: (page: number) => void;
 }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', fontSize: '0.85rem' }}>
-      <span style={{ color: 'var(--text-muted)' }}>
-        Page {page} of {totalPages || 1}
-      </span>
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
-        <button
-          type="button"
-          disabled={page <= 1}
-          onClick={() => onChange(page - 1)}
-          className="btn btn-secondary btn-sm"
-        >
-          Previous
-        </button>
-        <button
-          type="button"
-          disabled={page >= totalPages}
-          onClick={() => onChange(page + 1)}
-          className="btn btn-secondary btn-sm"
-        >
-          Next
-        </button>
-      </div>
-    </div>
+    <SharedPagination
+      page={page}
+      totalPages={totalPages}
+      onPageChange={onChange}
+      showPageSizeSelector={false}
+    />
   );
 }
 
@@ -359,61 +343,64 @@ export function ApplicationsWorkspace({ embedded = false }: { embedded?: boolean
       ) : !applications.length ? (
         <p style={{ color: 'var(--text-muted)' }}>No matching applications.</p>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Applicant</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Type</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Submitted</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {applications.map((a) => (
-                <tr key={a.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <div style={{ fontWeight: 600 }}>{a.displayName || a.username}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{a.userId}</div>
-                  </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>{a.category}</span>
-                  </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <span
-                      className={`badge ${
-                        a.status === 'approved'
-                          ? 'badge-success'
-                          : a.status === 'rejected'
-                            ? 'badge-danger'
-                            : 'badge-warning'
-                      }`}
-                      style={{ fontSize: '0.72rem' }}
-                    >
-                      {a.status}
-                    </span>
-                  </td>
-                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
-                    {new Date(a.submittedAt).toLocaleString()}
-                  </td>
-                  <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
-                    <button
-                      type="button"
-                      className="btn btn-secondary btn-sm"
-                      onClick={() => {
-                        setSelected(a.id);
-                        setNotes('');
-                      }}
-                    >
-                      View #{a.id}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={[
+            {
+              key: 'applicant',
+              header: 'Applicant',
+              render: (a: Application) => (
+                <div>
+                  <div style={{ fontWeight: 600 }}>{a.displayName || a.username}</div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                    {a.userId}
+                  </div>
+                </div>
+              ),
+            },
+            {
+              key: 'category',
+              header: 'Type',
+              render: (a: Application) => (
+                <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
+                  {a.category}
+                </span>
+              ),
+            },
+            {
+              key: 'status',
+              header: 'Status',
+              render: (a: Application) => <StatusBadge status={a.status} />,
+            },
+            {
+              key: 'submittedAt',
+              header: 'Submitted',
+              render: (a: Application) => (
+                <span style={{ color: 'var(--text-muted)' }}>
+                  {new Date(a.submittedAt).toLocaleString()}
+                </span>
+              ),
+            },
+            {
+              key: 'actions',
+              header: 'Details',
+              align: 'right',
+              render: (a: Application) => (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => {
+                    setSelected(a.id);
+                    setNotes('');
+                  }}
+                >
+                  View #{a.id}
+                </button>
+              ),
+            },
+          ]}
+          data={applications}
+          keyExtractor={(a) => a.id}
+        />
       )}
       <Pagination page={pagination.page} totalPages={pagination.totalPages} onChange={setPage} />
       {selected !== null && (
