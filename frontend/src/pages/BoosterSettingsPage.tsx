@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { LoadingState } from '../components/ui/LoadingState';
+import { Tabs } from '../components/ui';
 import {
   UserSettings,
   RosterRole,
@@ -498,104 +499,19 @@ export const BoosterSettingsPage: React.FC = () => {
       )}
 
       {/* ─── Navigation Tabs ─────────────────────────────────────────────── */}
-      <div className="flex items-center gap-2 border-b border-gray-800 overflow-x-auto pb-1">
-        <button
-          onClick={() => setActiveTab('overview')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'overview'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <span>📊</span> Overview
-        </button>
-
-        <button
-          onClick={() => setActiveTab('characters')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'characters'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <span>⚔️</span> My Characters
-          {activeCharacters.length > 0 && (
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-900 text-emerald-200">
-              {activeCharacters.length}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('available')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'available'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <span>📋</span> Available Orders
-          {availableQueue.length > 0 && (
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-900 text-purple-200">
-              {availableQueue.length}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('orders')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'orders'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <span>🎯</span> My Orders
-          {myOrders.length > 0 && (
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-blue-900 text-blue-200">
-              {myOrders.length}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('proofs')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'proofs'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <span>📸</span> My Runs &amp; Proofs
-          {overview?.proofsAwaitingReviewCount ? (
-            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-900 text-amber-200">
-              {overview.proofsAwaitingReviewCount}
-            </span>
-          ) : null}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('history')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'history'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <span>📜</span> Activity History
-        </button>
-
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`px-4 py-2 text-sm font-semibold rounded-t-lg transition-colors flex items-center gap-2 ${
-            activeTab === 'settings'
-              ? 'text-[var(--accent-lime)] border-b-2 border-[var(--accent-lime)] bg-[#1e1b2e]'
-              : 'text-gray-400 hover:text-white'
-          }`}
-        >
-          <span>⚙️</span> Preferences &amp; Specialization
-        </button>
-      </div>
+      <Tabs
+        tabs={[
+          { id: 'overview', label: 'Overview', icon: '📊' },
+          { id: 'characters', label: 'My Characters', icon: '⚔️', badge: activeCharacters.length || undefined },
+          { id: 'available', label: 'Available Orders', icon: '📋', badge: availableQueue.length || undefined },
+          { id: 'orders', label: 'My Orders', icon: '🎯', badge: myOrders.length || undefined },
+          { id: 'proofs', label: 'My Runs & Proofs', icon: '📸', badge: overview?.proofsAwaitingReviewCount || undefined },
+          { id: 'history', label: 'Activity History', icon: '📜' },
+          { id: 'settings', label: 'Preferences & Specialization', icon: '⚙️' },
+        ]}
+        activeTab={activeTab}
+        onChange={(tab) => setActiveTab(tab as TabKey)}
+      />
 
       {/* ─── TAB A: Overview ─────────────────────────────────────────────── */}
       {activeTab === 'overview' && (

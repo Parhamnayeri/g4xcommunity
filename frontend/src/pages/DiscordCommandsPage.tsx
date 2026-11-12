@@ -15,8 +15,10 @@ import { fetchDiscordCommands } from '../services/discordCommands';
 import {
   DiscordCommandsResponse,
   CommandType,
+  CommandParameter,
 } from '../types/discordCommands';
 import { LoadingState } from '../components/ui/LoadingState';
+import { DataTable, Column, EmptyState } from '../components/ui';
 
 export const DiscordCommandsPage: React.FC = () => {
   const { status } = useAuth();
@@ -112,6 +114,54 @@ export const DiscordCommandsPage: React.FC = () => {
       return true;
     });
   }, [data, selectedCategory, selectedType, searchQuery]);
+
+  const paramColumns: Column<CommandParameter>[] = useMemo(
+    () => [
+      {
+        key: 'name',
+        header: 'Parameter',
+        render: (p) => (
+          <span style={{ fontFamily: 'monospace', color: 'var(--accent-lime)', fontWeight: 600 }}>
+            {p.name}
+          </span>
+        ),
+      },
+      {
+        key: 'type',
+        header: 'Type',
+        render: (p) => <span style={{ color: 'var(--text-secondary)' }}>{p.type}</span>,
+      },
+      {
+        key: 'required',
+        header: 'Requirement',
+        render: (p) =>
+          p.required ? (
+            <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase' }}>
+              Required
+            </span>
+          ) : (
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem', textTransform: 'uppercase' }}>
+              Optional
+            </span>
+          ),
+      },
+      {
+        key: 'allowedValues',
+        header: 'Allowed Values / Default',
+        render: (p) => (
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+            {p.allowedValues ? p.allowedValues.map((v) => `\`${v}\``).join(', ') : p.defaultValue ? `default: \`${p.defaultValue}\`` : '—'}
+          </span>
+        ),
+      },
+      {
+        key: 'description',
+        header: 'Description',
+        render: (p) => <span style={{ color: 'var(--text-secondary)' }}>{p.description}</span>,
+      },
+    ],
+    []
+  );
 
   if (loading) {
     return (
@@ -419,30 +469,17 @@ export const DiscordCommandsPage: React.FC = () => {
 
       {/* Command Cards List */}
       {filteredCommands.length === 0 ? (
-        <div
-          className="card-surface"
-          style={{
-            padding: '3rem',
-            textAlign: 'center',
-            border: '1px dashed var(--border-subtle)',
+        <EmptyState
+          icon="🔎"
+          title="No commands found"
+          message="No Discord bot commands matched your search or category filter."
+          actionLabel="Reset Filters"
+          onAction={() => {
+            setSearchQuery('');
+            setSelectedCategory('all');
+            setSelectedType('all');
           }}
-        >
-          <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>🔎</div>
-          <h3 style={{ fontSize: '1.2rem', marginBottom: '0.5rem' }}>No commands found</h3>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-            No Discord bot commands matched your search or category filter.
-          </p>
-          <button
-            onClick={() => {
-              setSearchQuery('');
-              setSelectedCategory('all');
-              setSelectedType('all');
-            }}
-            className="btn btn-secondary btn-sm"
-          >
-            Reset Filters
-          </button>
-        </div>
+        />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           {filteredCommands.map((cmd) => {
@@ -593,47 +630,12 @@ export const DiscordCommandsPage: React.FC = () => {
                     <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem', letterSpacing: '0.04em' }}>
                       Parameters &amp; Arguments
                     </div>
-                    <div
-                      style={{
-                        overflowX: 'auto',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: '6px',
-                        backgroundColor: 'rgba(0, 0, 0, 0.2)',
-                      }}
-                    >
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
-                        <thead>
-                          <tr style={{ borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'rgba(255, 255, 255, 0.02)' }}>
-                            <th style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Parameter</th>
-                            <th style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Type</th>
-                            <th style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Requirement</th>
-                            <th style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Allowed Values / Default</th>
-                            <th style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Description</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {cmd.parameters.map((p, idx) => (
-                            <tr key={idx} style={{ borderBottom: idx < cmd.parameters.length - 1 ? '1px solid rgba(255, 255, 255, 0.04)' : 'none' }}>
-                              <td style={{ padding: '0.5rem 0.75rem', fontFamily: 'monospace', color: 'var(--accent-lime)', fontWeight: 600 }}>
-                                {p.name}
-                              </td>
-                              <td style={{ padding: '0.5rem 0.75rem', color: 'var(--text-secondary)' }}>{p.type}</td>
-                              <td style={{ padding: '0.5rem 0.75rem' }}>
-                                {p.required ? (
-                                  <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase' }}>Required</span>
-                                ) : (
-                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem', textTransform: 'uppercase' }}>Optional</span>
-                                )}
-                              </td>
-                              <td style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                                {p.allowedValues ? p.allowedValues.map((v) => `\`${v}\``).join(', ') : p.defaultValue ? `default: \`${p.defaultValue}\`` : '—'}
-                              </td>
-                              <td style={{ padding: '0.5rem 0.75rem', color: 'var(--text-secondary)' }}>{p.description}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <DataTable<CommandParameter>
+                      columns={paramColumns}
+                      data={cmd.parameters}
+                      keyExtractor={(p, idx) => `${p.name}-${idx}`}
+                      stackedOnMobile={false}
+                    />
                   </div>
                 )}
 

@@ -1,35 +1,37 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { DashboardTransaction } from '../../types/dashboard';
 import { fetchWalletTransactions } from '../../services/dashboard';
-import { Card } from '../ui/Card';
-import { Button } from '../ui/Button';
+import { Card, DataTable, Column, Pagination } from '../ui';
+import { normalizePagination, NormalizedPagination } from '../../utils/pagination';
 
 export const FinancialActivitySection: React.FC = () => {
   const [transactions, setTransactions] = useState<DashboardTransaction[]>([]);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
+  const [pagination, setPagination] = useState<NormalizedPagination>({
+    page: 1,
+    limit: 10,
+    total: 0,
+    totalPages: 1,
+  });
 
-  const loadTransactions = useCallback(async () => {
+  const loadTransactions = useCallback(async (targetPage = 1) => {
     setLoading(true);
     try {
       const res = await fetchWalletTransactions({
-        page,
+        page: targetPage,
         limit: 10,
       });
       setTransactions(res.transactions || []);
-      setTotalPages(res.pagination?.totalPages || 1);
-      setTotal(res.pagination?.total || 0);
+      setPagination(normalizePagination(res.pagination || res, targetPage, 10));
     } catch (err) {
       console.warn('[FinancialActivity] Failed to load transactions:', err);
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, []);
 
   useEffect(() => {
-    loadTransactions();
+    loadTransactions(1);
   }, [loadTransactions]);
 
   const formatEntryType = (type: string) => {
@@ -57,147 +59,116 @@ export const FinancialActivitySection: React.FC = () => {
     }
   };
 
+  const columns: Column<DashboardTransaction>[] = useMemo(
+    () => [
+      {
+        key: 'entryRef',
+        header: 'Entry Ref',
+        render: (t) => (
+          <span style={{ fontFamily: 'monospace', fontSize: '0.82rem', color: '#fff', fontWeight: 600 }}>
+            {t.entryRef}
+          </span>
+        ),
+      },
+      {
+        key: 'type',
+        header: 'Transaction Type',
+        render: (t) => {
+          const isCredit = t.direction === 'CREDIT';
+          return (
+            <span
+              className={`badge ${isCredit ? 'badge-lime' : 'badge-purple'}`}
+              style={{ fontSize: '0.72rem', textTransform: 'none' }}
+            >
+              {formatEntryType(t.entryType)}
+            </span>
+          );
+        },
+      },
+      {
+        key: 'description',
+        header: 'Description / Order',
+        render: (t) => (
+          <div style={{ color: 'var(--text-muted)' }}>
+            <div>{t.description || '—'}</div>
+            {t.orderRef && (
+              <span style={{ fontSize: '0.75rem', color: 'var(--accent-lime)', fontFamily: 'monospace' }}>
+                Ref: #{t.orderRef}
+              </span>
+            )}
+          </div>
+        ),
+      },
+      {
+        key: 'amount',
+        header: 'Amount',
+        numeric: true,
+        render: (t) => {
+          const isCredit = t.direction === 'CREDIT';
+          return (
+            <span
+              style={{
+                fontWeight: 700,
+                color: isCredit ? 'var(--accent-lime)' : 'var(--status-danger)',
+              }}
+            >
+              {isCredit ? `+$${t.amountUsd}` : `-$${t.amountUsd}`} USD
+            </span>
+          );
+        },
+      },
+      {
+        key: 'balanceAfter',
+        header: 'Available After',
+        numeric: true,
+        render: (t) => (
+          <span style={{ color: '#fff', fontWeight: 600 }}>
+            {t.balanceAfterAvailableUsd !== null ? `$${t.balanceAfterAvailableUsd}` : '—'}
+          </span>
+        ),
+      },
+      {
+        key: 'date',
+        header: 'Timestamp',
+        render: (t) => (
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+            {new Date(t.createdAt).toLocaleString()}
+          </span>
+        ),
+      },
+    ],
+    []
+  );
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+    <Card style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-            <h2 style={{ fontSize: '1.35rem', fontWeight: 800 }}>Wallet &amp; Ledger Activity</h2>
+            <h2 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0 }}>Wallet &amp; Ledger Activity</h2>
             <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
-              {total} Entries
+              {pagination.total} Entries
             </span>
           </div>
-          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
             Immutable, double-entry audit records for all balance additions and allocations.
           </p>
         </div>
       </div>
 
-      {loading ? (
-        <Card style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-          <div
-            style={{
-              width: '28px',
-              height: '28px',
-              borderRadius: '50%',
-              border: '2px solid var(--border-subtle)',
-              borderTopColor: 'var(--accent-lime)',
-              animation: 'spin 0.8s linear infinite',
-              margin: '0 auto 0.75rem',
-            }}
-          />
-          Loading ledger entries...
-        </Card>
-      ) : transactions.length === 0 ? (
-        <Card style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-            No financial activity recorded yet for this wallet.
-          </p>
-        </Card>
-      ) : (
-        <Card style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', backgroundColor: 'rgba(13, 11, 18, 0.4)', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '0.85rem 1rem' }}>Entry Ref</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Transaction Type</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Description / Order</th>
-                  <th style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>Amount</th>
-                  <th style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>Available After</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Timestamp</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.map((t) => {
-                  const isCredit = t.direction === 'CREDIT';
-                  return (
-                    <tr
-                      key={t.id}
-                      style={{
-                        borderBottom: '1px solid rgba(45, 38, 69, 0.3)',
-                        transition: 'background var(--transition-fast)',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                    >
-                      <td style={{ padding: '0.85rem 1rem', fontFamily: 'monospace', fontSize: '0.78rem', color: '#fff' }}>
-                        {t.entryRef}
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem' }}>
-                        <span
-                          className={`badge ${isCredit ? 'badge-lime' : 'badge-purple'}`}
-                          style={{ fontSize: '0.68rem', textTransform: 'none' }}
-                        >
-                          {formatEntryType(t.entryType)}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>
-                        <div>{t.description || '—'}</div>
-                        {t.orderRef && (
-                          <span style={{ fontSize: '0.72rem', color: 'var(--accent-lime)', fontFamily: 'monospace' }}>
-                            Ref: #{t.orderRef}
-                          </span>
-                        )}
-                      </td>
-                      <td
-                        style={{
-                          padding: '0.85rem 1rem',
-                          textAlign: 'right',
-                          fontWeight: 700,
-                          color: isCredit ? 'var(--accent-lime)' : 'var(--status-danger)',
-                        }}
-                      >
-                        {isCredit ? `+$${t.amountUsd}` : `-$${t.amountUsd}`} USD
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem', textAlign: 'right', color: '#fff', fontWeight: 600 }}>
-                        {t.balanceAfterAvailableUsd !== null ? `$${t.balanceAfterAvailableUsd}` : '—'}
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                        {new Date(t.createdAt).toLocaleString()}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+      <DataTable<DashboardTransaction>
+        columns={columns}
+        data={transactions}
+        keyField="id"
+        loading={loading}
+        emptyTitle="No financial activity found"
+        emptyMessage="No financial activity recorded yet for this wallet."
+      />
 
-          {/* Pagination Controls */}
-          {totalPages > 1 && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '0.75rem 1rem',
-                borderTop: '1px solid var(--border-subtle)',
-                backgroundColor: 'rgba(13, 11, 18, 0.4)',
-              }}
-            >
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                &larr; Previous
-              </Button>
-              <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                Page <strong style={{ color: '#fff' }}>{page}</strong> of <strong style={{ color: '#fff' }}>{totalPages}</strong>
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              >
-                Next &rarr;
-              </Button>
-            </div>
-          )}
-        </Card>
-      )}
-    </div>
+      <Pagination
+        pagination={pagination}
+        onPageChange={(nextPage) => loadTransactions(nextPage)}
+      />
+    </Card>
   );
 };

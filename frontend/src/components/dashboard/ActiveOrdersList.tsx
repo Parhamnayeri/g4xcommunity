@@ -1,7 +1,6 @@
 import React from 'react';
 import { DashboardActiveOrder } from '../../types/dashboard';
-import { Card } from '../ui/Card';
-import { Button } from '../ui/Button';
+import { Card, EmptyState } from '../ui';
 
 export interface ActiveOrdersListProps {
   orders: DashboardActiveOrder[];
@@ -23,35 +22,15 @@ export const ActiveOrdersList: React.FC<ActiveOrdersListProps> = ({ orders }) =>
       </div>
 
       {orders.length === 0 ? (
-        <Card highlight="none" style={{ textAlign: 'center', padding: '3rem 1.5rem' }}>
-          <div
-            style={{
-              width: '48px',
-              height: '48px',
-              borderRadius: '50%',
-              backgroundColor: 'rgba(124, 58, 237, 0.15)',
-              color: '#c4b5fd',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: '1.4rem',
-              margin: '0 auto 1rem',
-            }}
-          >
-            📋
-          </div>
-          <h3 style={{ fontSize: '1.15rem', marginBottom: '0.4rem', color: '#fff' }}>
-            No Active Orders
-          </h3>
-          <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)', maxWidth: '480px', margin: '0 auto 1.5rem' }}>
-            You do not currently have any orders in progress. Check available community services to book a run or claim open listings on Discord.
-          </p>
-          <a href="/#services" style={{ textDecoration: 'none' }}>
-            <Button variant="purple" size="sm">
-              Explore Boost Services
-            </Button>
-          </a>
-        </Card>
+        <EmptyState
+          icon="📋"
+          title="No Active Orders"
+          message="You do not currently have any orders in progress. Check available community services to book a run or claim open listings on Discord."
+          actionLabel="Explore Boost Services"
+          onAction={() => {
+            window.location.href = '/#services';
+          }}
+        />
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {orders.map((order) => {

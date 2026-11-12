@@ -1,56 +1,118 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { DashboardHistoricalOrder } from '../../types/dashboard';
 import { fetchOrderHistory } from '../../services/dashboard';
-import { Card } from '../ui/Card';
-import { Button } from '../ui/Button';
+import { Card, DataTable, Column, Pagination, StatusBadge } from '../ui';
+import { normalizePagination, NormalizedPagination } from '../../utils/pagination';
 
 export const OrderHistorySection: React.FC = () => {
   const [orders, setOrders] = useState<DashboardHistoricalOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'cancelled'>('all');
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [total, setTotal] = useState(0);
+  const [pagination, setPagination] = useState<NormalizedPagination>({
+    page: 1,
+    limit: 8,
+    total: 0,
+    totalPages: 1,
+  });
 
-  const loadHistory = useCallback(async () => {
+  const loadHistory = useCallback(async (targetPage = 1) => {
     setLoading(true);
     try {
       const res = await fetchOrderHistory({
-        page,
+        page: targetPage,
         limit: 8,
         status: statusFilter,
       });
       setOrders(res.orders || []);
-      setTotalPages(res.pagination?.totalPages || 1);
-      setTotal(res.pagination?.total || 0);
+      setPagination(normalizePagination(res.pagination || res, targetPage, 8));
     } catch (err) {
       console.warn('[OrderHistory] Failed to load history:', err);
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter]);
+  }, [statusFilter]);
 
   useEffect(() => {
-    loadHistory();
+    loadHistory(1);
   }, [loadHistory]);
 
   const handleStatusChange = (status: 'all' | 'completed' | 'cancelled') => {
     setStatusFilter(status);
-    setPage(1);
   };
 
+  const columns: Column<DashboardHistoricalOrder>[] = useMemo(
+    () => [
+      {
+        key: 'orderRef',
+        header: 'Order Ref',
+        render: (o) => (
+          <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#fff' }}>
+            #{o.orderRef}
+          </span>
+        ),
+      },
+      {
+        key: 'service',
+        header: 'Game & Service',
+        render: (o) => (
+          <div>
+            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{o.serviceDisplayName}</div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{o.gameDisplayName}</div>
+          </div>
+        ),
+      },
+      {
+        key: 'role',
+        header: 'Your Role',
+        render: (o) => (
+          <span className={`badge ${o.userRelation === 'booster' ? 'badge-lime' : 'badge-purple'}`}>
+            {o.userRelation}
+          </span>
+        ),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        render: (o) => <StatusBadge status={o.status} />,
+      },
+      {
+        key: 'amount',
+        header: 'Amount',
+        numeric: true,
+        render: (o) => {
+          const isCompleted = o.status === 'completed';
+          return (
+            <span style={{ fontWeight: 700, color: isCompleted ? 'var(--accent-lime)' : 'var(--text-muted)' }}>
+              ${o.amountUsd} USD
+            </span>
+          );
+        },
+      },
+      {
+        key: 'date',
+        header: 'Completed Date',
+        render: (o) => (
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+            {o.completedAt ? new Date(o.completedAt).toLocaleDateString() : new Date(o.createdAt).toLocaleDateString()}
+          </span>
+        ),
+      },
+    ],
+    []
+  );
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+    <Card style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
       {/* Header and Filter bar */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-            <h2 style={{ fontSize: '1.35rem', fontWeight: 800 }}>Order History</h2>
+            <h2 style={{ fontSize: '1.35rem', fontWeight: 800, margin: 0 }}>Order History</h2>
             <span className="badge badge-muted" style={{ fontSize: '0.72rem' }}>
-              {total} Total
+              {pagination.total} Total
             </span>
           </div>
-          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.25rem 0 0' }}>
             Completed and closed boost orders and service deliveries.
           </p>
         </div>
@@ -111,129 +173,19 @@ export const OrderHistorySection: React.FC = () => {
         </div>
       </div>
 
-      {loading ? (
-        <Card style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-          <div
-            style={{
-              width: '28px',
-              height: '28px',
-              borderRadius: '50%',
-              border: '2px solid var(--border-subtle)',
-              borderTopColor: 'var(--accent-lime)',
-              animation: 'spin 0.8s linear infinite',
-              margin: '0 auto 0.75rem',
-            }}
-          />
-          Loading historical orders...
-        </Card>
-      ) : orders.length === 0 ? (
-        <Card style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-            No past orders matching the selected filter.
-          </p>
-        </Card>
-      ) : (
-        <Card style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.86rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', backgroundColor: 'rgba(13, 11, 18, 0.4)', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '0.85rem 1rem' }}>Order Ref</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Game &amp; Service</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Your Role</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Status</th>
-                  <th style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>Amount</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Completed Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map((o) => {
-                  const isCompleted = o.status === 'completed';
-                  return (
-                    <tr
-                      key={o.id}
-                      style={{
-                        borderBottom: '1px solid rgba(45, 38, 69, 0.3)',
-                        transition: 'background var(--transition-fast)',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                    >
-                      <td style={{ padding: '0.85rem 1rem', fontFamily: 'monospace', fontWeight: 700, color: '#fff' }}>
-                        #{o.orderRef}
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem' }}>
-                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{o.serviceDisplayName}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{o.gameDisplayName}</div>
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem' }}>
-                        <span className={`badge ${o.userRelation === 'booster' ? 'badge-lime' : 'badge-purple'}`} style={{ fontSize: '0.68rem' }}>
-                          {o.userRelation}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem' }}>
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '0.3rem',
-                            fontWeight: 700,
-                            fontSize: '0.75rem',
-                            textTransform: 'uppercase',
-                            color: isCompleted ? 'var(--status-success)' : 'var(--status-danger)',
-                          }}
-                        >
-                          {isCompleted ? '✓ Completed' : '✕ Cancelled'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: 700, color: isCompleted ? 'var(--accent-lime)' : 'var(--text-muted)' }}>
-                        ${o.amountUsd} USD
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                        {o.completedAt ? new Date(o.completedAt).toLocaleDateString() : new Date(o.createdAt).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+      <DataTable<DashboardHistoricalOrder>
+        columns={columns}
+        data={orders}
+        keyField="id"
+        loading={loading}
+        emptyTitle="No past orders found"
+        emptyMessage="No historical orders match the selected filter."
+      />
 
-          {/* Pagination Controls */}
-          {totalPages > 1 && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '0.75rem 1rem',
-                borderTop: '1px solid var(--border-subtle)',
-                backgroundColor: 'rgba(13, 11, 18, 0.4)',
-              }}
-            >
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                &larr; Previous
-              </Button>
-              <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                Page <strong style={{ color: '#fff' }}>{page}</strong> of <strong style={{ color: '#fff' }}>{totalPages}</strong>
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              >
-                Next &rarr;
-              </Button>
-            </div>
-          )}
-        </Card>
-      )}
-    </div>
+      <Pagination
+        pagination={pagination}
+        onPageChange={(nextPage) => loadHistory(nextPage)}
+      />
+    </Card>
   );
 };

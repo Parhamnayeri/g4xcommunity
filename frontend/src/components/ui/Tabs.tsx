@@ -4,6 +4,7 @@ export interface TabItem {
   id: string;
   label: string;
   count?: number | string | null;
+  badge?: number | string | null;
   icon?: React.ReactNode;
   disabled?: boolean;
 }
@@ -32,6 +33,7 @@ export const Tabs: React.FC<TabsProps> = ({
         const activeClass = isActive
           ? (accent === 'purple' ? 'tab-active-purple' : 'tab-active')
           : '';
+        const effectiveCount = tab.count ?? tab.badge;
 
         return (
           <button
@@ -45,8 +47,8 @@ export const Tabs: React.FC<TabsProps> = ({
           >
             {tab.icon}
             <span>{tab.label}</span>
-            {tab.count !== undefined && tab.count !== null && (
-              <span className="portal-tab-badge">{tab.count}</span>
+            {effectiveCount !== undefined && effectiveCount !== null && (
+              <span className="portal-tab-badge">{effectiveCount}</span>
             )}
           </button>
         );
