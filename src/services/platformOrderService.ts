@@ -20,7 +20,7 @@ import prisma from '../database/db';
 import { authorize } from './authorizationService';
 import { Permission } from './permissionTypes';
 import { validateGameAndService } from './orderValidationService';
-import { calculateOrderFinancialSnapshot } from './financialCalculationEngine';
+import { calculateOrderFinancialSnapshot, validateExternalOrderDefensibleNet } from './financialCalculationEngine';
 import { creditOrderSalesProceeds } from './platformBalanceService';
 
 export const SUPPORTED_SOURCE_PLATFORMS = ['g2g', 'skycoach', 'eldorado'] as const;
@@ -98,8 +98,8 @@ export interface CreateExternalOrderInput {
   platformAccountRef?: string;
   platformAccountId?: number;
   sourceAmountType: 'gross_sale' | 'platform_net';
-  externalOrderId?: string;
-  boosterPoolMinor?: number;
+  externalOrderId: string;
+  boosterPoolMinor: number;
   orderMode?: 'selfplay' | 'pilot' | 'mythicplus';
   runsCount?: number;
   keyLevel?: number | null;
@@ -168,18 +168,29 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
       `INVALID_ORDER_AMOUNT: Order amount must be a positive integer in minor units (cents), got ${amountMinor}.`
     );
   }
-  const normalizedExternalOrderId = externalOrderId?.trim() || `legacy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const normalizedPool = boosterPoolMinor ?? amountMinor;
-  if (!Number.isSafeInteger(normalizedPool) || normalizedPool <= 0 || normalizedPool > amountMinor) {
+  const normalizedExternalOrderId = externalOrderId.trim();
+  if (!normalizedExternalOrderId) throw new Error('MISSING_SITE_ORDER_ID');
+  if (!Number.isSafeInteger(boosterPoolMinor) || boosterPoolMinor <= 0) {
     throw new Error('INVALID_BOOSTER_POOL');
   }
-  const isMythic = service.serviceKey.toLowerCase().includes('mythic') || service.displayName.toLowerCase().includes('mythic');
+  const isMythic = service.settings?.requiresKey === true;
   if (isMythic && (!Number.isSafeInteger(keyLevel) || (keyLevel as number) <= 0 || !dungeonName?.trim())) {
     throw new Error('MYTHIC_KEY_DETAILS_REQUIRED');
   }
   const normalizedRuns = Number.isSafeInteger(runsCount) && runsCount > 0 ? runsCount : 1;
   const normalizedRequired = requiredBoosterCount ?? (isMythic ? 4 : 1);
   if (!Number.isSafeInteger(normalizedRequired) || normalizedRequired <= 0) throw new Error('INVALID_REQUIRED_BOOSTER_COUNT');
+  if (isMythic && normalizedRequired !== 4) throw new Error('MYTHIC_COMPOSITION_REQUIRED');
+  const defensibleNet = sourceAmountType === 'platform_net'
+    ? boosterPoolMinor
+    : (await validateExternalOrderDefensibleNet({
+      platform: platformAccount.platform as SupportedSourcePlatform,
+      grossMinor: amountMinor,
+      boosterPoolMinor,
+      gameSlug,
+      listingCategory,
+    })).platformNetMinor;
+  if (boosterPoolMinor > defensibleNet) throw new Error('EXCESSIVE_BOOSTER_POOL');
 
   const orderRef = `ORD_EXT_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
@@ -201,14 +212,16 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
         sourceType: 'external',
         sourceWebsite: platformAccount.platform,
         platformAccountId: platformAccount.id,
-        orderType: isMythic ? 'group' : orderMode === 'pilot' ? 'pilot' : 'solo',
+        orderType: isMythic || (orderMode !== 'pilot' && normalizedRequired > 1)
+          ? 'group'
+          : orderMode === 'pilot' ? 'pilot' : 'solo',
         orderMode: service.serviceMode === 'pilot' || orderMode === 'pilot' ? 'pilot' : 'non_pilot',
         quantity: normalizedRuns,
         currency: currency.toUpperCase(),
         grossAmountMinor: amountMinor,
         platformFeeMinor: 0, // Updated immediately below from calculated snapshot
         advertiserFeeMinor: 0,
-        boosterPoolMinor: normalizedPool,
+        boosterPoolMinor,
         paymentStatus: 'unneeded',
         status: 'open_presign',
         externalOrderId: normalizedExternalOrderId,
@@ -243,7 +256,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
         sourcePlatform: platformAccount.platform as any,
         sourceAmountType,
         sourceAmountMinor: amountMinor,
-        explicitBoosterPoolMinor: normalizedPool,
+        explicitBoosterPoolMinor: boosterPoolMinor,
         platformAccountId: platformAccount.id,
         currency: currency.toUpperCase(),
         gameSlug,

@@ -550,7 +550,7 @@ async function handleExternalOrderCreate(message: Message, args: string[]): Prom
   const actorId = message.author.id;
 
   // Usage: G4!order ext-create <gameSlug> <serviceId> <amountUsd> <platform> [accountRef] [gross|net] [orderType] [notes...]
-  const [gameSlug, serviceIdRaw, amountUsdRaw, platformRaw, accountRefRaw, basisRaw, orderTypeRaw, ...notesArr] = args;
+  const [gameSlug, serviceIdRaw, amountUsdRaw, poolUsdRaw, siteOrderId, platformRaw, accountRefRaw, basisRaw, orderTypeRaw, ...notesArr] = args;
 
   if (!gameSlug || !serviceIdRaw || !amountUsdRaw || !platformRaw) {
     await message.reply({
@@ -565,7 +565,8 @@ async function handleExternalOrderCreate(message: Message, args: string[]): Prom
 
   const serviceId = Number(serviceIdRaw);
   const amountUsd = Number(amountUsdRaw);
-  if (isNaN(serviceId) || serviceId <= 0 || isNaN(amountUsd) || amountUsd <= 0) {
+  const poolUsd = Number(poolUsdRaw);
+  if (isNaN(serviceId) || serviceId <= 0 || isNaN(amountUsd) || amountUsd <= 0 || isNaN(poolUsd) || poolUsd <= 0 || !siteOrderId) {
     await message.reply({
       content: '❌ Invalid serviceId or amountUsd. Both must be positive numbers.',
     });
@@ -573,6 +574,7 @@ async function handleExternalOrderCreate(message: Message, args: string[]): Prom
   }
 
   const amountMinor = Math.round(amountUsd * 100);
+  const boosterPoolMinor = Math.round(poolUsd * 100);
   const sourcePlatform = platformRaw.toLowerCase();
   const platformAccountRef =
     accountRefRaw && !['gross', 'net', 'group', 'solo'].includes(accountRefRaw.toLowerCase())
@@ -595,6 +597,8 @@ async function handleExternalOrderCreate(message: Message, args: string[]): Prom
       sourcePlatform,
       platformAccountRef,
       sourceAmountType,
+      externalOrderId: siteOrderId,
+      boosterPoolMinor,
       orderType,
       notes: notes || undefined,
       actorId,

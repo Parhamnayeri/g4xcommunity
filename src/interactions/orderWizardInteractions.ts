@@ -921,7 +921,7 @@ export async function handleOrderWizardModalSubmit(
       // Enforce uniqueness within the source platform and platform account scope
       const existingExternalOrder = await prisma.order.findFirst({
         where: {
-          externalOrderId: siteOrderId || undefined,
+          externalOrderId: siteOrderId || '',
           sourceWebsite: session.platform || undefined,
           ...(session.platformAccountId ? { platformAccountId: session.platformAccountId } : {}),
         },
@@ -1011,7 +1011,7 @@ export async function handleOrderWizardModalSubmit(
         sourcePlatform: session.platform as any,
         platformAccountId: session.platformAccountId || undefined,
         platformAccountRef: session.platformAccountRef || undefined,
-        externalOrderId: siteOrderId || undefined,
+        externalOrderId: siteOrderId || '',
         sourceAmountType: 'gross_sale',
         orderMode: isMythic ? 'mythicplus' : isPilot ? 'pilot' : 'selfplay',
         runsCount,

@@ -1976,6 +1976,9 @@ router.post(
         platformAccountId,
         sourceAmountType,
         listingCategory,
+        externalOrderId,
+        boosterPoolUsd,
+        boosterPoolMinor,
       } = req.body;
 
       if (!gameSlug || !serviceId || !grossAmountUsd) {
@@ -1995,6 +1998,10 @@ router.post(
           gameSlug,
           serviceId: Number(serviceId),
           amountMinor: grossCents,
+          externalOrderId: String(externalOrderId || ''),
+          boosterPoolMinor: Number.isSafeInteger(Number(boosterPoolMinor))
+            ? Number(boosterPoolMinor)
+            : Math.round(Number(boosterPoolUsd) * 100),
           sourcePlatform,
           platformAccountRef,
           platformAccountId: platformAccountId ? Number(platformAccountId) : undefined,
