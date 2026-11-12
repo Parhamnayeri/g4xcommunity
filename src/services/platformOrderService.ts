@@ -98,6 +98,13 @@ export interface CreateExternalOrderInput {
   platformAccountRef?: string;
   platformAccountId?: number;
   sourceAmountType: 'gross_sale' | 'platform_net';
+  externalOrderId?: string;
+  boosterPoolMinor?: number;
+  orderMode?: 'selfplay' | 'pilot' | 'mythicplus';
+  runsCount?: number;
+  keyLevel?: number | null;
+  dungeonName?: string | null;
+  requiredBoosterCount?: number;
   orderType?: string;
   listingCategory?: string;
   notes?: string;
@@ -117,6 +124,13 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
     platformAccountRef,
     platformAccountId,
     sourceAmountType,
+    externalOrderId,
+    boosterPoolMinor,
+    orderMode = 'selfplay',
+    runsCount = 1,
+    keyLevel = null,
+    dungeonName = null,
+    requiredBoosterCount,
     orderType = 'group',
     listingCategory,
     notes,
@@ -154,11 +168,28 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
       `INVALID_ORDER_AMOUNT: Order amount must be a positive integer in minor units (cents), got ${amountMinor}.`
     );
   }
+  const normalizedExternalOrderId = externalOrderId?.trim() || `legacy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const normalizedPool = boosterPoolMinor ?? amountMinor;
+  if (!Number.isSafeInteger(normalizedPool) || normalizedPool <= 0 || normalizedPool > amountMinor) {
+    throw new Error('INVALID_BOOSTER_POOL');
+  }
+  const isMythic = service.serviceKey.toLowerCase().includes('mythic') || service.displayName.toLowerCase().includes('mythic');
+  if (isMythic && (!Number.isSafeInteger(keyLevel) || (keyLevel as number) <= 0 || !dungeonName?.trim())) {
+    throw new Error('MYTHIC_KEY_DETAILS_REQUIRED');
+  }
+  const normalizedRuns = Number.isSafeInteger(runsCount) && runsCount > 0 ? runsCount : 1;
+  const normalizedRequired = requiredBoosterCount ?? (isMythic ? 4 : 1);
+  if (!Number.isSafeInteger(normalizedRequired) || normalizedRequired <= 0) throw new Error('INVALID_REQUIRED_BOOSTER_COUNT');
 
   const orderRef = `ORD_EXT_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
   // 5. Create Order atomically, generate snapshot, credit platform pending balance, and record audit log
   const result = await prisma.$transaction(async (tx) => {
+    const duplicate = await tx.order.findFirst({
+      where: { platformAccountId: platformAccount.id, externalOrderId: normalizedExternalOrderId },
+      select: { id: true },
+    });
+    if (duplicate) throw new Error('DUPLICATE_SITE_ORDER_ID');
     // A. Create Order entity
     const ord = await tx.order.create({
       data: {
@@ -170,32 +201,33 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
         sourceType: 'external',
         sourceWebsite: platformAccount.platform,
         platformAccountId: platformAccount.id,
-        orderType,
-        orderMode: service.serviceMode === 'pilot' ? 'pilot' : 'non_pilot',
+        orderType: isMythic ? 'group' : orderMode === 'pilot' ? 'pilot' : 'solo',
+        orderMode: service.serviceMode === 'pilot' || orderMode === 'pilot' ? 'pilot' : 'non_pilot',
+        quantity: normalizedRuns,
         currency: currency.toUpperCase(),
         grossAmountMinor: amountMinor,
         platformFeeMinor: 0, // Updated immediately below from calculated snapshot
         advertiserFeeMinor: 0,
-        boosterPoolMinor: 0, // Updated immediately below from calculated snapshot
-        paymentStatus: 'verified', // Commercial commitment is externally validated on the platform
+        boosterPoolMinor: normalizedPool,
+        paymentStatus: 'unneeded',
         status: 'open_presign',
-        paymentVerifiedBy: actorId,
-        paymentVerifiedAt: new Date(),
+        externalOrderId: normalizedExternalOrderId,
         notes: notes || null,
         runs: {
-          create: [{ runNumber: 1, status: 'pending' }],
+          create: Array.from({ length: normalizedRuns }, (_, i) => ({ runNumber: i + 1, status: 'pending' })),
         },
-        ...(service.gameSlug === 'wow_midnight' && orderType === 'group'
+        ...(isMythic
           ? {
               requiredRoles: {
                 create: [
                   { roleName: 'tank', quantity: 1 },
                   { roleName: 'healer', quantity: 1 },
-                  { roleName: 'dps', quantity: 3 },
+                  { roleName: 'dps', quantity: 2 },
                 ],
               },
             }
-          : {}),
+          : { requiredRoles: { create: [{ roleName: orderMode === 'pilot' ? 'pilot' : 'booster', quantity: normalizedRequired }] } }),
+        ...(isMythic ? { keyRequirements: { create: [{ dungeonName: dungeonName!.trim(), keyLevel: keyLevel as number, isMandatory: true }] } } : {}),
       },
       include: {
         game: true,
@@ -211,6 +243,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
         sourcePlatform: platformAccount.platform as any,
         sourceAmountType,
         sourceAmountMinor: amountMinor,
+        explicitBoosterPoolMinor: normalizedPool,
         platformAccountId: platformAccount.id,
         currency: currency.toUpperCase(),
         gameSlug,

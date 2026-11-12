@@ -383,6 +383,21 @@ export async function assignOrderRoster(orderId: number, candidates: Array<{ cla
   return apiRequest(`/api/management/orders/${orderId}/assign`, { method: 'POST', body: JSON.stringify({ candidates }) });
 }
 
+export async function fetchManagementOrderCatalog(): Promise<{ games: any[]; accounts: any[] }> {
+  return apiRequest('/api/management/order-catalog');
+}
+
+export async function createManagementExternalOrder(body: Record<string, unknown>): Promise<{ success: boolean; order: any }> {
+  return apiRequest('/api/management/orders', { method: 'POST', body: JSON.stringify(body) });
+}
+
+export async function directAssignOrder(
+  orderId: number,
+  body: { candidates: Array<{ userId: string; assignedRole: string }>; squadId?: number; auditReason: string },
+): Promise<{ success: boolean; message: string }> {
+  return apiRequest(`/api/management/orders/${orderId}/direct-assign`, { method: 'POST', body: JSON.stringify(body) });
+}
+
 export async function verifyOrderPayment(orderId: number, receiptRef: string): Promise<{ success: boolean; message: string }> {
   return apiRequest(`/api/orders/${orderId}/verify-payment`, { method: 'POST', body: JSON.stringify({ receiptRef }) });
 }

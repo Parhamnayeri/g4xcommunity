@@ -23,6 +23,7 @@ export interface AssignOrderInput {
   squadId?: number | null;
   discordClient?: any;
   requireCompleteRegisteredRoster?: boolean;
+  auditReason?: string;
 }
 
 /**
@@ -120,6 +121,12 @@ export async function assignOrderBoosters(
         DomainErrorCode.ASSIGNMENT_CONFLICT,
         'No booster candidates or valid squad provided for assignment',
       );
+    }
+    if (!input.requireCompleteRegisteredRoster) {
+      if (!input.auditReason || input.auditReason.trim().length < 5) throw new Error('MISSING_ASSIGNMENT_AUDIT_REASON');
+      if (new Set(effectiveCandidates.map((c) => c.userId)).size !== effectiveCandidates.length) {
+        throw new Error('DUPLICATE_BOOSTER');
+      }
     }
 
     if (input.requireCompleteRegisteredRoster) {
@@ -243,11 +250,16 @@ export async function assignOrderBoosters(
         action: 'ORDER_ASSIGNMENT_CREATED',
         entityType: 'order',
         entityId: String(order.id),
+        previousValues: JSON.stringify({
+          status: order.status,
+          assignments: order.assignments.map((a) => ({ userId: a.userId, assignedRole: a.assignedRole, status: a.status })),
+        }),
         newValues: JSON.stringify({
           assignmentsCount: createdAssignments.length,
           squadId: input.squadId ?? null,
           assignedUsers: effectiveCandidates.map((c) => c.userId),
         }),
+        reason: input.auditReason ?? (input.requireCompleteRegisteredRoster ? 'Registered roster assignment' : undefined),
       },
     });
 
