@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { LoadingState } from '../ui/LoadingState';
+import {
+  Card,
+  Button,
+  LoadingState,
+  DataTable,
+  Column,
+  StatusBadge,
+  Modal,
+  Input,
+  Textarea,
+  EmptyState,
+} from '../ui';
 import {
   fetchAdminWithdrawals,
   reviewAdminWithdrawal,
@@ -110,357 +121,302 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
     setMetaFeedback(null);
   };
 
+  const columns: Column<WithdrawalItem>[] = [
+    {
+      key: 'withdrawalRef',
+      header: 'Ref / Date',
+      render: (w) => (
+        <div>
+          <div style={{ fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{w.withdrawalRef}</div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>
+            {new Date(w.createdAt).toLocaleDateString()}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'boosterName',
+      header: 'Booster',
+      render: (w) => (
+        <div>
+          <div style={{ fontWeight: 600 }}>{w.boosterName}</div>
+          <div style={{ fontSize: 'var(--font-size-2xs)', color: 'var(--text-muted)' }}>{w.boosterId}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'payoutMethod',
+      header: 'Method',
+      render: (w) => (
+        <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
+          {w.payoutMethod}
+        </span>
+      ),
+    },
+    {
+      key: 'requestedAmount',
+      header: 'Requested / Net',
+      numeric: true,
+      render: (w) => (
+        <div style={{ fontWeight: 700, color: 'var(--accent-lime)' }}>
+          ${(w.requestedUsdCents ? w.requestedUsdCents / 100 : w.requestedUsd || 0).toFixed(2)}
+        </div>
+      ),
+    },
+    {
+      key: 'destinationAddress',
+      header: 'Destination',
+      truncate: true,
+      render: (w) => (
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--font-size-xs)' }}>
+          {w.destinationAddress
+            ? `${w.destinationAddress.slice(0, 10)}...${w.destinationAddress.slice(-6)}`
+            : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (w) => <StatusBadge status={w.status} />,
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      align: 'right',
+      render: (w) => (
+        <div style={{ display: 'flex', gap: '0.45rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
+            onClick={() => handleOpenHistory(w)}
+            title="View audit history"
+          >
+            📜 History
+          </button>
+          {canEditMetadata && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
+              onClick={() => handleOpenMetadataEdit(w)}
+              title="Edit administrative notes"
+            >
+              ✏️ Notes
+            </button>
+          )}
+          {canReview && (
+            <button
+              type="button"
+              className="btn btn-cta btn-sm"
+              style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
+              onClick={() => {
+                setSelectedWithdrawal(w);
+                setDecision('approve_processing');
+                setTxHash('');
+                setReviewNotes('');
+                setReviewFeedback(null);
+              }}
+            >
+              Review &amp; Payout
+            </button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
-    <div className="card-surface" style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+    <Card style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>{title}</h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0.25rem 0 0' }}>{subtitle}</p>
+          <h2 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 700, margin: 0 }}>{title}</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)', margin: '0.25rem 0 0' }}>{subtitle}</p>
         </div>
-        <button type="button" className="btn btn-secondary btn-sm" onClick={loadWithdrawals}>
+        <Button variant="outline" size="sm" onClick={loadWithdrawals}>
           ↻ Refresh Queue
-        </button>
+        </Button>
       </div>
 
       {error && (
-        <div style={{ padding: '1rem', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: 'var(--status-danger)', borderRadius: 'var(--radius-sm)' }}>
+        <div style={{ padding: '1rem', backgroundColor: 'var(--status-danger-bg)', color: 'var(--status-danger)', borderRadius: 'var(--radius-sm)' }}>
           {error}
         </div>
       )}
 
-      {loading ? (
-        <LoadingState message="Loading withdrawal requests..." />
-      ) : withdrawals.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-          No booster withdrawal requests currently in queue.
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Ref / Date</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Booster</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Method</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Requested / Net</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Destination</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {withdrawals.map((w) => (
-                <tr key={w.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>{w.withdrawalRef}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {new Date(w.createdAt).toLocaleDateString()}
-                    </div>
-                  </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <div style={{ fontWeight: 600 }}>{w.boosterName}</div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{w.boosterId}</div>
-                  </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
-                      {w.payoutMethod}
-                    </span>
-                  </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <div style={{ fontWeight: 700, color: 'var(--accent-lime)' }}>
-                      ${(w.requestedUsdCents ? w.requestedUsdCents / 100 : w.requestedUsd || 0).toFixed(2)}
-                    </div>
-                  </td>
-                  <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace', fontSize: '0.78rem' }}>
-                    {w.destinationAddress ? `${w.destinationAddress.slice(0, 10)}...${w.destinationAddress.slice(-6)}` : '—'}
-                  </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <span className="badge badge-warning" style={{ fontSize: '0.75rem' }}>
-                      {w.status}
-                    </span>
-                  </td>
-                  <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
-                    <div style={{ display: 'flex', gap: '0.45rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
-                        onClick={() => handleOpenHistory(w)}
-                        title="View audit history"
-                      >
-                        📜 History
-                      </button>
-                      {canEditMetadata && (
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-sm"
-                          style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
-                          onClick={() => handleOpenMetadataEdit(w)}
-                          title="Edit administrative notes"
-                        >
-                          ✏️ Notes
-                        </button>
-                      )}
-                      {canReview && (
-                        <button
-                          type="button"
-                          className="btn btn-cta btn-sm"
-                          style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
-                          onClick={() => {
-                            setSelectedWithdrawal(w);
-                            setDecision('approve_processing');
-                            setTxHash('');
-                            setReviewNotes('');
-                            setReviewFeedback(null);
-                          }}
-                        >
-                          Review &amp; Payout
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* Withdrawals DataTable */}
+      <DataTable
+        columns={columns}
+        data={withdrawals}
+        keyExtractor={(w) => w.id}
+        isLoading={loading}
+        emptyTitle="No booster withdrawal requests currently in queue."
+        emptyMessage="Any pending payout requests submitted by boosters will appear here for operational verification."
+      />
 
       {/* Review & Payout Modal (Admin/Owner only) */}
       {selectedWithdrawal && canReview && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '1rem',
+        <Modal
+          isOpen={Boolean(selectedWithdrawal && canReview)}
+          onClose={() => {
+            setSelectedWithdrawal(null);
+            setReviewFeedback(null);
           }}
-        >
-          <div className="card-surface" style={{ maxWidth: '520px', width: '100%', padding: '2rem' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.5rem' }}>
-              Execute Payout Decision #{selectedWithdrawal.id}
-            </h3>
-            <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
-              <div>Booster: <strong>{selectedWithdrawal.boosterName}</strong></div>
-              <div>Method: <strong>{selectedWithdrawal.payoutMethod}</strong></div>
-              <div>Requested Amount: <strong style={{ color: 'var(--accent-lime)' }}>${(selectedWithdrawal.requestedUsdCents ? selectedWithdrawal.requestedUsdCents / 100 : selectedWithdrawal.requestedUsd || 0).toFixed(2)} USD</strong></div>
-              <div>Destination: <span style={{ fontFamily: 'monospace' }}>{selectedWithdrawal.destinationAddress}</span></div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                <input
-                  type="radio"
-                  name="decision"
-                  checked={decision === 'approve_processing'}
-                  onChange={() => setDecision('approve_processing')}
-                />
-                Approve for Manual Transfer (Processing)
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                <input
-                  type="radio"
-                  name="decision"
-                  checked={decision === 'approve_paid'}
-                  onChange={() => setDecision('approve_paid')}
-                />
-                Confirm Disbursement (Paid + Tx Proof)
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                <input
-                  type="radio"
-                  name="decision"
-                  checked={decision === 'reject'}
-                  onChange={() => setDecision('reject')}
-                />
-                Reject &amp; Refund Reserve
-              </label>
-            </div>
-
-            {decision === 'approve_paid' && (
-              <div style={{ marginBottom: '1rem' }}>
-                <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                  Transaction Hash / Payment Proof Reference
-                </label>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="e.g. 0xabc... or Bank Transfer Ref"
-                  value={txHash}
-                  onChange={(e) => setTxHash(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
-                />
-              </div>
-            )}
-
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                Reviewer Notes {decision === 'reject' && <span style={{ color: 'var(--status-danger)' }}>* (Required)</span>}
-              </label>
-              <textarea
-                className="input"
-                rows={2}
-                placeholder="Authoritative audit notes..."
-                value={reviewNotes}
-                onChange={(e) => setReviewNotes(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
-              />
-            </div>
-
-            {reviewFeedback && (
-              <div
-                style={{
-                  padding: '0.65rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: '0.82rem',
-                  marginBottom: '1rem',
-                  backgroundColor: reviewFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                  color: reviewFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+          title={`Execute Payout Decision #${selectedWithdrawal.id}`}
+          maxWidth="540px"
+          footer={
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', width: '100%' }}>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSelectedWithdrawal(null);
+                  setReviewFeedback(null);
                 }}
               >
-                {reviewFeedback.text}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => setSelectedWithdrawal(null)}
-              >
                 Cancel
-              </button>
-              <button
-                type="button"
-                disabled={submittingReview || (decision === 'reject' && !reviewNotes.trim())}
-                className="btn btn-cta btn-sm"
+              </Button>
+              <Button
+                variant="cta"
+                size="sm"
+                disabled={submittingReview || (decision === 'reject' && reviewNotes.trim().length < 5)}
                 onClick={async () => {
                   setSubmittingReview(true);
                   setReviewFeedback(null);
                   try {
                     await reviewAdminWithdrawal(selectedWithdrawal.id, decision, {
-                      txHash: decision === 'approve_paid' && txHash.trim() ? txHash.trim() : undefined,
-                      reason: reviewNotes.trim() || undefined,
-                      notes: reviewNotes.trim() || undefined,
+                      txHash: decision === 'approve_paid' ? txHash.trim() : undefined,
+                      reviewNotes: reviewNotes.trim() || undefined,
+                      rejectionReason: decision === 'reject' ? reviewNotes.trim() : undefined,
                     });
-                    setReviewFeedback({ text: 'Payout decision recorded successfully.', type: 'success' });
+                    setReviewFeedback({ text: 'Withdrawal review recorded successfully.', type: 'success' });
                     setTimeout(() => {
                       setSelectedWithdrawal(null);
                       loadWithdrawals();
                     }, 800);
                   } catch (err: any) {
-                    setReviewFeedback({ text: err.message || 'Payout decision execution failed', type: 'error' });
+                    setReviewFeedback({ text: err.message || 'Operation failed', type: 'error' });
                   } finally {
                     setSubmittingReview(false);
                   }
                 }}
               >
-                {submittingReview ? 'Executing...' : 'Confirm Decision'}
-              </button>
+                {submittingReview ? 'Submitting...' : 'Confirm Decision'}
+              </Button>
             </div>
+          }
+        >
+          <div
+            style={{
+              backgroundColor: 'var(--bg-surface-raised)',
+              padding: '1rem',
+              borderRadius: 'var(--radius-sm)',
+              marginBottom: '1.25rem',
+              fontSize: 'var(--font-size-sm)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.35rem',
+            }}
+          >
+            <div>Booster: <strong>{selectedWithdrawal.boosterName}</strong></div>
+            <div>Method: <strong>{selectedWithdrawal.payoutMethod}</strong></div>
+            <div>
+              Requested Amount:{' '}
+              <strong style={{ color: 'var(--accent-lime)' }}>
+                ${(selectedWithdrawal.requestedUsdCents ? selectedWithdrawal.requestedUsdCents / 100 : selectedWithdrawal.requestedUsd || 0).toFixed(2)} USD
+              </strong>
+            </div>
+            <div>Destination: <span style={{ fontFamily: 'var(--font-mono)' }}>{selectedWithdrawal.destinationAddress}</span></div>
           </div>
-        </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: 'var(--font-size-sm)' }}>
+              <input
+                type="radio"
+                name="decision"
+                checked={decision === 'approve_processing'}
+                onChange={() => setDecision('approve_processing')}
+              />
+              Approve for Manual Transfer (Processing)
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: 'var(--font-size-sm)' }}>
+              <input
+                type="radio"
+                name="decision"
+                checked={decision === 'approve_paid'}
+                onChange={() => setDecision('approve_paid')}
+              />
+              Confirm Disbursement (Paid + Tx Proof)
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: 'var(--font-size-sm)' }}>
+              <input
+                type="radio"
+                name="decision"
+                checked={decision === 'reject'}
+                onChange={() => setDecision('reject')}
+              />
+              Reject &amp; Refund Reserve
+            </label>
+          </div>
+
+          {decision === 'approve_paid' && (
+            <div style={{ marginBottom: '1rem' }}>
+              <Input
+                label="Transaction Hash / Payment Proof Reference"
+                placeholder="e.g. 0xabc... or Bank Transfer Ref"
+                value={txHash}
+                onChange={(e) => setTxHash(e.target.value)}
+              />
+            </div>
+          )}
+
+          <Textarea
+            label={decision === 'reject' ? 'Rejection Reason * (Min 5 chars)' : 'Reviewer Notes (Optional)'}
+            required={decision === 'reject'}
+            minLength={decision === 'reject' ? 5 : undefined}
+            placeholder={
+              decision === 'reject'
+                ? 'State the reason for rejecting this withdrawal...'
+                : 'Administrative notes or disbursement references...'
+            }
+            value={reviewNotes}
+            onChange={(e) => setReviewNotes(e.target.value)}
+          />
+
+          {reviewFeedback && (
+            <div
+              style={{
+                marginTop: '1rem',
+                padding: '0.65rem 0.85rem',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.82rem',
+                backgroundColor: reviewFeedback.type === 'success' ? 'var(--status-success-bg)' : 'var(--status-danger-bg)',
+                color: reviewFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+              }}
+            >
+              {reviewFeedback.text}
+            </div>
+          )}
+        </Modal>
       )}
 
-      {/* Metadata Edit Modal (Admin/Owner only) */}
+      {/* Edit Metadata Modal */}
       {metadataItem && canEditMetadata && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '1rem',
-          }}
-        >
-          <div className="card-surface" style={{ maxWidth: '520px', width: '100%', padding: '2rem' }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 0.5rem' }}>
-              Edit Withdrawal Metadata #{metadataItem.id}
-            </h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-              Ref: <strong>{metadataItem.withdrawalRef}</strong> — Financial amounts and balances cannot be edited here.
-            </p>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                Operational Notes
-              </label>
-              <textarea
-                className="input"
-                rows={2}
-                value={metaNotes}
-                onChange={(e) => setMetaNotes(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
-              />
-            </div>
-
-            <div style={{ marginBottom: '1rem' }}>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                Internal Admin Notes
-              </label>
-              <textarea
-                className="input"
-                rows={2}
-                value={metaAdminNotes}
-                onChange={(e) => setMetaAdminNotes(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
-              />
-            </div>
-
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                Audit Reason <span style={{ color: 'var(--status-danger)' }}>* (Min 5 chars required)</span>
-              </label>
-              <input
-                type="text"
-                className="input"
-                placeholder="Reason for modifying metadata..."
-                value={metaReason}
-                onChange={(e) => setMetaReason(e.target.value)}
-                style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
-              />
-            </div>
-
-            {metaFeedback && (
-              <div
-                style={{
-                  padding: '0.65rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: '0.82rem',
-                  marginBottom: '1rem',
-                  backgroundColor: metaFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                  color: metaFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
-                }}
-              >
-                {metaFeedback.text}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => setMetadataItem(null)}
-              >
+        <Modal
+          isOpen={Boolean(metadataItem && canEditMetadata)}
+          onClose={() => setMetadataItem(null)}
+          title={`Update Metadata: ${metadataItem.withdrawalRef}`}
+          maxWidth="540px"
+          footer={
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', width: '100%' }}>
+              <Button variant="outline" size="sm" onClick={() => setMetadataItem(null)}>
                 Cancel
-              </button>
-              <button
-                type="button"
+              </Button>
+              <Button
+                variant="cta"
+                size="sm"
                 disabled={submittingMeta || metaReason.trim().length < 5}
-                className="btn btn-cta btn-sm"
                 onClick={async () => {
                   setSubmittingMeta(true);
                   setMetaFeedback(null);
@@ -470,109 +426,115 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                       adminNotes: metaAdminNotes.trim() || undefined,
                       reason: metaReason.trim(),
                     });
-                    setMetaFeedback({ text: 'Metadata updated with immutable audit log.', type: 'success' });
+                    setMetaFeedback({ text: 'Metadata updated successfully.', type: 'success' });
                     setTimeout(() => {
                       setMetadataItem(null);
                       loadWithdrawals();
                     }, 800);
                   } catch (err: any) {
-                    setMetaFeedback({ text: err.message || 'Failed to update metadata', type: 'error' });
+                    setMetaFeedback({ text: err.message || 'Update failed', type: 'error' });
                   } finally {
                     setSubmittingMeta(false);
                   }
                 }}
               >
-                {submittingMeta ? 'Saving...' : 'Save Metadata'}
-              </button>
+                {submittingMeta ? 'Saving...' : 'Save Changes'}
+              </Button>
             </div>
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <Textarea
+              label="Booster Visible Notes"
+              placeholder="Notes visible to the booster..."
+              value={metaNotes}
+              onChange={(e) => setMetaNotes(e.target.value)}
+            />
+
+            <Textarea
+              label="Internal Admin Notes"
+              placeholder="Internal notes visible only to operations staff..."
+              value={metaAdminNotes}
+              onChange={(e) => setMetaAdminNotes(e.target.value)}
+            />
+
+            <Input
+              required
+              minLength={5}
+              label="Audit Reason * (Min 5 chars)"
+              placeholder="Mandatory reason for this administrative update..."
+              value={metaReason}
+              onChange={(e) => setMetaReason(e.target.value)}
+            />
+
+            {metaFeedback && (
+              <div
+                style={{
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.82rem',
+                  backgroundColor: metaFeedback.type === 'success' ? 'var(--status-success-bg)' : 'var(--status-danger-bg)',
+                  color: metaFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                }}
+              >
+                {metaFeedback.text}
+              </div>
+            )}
           </div>
-        </div>
+        </Modal>
       )}
 
       {/* Audit History Modal */}
       {historyItem && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '1rem',
-          }}
+        <Modal
+          isOpen={Boolean(historyItem)}
+          onClose={() => setHistoryItem(null)}
+          title={`Disbursement Audit Trail: ${historyItem.withdrawalRef}`}
+          maxWidth="680px"
+          footer={
+            <Button variant="outline" size="sm" onClick={() => setHistoryItem(null)}>
+              Close Audit Trail
+            </Button>
+          }
         >
-          <div className="card-surface" style={{ maxWidth: '650px', width: '100%', maxHeight: '85vh', overflowY: 'auto', padding: '1.75rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem', marginBottom: '1rem' }}>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>
-                Withdrawal #{historyItem.id} Audit History
-              </h3>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => setHistoryItem(null)}
-              >
-                ✕ Close
-              </button>
+          {loadingHistory ? (
+            <LoadingState message="Fetching immutable audit history..." />
+          ) : historyError ? (
+            <div style={{ color: 'var(--status-danger)' }}>{historyError}</div>
+          ) : auditHistory.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+              No audit logs recorded for this withdrawal request.
             </div>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-              Ref: <strong>{historyItem.withdrawalRef}</strong> — Booster: {historyItem.boosterName}
-            </p>
-
-            {loadingHistory ? (
-              <LoadingState message="Loading immutable audit events..." />
-            ) : historyError ? (
-              <div style={{ padding: '1rem', color: 'var(--status-danger)' }}>{historyError}</div>
-            ) : auditHistory.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                No recorded audit events for this withdrawal request.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {auditHistory.map((h) => (
-                  <div
-                    key={h.id}
-                    style={{
-                      padding: '0.85rem',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-main)',
-                      border: '1px solid var(--border-subtle)',
-                      fontSize: '0.84rem',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                      <span className="badge badge-purple" style={{ fontSize: '0.75rem' }}>
-                        {h.action}
-                      </span>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                        {new Date(h.createdAt).toLocaleString()}
-                      </span>
-                    </div>
-                    <div style={{ marginBottom: '0.35rem' }}>
-                      <span style={{ color: 'var(--text-muted)' }}>Actor: </span>
-                      <strong>{h.actor?.displayName || h.actor?.username || 'Authoritative System'}</strong>{' '}
-                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>({h.actor?.id})</span>
-                    </div>
-                    <div style={{ marginBottom: '0.35rem' }}>
-                      <span style={{ color: 'var(--text-muted)' }}>Reason: </span>
-                      <span style={{ color: 'var(--text-primary)' }}>{h.reason || 'No recorded notes'}</span>
-                    </div>
-                    {h.details && (
-                      <pre style={{ margin: '0.35rem 0 0', padding: '0.5rem', backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 'var(--radius-xs)', fontSize: '0.75rem', overflowX: 'auto' }}>
-                        {typeof h.details === 'string' ? h.details : JSON.stringify(h.details, null, 2)}
-                      </pre>
-                    )}
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+              {auditHistory.map((h) => (
+                <div
+                  key={h.id}
+                  style={{
+                    padding: '0.85rem',
+                    backgroundColor: 'var(--bg-surface-raised)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-sm)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{h.action}</span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
+                      {new Date(h.createdAt).toLocaleString()}
+                    </span>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+                  <p style={{ fontSize: 'var(--font-size-xs)', margin: '0.25rem 0', color: 'var(--text-muted)' }}>
+                    Reason: <em>{h.reason || 'No specific note entered.'}</em>
+                  </p>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
+                    Actor: {h.actor?.displayName || h.actor?.username || 'Automated Engine'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Modal>
       )}
-    </div>
+    </Card>
   );
 };
