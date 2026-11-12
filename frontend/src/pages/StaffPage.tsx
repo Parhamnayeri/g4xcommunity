@@ -13,9 +13,23 @@ import {
   reviewProof,
   fetchStaffDisputes,
 } from '../services/operations';
-import { LoadingState } from '../components/ui/LoadingState';
+import {
+  Card,
+  Button,
+  LoadingState,
+  DataTable,
+  Column,
+  Pagination,
+  StatusBadge,
+  Tabs,
+  KpiCard,
+  Modal,
+  Select,
+  Textarea,
+} from '../components/ui';
 import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
 import { UserManagementWorkspace } from '../components/admin/UserManagementWorkspace';
+import { normalizePagination } from '../utils/pagination';
 
 export const StaffPage: React.FC = () => {
   const { user } = useAuth();
@@ -34,9 +48,10 @@ export const StaffPage: React.FC = () => {
       : 'proofs'
   );
 
-  const handleTabChange = (newTab: 'proofs' | 'orders' | 'users' | 'disputes' | 'activity') => {
-    setActiveTab(newTab);
-    setSearchParams({ tab: newTab });
+  const handleTabChange = (newTab: string) => {
+    const tabKey = newTab as 'proofs' | 'orders' | 'users' | 'disputes' | 'activity';
+    setActiveTab(tabKey);
+    setSearchParams({ tab: tabKey });
   };
 
   // Proofs State
@@ -81,7 +96,7 @@ export const StaffPage: React.FC = () => {
         status: proofStatusFilter || undefined,
       });
       setProofs(Array.isArray(res?.proofs) ? res.proofs : []);
-      setProofsPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
+      setProofsPagination(normalizePagination(res?.pagination, 10));
     } catch (err: any) {
       console.error('Failed to load proofs:', err);
     } finally {
@@ -95,7 +110,7 @@ export const StaffPage: React.FC = () => {
     try {
       const res = await fetchStaffDisputes({ page, limit: 10 });
       setDisputes(Array.isArray(res?.disputes) ? res.disputes : []);
-      setDisputesPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
+      setDisputesPagination(normalizePagination(res?.pagination, 10));
     } catch (err: any) {
       console.error('Failed to load disputes:', err);
     } finally {
@@ -122,27 +137,25 @@ export const StaffPage: React.FC = () => {
     setReviewMessage(null);
   };
 
-  const handleSubmitProofReview = async (e: React.FormEvent) => {
+  const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProof) return;
+
     setSubmittingReview(true);
     setReviewMessage(null);
     try {
-      await reviewProof(selectedProof.id, reviewAction, reviewNotes);
+      await reviewProof(selectedProof.id, reviewAction, reviewNotes.trim() || undefined);
       setReviewMessage({
-        text: `Proof #${selectedProof.id} successfully marked as ${reviewAction}.`,
+        text: `Run Proof #${selectedProof.id} marked as ${reviewAction.toUpperCase()}.`,
         type: 'success',
       });
       setTimeout(() => {
         setSelectedProof(null);
         loadProofs(proofsPagination.page);
         loadOverview();
-      }, 1200);
+      }, 900);
     } catch (err: any) {
-      setReviewMessage({
-        text: err.message || 'Failed to submit proof review.',
-        type: 'error',
-      });
+      setReviewMessage({ text: err.message || 'Proof review operation failed.', type: 'error' });
     } finally {
       setSubmittingReview(false);
     }
@@ -154,21 +167,158 @@ export const StaffPage: React.FC = () => {
 
   if (overviewError) {
     return (
-      <div className="card-surface" style={{ padding: '2rem', textAlign: 'center' }}>
+      <Card style={{ padding: '2rem', textAlign: 'center' }}>
         <h2 style={{ color: 'var(--status-danger)', marginBottom: '1rem' }}>Access Denied or Server Error</h2>
         <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>{overviewError}</p>
         <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
           Only authenticated users with verified Staff or Management roles may access this console.
         </p>
-      </div>
+      </Card>
     );
   }
 
+  const proofColumns: Column<PendingProofItem>[] = [
+    {
+      key: 'id',
+      header: 'ID',
+      render: (p) => <span style={{ fontWeight: 700 }}>#{p.id}</span>,
+    },
+    {
+      key: 'order',
+      header: 'Order / Run',
+      render: (p) => (
+        <div>
+          <div style={{ fontWeight: 600 }}>Order #{p.orderId ?? 'N/A'}</div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>Run #{p.runId}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'service',
+      header: 'Service',
+      render: (p) => (
+        <div>
+          <div>{p.game || 'WoW'}</div>
+          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-muted)' }}>{p.service || 'Mythic+'}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'booster',
+      header: 'Booster',
+      render: (p) => (
+        <div>
+          <div style={{ fontWeight: 600 }}>{p.submittedBy.displayName || p.submittedBy.username}</div>
+          <div style={{ fontSize: 'var(--font-size-2xs)', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{p.submittedBy.id}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'proofType',
+      header: 'Type',
+      render: (p) => <span className="badge badge-muted">{p.proofType}</span>,
+    },
+    {
+      key: 'evidence',
+      header: 'Evidence',
+      render: (p) => (
+        <a
+          href={p.evidenceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: 'var(--accent-lime)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+        >
+          View Evidence ↗
+        </a>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (p) => <StatusBadge status={p.status} />,
+    },
+    {
+      key: 'actions',
+      header: 'Action',
+      align: 'right',
+      render: (p) => {
+        const isSubmitter = user?.discordId === p.submittedBy.id;
+        if (p.status === 'pending') {
+          if (isSubmitter) {
+            return (
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                Self-review blocked
+              </span>
+            );
+          }
+          return (
+            <button
+              type="button"
+              onClick={() => handleOpenProofModal(p)}
+              className="btn btn-purple btn-sm"
+              style={{ fontSize: '0.75rem', padding: '0.35rem 0.75rem' }}
+            >
+              Review Proof
+            </button>
+          );
+        }
+        return (
+          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+            Closed by {p.reviewedBy || 'Staff'}
+          </span>
+        );
+      },
+    },
+  ];
+
+  const disputeColumns: Column<DisputeItem>[] = [
+    {
+      key: 'id',
+      header: 'Dispute ID',
+      render: (d) => <span style={{ fontWeight: 700 }}>#{d.id}</span>,
+    },
+    {
+      key: 'orderId',
+      header: 'Order #',
+      render: (d) => <span>Order #{d.orderId}</span>,
+    },
+    {
+      key: 'claimant',
+      header: 'Claimant',
+      render: (d) => (
+        <div>
+          <div style={{ fontWeight: 600 }}>{d.openedBy.displayName || d.openedBy.username}</div>
+          <div style={{ fontSize: 'var(--font-size-2xs)', color: 'var(--text-muted)' }}>{d.openedBy.id}</div>
+        </div>
+      ),
+    },
+    {
+      key: 'disputeType',
+      header: 'Type',
+      render: (d) => <span className="badge badge-muted">{d.disputeType}</span>,
+    },
+    {
+      key: 'description',
+      header: 'Description',
+      truncate: true,
+      render: (d) => <span>{d.description}</span>,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (d) => <StatusBadge status={d.status} />,
+    },
+    {
+      key: 'createdAt',
+      header: 'Date',
+      render: (d) => <span style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-xs)' }}>{new Date(d.createdAt).toLocaleDateString()}</span>,
+    },
+  ];
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-      {/* Header Banner */}
-      <div
-        className="card-surface"
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Header Banner with KPIs */}
+      <Card
         style={{
           padding: '1.75rem 2rem',
           display: 'flex',
@@ -181,221 +331,52 @@ export const StaffPage: React.FC = () => {
       >
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.5rem' }}>
-            <span
-              style={{
-                backgroundColor: 'rgba(204, 255, 0, 0.15)',
-                color: 'var(--accent-lime)',
-                padding: '0.2rem 0.6rem',
-                borderRadius: 'var(--radius-xs)',
-                fontSize: '0.75rem',
-                fontWeight: 700,
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-              }}
-            >
-              Operational Staff Console
-            </span>
+            <span className="badge badge-lime">Operational Staff Console</span>
             {overview?.user.isManagerOrAdmin && (
-              <span
-                style={{
-                  backgroundColor: 'rgba(124, 58, 237, 0.2)',
-                  color: 'var(--primary-purple)',
-                  padding: '0.2rem 0.6rem',
-                  borderRadius: 'var(--radius-xs)',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                }}
-              >
-                Manager Privileges Active
-              </span>
+              <span className="badge badge-purple">Manager Privileges Active</span>
             )}
           </div>
-          <h2 style={{ fontSize: '1.6rem', fontWeight: 800, margin: 0 }}>Staff Operations &amp; Verification</h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '0.35rem', margin: 0 }}>
+          <h1 style={{ fontSize: 'var(--font-size-xl)', fontWeight: 800, margin: 0 }}>Staff Operations &amp; Verification</h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: 'var(--font-size-sm)', marginTop: '0.35rem', margin: 0 }}>
             Logged in as <strong style={{ color: 'var(--text-primary)' }}>{overview?.user.displayName || overview?.user.username}</strong> ({overview?.user.discordId})
           </p>
         </div>
 
         {/* Quick KPI Counters */}
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          <div
-            style={{
-              backgroundColor: 'var(--bg-main)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-sm)',
-              padding: '0.75rem 1.25rem',
-              textAlign: 'center',
-              minWidth: '110px',
-            }}
-          >
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-lime)' }}>
-              {overview?.metrics.pendingProofsCount ?? 0}
-            </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginTop: '0.2rem' }}>
-              Pending Proofs
-            </div>
-          </div>
-
-          <div
-            style={{
-              backgroundColor: 'var(--bg-main)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-sm)',
-              padding: '0.75rem 1.25rem',
-              textAlign: 'center',
-              minWidth: '110px',
-            }}
-          >
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--status-warning)' }}>
-              {overview?.metrics.activeDisputesCount ?? 0}
-            </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginTop: '0.2rem' }}>
-              Open Disputes
-            </div>
-          </div>
-
-          <div
-            style={{
-              backgroundColor: 'var(--bg-main)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-sm)',
-              padding: '0.75rem 1.25rem',
-              textAlign: 'center',
-              minWidth: '110px',
-            }}
-          >
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--primary-purple)' }}>
-              {overview?.metrics.pendingStaffReviewOrdersCount ?? 0}
-            </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginTop: '0.2rem' }}>
-              Order Reviews
-            </div>
-          </div>
+          <KpiCard
+            label="Pending Proofs"
+            value={overview?.metrics.pendingProofsCount ?? 0}
+            highlight="lime"
+            style={{ minWidth: '120px' }}
+          />
+          <KpiCard
+            label="Open Disputes"
+            value={overview?.metrics.activeDisputesCount ?? 0}
+            highlight="purple"
+            style={{ minWidth: '120px' }}
+          />
+          <KpiCard
+            label="Order Reviews"
+            value={overview?.metrics.pendingStaffReviewOrdersCount ?? 0}
+            highlight="purple"
+            style={{ minWidth: '120px' }}
+          />
         </div>
-      </div>
+      </Card>
 
-      {/* Tabs Bar */}
-      <div
-        style={{
-          display: 'flex',
-          borderBottom: '1px solid var(--border-subtle)',
-          gap: '0.5rem',
-          overflowX: 'auto',
-          paddingBottom: '0.25rem',
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => handleTabChange('proofs')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'proofs' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'proofs' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.92rem',
-            padding: '0.65rem 1rem',
-            cursor: 'pointer',
-            transition: 'var(--transition-fast)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <span>🛡️ Pending Proofs</span>
-          <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>({overview?.metrics.pendingProofsCount ?? 0})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleTabChange('orders')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'orders' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'orders' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.92rem',
-            padding: '0.65rem 1rem',
-            cursor: 'pointer',
-            transition: 'var(--transition-fast)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <span>📦 Order Workspace</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleTabChange('users')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'users' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'users' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.92rem',
-            padding: '0.65rem 1rem',
-            cursor: 'pointer',
-            transition: 'var(--transition-fast)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <span>👥 User Directory</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleTabChange('disputes')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'disputes' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'disputes' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.92rem',
-            padding: '0.65rem 1rem',
-            cursor: 'pointer',
-            transition: 'var(--transition-fast)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <span>⚖️ Dispute Queue</span>
-          <span style={{ fontSize: '0.75rem', opacity: 0.8 }}>({overview?.metrics.activeDisputesCount ?? 0})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleTabChange('activity')}
-          style={{
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'activity' ? '2px solid var(--accent-lime)' : '2px solid transparent',
-            color: activeTab === 'activity' ? 'var(--accent-lime)' : 'var(--text-muted)',
-            fontWeight: 700,
-            fontSize: '0.92rem',
-            padding: '0.65rem 1rem',
-            cursor: 'pointer',
-            transition: 'var(--transition-fast)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          <span>📋 My Operational Activity</span>
-        </button>
-      </div>
+      {/* Tabs */}
+      <Tabs
+        tabs={[
+          { id: 'proofs', label: 'Pending Proofs', count: overview?.metrics.pendingProofsCount ?? 0 },
+          { id: 'orders', label: 'Order Workspace' },
+          { id: 'users', label: 'User Directory' },
+          { id: 'disputes', label: 'Dispute Queue', count: overview?.metrics.activeDisputesCount ?? 0 },
+          { id: 'activity', label: 'My Operational Activity' },
+        ]}
+        activeTab={activeTab}
+        onChange={handleTabChange}
+      />
 
       {/* Tab: Order Workspace (Read-Only) */}
       {activeTab === 'orders' && (
@@ -416,346 +397,65 @@ export const StaffPage: React.FC = () => {
         />
       )}
 
-      {/* Tab 1: Proofs Queue */}
+      {/* Tab: Proofs Queue */}
       {activeTab === 'proofs' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {/* Filter Bar */}
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: '1rem',
-            }}
-          >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
               <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Status:</span>
-              <select
+              <Select
                 value={proofStatusFilter}
                 onChange={(e) => setProofStatusFilter(e.target.value)}
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  padding: '0.4rem 0.8rem',
-                  borderRadius: 'var(--radius-xs)',
-                  fontSize: '0.85rem',
-                }}
+                style={{ width: 'auto' }}
               >
                 <option value="pending">Pending Review</option>
                 <option value="approved">Approved</option>
                 <option value="rejected">Rejected</option>
                 <option value="">All Statuses</option>
-              </select>
+              </Select>
             </div>
 
-            <button
-              onClick={() => loadProofs(proofsPagination?.page ?? 1)}
-              className="btn btn-sm"
-              style={{
-                backgroundColor: 'var(--bg-surface-hover)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-subtle)',
-              }}
-            >
-              Refresh Queue
-            </button>
+            <Button variant="outline" size="sm" onClick={() => loadProofs(proofsPagination?.page ?? 1)}>
+              ↻ Refresh Queue
+            </Button>
           </div>
 
-          {/* Table */}
-          <div
-            className="card-surface"
-            style={{
-              padding: 0,
-              overflow: 'hidden',
-              border: '1px solid var(--border-subtle)',
-            }}
-          >
-            {proofsLoading ? (
-              <div style={{ padding: '3rem' }}>
-                <LoadingState message="Fetching proof queue..." />
-              </div>
-            ) : proofs.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                No run proofs found matching current filters.
-              </div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>ID</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Order / Run</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Service</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Booster</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Type</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Evidence</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Status</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600, textAlign: 'right' }}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {proofs.map((proof) => {
-                      const isSubmitter = user?.discordId === proof.submittedBy.id;
-                      return (
-                        <tr
-                          key={proof.id}
-                          style={{
-                            borderBottom: '1px solid var(--border-subtle)',
-                            transition: 'var(--transition-fast)',
-                          }}
-                        >
-                          <td style={{ padding: '0.9rem 1.25rem', fontWeight: 700 }}>#{proof.id}</td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <div>Order #{proof.orderId ?? 'N/A'}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Run #{proof.runId}</div>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <div>{proof.game || 'WoW'}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{proof.service || 'Mythic+'}</div>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <div style={{ fontWeight: 600 }}>{proof.submittedBy.displayName || proof.submittedBy.username}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{proof.submittedBy.id}</div>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <span
-                              style={{
-                                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                                padding: '0.2rem 0.5rem',
-                                borderRadius: 'var(--radius-xs)',
-                                fontSize: '0.75rem',
-                              }}
-                            >
-                              {proof.proofType}
-                            </span>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <a
-                              href={proof.evidenceUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{
-                                color: 'var(--accent-lime)',
-                                textDecoration: 'none',
-                                fontWeight: 600,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '0.25rem',
-                              }}
-                            >
-                              View Evidence &nearr;
-                            </a>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <span
-                              style={{
-                                padding: '0.2rem 0.6rem',
-                                borderRadius: 'var(--radius-xs)',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                textTransform: 'capitalize',
-                                backgroundColor:
-                                  proof.status === 'approved'
-                                    ? 'rgba(16, 185, 129, 0.15)'
-                                    : proof.status === 'rejected'
-                                    ? 'rgba(239, 68, 68, 0.15)'
-                                    : 'rgba(245, 158, 11, 0.15)',
-                                color:
-                                  proof.status === 'approved'
-                                    ? 'var(--status-success)'
-                                    : proof.status === 'rejected'
-                                    ? 'var(--status-danger)'
-                                    : 'var(--status-warning)',
-                              }}
-                            >
-                              {proof.status}
-                            </span>
-                          </td>
-                          <td style={{ padding: '0.9rem 1.25rem', textAlign: 'right' }}>
-                            {proof.status === 'pending' ? (
-                              isSubmitter ? (
-                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                  Self-review blocked
-                                </span>
-                              ) : (
-                                <button
-                                  onClick={() => handleOpenProofModal(proof)}
-                                  className="btn btn-sm"
-                                  style={{
-                                    backgroundColor: 'var(--primary-purple)',
-                                    color: '#ffffff',
-                                    fontWeight: 600,
-                                    fontSize: '0.75rem',
-                                    padding: '0.35rem 0.75rem',
-                                  }}
-                                >
-                                  Review Proof
-                                </button>
-                              )
-                            ) : (
-                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                Closed by {proof.reviewedBy || 'Staff'}
-                              </span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
+          <div>
+            <DataTable
+              columns={proofColumns}
+              data={proofs}
+              keyExtractor={(p) => p.id}
+              isLoading={proofsLoading}
+              emptyTitle="No run proofs found matching current filters."
+              emptyMessage="Proofs submitted by boosters for completed runs will appear here for staff review."
+            />
 
-            {/* Pagination Controls */}
-            {(proofsPagination?.totalPages ?? 0) > 1 && (
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '1rem 1.5rem',
-                  borderTop: '1px solid var(--border-subtle)',
-                  fontSize: '0.85rem',
-                  color: 'var(--text-muted)',
-                }}
-              >
-                <div>
-                  Page {proofsPagination?.page ?? 1} of {proofsPagination?.totalPages || 1} ({proofsPagination?.total ?? 0} total proofs)
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    disabled={(proofsPagination?.page ?? 1) <= 1}
-                    onClick={() => loadProofs((proofsPagination?.page ?? 1) - 1)}
-                    className="btn btn-sm"
-                    style={{
-                      backgroundColor: 'var(--bg-surface-hover)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-subtle)',
-                    }}
-                  >
-                    &larr; Previous
-                  </button>
-                  <button
-                    disabled={(proofsPagination?.page ?? 1) >= (proofsPagination?.totalPages || 1)}
-                    onClick={() => loadProofs((proofsPagination?.page ?? 1) + 1)}
-                    className="btn btn-sm"
-                    style={{
-                      backgroundColor: 'var(--bg-surface-hover)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-subtle)',
-                    }}
-                  >
-                    Next &rarr;
-                  </button>
-                </div>
-              </div>
-            )}
+            <Pagination
+              pagination={proofsPagination}
+              onPageChange={(p) => loadProofs(p)}
+              showPageSizeSelector={false}
+            />
           </div>
         </div>
       )}
 
-      {/* Tab 2: Disputes Queue */}
+      {/* Tab: Disputes Queue */}
       {activeTab === 'disputes' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div
-            className="card-surface"
-            style={{
-              padding: 0,
-              overflow: 'hidden',
-              border: '1px solid var(--border-subtle)',
-            }}
-          >
-            {disputesLoading ? (
-              <div style={{ padding: '3rem' }}>
-                <LoadingState message="Fetching open disputes..." />
-              </div>
-            ) : disputes.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                No active disputes requiring review at this time.
-              </div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Dispute ID</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Order #</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Claimant</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Type</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Description</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Status</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Date</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {disputes.map((dispute) => (
-                      <tr key={dispute.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                        <td style={{ padding: '0.9rem 1.25rem', fontWeight: 700 }}>#{dispute.id}</td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>Order #{dispute.orderId}</td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
-                          <div style={{ fontWeight: 600 }}>{dispute.openedBy.displayName || dispute.openedBy.username}</div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{dispute.openedBy.id}</div>
-                        </td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
-                          <span
-                            style={{
-                              backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                              padding: '0.2rem 0.5rem',
-                              borderRadius: 'var(--radius-xs)',
-                              fontSize: '0.75rem',
-                            }}
-                          >
-                            {dispute.disputeType}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.9rem 1.25rem', maxWidth: '300px' }}>
-                          <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {dispute.description}
-                          </div>
-                        </td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
-                          <span
-                            style={{
-                              padding: '0.2rem 0.6rem',
-                              borderRadius: 'var(--radius-xs)',
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              textTransform: 'capitalize',
-                              backgroundColor:
-                                dispute.status === 'resolved'
-                                  ? 'rgba(16, 185, 129, 0.15)'
-                                  : dispute.status === 'open'
-                                  ? 'rgba(239, 68, 68, 0.15)'
-                                  : 'rgba(245, 158, 11, 0.15)',
-                              color:
-                                dispute.status === 'resolved'
-                                  ? 'var(--status-success)'
-                                  : dispute.status === 'open'
-                                  ? 'var(--status-danger)'
-                                  : 'var(--status-warning)',
-                            }}
-                          >
-                            {dispute.status}
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                          {new Date(dispute.createdAt).toLocaleDateString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+          <DataTable
+            columns={disputeColumns}
+            data={disputes}
+            keyExtractor={(d) => d.id}
+            isLoading={disputesLoading}
+            emptyTitle="No active disputes requiring review at this time."
+            emptyMessage="Customer or booster disputes will be listed here when raised."
+          />
         </div>
       )}
 
-      {/* Tab 3: Staff Activity History */}
+      {/* Tab: Staff Activity History */}
       {activeTab === 'activity' && (
-        <div className="card-surface" style={{ padding: '1.5rem', border: '1px solid var(--border-subtle)' }}>
+        <Card style={{ padding: '1.5rem' }}>
           <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', fontWeight: 700 }}>Recent Operational Decisions</h3>
           {overview?.recentActivity.length === 0 ? (
             <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>No recent logged staff actions found.</div>
@@ -765,9 +465,9 @@ export const StaffPage: React.FC = () => {
                 <div
                   key={log.id}
                   style={{
-                    backgroundColor: 'var(--bg-main)',
+                    backgroundColor: 'var(--bg-surface-raised)',
                     border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-xs)',
+                    borderRadius: 'var(--radius-sm)',
                     padding: '0.85rem 1.25rem',
                     display: 'flex',
                     justifyContent: 'space-between',
@@ -783,206 +483,127 @@ export const StaffPage: React.FC = () => {
                       {log.entityType} #{log.entityId} — {log.reason || 'Operational action'}
                     </div>
                   </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
                     {new Date(log.createdAt).toLocaleString()}
                   </div>
                 </div>
               ))}
             </div>
           )}
-        </div>
+        </Card>
       )}
 
       {/* Proof Review Modal */}
       {selectedProof && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '1rem',
-          }}
+        <Modal
+          isOpen={Boolean(selectedProof)}
+          onClose={() => setSelectedProof(null)}
+          title={`Review Run Proof #${selectedProof.id}`}
+          maxWidth="560px"
+          footer={
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', width: '100%' }}>
+              <Button variant="outline" size="sm" onClick={() => setSelectedProof(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant={reviewAction === 'approved' ? 'cta' : 'purple'}
+                size="sm"
+                disabled={submittingReview}
+                onClick={handleReviewSubmit}
+              >
+                {submittingReview
+                  ? 'Submitting...'
+                  : reviewAction === 'approved'
+                  ? 'Approve Proof'
+                  : 'Reject Proof'}
+              </Button>
+            </div>
+          }
         >
           <div
-            className="card-surface"
             style={{
-              maxWidth: '560px',
-              width: '100%',
-              padding: '2rem',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-subtle)',
+              backgroundColor: 'var(--bg-surface-raised)',
+              padding: '1rem',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '0.85rem',
+              marginBottom: '1.25rem',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '0.4rem',
             }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>Review Run Proof #{selectedProof.id}</h3>
-              <button
-                onClick={() => setSelectedProof(null)}
+            <div>
+              <strong style={{ color: 'var(--text-muted)' }}>Order:</strong> #{selectedProof.orderId ?? 'N/A'} (Run #{selectedProof.runId})
+            </div>
+            <div>
+              <strong style={{ color: 'var(--text-muted)' }}>Booster:</strong> {selectedProof.submittedBy.displayName || selectedProof.submittedBy.username} ({selectedProof.submittedBy.id})
+            </div>
+            <div>
+              <strong style={{ color: 'var(--text-muted)' }}>Description:</strong> {selectedProof.description || 'No description provided'}
+            </div>
+            <div>
+              <strong style={{ color: 'var(--text-muted)' }}>Evidence URL:</strong>{' '}
+              <a
+                href={selectedProof.evidenceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: 'var(--accent-lime)', textDecoration: 'underline' }}
+              >
+                {selectedProof.evidenceUrl}
+              </a>
+            </div>
+          </div>
+
+          <form onSubmit={handleReviewSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div>
+              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                Operational Decision
+              </label>
+              <div style={{ display: 'flex', gap: '1rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="proofDecision"
+                    checked={reviewAction === 'approved'}
+                    onChange={() => setReviewAction('approved')}
+                  />
+                  <span>Approve Evidence</span>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                  <input
+                    type="radio"
+                    name="proofDecision"
+                    checked={reviewAction === 'rejected'}
+                    onChange={() => setReviewAction('rejected')}
+                  />
+                  <span style={{ color: 'var(--status-danger)' }}>Reject Evidence</span>
+                </label>
+              </div>
+            </div>
+
+            <Textarea
+              label="Reviewer Notes / Feedback (Optional for approval, recommended for rejection)"
+              placeholder="e.g. Cleared boss verified on score screen; or Incomplete screenshot provided..."
+              value={reviewNotes}
+              onChange={(e) => setReviewNotes(e.target.value)}
+            />
+
+            {reviewMessage && (
+              <div
                 style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-muted)',
-                  fontSize: '1.2rem',
-                  cursor: 'pointer',
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.82rem',
+                  backgroundColor: reviewMessage.type === 'success' ? 'var(--status-success-bg)' : 'var(--status-danger-bg)',
+                  color: reviewMessage.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
                 }}
               >
-                &times;
-              </button>
-            </div>
-
-            <div
-              style={{
-                backgroundColor: 'var(--bg-main)',
-                padding: '1rem',
-                borderRadius: 'var(--radius-xs)',
-                fontSize: '0.85rem',
-                marginBottom: '1.5rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.5rem',
-              }}
-            >
-              <div>
-                <strong style={{ color: 'var(--text-muted)' }}>Order:</strong> #{selectedProof.orderId ?? 'N/A'} (Run #{selectedProof.runId})
+                {reviewMessage.text}
               </div>
-              <div>
-                <strong style={{ color: 'var(--text-muted)' }}>Booster:</strong> {selectedProof.submittedBy.displayName || selectedProof.submittedBy.username} ({selectedProof.submittedBy.id})
-              </div>
-              <div>
-                <strong style={{ color: 'var(--text-muted)' }}>Description:</strong> {selectedProof.description || 'No description provided'}
-              </div>
-              <div>
-                <strong style={{ color: 'var(--text-muted)' }}>Evidence URL:</strong>{' '}
-                <a
-                  href={selectedProof.evidenceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: 'var(--accent-lime)', textDecoration: 'underline' }}
-                >
-                  {selectedProof.evidenceUrl}
-                </a>
-              </div>
-            </div>
-
-            <form onSubmit={handleSubmitProofReview} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-                  Decision
-                </label>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  <label
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                      cursor: 'pointer',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="decision"
-                      value="approved"
-                      checked={reviewAction === 'approved'}
-                      onChange={() => setReviewAction('approved')}
-                    />
-                    <span style={{ color: 'var(--status-success)', fontWeight: 600 }}>Approve Proof</span>
-                  </label>
-                  <label
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                      cursor: 'pointer',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="decision"
-                      value="rejected"
-                      checked={reviewAction === 'rejected'}
-                      onChange={() => setReviewAction('rejected')}
-                    />
-                    <span style={{ color: 'var(--status-danger)', fontWeight: 600 }}>Reject Proof</span>
-                  </label>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-                  Review Notes / Audit Reason
-                </label>
-                <textarea
-                  value={reviewNotes}
-                  onChange={(e) => setReviewNotes(e.target.value)}
-                  placeholder="Enter audit notes (required if rejecting)..."
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    backgroundColor: 'var(--bg-main)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-xs)',
-                    color: 'var(--text-primary)',
-                    padding: '0.75rem',
-                    fontSize: '0.85rem',
-                    resize: 'vertical',
-                  }}
-                />
-              </div>
-
-              {reviewMessage && (
-                <div
-                  style={{
-                    padding: '0.75rem',
-                    borderRadius: 'var(--radius-xs)',
-                    fontSize: '0.85rem',
-                    backgroundColor: reviewMessage.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                    color: reviewMessage.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
-                  }}
-                >
-                  {reviewMessage.text}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedProof(null)}
-                  disabled={submittingReview}
-                  className="btn btn-sm"
-                  style={{
-                    backgroundColor: 'var(--bg-surface-hover)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-subtle)',
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submittingReview}
-                  className="btn btn-sm"
-                  style={{
-                    backgroundColor: reviewAction === 'approved' ? 'var(--status-success)' : 'var(--status-danger)',
-                    color: '#ffffff',
-                    fontWeight: 700,
-                  }}
-                >
-                  {submittingReview ? 'Recording...' : `Confirm ${reviewAction === 'approved' ? 'Approval' : 'Rejection'}`}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+            )}
+          </form>
+        </Modal>
       )}
     </div>
   );
 };
-export default StaffPage;
