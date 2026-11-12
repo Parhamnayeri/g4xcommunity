@@ -9,6 +9,7 @@ import { LedgerActivityTable } from '../components/wallet/LedgerActivityTable';
 import { LoadingState } from '../components/ui/LoadingState';
 import { ErrorState } from '../components/ui/ErrorState';
 import { Card } from '../components/ui/Card';
+import { Tabs } from '../components/ui';
 import { WalletOverviewResponse } from '../types/wallet';
 import { fetchWalletOverview } from '../services/wallet';
 
@@ -221,43 +222,16 @@ export const WalletPage: React.FC = () => {
         </div>
 
         {/* 3. Financial Activity Section (Tabs for Deposit History & Ledger Activity) */}
-        <div>
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border-subtle)', marginBottom: '1.25rem', gap: '1.5rem' }}>
-            <button
-              type="button"
-              onClick={() => setActiveHistoryTab('deposits')}
-              style={{
-                padding: '0.75rem 0.25rem',
-                background: 'none',
-                border: 'none',
-                borderBottom: activeHistoryTab === 'deposits' ? '3px solid var(--accent-lime)' : '3px solid transparent',
-                color: activeHistoryTab === 'deposits' ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontWeight: activeHistoryTab === 'deposits' ? 800 : 600,
-                fontSize: '0.95rem',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              Deposit Requests History
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveHistoryTab('ledger')}
-              style={{
-                padding: '0.75rem 0.25rem',
-                background: 'none',
-                border: 'none',
-                borderBottom: activeHistoryTab === 'ledger' ? '3px solid var(--primary-purple)' : '3px solid transparent',
-                color: activeHistoryTab === 'ledger' ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontWeight: activeHistoryTab === 'ledger' ? 800 : 600,
-                fontSize: '0.95rem',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-              }}
-            >
-              Ledger Journal Activity
-            </button>
+          <div style={{ marginBottom: '1.25rem' }}>
+            <Tabs
+              tabs={[
+                { id: 'deposits', label: 'Deposit Requests History' },
+                { id: 'ledger', label: 'Ledger Journal Activity' },
+              ]}
+              activeTab={activeHistoryTab}
+              onChange={(t) => setActiveHistoryTab(t as 'deposits' | 'ledger')}
+              accent="lime"
+            />
           </div>
 
           {activeHistoryTab === 'deposits' ? (

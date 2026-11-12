@@ -1,5 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { Card } from '../ui/Card';
+import React, { useState, useEffect, useMemo } from 'react';
+import {
+  Card,
+  Button,
+  DataTable,
+  Column,
+  Pagination,
+  StatusBadge,
+  Select,
+} from '../ui';
+import { normalizePagination } from '../../utils/pagination';
 import { WithdrawalHistoryItem } from '../../types/withdraw';
 import { fetchWithdrawalHistory, cancelWithdrawalRequest } from '../../services/withdraw';
 
@@ -11,8 +20,7 @@ interface WithdrawalHistoryTableProps {
 export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ lastUpdated, onBalanceSync }) => {
   const [withdrawals, setWithdrawals] = useState<WithdrawalHistoryItem[]>([]);
   const [page, setPage] = useState<number>(1);
-  const [totalPages, setTotalPages] = useState<number>(1);
-  const [totalCount, setTotalCount] = useState<number>(0);
+  const [pagination, setPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [methodFilter, setMethodFilter] = useState<string>('ALL');
   const [loading, setLoading] = useState<boolean>(true);
@@ -33,10 +41,8 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
 
       if (res.success) {
         setWithdrawals(res.withdrawals || []);
-        const pag = res.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 };
-        setPage(pag.page ?? 1);
-        setTotalPages(pag.totalPages ?? 1);
-        setTotalCount(pag.total ?? 0);
+        setPage(res.pagination?.page ?? targetPage);
+        setPagination(normalizePagination(res.pagination || res, targetPage, 10));
       } else {
         setError(res.error || 'Failed to retrieve withdrawal history.');
       }
@@ -92,22 +98,144 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
     }
   };
 
-  const getStatusBadge = (item: WithdrawalHistoryItem) => {
-    const raw = (item.status || '').toUpperCase();
-    if (raw === 'PAID') {
-      return <span className="badge badge-green">Paid</span>;
-    }
-    if (raw === 'RESERVED' || raw === 'UNDER_ADMIN_REVIEW' || raw === 'PROCESSING') {
-      return <span className="badge badge-purple">{item.simplifiedStatus.label}</span>;
-    }
-    if (raw === 'QUOTED' || raw === 'USER_CONFIRMED' || raw === 'REQUESTED') {
-      return <span className="badge badge-amber">{item.simplifiedStatus.label}</span>;
-    }
-    if (raw === 'REJECTED' || raw === 'CANCELLED' || raw === 'FAILED') {
-      return <span className="badge badge-muted">{item.simplifiedStatus.label}</span>;
-    }
-    return <span className="badge badge-muted">{raw}</span>;
-  };
+  const columns: Column<WithdrawalHistoryItem>[] = useMemo(
+    () => [
+      {
+        key: 'id',
+        header: 'Reference',
+        render: (item) => (
+          <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--text-primary)' }}>
+            #{item.id} <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>({item.withdrawalRef})</span>
+          </span>
+        ),
+      },
+      {
+        key: 'createdAt',
+        header: 'Date',
+        render: (item) => (
+          <span style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+            {formatDate(item.createdAt)}
+          </span>
+        ),
+      },
+      {
+        key: 'method',
+        header: 'Method & Destination',
+        render: (item) => (
+          <div>
+            <div style={{ fontWeight: 700, color: item.payoutMethod === 'USDT_BEP20' ? 'var(--accent-lime)' : 'var(--status-info)' }}>
+              {item.payoutMethod === 'USDT_BEP20' ? 'USDT (BEP-20)' : 'Iranian Bank (IRT)'}
+            </div>
+            <div style={{ fontFamily: 'monospace', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+              {item.maskedDestinationAddress}
+            </div>
+          </div>
+        ),
+      },
+      {
+        key: 'requestedUsd',
+        header: 'Requested',
+        align: 'right',
+        render: (item) => (
+          <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+            ${item.requestedUsd}
+          </span>
+        ),
+      },
+      {
+        key: 'fixedFeeUsd',
+        header: 'Fee',
+        align: 'right',
+        render: (item) => (
+          <span style={{ color: 'var(--status-warning)' }}>
+            -${item.fixedFeeUsd}
+          </span>
+        ),
+      },
+      {
+        key: 'quotedNetPayoutAmount',
+        header: 'Net Payout',
+        align: 'right',
+        render: (item) => (
+          <span style={{ fontWeight: 800, color: 'var(--accent-lime)' }}>
+            {item.payoutMethod === 'IRT_BANK'
+              ? `${Number(item.quotedNetPayoutAmount).toLocaleString()} Toman`
+              : `${item.quotedNetPayoutAmount} USDT`}
+          </span>
+        ),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        align: 'center',
+        render: (item) => <StatusBadge status={item.status} simplifiedStatus={item.simplifiedStatus?.label} />,
+      },
+      {
+        key: 'receipt',
+        header: 'Payment Receipt',
+        render: (item) => (
+          <span style={{ fontSize: '0.75rem' }}>
+            {item.externalTxHash ? (
+              item.txExplorerUrl ? (
+                <a
+                  href={item.txExplorerUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    fontFamily: 'monospace',
+                    color: 'var(--primary-purple)',
+                    textDecoration: 'underline',
+                  }}
+                >
+                  Tx: {item.externalTxHash} ↗
+                </a>
+              ) : (
+                <span style={{ fontFamily: 'monospace', color: 'var(--primary-purple)' }}>
+                  Tx: {item.externalTxHash}
+                </span>
+              )
+            ) : item.bankSettled ? (
+              <span style={{ fontFamily: 'monospace', color: 'var(--status-success)', fontWeight: 600 }}>
+                ✓ Bank Settled
+              </span>
+            ) : (
+              <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Pending manual payout</span>
+            )}
+          </span>
+        ),
+      },
+      {
+        key: 'action',
+        header: 'Action',
+        align: 'center',
+        render: (item) => {
+          const isCancellable = ['QUOTED', 'REQUESTED', 'USER_CONFIRMED', 'PENDING'].includes(item.status);
+          if (!isCancellable) {
+            return (
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>—</span>
+            );
+          }
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={cancellingId === item.id}
+              onClick={() => handleCancelRequest(item)}
+              style={{
+                color: 'var(--status-danger)',
+                borderColor: 'rgba(239, 68, 68, 0.4)',
+                padding: '0.2rem 0.5rem',
+                fontSize: '0.72rem',
+              }}
+            >
+              {cancellingId === item.id ? 'Cancelling...' : 'Cancel'}
+            </Button>
+          );
+        },
+      },
+    ],
+    [cancellingId]
+  );
 
   return (
     <Card highlight="none" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
@@ -132,49 +260,35 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
 
         {/* Filter Controls */}
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <select
+          <Select
             value={methodFilter}
             onChange={(e) => {
               setMethodFilter(e.target.value);
               setPage(1);
             }}
-            style={{
-              backgroundColor: 'rgba(15, 12, 28, 0.7)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-xs)',
-              padding: '0.4rem 0.65rem',
-              color: 'var(--text-primary)',
-              fontSize: '0.78rem',
-            }}
-          >
-            <option value="ALL">All Methods</option>
-            <option value="USDT_BEP20">USDT (BEP-20)</option>
-            <option value="IRT_BANK">Iranian Bank (IRT)</option>
-          </select>
+            options={[
+              { label: 'All Methods', value: 'ALL' },
+              { label: 'USDT (BEP-20)', value: 'USDT_BEP20' },
+              { label: 'Iranian Bank (IRT)', value: 'IRT_BANK' },
+            ]}
+          />
 
-          <select
+          <Select
             value={statusFilter}
             onChange={(e) => {
               setStatusFilter(e.target.value);
               setPage(1);
             }}
-            style={{
-              backgroundColor: 'rgba(15, 12, 28, 0.7)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-xs)',
-              padding: '0.4rem 0.65rem',
-              color: 'var(--text-primary)',
-              fontSize: '0.78rem',
-            }}
-          >
-            <option value="ALL">All Statuses</option>
-            <option value="PAID">Paid</option>
-            <option value="RESERVED">Reserved</option>
-            <option value="UNDER_ADMIN_REVIEW">Under Review</option>
-            <option value="PROCESSING">Processing</option>
-            <option value="CANCELLED">Cancelled</option>
-            <option value="REJECTED">Rejected</option>
-          </select>
+            options={[
+              { label: 'All Statuses', value: 'ALL' },
+              { label: 'Paid', value: 'PAID' },
+              { label: 'Reserved', value: 'RESERVED' },
+              { label: 'Under Review', value: 'UNDER_ADMIN_REVIEW' },
+              { label: 'Processing', value: 'PROCESSING' },
+              { label: 'Cancelled', value: 'CANCELLED' },
+              { label: 'Rejected', value: 'REJECTED' },
+            ]}
+          />
         </div>
       </div>
 
@@ -190,177 +304,20 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
         </div>
       )}
 
-      {loading ? (
-        <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.88rem' }}>
-          Loading withdrawal records...
-        </div>
-      ) : withdrawals.length === 0 ? (
-        <div
-          style={{
-            padding: '2.5rem',
-            textAlign: 'center',
-            backgroundColor: 'rgba(15, 12, 28, 0.4)',
-            border: '1px dashed var(--border-subtle)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--text-muted)',
-            fontSize: '0.88rem',
-          }}
-        >
-          No withdrawal requests found matching your filter criteria.
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700 }}>Reference</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700 }}>Date</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700 }}>Method &amp; Destination</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'right' }}>Requested</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'right' }}>Fee</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'right' }}>Net Payout</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'center' }}>Status</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700 }}>Payment Receipt</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'center' }}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {withdrawals.map((item) => (
-                <tr
-                  key={item.id}
-                  style={{
-                    borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-                    transition: 'background-color 0.15s ease',
-                  }}
-                >
-                  <td style={{ padding: '0.65rem 0.75rem', fontFamily: 'monospace', fontWeight: 700, color: 'var(--text-primary)' }}>
-                    #{item.id} <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>({item.withdrawalRef})</span>
-                  </td>
+      <DataTable
+        columns={columns}
+        data={withdrawals}
+        keyField="id"
+        loading={loading}
+        emptyMessage="No withdrawal requests found matching your filter criteria."
+      />
 
-                  <td style={{ padding: '0.65rem 0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                    {formatDate(item.createdAt)}
-                  </td>
-
-                  <td style={{ padding: '0.65rem 0.75rem' }}>
-                    <div style={{ fontWeight: 700, color: item.payoutMethod === 'USDT_BEP20' ? 'var(--accent-lime)' : 'var(--status-info)' }}>
-                      {item.payoutMethod === 'USDT_BEP20' ? 'USDT (BEP-20)' : 'Iranian Bank (IRT)'}
-                    </div>
-                    <div style={{ fontFamily: 'monospace', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
-                      {item.maskedDestinationAddress}
-                    </div>
-                  </td>
-
-                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right', fontWeight: 700, color: 'var(--text-primary)' }}>
-                    ${item.requestedUsd}
-                  </td>
-
-                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right', color: 'var(--status-warning)' }}>
-                    -${item.fixedFeeUsd}
-                  </td>
-
-                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right', fontWeight: 800, color: 'var(--accent-lime)' }}>
-                    {item.payoutMethod === 'IRT_BANK'
-                      ? `${Number(item.quotedNetPayoutAmount).toLocaleString()} Toman`
-                      : `${item.quotedNetPayoutAmount} USDT`}
-                  </td>
-
-                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'center' }}>
-                    {getStatusBadge(item)}
-                  </td>
-
-                  <td style={{ padding: '0.65rem 0.75rem', fontSize: '0.75rem' }}>
-                    {item.externalTxHash ? (
-                      item.txExplorerUrl ? (
-                        <a
-                          href={item.txExplorerUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{
-                            fontFamily: 'monospace',
-                            color: 'var(--primary-purple)',
-                            textDecoration: 'underline',
-                          }}
-                        >
-                          Tx: {item.externalTxHash} ↗
-                        </a>
-                      ) : (
-                        <span style={{ fontFamily: 'monospace', color: 'var(--primary-purple)' }}>
-                          Tx: {item.externalTxHash}
-                        </span>
-                      )
-                    ) : item.bankSettled ? (
-                      <span style={{ fontFamily: 'monospace', color: 'var(--status-success)', fontWeight: 600 }}>
-                        ✓ Bank Settled
-                      </span>
-                    ) : (
-                      <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Pending manual payout</span>
-                    )}
-                  </td>
-
-                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'center' }}>
-                    {(item.status === 'RESERVED' || item.status === 'QUOTED') ? (
-                      <button
-                        type="button"
-                        onClick={() => handleCancelRequest(item)}
-                        disabled={cancellingId === item.id}
-                        className="btn btn-outline btn-sm"
-                        style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', color: 'var(--status-danger)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
-                        title="Cancel this withdrawal request and release locked funds"
-                      >
-                        {cancellingId === item.id ? 'Cancelling...' : 'Cancel'}
-                      </button>
-                    ) : (
-                      <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Pagination Footer */}
-      {totalPages > 1 && (
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginTop: '1.25rem',
-            paddingTop: '0.75rem',
-            borderTop: '1px solid var(--border-subtle)',
-            fontSize: '0.78rem',
-            color: 'var(--text-muted)',
-          }}
-        >
-          <span>
-            Showing page {page} of {totalPages} ({totalCount} total requests)
-          </span>
-
-          <div style={{ display: 'flex', gap: '0.5rem' }}>
-            <button
-              type="button"
-              onClick={() => loadData(page - 1)}
-              disabled={page <= 1 || loading}
-              className="btn btn-outline btn-sm"
-              style={{ padding: '0.25rem 0.6rem' }}
-            >
-              &larr; Previous
-            </button>
-            <button
-              type="button"
-              onClick={() => loadData(page + 1)}
-              disabled={page >= totalPages || loading}
-              className="btn btn-outline btn-sm"
-              style={{ padding: '0.25rem 0.6rem' }}
-            >
-              Next &rarr;
-            </button>
-          </div>
-        </div>
-      )}
+      <Pagination
+        pagination={pagination}
+        onPageChange={(p) => loadData(p)}
+      />
     </Card>
   );
 };
 
+export default WithdrawalHistoryTable;
