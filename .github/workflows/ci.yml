@@ -160,6 +160,7 @@ jobs:
         run: |
           trap 'rm -f prisma/staging/ci_withdraw.db*' EXIT
           rm -f prisma/staging/ci_withdraw.db*
+          : > prisma/staging/ci_withdraw.db
           npm run migrate:safe
           npx ts-node src/database/seed.ts
           npm run test:withdraw
@@ -177,6 +178,7 @@ jobs:
         run: |
           trap 'rm -f prisma/staging/ci_orders.db*' EXIT
           rm -f prisma/staging/ci_orders.db*
+          : > prisma/staging/ci_orders.db
           npm run migrate:safe
           npx ts-node src/database/seed.ts
           npm run test:orders
