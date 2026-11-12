@@ -4,30 +4,73 @@
  */
 
 :root {
-  /* Mandatory Core Palette */
+  /* Mandatory Core Palette - Never modify without governance */
   --bg-main: #0d0b12;
   --bg-surface: #181524;
   --bg-surface-hover: #231e34;
+  --bg-surface-active: #2e2844;
+  --bg-surface-raised: #1f1b2e;
   --primary-purple: #7c3aed;
   --primary-purple-hover: #6d28d9;
+  --primary-purple-light: #a78bfa;
   --purple-glow: rgba(124, 58, 237, 0.35);
+  --purple-subtle: rgba(124, 58, 237, 0.12);
   --accent-lime: #ccff00;
   --accent-lime-hover: #b8e600;
   --accent-lime-glow: rgba(204, 255, 0, 0.4);
+  --accent-lime-subtle: rgba(204, 255, 0, 0.12);
   --text-primary: #f4f4f6;
   --text-muted: #94a3b8;
+  --text-dim: #64748b;
   --text-inverse: #0d0b12;
   --border-subtle: #2d2645;
+  --border-strong: #3d335c;
+  --border-focus: #7c3aed;
 
   /* Status Colors (Harmonious with Dark/Purple aesthetic) */
   --status-success: #10b981;
+  --status-success-bg: rgba(16, 185, 129, 0.12);
+  --status-success-border: rgba(16, 185, 129, 0.3);
   --status-warning: #f59e0b;
+  --status-warning-bg: rgba(245, 158, 11, 0.12);
+  --status-warning-border: rgba(245, 158, 11, 0.3);
   --status-danger: #ef4444;
+  --status-danger-bg: rgba(239, 68, 68, 0.15);
+  --status-danger-border: rgba(239, 68, 68, 0.3);
   --status-info: #38bdf8;
+  --status-info-bg: rgba(56, 189, 248, 0.12);
+  --status-info-border: rgba(56, 189, 248, 0.3);
+  --status-neutral: #64748b;
+  --status-neutral-bg: rgba(148, 163, 184, 0.1);
+  --status-neutral-border: rgba(148, 163, 184, 0.25);
 
-  /* Typography */
+  /* Spacing Scale */
+  --space-3xs: 2px;
+  --space-2xs: 4px;
+  --space-xs: 6px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+  --space-xl: 20px;
+  --space-2xl: 24px;
+  --space-3xl: 32px;
+  --space-4xl: 48px;
+  --space-5xl: 64px;
+
+  /* Typography Scale */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --font-display: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', Menlo, Monaco, Consolas, monospace;
+
+  --font-size-2xs: 0.7rem;    /* 11.2px */
+  --font-size-xs: 0.75rem;    /* 12px */
+  --font-size-sm: 0.875rem;   /* 14px */
+  --font-size-base: 1rem;     /* 16px */
+  --font-size-md: 1.125rem;   /* 18px */
+  --font-size-lg: 1.25rem;    /* 20px */
+  --font-size-xl: 1.5rem;     /* 24px */
+  --font-size-2xl: 1.875rem;  /* 30px */
+  --font-size-3xl: 2.25rem;   /* 36px */
 
   /* Border Radii */
   --radius-xs: 4px;
@@ -37,11 +80,25 @@
   --radius-xl: 24px;
   --radius-full: 9999px;
 
-  /* Shadows & Glows */
+  /* Elevation, Shadows & Glows */
   --shadow-subtle: 0 4px 20px rgba(0, 0, 0, 0.35);
   --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.5);
   --shadow-purple-sm: 0 0 15px var(--purple-glow);
   --shadow-lime-cta: 0 0 15px var(--accent-lime-glow);
+  --shadow-dropdown: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 1px rgba(255, 255, 255, 0.1);
+  --shadow-modal: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 40px rgba(124, 58, 237, 0.2);
+  --shadow-drawer: -10px 0 40px rgba(0, 0, 0, 0.7);
+  --shadow-sticky: 0 4px 12px rgba(0, 0, 0, 0.4);
+
+  /* Layering / Z-Index Scale */
+  --z-base: 1;
+  --z-table-header: 10;
+  --z-sticky: 20;
+  --z-dropdown: 100;
+  --z-backdrop: 200;
+  --z-drawer: 300;
+  --z-modal: 400;
+  --z-tooltip: 500;
 
   /* Transitions */
   --transition-fast: 0.15s ease;
