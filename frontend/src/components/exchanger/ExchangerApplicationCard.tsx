@@ -46,11 +46,11 @@ export const ExchangerApplicationCard: React.FC<ExchangerApplicationCardProps> =
 
     try {
       const payload = {
-        fullName: fullName.trim(),
-        contactHandle: contactHandle.trim(),
-        supportedMethods: methods,
-        estimatedDailyVolume: dailyVolume,
-        experienceNotes: notes.trim() || undefined,
+        introduction: `Legal/Business Name: ${fullName.trim()}. Estimated Daily Capacity: ${dailyVolume}.`,
+        experience: notes.trim() || 'P2P gold exchange liquidity provider',
+        gameCurrencies: ['WOW_GOLD'],
+        settlementCurrencies: methods,
+        contactInfo: contactHandle.trim(),
       };
       await submitExchangerApplication(payload);
       setSuccessMsg('Your Exchanger application has been submitted to management for review.');

@@ -128,7 +128,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
   const [overviewError, setOverviewError] = useState<string | null>(null);
 
   // Financial Config state
-  const [configData, setConfigData] = useState<FinancialConfigResponse | null>(null);
+  const [_configData, setConfigData] = useState<FinancialConfigResponse | null>(null);
   const [configLoading, setConfigLoading] = useState(false);
   const [formInputs, setFormInputs] = useState<Record<string, string>>({});
   const [showSensitiveCard, setShowSensitiveCard] = useState(false);

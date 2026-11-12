@@ -10,7 +10,7 @@ export interface SimplifiedStatusLike {
 
 export interface StatusBadgeProps {
   status?: string | null;
-  simplifiedStatus?: SimplifiedStatusLike | null;
+  simplifiedStatus?: SimplifiedStatusLike | string | null;
   label?: string;
   variant?: BadgeVariant;
   dot?: boolean;
@@ -81,8 +81,20 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({
   dot = true,
   className = '',
 }) => {
-  // If backend provided a pre-formatted simplifiedStatus object, honor it
+  // If backend provided a pre-formatted simplifiedStatus object or string, honor it
   if (simplifiedStatus) {
+    if (typeof simplifiedStatus === 'string') {
+      const normalized = simplifiedStatus.toLowerCase().trim();
+      const registered = STATUS_REGISTRY[normalized];
+      const computedVariant = variant || (registered ? registered.variant : 'muted');
+      const displayLabel = label || (registered ? registered.label : simplifiedStatus);
+      return (
+        <span className={`badge badge-${computedVariant} ${className}`.trim()}>
+          {dot && <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'currentColor' }} />}
+          {displayLabel}
+        </span>
+      );
+    }
     const computedVariant = variant || resolveVariantFromColorClass(simplifiedStatus.colorClass);
     const displayLabel = label || simplifiedStatus.label || simplifiedStatus.rawStatus || 'Unknown';
     return (

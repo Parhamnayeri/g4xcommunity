@@ -1,6 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { GoldTrade, PaginationMeta } from '../../types/exchange';
-import { reportGoldDelivery, confirmExternalPaymentReceipt, disputeTrade, cancelTrade } from '../../services/exchange';
+import {
+  reportGoldDelivery,
+  confirmExternalPaymentReceipt,
+  disputeTrade,
+  cancelTrade,
+} from '../../services/exchange';
+import {
+  Card,
+  Button,
+  DataTable,
+  Column,
+  Pagination,
+  StatusBadge,
+  Modal,
+  Select,
+  Textarea,
+} from '../ui';
+import { normalizePagination } from '../../utils/pagination';
 
 interface AdvertiserTradesTableProps {
   trades: GoldTrade[];
@@ -19,7 +36,6 @@ export const AdvertiserTradesTable: React.FC<AdvertiserTradesTableProps> = ({
   onFilterChange,
   onRefresh,
 }) => {
-  const safePagination = pagination || { page: 1, limit: 10, total: trades?.length || 0, totalPages: 1 };
   const [selectedStatus, setSelectedStatus] = useState<string>('');
   const [actionTrade, setActionTrade] = useState<GoldTrade | null>(null);
   const [actionType, setActionType] = useState<'deliver' | 'confirm_receipt' | 'dispute' | 'cancel' | null>(null);
@@ -30,8 +46,7 @@ export const AdvertiserTradesTable: React.FC<AdvertiserTradesTableProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  const handleStatusFilter = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
+  const handleStatusFilter = (val: string) => {
     setSelectedStatus(val);
     onFilterChange(val);
   };
@@ -61,11 +76,16 @@ export const AdvertiserTradesTable: React.FC<AdvertiserTradesTableProps> = ({
 
     try {
       if (actionType === 'deliver') {
-        await reportGoldDelivery(actionTrade.id, deliveryNotes || undefined);
-        setSuccessMsg('Gold delivery reported successfully. Awaiting exchanger verification.');
+        if (!deliveryNotes.trim()) {
+          setErrorMsg('Delivery screenshot link or in-game transaction ref is required.');
+          setSubmitting(false);
+          return;
+        }
+        await reportGoldDelivery(actionTrade.id, deliveryNotes.trim());
+        setSuccessMsg('Delivery reported. Exchanger will inspect and release payment.');
       } else if (actionType === 'confirm_receipt') {
         await confirmExternalPaymentReceipt(actionTrade.id);
-        setSuccessMsg('Payment receipt confirmed. Trade has been finalized.');
+        setSuccessMsg('Payment receipt confirmed. Trade settled successfully.');
       } else if (actionType === 'dispute') {
         if (!disputeReason.trim()) {
           setErrorMsg('Dispute reason is required.');
@@ -73,7 +93,7 @@ export const AdvertiserTradesTable: React.FC<AdvertiserTradesTableProps> = ({
           return;
         }
         await disputeTrade(actionTrade.id, disputeReason.trim());
-        setSuccessMsg('Trade moved to disputed status. Management review initiated.');
+        setSuccessMsg('Trade placed in dispute. Management will review logs.');
       } else if (actionType === 'cancel') {
         await cancelTrade(actionTrade.id, cancelReason.trim() || undefined);
         setSuccessMsg('Trade cancelled successfully.');
@@ -89,427 +109,337 @@ export const AdvertiserTradesTable: React.FC<AdvertiserTradesTableProps> = ({
     }
   };
 
-  const formatStatus = (status: string) => {
-    switch (status) {
-      case 'PENDING_DELIVERY':
-        return <span style={{ color: '#f59e0b', fontWeight: 600 }}>Pending Delivery</span>;
-      case 'PENDING_PAYMENT':
-        return <span style={{ color: '#38bdf8', fontWeight: 600 }}>Pending Payment</span>;
-      case 'SETTLED':
-        return <span style={{ color: '#10b981', fontWeight: 600 }}>Settled</span>;
-      case 'CANCELLED':
-        return <span style={{ color: '#ef4444', fontWeight: 600 }}>Cancelled</span>;
-      case 'DISPUTED':
-        return <span style={{ color: '#ec4899', fontWeight: 600 }}>Disputed</span>;
-      default:
-        return <span>{status}</span>;
-    }
-  };
+  const columns: Column<GoldTrade>[] = useMemo(
+    () => [
+      {
+        key: 'tradeRef',
+        header: 'Trade Ref',
+        render: (trade) => (
+          <div>
+            <strong style={{ fontFamily: 'monospace' }}>#{trade.tradeRef || String(trade.id)}</strong>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              {trade.gameSlug}
+            </div>
+          </div>
+        ),
+      },
+      {
+        key: 'createdAt',
+        header: 'Created',
+        render: (trade) => (
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+            {new Date(trade.createdAt).toLocaleDateString()} {new Date(trade.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        ),
+      },
+      {
+        key: 'buyer',
+        header: 'Buyer (Exchanger)',
+        render: (trade) => trade.buyer?.displayName || trade.buyer?.username || trade.buyerId,
+      },
+      {
+        key: 'goldQuantity',
+        header: 'Gold',
+        align: 'right',
+        render: (trade) => (
+          <span style={{ color: 'var(--accent-lime)', fontWeight: 700 }}>
+            {(trade.goldQuantity / 1000).toLocaleString()}k
+          </span>
+        ),
+      },
+      {
+        key: 'settlementMethod',
+        header: 'Settlement',
+        render: (trade) => (
+          <span
+            style={{
+              padding: '2px 8px',
+              borderRadius: 'var(--radius-xs)',
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              backgroundColor:
+                trade.settlementMethod === 'USD_WALLET'
+                  ? 'rgba(124, 58, 237, 0.2)'
+                  : trade.settlementMethod === 'IRT_DIRECT' || trade.settlementMethod === 'IRT_CARD'
+                  ? 'rgba(204, 255, 0, 0.15)'
+                  : 'rgba(56, 189, 248, 0.2)',
+              color:
+                trade.settlementMethod === 'USD_WALLET'
+                  ? 'var(--primary-purple)'
+                  : trade.settlementMethod === 'IRT_DIRECT' || trade.settlementMethod === 'IRT_CARD'
+                  ? 'var(--accent-lime)'
+                  : '#38bdf8',
+            }}
+          >
+            {trade.settlementMethod}
+          </span>
+        ),
+      },
+      {
+        key: 'payableAmount',
+        header: 'Amount to Receive',
+        align: 'right',
+        render: (trade) => (
+          <span style={{ fontWeight: 700 }}>
+            {trade.quotedPayableAmount
+              ? `${trade.quotedPayableAmount} ${trade.quotedPayableCurrency || ''}`
+              : `$${((trade.agreedValuationUsdCents || 0) / 100).toFixed(2)} USD`}
+          </span>
+        ),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        render: (trade) => (
+          <StatusBadge
+            status={trade.tradeStatus.toLowerCase()}
+            simplifiedStatus={trade.simplifiedStatus?.label}
+          />
+        ),
+      },
+      {
+        key: 'actions',
+        header: 'Actions',
+        align: 'right',
+        render: (trade) => {
+          const status = trade.tradeStatus;
+          const canDeliver = trade.goldDeliveryStatus === 'PENDING' || status === 'PENDING_DELIVERY';
+          const canConfirmReceipt =
+            (trade.paymentStatus === 'SUBMITTED' || status === 'PENDING_PAYMENT') &&
+            trade.settlementMethod !== 'USD_WALLET';
+          const canDispute = status !== 'SETTLED' && status !== 'CANCELLED' && status !== 'DISPUTED';
+          const canCancel = trade.goldDeliveryStatus === 'PENDING' && status === 'PENDING_DELIVERY';
+
+          return (
+            <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {canDeliver && (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => openAction(trade, 'deliver')}
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: '0.72rem',
+                    backgroundColor: 'var(--accent-lime)',
+                    color: '#0d0b12',
+                  }}
+                >
+                  Report Delivery
+                </Button>
+              )}
+              {canConfirmReceipt && (
+                <Button
+                  size="sm"
+                  variant="primary"
+                  onClick={() => openAction(trade, 'confirm_receipt')}
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: '0.72rem',
+                    backgroundColor: '#10b981',
+                    color: '#fff',
+                  }}
+                >
+                  Confirm Payment
+                </Button>
+              )}
+              {canDispute && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openAction(trade, 'dispute')}
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: '0.72rem',
+                    color: 'var(--status-danger)',
+                    borderColor: 'rgba(239, 68, 68, 0.4)',
+                  }}
+                >
+                  Dispute
+                </Button>
+              )}
+              {canCancel && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => openAction(trade, 'cancel')}
+                  style={{
+                    padding: '3px 8px',
+                    fontSize: '0.72rem',
+                    color: 'var(--text-muted)',
+                  }}
+                >
+                  Cancel
+                </Button>
+              )}
+            </div>
+          );
+        },
+      },
+    ],
+    []
+  );
 
   return (
-    <div style={{ backgroundColor: 'var(--bg-surface)', borderRadius: '12px', border: '1px solid var(--border-subtle)', padding: '20px' }}>
+    <Card style={{ padding: '20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h3 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.2rem' }}>My Gold Sales & Trades</h3>
+          <h3 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.2rem', fontWeight: 800 }}>
+            My Trades &amp; Orders
+          </h3>
           <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-            Trades where you are selling gold or funding through verified Exchangers.
+            Track the progress of your gold sales and P2P exchange settlements.
           </p>
         </div>
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <select
+
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <Select
             value={selectedStatus}
-            onChange={handleStatusFilter}
-            style={{
-              padding: '8px 12px',
-              backgroundColor: 'var(--bg-main)',
-              color: 'var(--text-primary)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: '8px',
-              fontSize: '0.875rem'
-            }}
-          >
-            <option value="">All Statuses</option>
-            <option value="PENDING_DELIVERY">Pending Delivery</option>
-            <option value="PENDING_PAYMENT">Pending Payment</option>
-            <option value="SETTLED">Settled</option>
-            <option value="CANCELLED">Cancelled</option>
-            <option value="DISPUTED">Disputed</option>
-          </select>
-          <button
+            onChange={(e) => handleStatusFilter(e.target.value)}
+            options={[
+              { label: 'All Statuses', value: '' },
+              { label: 'Pending Delivery', value: 'PENDING_DELIVERY' },
+              { label: 'Pending Payment', value: 'PENDING_PAYMENT' },
+              { label: 'Settled', value: 'SETTLED' },
+              { label: 'Disputed', value: 'DISPUTED' },
+              { label: 'Cancelled', value: 'CANCELLED' },
+            ]}
+          />
+
+          <Button
             onClick={onRefresh}
-            style={{
-              padding: '8px 14px',
-              backgroundColor: 'var(--bg-surface-hover)',
-              color: 'var(--text-primary)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: '8px',
-              cursor: 'pointer',
-              fontSize: '0.875rem'
-            }}
+            variant="outline"
+            size="sm"
           >
-            Refresh
-          </button>
+            ↻ Refresh
+          </Button>
         </div>
       </div>
 
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>Loading your trade history...</div>
-      ) : trades.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', backgroundColor: 'var(--bg-main)', borderRadius: '8px' }}>
-          No trades found. Create a gold sale or P2P funding trade from the marketplace offers.
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '12px 8px' }}>Trade ID</th>
-                <th style={{ padding: '12px 8px' }}>Created</th>
-                <th style={{ padding: '12px 8px' }}>Buyer (Exchanger)</th>
-                <th style={{ padding: '12px 8px' }}>Gold (K)</th>
-                <th style={{ padding: '12px 8px' }}>Settlement</th>
-                <th style={{ padding: '12px 8px' }}>Amount to Receive</th>
-                <th style={{ padding: '12px 8px' }}>Status</th>
-                <th style={{ padding: '12px 8px', textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trades.map((trade) => {
-                const canDeliver = trade.status === 'PENDING_DELIVERY';
-                const canConfirmReceipt = trade.status === 'PENDING_PAYMENT' && trade.settlementMethod !== 'USD_WALLET';
-                const canDispute = trade.status === 'PENDING_PAYMENT' || trade.status === 'PENDING_DELIVERY';
-                const canCancel = trade.status === 'PENDING_DELIVERY';
+      <DataTable
+        columns={columns}
+        data={trades}
+        keyField="id"
+        loading={loading}
+        emptyMessage="No trades found. Create a gold sale or P2P funding trade from the marketplace offers."
+      />
 
-                return (
-                  <tr key={trade.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                    <td style={{ padding: '12px 8px', fontFamily: 'monospace', color: 'var(--text-primary)' }}>
-                      #{trade.tradeRef || String(trade.id)}
-                    </td>
-                    <td style={{ padding: '12px 8px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                      {new Date(trade.createdAt).toLocaleDateString()} {new Date(trade.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </td>
-                    <td style={{ padding: '12px 8px', color: 'var(--text-primary)' }}>
-                      {trade.buyer?.displayName || trade.buyer?.username || 'Exchanger'}
-                    </td>
-                    <td style={{ padding: '12px 8px', color: 'var(--accent-lime)', fontWeight: 600 }}>
-                      {trade.goldAmountK.toLocaleString()}k
-                    </td>
-                    <td style={{ padding: '12px 8px' }}>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          padding: '2px 8px',
-                          borderRadius: '4px',
-                          fontSize: '0.75rem',
-                          backgroundColor:
-                            trade.settlementMethod === 'USD_WALLET'
-                              ? 'rgba(124, 58, 237, 0.2)'
-                              : trade.settlementMethod === 'IRT_CARD'
-                              ? 'rgba(204, 255, 0, 0.15)'
-                              : 'rgba(56, 189, 248, 0.2)',
-                          color:
-                            trade.settlementMethod === 'USD_WALLET'
-                              ? 'var(--primary-purple)'
-                              : trade.settlementMethod === 'IRT_CARD'
-                              ? 'var(--accent-lime)'
-                              : '#38bdf8',
-                        }}
-                      >
-                        {trade.settlementMethod}
-                      </span>
-                    </td>
-                    <td style={{ padding: '12px 8px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {trade.settlementMethod === 'USD_WALLET' && `$${(trade.totalUsdCents / 100).toFixed(2)} USD`}
-                      {trade.settlementMethod === 'IRT_CARD' && `${(trade.settlementAmount || 0).toLocaleString()} Toman`}
-                      {trade.settlementMethod === 'CRYPTO_USDT' && `${trade.settlementAmount || (trade.totalUsdCents / 100)} USDT`}
-                    </td>
-                    <td style={{ padding: '12px 8px' }}>{formatStatus(trade.status)}</td>
-                    <td style={{ padding: '12px 8px', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                        {canDeliver && (
-                          <button
-                            onClick={() => openAction(trade, 'deliver')}
-                            style={{
-                              padding: '4px 10px',
-                              backgroundColor: 'var(--accent-lime)',
-                              color: 'var(--text-inverse)',
-                              border: 'none',
-                              borderRadius: '6px',
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            Report Delivery
-                          </button>
-                        )}
-                        {canConfirmReceipt && (
-                          <button
-                            onClick={() => openAction(trade, 'confirm_receipt')}
-                            style={{
-                              padding: '4px 10px',
-                              backgroundColor: '#10b981',
-                              color: '#fff',
-                              border: 'none',
-                              borderRadius: '6px',
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            Confirm Payment Received
-                          </button>
-                        )}
-                        {canCancel && (
-                          <button
-                            onClick={() => openAction(trade, 'cancel')}
-                            style={{
-                              padding: '4px 8px',
-                              backgroundColor: 'transparent',
-                              color: '#ef4444',
-                              border: '1px solid #ef4444',
-                              borderRadius: '6px',
-                              fontSize: '0.75rem',
-                              cursor: 'pointer'
-                            }}
-                          >
-                            Cancel
-                          </button>
-                        )}
-                        {canDispute && (
-                          <button
-                            onClick={() => openAction(trade, 'dispute')}
-                            style={{
-                              padding: '4px 8px',
-                              backgroundColor: 'transparent',
-                              color: '#ec4899',
-                              border: '1px solid #ec4899',
-                              borderRadius: '6px',
-                              fontSize: '0.75rem',
-                              cursor: 'pointer'
-                            }}
-                          >
-                            Dispute
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-
-          {/* Pagination Controls */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' }}>
-            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              Showing {trades.length} of {safePagination.total} trades (Page {safePagination.page} of {safePagination.totalPages || 1})
-            </span>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                disabled={safePagination.page <= 1}
-                onClick={() => onPageChange(safePagination.page - 1)}
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: 'var(--bg-main)',
-                  color: safePagination.page <= 1 ? 'var(--text-muted)' : 'var(--text-primary)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: '6px',
-                  cursor: safePagination.page <= 1 ? 'not-allowed' : 'pointer',
-                  fontSize: '0.85rem'
-                }}
-              >
-                Previous
-              </button>
-              <button
-                disabled={safePagination.page >= safePagination.totalPages}
-                onClick={() => onPageChange(safePagination.page + 1)}
-                style={{
-                  padding: '6px 12px',
-                  backgroundColor: 'var(--bg-main)',
-                  color: safePagination.page >= safePagination.totalPages ? 'var(--text-muted)' : 'var(--text-primary)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: '6px',
-                  cursor: safePagination.page >= safePagination.totalPages ? 'not-allowed' : 'pointer',
-                  fontSize: '0.85rem'
-                }}
-              >
-                Next
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <Pagination
+        pagination={normalizePagination(pagination, pagination?.page ?? 1, 10)}
+        onPageChange={(p) => onPageChange(p)}
+      />
 
       {/* Action Modal */}
       {actionTrade && actionType && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '16px'
-          }}
+        <Modal
+          isOpen={!!actionTrade}
+          onClose={closeAction}
+          title={
+            actionType === 'deliver'
+              ? `Report Gold Delivery - #${actionTrade.tradeRef || actionTrade.id}`
+              : actionType === 'confirm_receipt'
+              ? `Confirm Payment Received - #${actionTrade.tradeRef || actionTrade.id}`
+              : actionType === 'dispute'
+              ? `Raise Dispute - #${actionTrade.tradeRef || actionTrade.id}`
+              : `Cancel Trade - #${actionTrade.tradeRef || actionTrade.id}`
+          }
+          size="md"
         >
-          <div
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: '12px',
-              width: '100%',
-              maxWidth: '480px',
-              padding: '24px',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
-            }}
-          >
-            <h3 style={{ margin: '0 0 12px 0', color: 'var(--text-primary)', fontSize: '1.2rem' }}>
-              {actionType === 'deliver' && 'Confirm In-Game Gold Delivery'}
-              {actionType === 'confirm_receipt' && 'Confirm Bank/Crypto Payment Received'}
-              {actionType === 'dispute' && 'Raise Trade Dispute'}
-              {actionType === 'cancel' && 'Cancel Gold Trade'}
-            </h3>
-
-            <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              Trade #{actionTrade.tradeRef || String(actionTrade.id)} — {actionTrade.goldAmountK.toLocaleString()}k Gold (
-              {actionTrade.settlementMethod})
+          {errorMsg && (
+            <div style={{ padding: '10px 14px', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', borderRadius: 'var(--radius-sm)', marginBottom: '14px', fontSize: '0.85rem' }}>
+              {errorMsg}
             </div>
+          )}
+          {successMsg && (
+            <div style={{ padding: '10px 14px', backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981', borderRadius: 'var(--radius-sm)', marginBottom: '14px', fontSize: '0.85rem' }}>
+              {successMsg}
+            </div>
+          )}
 
-            {errorMsg && (
-              <div style={{ padding: '10px 14px', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', borderRadius: '8px', marginBottom: '16px', fontSize: '0.85rem' }}>
-                {errorMsg}
-              </div>
-            )}
-
-            {successMsg && (
-              <div style={{ padding: '10px 14px', backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981', borderRadius: '8px', marginBottom: '16px', fontSize: '0.85rem' }}>
-                {successMsg}
-              </div>
-            )}
-
-            {actionType === 'deliver' && (
-              <div>
-                <p style={{ fontSize: '0.875rem', color: 'var(--text-primary)', marginBottom: '12px' }}>
-                  Have you transferred the agreed gold in-game to the exchanger character?
-                </p>
-                <div style={{ marginBottom: '16px' }}>
-                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                    Delivery Notes / In-Game Character (Optional)
-                  </label>
-                  <input
-                    type="text"
-                    value={deliveryNotes}
-                    onChange={(e) => setDeliveryNotes(e.target.value)}
-                    placeholder="e.g. Traded to character X on Realm Y"
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px',
-                      backgroundColor: 'var(--bg-main)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: '8px',
-                      fontSize: '0.875rem'
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {actionType === 'confirm_receipt' && (
-              <p style={{ fontSize: '0.875rem', color: 'var(--text-primary)', marginBottom: '16px', lineHeight: 1.5 }}>
-                Please check your bank account or crypto wallet. Once you confirm receipt of payment, this trade will be
-                marked as settled. This action is irreversible.
+          {actionType === 'deliver' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: 0 }}>
+                Deliver <strong>{(actionTrade.goldQuantity / 1000).toLocaleString()}k Gold</strong> to buyer <strong>{actionTrade.buyer?.displayName || actionTrade.buyerId}</strong> in <strong>{actionTrade.gameSlug}</strong>.
               </p>
-            )}
-
-            {actionType === 'dispute' && (
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                  Reason for Dispute <span style={{ color: '#ef4444' }}>*</span>
-                </label>
-                <textarea
-                  rows={3}
-                  value={disputeReason}
-                  onChange={(e) => setDisputeReason(e.target.value)}
-                  placeholder="Describe the issue (e.g. exchanger has not sent payment after 2 hours)"
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    backgroundColor: 'var(--bg-main)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '8px',
-                    fontSize: '0.875rem'
-                  }}
-                />
-              </div>
-            )}
-
-            {actionType === 'cancel' && (
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                  Reason for Cancellation (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={cancelReason}
-                  onChange={(e) => setCancelReason(e.target.value)}
-                  placeholder="e.g. No longer selling gold"
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    backgroundColor: 'var(--bg-main)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '8px',
-                    fontSize: '0.875rem'
-                  }}
-                />
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-              <button
-                type="button"
-                onClick={closeAction}
-                disabled={submitting}
-                style={{
-                  padding: '10px 16px',
-                  backgroundColor: 'var(--bg-main)',
-                  color: 'var(--text-primary)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: '8px',
-                  cursor: submitting ? 'not-allowed' : 'pointer',
-                  fontSize: '0.875rem'
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleExecuteAction}
-                disabled={submitting}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor:
-                    actionType === 'dispute' || actionType === 'cancel' ? '#ef4444' : 'var(--accent-lime)',
-                  color: actionType === 'dispute' || actionType === 'cancel' ? '#fff' : 'var(--text-inverse)',
-                  border: 'none',
-                  borderRadius: '8px',
-                  fontWeight: 600,
-                  cursor: submitting ? 'not-allowed' : 'pointer',
-                  fontSize: '0.875rem'
-                }}
-              >
-                {submitting ? 'Processing...' : 'Confirm'}
-              </button>
+              <Textarea
+                label="Delivery Evidence Link / Notes *"
+                placeholder="Paste imgur link, video recording URL, or in-game mail confirmation code..."
+                value={deliveryNotes}
+                onChange={(e) => setDeliveryNotes(e.target.value)}
+                rows={3}
+              />
             </div>
+          )}
+
+          {actionType === 'confirm_receipt' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: 0 }}>
+                Please check your bank account or crypto wallet to verify that you received the expected settlement amount before confirming.
+              </p>
+              {actionTrade.externalPaymentRef && (
+                <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-main)', borderRadius: 'var(--radius-xs)', fontSize: '0.82rem' }}>
+                  Exchanger Payment Reference: <code>{actionTrade.externalPaymentRef}</code>
+                </div>
+              )}
+            </div>
+          )}
+
+          {actionType === 'dispute' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <Textarea
+                label="Dispute Reason *"
+                placeholder="State the reason for this dispute clearly..."
+                value={disputeReason}
+                onChange={(e) => setDisputeReason(e.target.value)}
+                rows={3}
+              />
+            </div>
+          )}
+
+          {actionType === 'cancel' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <Textarea
+                label="Cancellation Reason (Optional)"
+                placeholder="Why do you wish to cancel this trade request?..."
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                rows={3}
+              />
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={closeAction}
+            >
+              Close
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
+              size="sm"
+              disabled={submitting}
+              onClick={handleExecuteAction}
+              style={{
+                backgroundColor:
+                  actionType === 'dispute'
+                    ? 'var(--status-danger)'
+                    : actionType === 'deliver'
+                    ? 'var(--accent-lime)'
+                    : '#10b981',
+                color: actionType === 'deliver' ? '#0d0b12' : '#ffffff',
+                fontWeight: 700,
+              }}
+            >
+              {submitting ? 'Executing...' : 'Confirm Action'}
+            </Button>
           </div>
-        </div>
+        </Modal>
       )}
-    </div>
+    </Card>
   );
 };
+
+export default AdvertiserTradesTable;

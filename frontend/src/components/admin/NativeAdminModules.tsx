@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { apiRequest } from '../../services/api';
 import { normalizePagination } from '../../services/operations';
-import { DataTable, Column, Pagination as SharedPagination, StatusBadge } from '../ui';
+import { DataTable, Pagination as SharedPagination, StatusBadge } from '../ui';
 
 const grid: React.CSSProperties = {
   display: 'grid',

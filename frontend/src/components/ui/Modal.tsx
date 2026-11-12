@@ -8,6 +8,7 @@ export interface ModalProps {
   children: React.ReactNode;
   footer?: React.ReactNode;
   maxWidth?: string | number;
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
 }
 
@@ -18,10 +19,14 @@ export const Modal: React.FC<ModalProps> = ({
   subtitle,
   children,
   footer,
-  maxWidth = '540px',
+  maxWidth,
+  size = 'md',
   className = '',
 }) => {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const defaultSizeWidth =
+    size === 'sm' ? '420px' : size === 'lg' ? '760px' : size === 'xl' ? '960px' : '540px';
+  const effectiveMaxWidth = maxWidth || defaultSizeWidth;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -67,7 +72,7 @@ export const Modal: React.FC<ModalProps> = ({
       <div
         ref={dialogRef}
         className={`modal-dialog ${className}`.trim()}
-        style={{ maxWidth }}
+        style={{ maxWidth: effectiveMaxWidth }}
       >
         <div className="sheet-header">
           <div>

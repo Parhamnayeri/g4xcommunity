@@ -3,7 +3,7 @@ import { Skeleton } from './Skeleton';
 import { EmptyState } from './EmptyState';
 import { Button } from './Button';
 
-export interface Column<T> {
+export interface Column<T = any> {
   id?: string;
   key: string;
   header: React.ReactNode;
@@ -15,10 +15,12 @@ export interface Column<T> {
   render?: (item: T, index: number) => React.ReactNode;
 }
 
-export interface DataTableProps<T> {
-  columns: Column<T>[];
+export interface DataTableProps<T = any> {
+  columns: Column<T>[] | Column<any>[];
   data: T[];
-  keyExtractor: (item: T, index: number) => string | number;
+  keyExtractor?: (item: T, index: number) => string | number;
+  keyField?: string;
+  loading?: boolean;
   isLoading?: boolean;
   error?: string | React.ReactNode;
   onRetry?: () => void;
@@ -35,10 +37,12 @@ export interface DataTableProps<T> {
   skeletonRowCount?: number;
 }
 
-export function DataTable<T>({
+export function DataTable<T = any>({
   columns,
   data,
   keyExtractor,
+  keyField = 'id',
+  loading,
   isLoading = false,
   error,
   onRetry,
@@ -54,6 +58,18 @@ export function DataTable<T>({
   className = '',
   skeletonRowCount = 5,
 }: DataTableProps<T>) {
+  const effectiveLoading = loading !== undefined ? loading : isLoading;
+
+  const getKey = (item: T, index: number): string | number => {
+    if (keyExtractor) return keyExtractor(item, index);
+    if (item && typeof item === 'object') {
+      const fieldVal = (item as any)[keyField];
+      if (fieldVal !== undefined && fieldVal !== null) return String(fieldVal);
+      if ((item as any).id !== undefined) return String((item as any).id);
+      if ((item as any)._id !== undefined) return String((item as any)._id);
+    }
+    return index;
+  };
   const handleHeaderClick = (col: Column<T>) => {
     if (!col.sortable || !onSort) return;
     const isCurrent = sortColumn === col.key;
@@ -134,7 +150,7 @@ export function DataTable<T>({
                   )}
                 </td>
               </tr>
-            ) : isLoading ? (
+            ) : effectiveLoading ? (
               /* Loading Skeletons */
               Array.from({ length: skeletonRowCount }).map((_, rIdx) => (
                 <tr key={`skel-row-${rIdx}`}>
@@ -160,7 +176,7 @@ export function DataTable<T>({
             ) : (
               /* Populated Rows */
               data.map((item, index) => {
-                const rowKey = keyExtractor(item, index);
+                const rowKey = getKey(item, index);
                 const isSelected = selectedRowKeys.includes(rowKey);
                 const isClickable = Boolean(onRowClick);
 

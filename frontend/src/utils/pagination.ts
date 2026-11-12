@@ -18,10 +18,18 @@ export interface NormalizedPagination {
   totalPages: number;
 }
 
-export function normalizePagination(raw: unknown, defaultLimit = 15): NormalizedPagination {
+export function normalizePagination(
+  raw: unknown,
+  fallbackPageOrDefaultLimit: number = 15,
+  fallbackLimit?: number
+): NormalizedPagination {
+  const isThreeArg = typeof fallbackLimit === 'number';
+  const defaultLimit = isThreeArg ? fallbackLimit : fallbackPageOrDefaultLimit;
+  const fallbackPage = isThreeArg ? fallbackPageOrDefaultLimit : 1;
+
   if (!raw || typeof raw !== 'object') {
     return {
-      page: 1,
+      page: fallbackPage,
       limit: defaultLimit,
       total: 0,
       totalPages: 1,
@@ -36,7 +44,7 @@ export function normalizePagination(raw: unknown, defaultLimit = 15): Normalized
   const source = nested ?? obj;
 
   const rawPage = Number(source.page);
-  const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1;
+  const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : fallbackPage;
 
   const rawLimit = Number(source.limit);
   const limit = Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.floor(rawLimit) : defaultLimit;

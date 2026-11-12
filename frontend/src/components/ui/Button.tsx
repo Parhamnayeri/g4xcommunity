@@ -1,7 +1,7 @@
 import React from 'react';
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'cta' | 'purple' | 'outline';
+  variant?: 'cta' | 'purple' | 'outline' | 'primary' | 'danger' | 'lime';
   size?: 'sm' | 'md' | 'lg';
   isLoading?: boolean;
   leftIcon?: React.ReactNode;
@@ -20,7 +20,13 @@ export const Button: React.FC<ButtonProps> = ({
   ...props
 }) => {
   const variantClass =
-    variant === 'cta' ? 'btn-cta' : variant === 'outline' ? 'btn-outline' : 'btn-purple';
+    variant === 'cta' || variant === 'lime'
+      ? 'btn-cta'
+      : variant === 'outline'
+      ? 'btn-outline'
+      : variant === 'danger'
+      ? 'btn-danger'
+      : 'btn-purple';
   const sizeClass = size === 'sm' ? 'btn-sm' : size === 'lg' ? 'btn-lg' : '';
 
   return (

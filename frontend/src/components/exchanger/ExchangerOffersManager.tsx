@@ -1,6 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { ExchangerOffer } from '../../types/exchange';
 import { createExchangerOffer, updateExchangerOffer } from '../../services/exchange';
+import {
+  Card,
+  Button,
+  DataTable,
+  Column,
+  StatusBadge,
+  Modal,
+  Input,
+  Select,
+  Textarea,
+} from '../ui';
 
 interface ExchangerOffersManagerProps {
   offers: ExchangerOffer[];
@@ -9,15 +20,14 @@ interface ExchangerOffersManagerProps {
 
 export const ExchangerOffersManager: React.FC<ExchangerOffersManagerProps> = ({ offers, onRefresh }) => {
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [serviceType, setServiceType] = useState<'GOLD_TRADE' | 'P2P_FUNDING'>('GOLD_TRADE');
-  const [direction, setDirection] = useState<'BUY' | 'SELL'>('BUY');
-  const [targetCurrency, setTargetCurrency] = useState<'IRT' | 'USDT' | 'USD_WALLET'>('IRT');
-  const [commissionBps, setCommissionBps] = useState<number>(300); // 3.00%
-  const [minUsdCents, setMinUsdCents] = useState<number>(1000); // $10.00
-  const [maxUsdCents, setMaxUsdCents] = useState<number>(100000); // $1,000.00
-  const [settlementDetails, setSettlementDetails] = useState('');
+  const [serviceType, setServiceType] = useState<string>('GOLD_TRADE');
+  const [settlementCurrency, setSettlementCurrency] = useState<string>('IRT');
+  const [commissionPercentage, setCommissionPercentage] = useState<number>(3.0);
+  const [minAmount, setMinAmount] = useState<number>(10);
+  const [maxAmount, setMaxAmount] = useState<number>(1000);
+  const [terms, setTerms] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
-  const [actionOfferId, setActionOfferId] = useState<string | null>(null);
+  const [actionOfferId, setActionOfferId] = useState<number | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -25,7 +35,8 @@ export const ExchangerOffersManager: React.FC<ExchangerOffersManagerProps> = ({ 
     setActionOfferId(offer.id);
     setErrorMsg(null);
     try {
-      await updateExchangerOffer(offer.id, { isActive: !offer.isActive });
+      const nextStatus = offer.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+      await updateExchangerOffer(offer.id, { status: nextStatus });
       onRefresh();
     } catch (err: any) {
       setErrorMsg(err.response?.data?.error || err.message || 'Failed to update offer status');
@@ -41,23 +52,13 @@ export const ExchangerOffersManager: React.FC<ExchangerOffersManagerProps> = ({ 
     setSuccessMsg(null);
 
     try {
-      let parsedSettlement = undefined;
-      if (settlementDetails.trim()) {
-        try {
-          parsedSettlement = JSON.parse(settlementDetails.trim());
-        } catch {
-          parsedSettlement = { info: settlementDetails.trim() };
-        }
-      }
-
       await createExchangerOffer({
         serviceType,
-        direction,
-        targetCurrency,
-        commissionRateBps: Number(commissionBps),
-        minAmountUsdCents: Number(minUsdCents),
-        maxAmountUsdCents: Number(maxUsdCents),
-        settlementDetails: parsedSettlement,
+        settlementCurrency,
+        commissionPercentage: Number(commissionPercentage),
+        minAmount: minAmount ? Number(minAmount) : undefined,
+        maxAmount: maxAmount ? Number(maxAmount) : undefined,
+        terms: terms.trim() || undefined,
       });
 
       setSuccessMsg('Offer created and published successfully!');
@@ -73,397 +74,236 @@ export const ExchangerOffersManager: React.FC<ExchangerOffersManagerProps> = ({ 
     }
   };
 
+  const columns: Column<ExchangerOffer>[] = useMemo(
+    () => [
+      {
+        key: 'offerRef',
+        header: 'Offer Ref',
+        render: (offer) => (
+          <div>
+            <strong>#{offer.id}</strong>
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+              {offer.offerRef}
+            </div>
+          </div>
+        ),
+      },
+      {
+        key: 'serviceType',
+        header: 'Service Type',
+        render: (offer) => (
+          <span style={{ fontWeight: 600 }}>
+            {offer.serviceType === 'GOLD_TRADE' ? 'Gold Trade' : 'P2P Funding'}
+          </span>
+        ),
+      },
+      {
+        key: 'settlementCurrency',
+        header: 'Currency',
+        render: (offer) => (
+          <span
+            style={{
+              padding: '2px 8px',
+              borderRadius: 'var(--radius-xs)',
+              fontSize: '0.75rem',
+              fontWeight: 700,
+              backgroundColor:
+                offer.settlementCurrency === 'IRT'
+                  ? 'rgba(204, 255, 0, 0.15)'
+                  : offer.settlementCurrency === 'USD_WALLET'
+                  ? 'rgba(124, 58, 237, 0.2)'
+                  : 'rgba(56, 189, 248, 0.2)',
+              color:
+                offer.settlementCurrency === 'IRT'
+                  ? 'var(--accent-lime)'
+                  : offer.settlementCurrency === 'USD_WALLET'
+                  ? 'var(--primary-purple)'
+                  : '#38bdf8',
+            }}
+          >
+            {offer.settlementCurrency}
+          </span>
+        ),
+      },
+      {
+        key: 'commission',
+        header: 'Commission',
+        align: 'right',
+        render: (offer) => (
+          <span style={{ fontWeight: 700, color: 'var(--accent-lime)' }}>
+            {offer.commissionPercentage}%
+          </span>
+        ),
+      },
+      {
+        key: 'limits',
+        header: 'Min / Max Limit',
+        render: (offer) => (
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+            ${offer.minAmount || 0} - ${offer.maxAmount ? `$${offer.maxAmount}` : 'No Limit'}
+          </span>
+        ),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        render: (offer) => <StatusBadge status={offer.status.toLowerCase()} />,
+      },
+      {
+        key: 'actions',
+        header: 'Action',
+        align: 'right',
+        render: (offer) => (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={actionOfferId === offer.id}
+            onClick={() => handleToggleOffer(offer)}
+            style={{
+              color: offer.status === 'ACTIVE' ? 'var(--status-danger)' : 'var(--status-success)',
+              borderColor: offer.status === 'ACTIVE' ? 'rgba(239, 68, 68, 0.4)' : 'rgba(16, 185, 129, 0.4)',
+              fontSize: '0.75rem',
+            }}
+          >
+            {actionOfferId === offer.id ? '...' : offer.status === 'ACTIVE' ? 'Pause' : 'Activate'}
+          </Button>
+        ),
+      },
+    ],
+    [actionOfferId]
+  );
+
   return (
-    <div style={{ backgroundColor: 'var(--bg-surface)', borderRadius: '12px', border: '1px solid var(--border-subtle)', padding: '20px' }}>
+    <Card style={{ padding: '20px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
         <div>
-          <h3 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.2rem' }}>My Marketplace Offers</h3>
+          <h3 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.2rem', fontWeight: 800 }}>
+            My Marketplace Offers
+          </h3>
           <p style={{ margin: '4px 0 0 0', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
             Configure your exchange fee tiers and liquidity limits available to the community.
           </p>
         </div>
-        <button
+        <Button
           onClick={() => setShowCreateModal(true)}
-          style={{
-            padding: '10px 16px',
-            backgroundColor: 'var(--primary-purple)',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            fontSize: '0.875rem',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-          }}
+          variant="primary"
+          size="sm"
         >
           + Create New Offer
-        </button>
+        </Button>
       </div>
 
       {errorMsg && (
-        <div style={{ padding: '10px 14px', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', borderRadius: '8px', marginBottom: '16px', fontSize: '0.85rem' }}>
+        <div style={{ padding: '10px 14px', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '0.85rem' }}>
           {errorMsg}
         </div>
       )}
 
-      {offers.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', backgroundColor: 'var(--bg-main)', borderRadius: '8px' }}>
-          You have not published any offers yet. Click "+ Create New Offer" to list your liquidity.
-        </div>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
-            <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '12px 8px' }}>Service Type</th>
-                <th style={{ padding: '12px 8px' }}>Target Currency</th>
-                <th style={{ padding: '12px 8px' }}>Direction</th>
-                <th style={{ padding: '12px 8px' }}>Commission Rate</th>
-                <th style={{ padding: '12px 8px' }}>Min / Max Limit</th>
-                <th style={{ padding: '12px 8px' }}>Status</th>
-                <th style={{ padding: '12px 8px', textAlign: 'right' }}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {offers.map((offer) => (
-                <tr key={offer.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                  <td style={{ padding: '12px 8px', fontWeight: 600, color: 'var(--text-primary)' }}>
-                    {offer.serviceType === 'GOLD_TRADE' ? 'Gold Trade' : 'P2P Funding'}
-                  </td>
-                  <td style={{ padding: '12px 8px' }}>
-                    <span
-                      style={{
-                        padding: '2px 8px',
-                        borderRadius: '4px',
-                        fontSize: '0.75rem',
-                        backgroundColor:
-                          offer.targetCurrency === 'IRT'
-                            ? 'rgba(204, 255, 0, 0.15)'
-                            : offer.targetCurrency === 'USD_WALLET'
-                            ? 'rgba(124, 58, 237, 0.2)'
-                            : 'rgba(56, 189, 248, 0.2)',
-                        color:
-                          offer.targetCurrency === 'IRT'
-                            ? 'var(--accent-lime)'
-                            : offer.targetCurrency === 'USD_WALLET'
-                            ? 'var(--primary-purple)'
-                            : '#38bdf8',
-                      }}
-                    >
-                      {offer.targetCurrency}
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px 8px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    {offer.direction}
-                  </td>
-                  <td style={{ padding: '12px 8px', fontWeight: 600, color: 'var(--accent-lime)' }}>
-                    {(offer.commissionRateBps / 100).toFixed(2)}%
-                  </td>
-                  <td style={{ padding: '12px 8px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    ${(offer.minAmountUsdCents / 100).toFixed(0)} - ${(offer.maxAmountUsdCents / 100).toFixed(0)} USD
-                  </td>
-                  <td style={{ padding: '12px 8px' }}>
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        width: '8px',
-                        height: '8px',
-                        borderRadius: '50%',
-                        backgroundColor: offer.isActive ? '#10b981' : '#6b7280',
-                        marginRight: '6px',
-                      }}
-                    />
-                    <span style={{ fontSize: '0.8rem', color: offer.isActive ? '#10b981' : '#6b7280' }}>
-                      {offer.isActive ? 'Active' : 'Paused'}
-                    </span>
-                  </td>
-                  <td style={{ padding: '12px 8px', textAlign: 'right' }}>
-                    <button
-                      disabled={actionOfferId === offer.id}
-                      onClick={() => handleToggleOffer(offer)}
-                      style={{
-                        padding: '6px 12px',
-                        backgroundColor: offer.isActive ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
-                        color: offer.isActive ? '#ef4444' : '#10b981',
-                        border: `1px solid ${offer.isActive ? '#ef4444' : '#10b981'}`,
-                        borderRadius: '6px',
-                        fontSize: '0.75rem',
-                        cursor: actionOfferId === offer.id ? 'not-allowed' : 'pointer',
-                      }}
-                    >
-                      {actionOfferId === offer.id ? '...' : offer.isActive ? 'Pause' : 'Activate'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <DataTable
+        columns={columns}
+        data={offers}
+        keyField="id"
+        emptyMessage="You have not published any offers yet. Click '+ Create New Offer' to list your liquidity."
+      />
 
       {/* Create Offer Modal */}
-      {showCreateModal && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '16px',
-          }}
-        >
-          <div
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: '12px',
-              width: '100%',
-              maxWidth: '520px',
-              padding: '24px',
-              maxHeight: '90vh',
-              overflowY: 'auto',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.2rem' }}>Publish New Offer</h3>
-              <button
-                onClick={() => setShowCreateModal(false)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-muted)',
-                  fontSize: '1.2rem',
-                  cursor: 'pointer',
-                }}
-              >
-                ✕
-              </button>
-            </div>
-
-            {errorMsg && (
-              <div style={{ padding: '10px 14px', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', borderRadius: '8px', marginBottom: '16px', fontSize: '0.85rem' }}>
-                {errorMsg}
-              </div>
-            )}
-
-            {successMsg && (
-              <div style={{ padding: '10px 14px', backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981', borderRadius: '8px', marginBottom: '16px', fontSize: '0.85rem' }}>
-                {successMsg}
-              </div>
-            )}
-
-            <form onSubmit={handleCreateOffer}>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                  Service Type
-                </label>
-                <select
-                  value={serviceType}
-                  onChange={(e: any) => setServiceType(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    backgroundColor: 'var(--bg-main)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '8px',
-                    fontSize: '0.9rem',
-                  }}
-                >
-                  <option value="GOLD_TRADE">Gold Trade (Buy gold from community members)</option>
-                  <option value="P2P_FUNDING">P2P Funding (Provide USD Wallet balance for Toman)</option>
-                </select>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                    Target Currency
-                  </label>
-                  <select
-                    value={targetCurrency}
-                    onChange={(e: any) => setTargetCurrency(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px',
-                      backgroundColor: 'var(--bg-main)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: '8px',
-                      fontSize: '0.9rem',
-                    }}
-                  >
-                    <option value="IRT">IRT (Toman Card / Sheba)</option>
-                    <option value="USDT">USDT (Crypto BEP-20)</option>
-                    <option value="USD_WALLET">G4X USD Wallet</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                    Direction
-                  </label>
-                  <select
-                    value={direction}
-                    onChange={(e: any) => setDirection(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px',
-                      backgroundColor: 'var(--bg-main)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: '8px',
-                      fontSize: '0.9rem',
-                    }}
-                  >
-                    <option value="BUY">BUY</option>
-                    <option value="SELL">SELL</option>
-                  </select>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                  Commission Rate (basis points: 100 bps = 1.00%)
-                </label>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input
-                    type="number"
-                    min={0}
-                    max={3000}
-                    step={10}
-                    value={commissionBps}
-                    onChange={(e) => setCommissionBps(Number(e.target.value))}
-                    style={{
-                      flex: 1,
-                      padding: '10px 12px',
-                      backgroundColor: 'var(--bg-main)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: '8px',
-                      fontSize: '0.9rem',
-                    }}
-                  />
-                  <span style={{ fontSize: '0.9rem', color: 'var(--accent-lime)', minWidth: '80px', fontWeight: 600 }}>
-                    {(commissionBps / 100).toFixed(2)}%
-                  </span>
-                </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                    Min Limit (USD Cents)
-                  </label>
-                  <input
-                    type="number"
-                    min={100}
-                    step={100}
-                    value={minUsdCents}
-                    onChange={(e) => setMinUsdCents(Number(e.target.value))}
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px',
-                      backgroundColor: 'var(--bg-main)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: '8px',
-                      fontSize: '0.9rem',
-                    }}
-                  />
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    = ${(minUsdCents / 100).toFixed(2)} USD
-                  </span>
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                    Max Limit (USD Cents)
-                  </label>
-                  <input
-                    type="number"
-                    min={100}
-                    step={100}
-                    value={maxUsdCents}
-                    onChange={(e) => setMaxUsdCents(Number(e.target.value))}
-                    style={{
-                      width: '100%',
-                      padding: '10px 12px',
-                      backgroundColor: 'var(--bg-main)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: '8px',
-                      fontSize: '0.9rem',
-                    }}
-                  />
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                    = ${(maxUsdCents / 100).toFixed(2)} USD
-                  </span>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '24px' }}>
-                <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
-                  Settlement Details / Bank Notes (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={settlementDetails}
-                  onChange={(e) => setSettlementDetails(e.target.value)}
-                  placeholder="e.g. Card/Sheba payment within 15 minutes of gold delivery"
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    backgroundColor: 'var(--bg-main)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '8px',
-                    fontSize: '0.9rem',
-                  }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                <button
-                  type="button"
-                  onClick={() => setShowCreateModal(false)}
-                  disabled={submitting}
-                  style={{
-                    padding: '10px 16px',
-                    backgroundColor: 'var(--bg-main)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '8px',
-                    cursor: submitting ? 'not-allowed' : 'pointer',
-                    fontSize: '0.875rem',
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  style={{
-                    padding: '10px 20px',
-                    backgroundColor: 'var(--primary-purple)',
-                    color: '#fff',
-                    border: 'none',
-                    borderRadius: '8px',
-                    fontWeight: 600,
-                    cursor: submitting ? 'not-allowed' : 'pointer',
-                    fontSize: '0.875rem',
-                  }}
-                >
-                  {submitting ? 'Publishing...' : 'Publish Offer'}
-                </button>
-              </div>
-            </form>
+      <Modal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title="Publish New Offer"
+        size="md"
+      >
+        {errorMsg && (
+          <div style={{ padding: '10px 14px', backgroundColor: 'rgba(239, 68, 68, 0.15)', color: '#ef4444', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '0.85rem' }}>
+            {errorMsg}
           </div>
-        </div>
-      )}
-    </div>
+        )}
+        {successMsg && (
+          <div style={{ padding: '10px 14px', backgroundColor: 'rgba(16, 185, 129, 0.15)', color: '#10b981', borderRadius: 'var(--radius-sm)', marginBottom: '16px', fontSize: '0.85rem' }}>
+            {successMsg}
+          </div>
+        )}
+
+        <form onSubmit={handleCreateOffer} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          <Select
+            label="Service Type"
+            value={serviceType}
+            onChange={(e) => setServiceType(e.target.value)}
+            options={[
+              { label: 'Gold Trade (Buy/Sell In-Game Gold)', value: 'GOLD_TRADE' },
+              { label: 'P2P Funding (Wallet Top-Up Rail)', value: 'P2P_FUNDING' },
+            ]}
+          />
+
+          <Select
+            label="Settlement Currency"
+            value={settlementCurrency}
+            onChange={(e) => setSettlementCurrency(e.target.value)}
+            options={[
+              { label: 'IRT (Card-to-Card Iranian Toman)', value: 'IRT' },
+              { label: 'USDT (Tether BEP-20)', value: 'USDT' },
+              { label: 'USD_WALLET (Internal G4X Balance)', value: 'USD_WALLET' },
+            ]}
+          />
+
+          <Input
+            label="Commission Fee (%)"
+            type="number"
+            step="0.1"
+            min="0"
+            max="50"
+            value={commissionPercentage}
+            onChange={(e) => setCommissionPercentage(Number(e.target.value))}
+            helperText="e.g. 3.0 = 3.00% fee"
+          />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <Input
+              label="Min Amount (USD)"
+              type="number"
+              min="1"
+              value={minAmount}
+              onChange={(e) => setMinAmount(Number(e.target.value))}
+            />
+            <Input
+              label="Max Amount (USD)"
+              type="number"
+              min="1"
+              value={maxAmount}
+              onChange={(e) => setMaxAmount(Number(e.target.value))}
+            />
+          </div>
+
+          <Textarea
+            label="Terms & Settlement Details (Optional)"
+            placeholder="e.g. Instant card transfer via Iranian bank. Include payment instructions or limits."
+            value={terms}
+            onChange={(e) => setTerms(e.target.value)}
+            rows={3}
+          />
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '12px' }}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowCreateModal(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              size="sm"
+              disabled={submitting}
+            >
+              {submitting ? 'Publishing...' : 'Publish Offer'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+    </Card>
   );
 };
+
+export default ExchangerOffersManager;

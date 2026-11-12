@@ -222,6 +222,7 @@ export const WalletPage: React.FC = () => {
         </div>
 
         {/* 3. Financial Activity Section (Tabs for Deposit History & Ledger Activity) */}
+        <div>
           <div style={{ marginBottom: '1.25rem' }}>
             <Tabs
               tabs={[

@@ -4,6 +4,7 @@ export interface BaseFieldProps {
   label?: string;
   error?: string | null;
   helpText?: string;
+  helperText?: string;
   required?: boolean;
   wrapperClassName?: string;
 }
@@ -13,8 +14,9 @@ export interface InputProps
     BaseFieldProps {}
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, helpText, required, wrapperClassName = '', className = '', id, ...props }, ref) => {
+  ({ label, error, helpText, helperText, required, wrapperClassName = '', className = '', id, ...props }, ref) => {
     const inputId = id || (label ? `input-${label.toLowerCase().replace(/\s+/g, '-')}` : undefined);
+    const effectiveHelpText = helpText || helperText;
 
     return (
       <div className={`form-group ${wrapperClassName}`.trim()}>
@@ -31,7 +33,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           {...props}
         />
         {error && <span className="form-error">{error}</span>}
-        {!error && helpText && <span className="form-help">{helpText}</span>}
+        {!error && effectiveHelpText && <span className="form-help">{effectiveHelpText}</span>}
       </div>
     );
   }

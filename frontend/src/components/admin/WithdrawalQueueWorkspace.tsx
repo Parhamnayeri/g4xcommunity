@@ -9,7 +9,6 @@ import {
   Modal,
   Input,
   Textarea,
-  EmptyState,
 } from '../ui';
 import {
   fetchAdminWithdrawals,
@@ -287,8 +286,8 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                   try {
                     await reviewAdminWithdrawal(selectedWithdrawal.id, decision, {
                       txHash: decision === 'approve_paid' ? txHash.trim() : undefined,
-                      reviewNotes: reviewNotes.trim() || undefined,
-                      rejectionReason: decision === 'reject' ? reviewNotes.trim() : undefined,
+                      notes: reviewNotes.trim() || undefined,
+                      reason: decision === 'reject' ? reviewNotes.trim() : undefined,
                     });
                     setReviewFeedback({ text: 'Withdrawal review recorded successfully.', type: 'success' });
                     setTimeout(() => {
