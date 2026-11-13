@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { fetchPublicGames, createAdvertiserOrder } from '../../services/advertiser';
-import { PublicGame, AdvertiserRankData, AdvertiserWallet, DiscordIntegrationInfo } from '../../types/advertiser';
+import { PublicGame, AdvertiserRankData, AdvertiserWallet, DiscordIntegrationInfo, CreateOrderRequest } from '../../types/advertiser';
 
 interface CreateOrderModalProps {
   rankData: AdvertiserRankData;
   wallet: AdvertiserWallet;
   discordInfo: DiscordIntegrationInfo;
+  createOrder?: (orderData: CreateOrderRequest) => Promise<{ success: boolean; order: { orderRef: string }; isFunded?: boolean }>;
+  title?: string;
   onClose: () => void;
   onSuccess: (orderRef: string) => void;
 }
@@ -14,6 +16,8 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   rankData,
   wallet,
   discordInfo,
+  createOrder = createAdvertiserOrder,
+  title = 'Create New G4X Order',
   onClose,
   onSuccess,
 }) => {
@@ -26,6 +30,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
   const [keyLevel, setKeyLevel] = useState('');
   const [vpnLocation, setVpnLocation] = useState('');
   const [customerInfo, setCustomerInfo] = useState('');
+  const [customerDiscord, setCustomerDiscord] = useState('');
+  const [customerDetails, setCustomerDetails] = useState('');
+  const [directBooster, setDirectBooster] = useState('');
+  const [currency, setCurrency] = useState('USD');
   const [grossAmountUsd, setGrossAmountUsd] = useState('');
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -49,7 +57,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             }
           }
         }
-      } catch (err: any) {
+      } catch {
         setError('Failed to load active games and services.');
       } finally {
         setLoadingGames(false);
@@ -140,7 +148,13 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     setError(null);
 
     try {
-      const res = await createAdvertiserOrder({
+      const customerParts = [customerInfo.trim(), customerDetails.trim(), customerDiscord.trim() ? `Discord: ${customerDiscord.trim()}` : '']
+        .filter(Boolean)
+        .join(' | ');
+      const orderNotes = [notes.trim(), directBooster.trim() ? `Requested booster assignment: ${directBooster.trim()}` : '']
+        .filter(Boolean)
+        .join('\n');
+      const res = await createOrder({
         gameSlug: selectedGameSlug,
         serviceId: Number(selectedServiceId),
         grossAmountUsd: parsedGross.toFixed(2),
@@ -148,13 +162,13 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         runsCount,
         keyLevel: isMythicPlus ? keyLevel.trim() : undefined,
         vpnLocation: orderMode === 'pilot' ? vpnLocation.trim() : undefined,
-        customerInfo: customerInfo.trim() || undefined,
-        notes: notes.trim() || undefined,
+        customerInfo: customerParts || undefined,
+        notes: orderNotes || undefined,
       });
 
       onSuccess(res.order.orderRef);
-    } catch (err: any) {
-      setError(err.message || 'Failed to place order.');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to place order.');
     } finally {
       setSubmitting(false);
     }
@@ -162,6 +176,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
   return (
     <div
+      className="modal-backdrop"
       style={{
         position: 'fixed',
         inset: 0,
@@ -170,11 +185,14 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 1000,
         padding: '1rem',
+      }}
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !submitting) onClose();
       }}
     >
       <div
+        className="modal-dialog"
         style={{
           backgroundColor: 'var(--bg-surface, #181524)',
           border: '1px solid rgba(124, 58, 237, 0.4)',
@@ -194,7 +212,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary, #f4f4f6)' }}>
-              Create Direct Boost Order
+              {title}
             </h3>
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted, #9490a6)' }}>
               Commercial Rank Tier: <strong style={{ color: 'var(--accent-lime, #ccff00)' }}>{rankData.rankLabel}</strong> ({rankData.commissionPercent})
@@ -480,6 +498,53 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     outline: 'none',
                   }}
                 />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted, #9490a6)', marginBottom: '0.35rem', fontWeight: 600 }}>
+                    Customer Discord tag:
+                  </label>
+                  <input
+                    type="text"
+                    value={customerDiscord}
+                    onChange={(e) => setCustomerDiscord(e.target.value)}
+                    placeholder="name or name#0000"
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted, #9490a6)', marginBottom: '0.35rem', fontWeight: 600 }}>
+                    Region / Faction / Realm:
+                  </label>
+                  <input
+                    type="text"
+                    value={customerDetails}
+                    onChange={(e) => setCustomerDetails(e.target.value)}
+                    placeholder="EU / Horde / Tarren Mill"
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '0.75rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted, #9490a6)', marginBottom: '0.35rem', fontWeight: 600 }}>
+                    Currency:
+                  </label>
+                  <select value={currency} onChange={(e) => setCurrency(e.target.value)} aria-label="Currency">
+                    <option value="USD">USD</option>
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted, #9490a6)', marginBottom: '0.35rem', fontWeight: 600 }}>
+                    Direct booster assignment (optional):
+                  </label>
+                  <input
+                    type="text"
+                    value={directBooster}
+                    onChange={(e) => setDirectBooster(e.target.value)}
+                    placeholder="Booster Discord tag, or leave empty for open pool"
+                  />
+                </div>
               </div>
               <div>
                 <label

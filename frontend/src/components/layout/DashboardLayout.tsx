@@ -250,7 +250,7 @@ export const DashboardLayout: React.FC = () => {
         </div>
       </div>
 
-      <main style={{ flex: 1, padding: '2rem 0' }}>
+      <main className="dashboard-main" style={{ flex: 1, padding: '2rem 0' }}>
         <div className="container">
           <Outlet />
         </div>

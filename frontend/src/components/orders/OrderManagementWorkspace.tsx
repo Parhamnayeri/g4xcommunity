@@ -4,7 +4,10 @@ import { Card } from '../ui/Card';
 import { LoadingState } from '../ui/LoadingState';
 import { useAuth } from '../../hooks/useAuth';
 import { OrderItem, OrderDiagnosticsData, PaginationMeta } from '../../types/operations';
+import { AdvertiserRankData, AdvertiserWallet, DiscordIntegrationInfo } from '../../types/advertiser';
 import { apiRequest } from '../../services/api';
+import { createOperationalOrder } from '../../services/operations';
+import { CreateOrderModal } from '../advertiser/CreateOrderModal';
 import {
   fetchManagementOrders,
   fetchStaffOrders,
@@ -35,6 +38,30 @@ const initialFilters = {
   sourceWebsite: '',
   startDate: '',
   endDate: '',
+};
+const managementRank: AdvertiserRankData = {
+  currentRank: null,
+  rankLabel: 'G4X Operations',
+  basisPoints: 1499,
+  commissionPercent: '14.99%',
+  rankHierarchy: [],
+};
+const managementWallet: AdvertiserWallet = {
+  availableCents: 0,
+  availableUsd: '0.00',
+  reservedCents: 0,
+  reservedUsd: '0.00',
+  pendingEarningsCents: 0,
+  pendingEarningsUsd: '0.00',
+  paidCents: 0,
+  paidUsd: '0.00',
+  canPlaceOrders: true,
+};
+const noDiscordIntegration: DiscordIntegrationInfo = {
+  guildId: null,
+  ordersChannelId: null,
+  becomeAdvChannelId: null,
+  orderEntryUrl: null,
 };
 type Action =
   | 'publish'
@@ -120,6 +147,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   const [opReason, setOpReason] = useState('');
   const [opFeedback, setOpFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [savingOp, setSavingOp] = useState(false);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
   const mutationLock = useRef(false);
   const closeButton = useRef<HTMLButtonElement>(null);
   const detailsDialog = useRef<HTMLDivElement>(null);
@@ -307,6 +335,13 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
           {hasRole('owner') && <Link to="/owner/orders">Owner orders</Link>}
         </nav>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn-cta"
+            onClick={() => setCreateModalOpen(true)}
+          >
+            Create New Order
+          </button>
           {(['g4x', 'advertiser'] as const).map((value) => (
             <button
               key={value}
@@ -476,7 +511,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
           {!orders.length ? (
             <p>No orders match these filters.</p>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <div className="table-scroll">
               <table style={{ width: '100%', textAlign: 'left', borderSpacing: '0 1rem' }}>
                 <thead>
                   <tr>
@@ -975,6 +1010,21 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
             )}
           </div>
         </div>
+      )}
+      {createModalOpen && (
+        <CreateOrderModal
+          rankData={managementRank}
+          wallet={managementWallet}
+          discordInfo={noDiscordIntegration}
+          createOrder={createOperationalOrder}
+          title="Create New G4X Order"
+          onClose={() => setCreateModalOpen(false)}
+          onSuccess={(orderRef) => {
+            setCreateModalOpen(false);
+            setFeedback(`Order ${orderRef} created successfully.`);
+            setRevision((n) => n + 1);
+          }}
+        />
       )}
     </div>
   );

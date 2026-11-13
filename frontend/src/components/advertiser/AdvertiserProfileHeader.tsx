@@ -311,7 +311,7 @@ export const AdvertiserProfileHeader: React.FC<AdvertiserProfileHeaderProps> = (
           onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--primary-purple, #7c3aed)')}
         >
           <span>➕</span>
-          <span>Create Order</span>
+          <span>Create New Order</span>
         </button>
       </div>
     </div>

@@ -19,6 +19,7 @@
   white-space: nowrap;
   transition: all var(--transition-normal);
   user-select: none;
+  pointer-events: auto;
 }
 
 .btn:disabled {
@@ -219,6 +220,67 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 1.5rem;
+}
+
+/* ─── Forms & Tables ─────────────────────────────────────────────────────── */
+.input,
+input,
+select,
+textarea {
+  width: 100%;
+  min-height: 2.5rem;
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  color: var(--text-primary);
+  background-color: rgba(13, 11, 18, 0.85);
+  border: 1px solid var(--border-subtle);
+}
+
+textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.table-scroll {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-scroll > table,
+.data-table {
+  width: 100%;
+  min-width: 680px;
+  border-collapse: collapse;
+}
+
+.table-scroll th,
+.table-scroll td,
+.data-table th,
+.data-table td {
+  padding: 0.75rem 0.9rem;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.table-scroll th,
+.data-table th {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.table-scroll td,
+.data-table td {
+  border-top: 1px solid rgba(45, 38, 69, 0.7);
+}
+
+.table-scroll .badge,
+.table-scroll .btn,
+.data-table .badge,
+.data-table .btn {
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {

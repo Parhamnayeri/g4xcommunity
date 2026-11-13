@@ -11,6 +11,7 @@ import {
   PaginationMeta,
   OrderDiagnosticsData,
 } from '../types/operations';
+import { AdvertiserOrder, CreateOrderRequest } from '../types/advertiser';
 
 /**
  * Universal pagination normalizer
@@ -21,6 +22,7 @@ export function normalizePagination(raw: any, defaultLimit: number = 10): Pagina
   if (!raw || typeof raw !== 'object') {
     return { page: 1, limit: defaultLimit, total: 0, totalPages: 1 };
   }
+
   if (raw.pagination && typeof raw.pagination === 'object') {
     const p = raw.pagination;
     const total = Number(p.total ?? p.totalCount ?? 0) || 0;
@@ -34,6 +36,15 @@ export function normalizePagination(raw: any, defaultLimit: number = 10): Pagina
   const page = Number(raw.page) || 1;
   const totalPages = Number(raw.totalPages) || (total > 0 ? Math.ceil(total / limit) : 1);
   return { page, limit, total, totalPages: Math.max(1, totalPages) };
+}
+
+export async function createOperationalOrder(
+  orderData: CreateOrderRequest
+): Promise<{ success: boolean; order: AdvertiserOrder; isFunded?: boolean }> {
+  return apiRequest<{ success: boolean; order: AdvertiserOrder; isFunded?: boolean }>('/api/orders/create', {
+    method: 'POST',
+    body: JSON.stringify(orderData),
+  });
 }
 
 // ==========================================

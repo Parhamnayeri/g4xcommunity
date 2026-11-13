@@ -9,6 +9,15 @@
   padding: 0;
 }
 
+*, *::before, *::after {
+  pointer-events: auto;
+}
+
+*::before,
+*::after {
+  pointer-events: none;
+}
+
 html {
   font-size: 16px;
   scroll-behavior: smooth;
@@ -28,10 +37,57 @@ body {
   flex-direction: column;
 }
 
+input,
+select,
+textarea,
+button {
+  pointer-events: auto;
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  color: var(--text-primary);
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--primary-purple);
+  outline: 2px solid rgba(204, 255, 0, 0.25);
+  outline-offset: 1px;
+}
+
+button {
+  cursor: pointer;
+}
+
 #root {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+.dashboard-main {
+  position: relative;
+  z-index: 10;
+  min-width: 0;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: auto;
+}
+
+.modal-dialog {
+  position: relative;
+  z-index: 100;
+  pointer-events: auto;
 }
 
 /* Accessible focus styling */

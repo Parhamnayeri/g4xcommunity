@@ -17,7 +17,7 @@ export const Header: React.FC = () => {
       style={{
         position: 'sticky',
         top: 0,
-        zIndex: 100,
+        zIndex: 50,
         backgroundColor: 'rgba(13, 11, 18, 0.92)',
         backdropFilter: 'blur(12px)',
         borderBottom: '1px solid var(--border-subtle)',
