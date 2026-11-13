@@ -29,6 +29,7 @@ import {
   deleteGameService,
 } from '../services/gameManagementService';
 import { validateGameAndService } from '../services/orderValidationService';
+import { isMythicPlusService } from '../services/orderLifecycleService';
 
 async function runAdminGameAndCategoryManagementSuite() {
   console.log('=== STARTING ADMIN GAME & SERVICE CATEGORY MANAGEMENT SUITE ===\n');
@@ -80,6 +81,7 @@ async function runAdminGameAndCategoryManagementSuite() {
       const mythicService = wowMidnight.services.find((s: any) => s.serviceKey === 'mythic_plus');
       assert(mythicService?.settings?.requiresKey === true, 'WoW Midnight Mythic+ requires keystone');
       assert(mythicService?.profileMode === 'raiderio', 'WoW Midnight Mythic+ uses Raider.IO profileMode');
+      assert(Boolean(mythicService && isMythicPlusService(mythicService)), 'Seeded WoW Midnight Mythic+ is detected as Mythic+');
     }
 
     if (wowForever) {

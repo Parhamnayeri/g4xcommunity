@@ -364,6 +364,7 @@ model Order {
   @@index([advertiserId])
   @@index([creatorId])
   @@index([platformAccountId])
+  @@unique([platformAccountId, externalOrderId])
   @@index([paymentStatus])
   @@index([advertiserRank])
   @@map("orders")

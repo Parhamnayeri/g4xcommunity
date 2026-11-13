@@ -21,6 +21,7 @@ import path from 'path';
 import dotenv from 'dotenv';
 import { findPrismaSchemaDir } from '../database/canonicalDbPath';
 import { validateWithdrawalQuoteSigningConfig } from '../services/financeV2/boosterWithdrawalService';
+import { validateOwnerAccessKeyConfig } from '../web/ownerGate';
 
 export interface BetaEnvValidationResult {
   valid: boolean;
@@ -199,8 +200,10 @@ export function validateBetaEnvironment(
   if (!env.SESSION_SECRET || env.SESSION_SECRET.trim().length < 24) {
     errors.push('SESSION_SECRET must be set to a cryptographically strong value (>= 24 chars).');
   }
-  if (!env.G4X_OWNER_ACCESS_KEY || env.G4X_OWNER_ACCESS_KEY.trim().length < 16) {
-    errors.push('G4X_OWNER_ACCESS_KEY must be set to a strong key (>= 16 chars).');
+  const ownerAccessKey = env.G4X_OWNER_ACCESS_KEY || env.OWNER_ACCESS_KEY;
+  const ownerKeyCheck = validateOwnerAccessKeyConfig(ownerAccessKey);
+  if (!ownerKeyCheck.valid) {
+    errors.push(`G4X_OWNER_ACCESS_KEY must be a valid, high-entropy key (>= 32 chars, >= 10 unique chars, non-placeholder): ${ownerKeyCheck.reason}.`);
   }
 
   const quoteConfigCheck = validateWithdrawalQuoteSigningConfig(env.WITHDRAWAL_QUOTE_SIGNING_SECRET);

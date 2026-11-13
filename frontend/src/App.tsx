@@ -64,6 +64,7 @@ export const App: React.FC = () => {
             <Route path="/management/applications" element={<RouteErrorBoundary routeName="Member Applications"><ApplicationsWorkspace /></RouteErrorBoundary>} />
             <Route path="/admin/applications" element={<RouteErrorBoundary routeName="Member Applications"><ApplicationsWorkspace /></RouteErrorBoundary>} />
             <Route path="/admin/games" element={<RouteErrorBoundary routeName="Game Registry"><GamesWorkspace /></RouteErrorBoundary>} />
+            <Route path="/games" element={<Navigate to="/admin/games" replace />} />
             <Route path="/admin/discord" element={<RouteErrorBoundary routeName="Discord Channels"><ChannelsWorkspace /></RouteErrorBoundary>} />
             <Route path="/admin/orders" element={<RouteErrorBoundary routeName="Admin Orders"><AdminPage defaultTab="orders" /></RouteErrorBoundary>} />
 

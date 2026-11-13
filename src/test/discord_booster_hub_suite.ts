@@ -398,6 +398,7 @@ export async function runDiscordBoosterHubSuite(): Promise<boolean> {
       orderId: testOrder1.id,
       actorId: uAdmin,
       candidates: [{ userId: uBooster1, assignedRole: 'dps' }],
+      auditReason: 'Operational roster assignment',
     });
 
     assert(

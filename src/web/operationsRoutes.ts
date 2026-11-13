@@ -28,6 +28,7 @@ import { KYC_DOCS_DIR, validateKycDocumentReference } from '../services/kycDocum
 
 import { configureChannelMapping, inspectMappingConnectivity, reconcileChannelMapping } from '../services/channelMappingConfigurationService';
 import { listChannelMappings } from '../services/discordProvisioningService';
+import { createExternalOrder } from '../services/platformOrderService';
 
 export const operationsRouter = Router();
 
@@ -541,6 +542,50 @@ operationsRouter.get('/management/orders/:id', requireAuth, requireLiveManagemen
         disputes: { orderBy: { createdAt: 'desc' } }, escrowHolds: true, boostReleaseTracker: true,
       },
     });
+
+    operationsRouter.get('/management/order-catalog', requireAuth, requireLiveManagementAccess, async (_req, res): Promise<void> => {
+      const [games, accounts] = await Promise.all([
+        prisma.game.findMany({ where: { isActive: true }, include: { services: { where: { isActive: true }, orderBy: { sortOrder: 'asc' } } }, orderBy: { sortOrder: 'asc' } }),
+        prisma.platformAccount.findMany({ where: { isActive: true }, select: { id: true, accountRef: true, platform: true, displayName: true }, orderBy: { platform: 'asc' } }),
+      ]);
+      res.json({ games, accounts });
+    });
+
+    operationsRouter.post('/management/orders', requireAuth, requireLivePermission(Permission.ORDER_CREATE_INTERNAL), requireCsrf, async (req: Request, res: Response): Promise<void> => {
+      try {
+        const body = req.body || {};
+        const parseUsdCents = (value: unknown): number => {
+          if (typeof value === 'number' && Number.isSafeInteger(value)) return value;
+          if (typeof value !== 'string' || !/^\d+(?:\.\d{1,2})?$/.test(value.trim())) throw new Error('INVALID_AMOUNT_CENTS');
+          const [whole, fraction = ''] = value.trim().split('.');
+          return Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+        };
+        const gross = parseUsdCents(body.grossAmountUsd ?? body.grossAmountMinor);
+        const pool = parseUsdCents(body.boosterPoolUsd ?? body.boosterPoolMinor);
+        const result = await createExternalOrder({
+          gameSlug: String(body.gameSlug || ''),
+          serviceId: Number(body.serviceId),
+          amountMinor: gross,
+          boosterPoolMinor: pool,
+          sourcePlatform: String(body.sourcePlatform || ''),
+          platformAccountId: body.platformAccountId ? Number(body.platformAccountId) : undefined,
+          platformAccountRef: body.platformAccountRef ? String(body.platformAccountRef) : undefined,
+          externalOrderId: String(body.externalOrderId || ''),
+          sourceAmountType: body.sourceAmountType === 'platform_net' ? 'platform_net' : 'gross_sale',
+          orderMode: body.orderMode === 'pilot' ? 'pilot' : body.orderMode === 'mythicplus' ? 'mythicplus' : 'selfplay',
+          runsCount: Number(body.runsCount),
+          keyLevel: body.keyLevel === '' || body.keyLevel == null ? null : Number(body.keyLevel),
+          dungeonName: body.dungeonName ? String(body.dungeonName) : null,
+          requiredBoosterCount: body.requiredBoosterCount == null ? undefined : Number(body.requiredBoosterCount),
+          notes: body.notes ? String(body.notes) : undefined,
+          actorId: (req as AuthenticatedRequest).user.discordId,
+        });
+        res.status(201).json({ success: true, ...result });
+      } catch (err: any) {
+        const status = /UNAUTHORIZED|PERMISSION_DENIED|DUPLICATE|REQUIRED|INVALID|MISSING|NOT_FOUND|MISMATCH|INACTIVE/.test(err.message) ? 400 : 500;
+        res.status(status).json({ error: err.message || 'EXTERNAL_ORDER_CREATION_FAILED' });
+      }
+    });
     if (!order) { res.status(404).json({ error: 'ORDER_NOT_FOUND' }); return; }
     const actorId = (req as AuthenticatedRequest).user.discordId;
     const permissions = new Set<Permission>();
@@ -700,6 +745,30 @@ operationsRouter.post('/management/orders/:id/assign', requireAuth, requireLiveP
     res.json({ ...result, message: 'Roster assigned. Check Discord channel and board state for synchronization.' });
   } catch (err: any) {
     res.status(400).json({ error: 'ASSIGNMENT_FAILED', message: err.message });
+  }
+});
+
+/** Explicit management assignment; this is intentionally separate from registered presign assignment. */
+operationsRouter.post('/management/orders/:id/direct-assign', requireAuth, requireLivePermission(Permission.ORDER_ASSIGN), requireCsrf, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const orderId = Number(req.params.id);
+    const body = req.body || {};
+    const candidates = Array.isArray(body.candidates) ? body.candidates.map((c: any) => ({
+      userId: String(c.userId || ''),
+      assignedRole: String(c.assignedRole || '').toLowerCase(),
+    })) : [];
+    const result = await assignOrderBoosters({
+      orderId,
+      actorId: (req as AuthenticatedRequest).user.discordId,
+      candidates,
+      squadId: body.squadId == null ? null : Number(body.squadId),
+      auditReason: String(body.auditReason || ''),
+      discordClient: getGlobalDiscordClient(),
+    });
+    res.json({ ...result, message: 'Management assignment recorded. This was not a booster claim.' });
+  } catch (err: any) {
+    const status = /PERMISSION_DENIED|MISSING|DUPLICATE|ALREADY_RESERVED|ROLE_CAPACITY|NOT_FOUND|INVALID/.test(err.message) ? 400 : 500;
+    res.status(status).json({ error: err.message || 'DIRECT_ASSIGNMENT_FAILED' });
   }
 });
 

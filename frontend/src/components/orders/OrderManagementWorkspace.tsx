@@ -19,6 +19,9 @@ import {
   assignOrderRoster,
   refreshOrderDiscord,
   updateOrderOperational,
+  fetchManagementOrderCatalog,
+  createManagementExternalOrder,
+  directAssignOrder,
 } from '../../services/operations';
 
 interface Props {
@@ -120,6 +123,11 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   const [opReason, setOpReason] = useState('');
   const [opFeedback, setOpFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [savingOp, setSavingOp] = useState(false);
+  const [catalog, setCatalog] = useState<{ games: any[]; accounts: any[] }>({ games: [], accounts: [] });
+  const [createExternal, setCreateExternal] = useState({ platform: 'g2g', accountId: '', siteId: '', game: '', service: '', mode: 'selfplay', gross: '', pool: '', runs: '1', boosters: '1', keyLevel: '', dungeon: '', notes: '' });
+  const [directUsers, setDirectUsers] = useState('');
+  const [directSquadId, setDirectSquadId] = useState('');
+  const [directReason, setDirectReason] = useState('');
   const mutationLock = useRef(false);
   const closeButton = useRef<HTMLButtonElement>(null);
   const detailsDialog = useRef<HTMLDivElement>(null);
@@ -128,9 +136,16 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   useEffect(() => {
     if (!allowed) return;
     let current = true;
-    apiRequest<{ games: Array<{ slug: string; displayName: string }> }>('/api/public/games')
+    (typeof fetchManagementOrderCatalog === 'function'
+      ? fetchManagementOrderCatalog()
+      : apiRequest<{ games: Array<{ slug: string; displayName: string }>; accounts?: any[] }>('/api/public/games'))
       .then((res) => {
-        if (current) setGames(res.games || []);
+        if (current) {
+          const nextGames = res?.games || [];
+          setGames(nextGames.map((g: any) => ({ slug: g.slug, displayName: g.displayName })));
+          setCatalog({ games: nextGames, accounts: res?.accounts || [] });
+          if (nextGames[0]) setCreateExternal((v) => ({ ...v, game: nextGames[0].slug, service: String(nextGames[0].services?.[0]?.id || '') }));
+        }
       })
       .catch(() => {});
     return () => {
@@ -463,6 +478,36 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
           </div>
         </form>
       </Card>
+      {!readOnly && tab === 'g4x' && (
+        <Card style={panelStyle}>
+          <details>
+            <summary><strong>Create externally sourced G4X order</strong></summary>
+            <p>Management-only action. No manager wallet debit; settlement stays pending. Discord publication requires the bot.</p>
+            <form style={gridStyle} onSubmit={(e) => { e.preventDefault(); void mutate(() => createManagementExternalOrder({
+              sourcePlatform: createExternal.platform, platformAccountId: Number(createExternal.accountId), externalOrderId: createExternal.siteId,
+              gameSlug: createExternal.game, serviceId: Number(createExternal.service), orderMode: createExternal.mode,
+              grossAmountMinor: Math.round(Number(createExternal.gross) * 100), boosterPoolMinor: Math.round(Number(createExternal.pool) * 100),
+              runsCount: Number(createExternal.runs), requiredBoosterCount: Number(createExternal.boosters),
+              keyLevel: createExternal.keyLevel ? Number(createExternal.keyLevel) : null, dungeonName: createExternal.dungeon || null, notes: createExternal.notes,
+            }), 'External order created. Discord publication remains unavailable until the bot is online.'); }}>
+              <label>Platform<select className="input" value={createExternal.platform} onChange={(e) => setCreateExternal({ ...createExternal, platform: e.target.value, accountId: '' })}>{['g2g', 'skycoach', 'eldorado'].map((p) => <option key={p}>{p}</option>)}</select></label>
+              <label>Account<select required className="input" value={createExternal.accountId} onChange={(e) => setCreateExternal({ ...createExternal, accountId: e.target.value })}><option value="">Select</option>{catalog.accounts.filter((a) => a.platform === createExternal.platform).map((a) => <option key={a.id} value={a.id}>{a.displayName} ({a.accountRef})</option>)}</select></label>
+              <label>Site Order ID<input required className="input" value={createExternal.siteId} onChange={(e) => setCreateExternal({ ...createExternal, siteId: e.target.value })} /></label>
+              <label>Game<select required className="input" value={createExternal.game} onChange={(e) => { const g = catalog.games.find((x) => x.slug === e.target.value); setCreateExternal({ ...createExternal, game: e.target.value, service: String(g?.services?.[0]?.id || '') }); }}>{catalog.games.map((g) => <option key={g.slug} value={g.slug}>{g.displayName}</option>)}</select></label>
+              <label>Service<select required className="input" value={createExternal.service} onChange={(e) => setCreateExternal({ ...createExternal, service: e.target.value })}>{(catalog.games.find((g) => g.slug === createExternal.game)?.services || []).map((s: any) => <option key={s.id} value={s.id}>{s.displayName}</option>)}</select></label>
+              <label>Mode<select className="input" value={createExternal.mode} onChange={(e) => setCreateExternal({ ...createExternal, mode: e.target.value })}><option value="selfplay">Selfplay</option><option value="pilot">Pilot</option><option value="mythicplus">Mythic+</option></select></label>
+              <label>Gross USD<input required type="number" step="0.01" min="0.01" className="input" value={createExternal.gross} onChange={(e) => setCreateExternal({ ...createExternal, gross: e.target.value })} /></label>
+              <label>Pool USD<input required type="number" step="0.01" min="0.01" className="input" value={createExternal.pool} onChange={(e) => setCreateExternal({ ...createExternal, pool: e.target.value })} /></label>
+              <label>Runs<input required type="number" min="1" className="input" value={createExternal.runs} onChange={(e) => setCreateExternal({ ...createExternal, runs: e.target.value })} /></label>
+              <label>Boosters<input required type="number" min="1" className="input" value={createExternal.boosters} onChange={(e) => setCreateExternal({ ...createExternal, boosters: e.target.value })} /></label>
+              <label>Key level<input type="number" min="1" className="input" value={createExternal.keyLevel} onChange={(e) => setCreateExternal({ ...createExternal, keyLevel: e.target.value })} /></label>
+              <label>Dungeon<input className="input" value={createExternal.dungeon} onChange={(e) => setCreateExternal({ ...createExternal, dungeon: e.target.value })} /></label>
+              <label>Notes<textarea className="input" value={createExternal.notes} onChange={(e) => setCreateExternal({ ...createExternal, notes: e.target.value })} /></label>
+              <button className="btn btn-primary" type="submit" disabled={busy || !createExternal.accountId}>Create external order</button>
+            </form>
+          </details>
+        </Card>
+      )}
       {feedback && <p role="status">{feedback}</p>}
       {error ? (
         <Card>
@@ -895,6 +940,23 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                       >
                         Confirm roster assignment
                       </button>
+                    </form>
+                  )}
+                  {!isReadOnly && details.authorizedActions.includes('assign') && (
+                    <form onSubmit={(e) => {
+                    e.preventDefault();
+                    const candidates = directUsers.split('\n').map((line) => {
+                      const [userId, assignedRole] = line.split(',').map((v) => v.trim());
+                      return { userId, assignedRole };
+                    }).filter((c) => c.userId && c.assignedRole);
+                    void mutate(() => directAssignOrder(details.orderId, { candidates, squadId: directSquadId ? Number(directSquadId) : undefined, auditReason: directReason.trim() }), 'Management assignment recorded (not a booster claim).');
+                    }} style={{ display: 'grid', gap: '.5rem', marginTop: '1rem' }}>
+                    <h4>Direct management assignment</h4>
+                    <p>For boosters agreed outside presign. This does not create or accept a Discord claim. One line per booster: user ID, role.</p>
+                    <textarea required minLength={3} className="input" placeholder={'booster-id-1, tank\nbooster-id-2, healer'} value={directUsers} onChange={(e) => setDirectUsers(e.target.value)} />
+                    <input className="input" type="number" min="1" placeholder="Optional premade team ID" value={directSquadId} onChange={(e) => setDirectSquadId(e.target.value)} />
+                    <textarea required minLength={5} className="input" placeholder="Mandatory audit reason" value={directReason} onChange={(e) => setDirectReason(e.target.value)} />
+                    <button className="btn btn-secondary" type="submit" disabled={busy}>Record direct management assignment</button>
                     </form>
                   )}
                 </section>

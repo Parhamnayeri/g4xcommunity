@@ -53,6 +53,7 @@ import {
 import { creditOrderSalesProceeds } from '../services/platformBalanceService';
 import { publishOrRefreshOrderCard } from '../services/orderDiscordService';
 import { createAdvertiserBoostOrder } from '../services/orderLifecycleService';
+import { createExternalOrder } from '../services/platformOrderService';
 
 /**
  * Safely reads modal text input without throwing DiscordjsTypeError.
@@ -920,7 +921,7 @@ export async function handleOrderWizardModalSubmit(
       // Enforce uniqueness within the source platform and platform account scope
       const existingExternalOrder = await prisma.order.findFirst({
         where: {
-          externalOrderId: siteOrderId,
+          externalOrderId: siteOrderId || '',
           sourceWebsite: session.platform || undefined,
           ...(session.platformAccountId ? { platformAccountId: session.platformAccountId } : {}),
         },
@@ -1001,141 +1002,24 @@ export async function handleOrderWizardModalSubmit(
 
     if (!isAdv) {
       // ── FLOW A: G4X External Operational Order ──
-      const orderRef = `ORD_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-
-      createdOrder = await prisma.$transaction(async (tx) => {
-        const paymentStatus = 'unneeded';
-        const orderStatus = 'open_presign';
-        const paymentVerifiedBy = actorId;
-        const paymentVerifiedAt = new Date();
-
-        // Create Order Entity with explicit source platform, account & external order id
-        const ord = await tx.order.create({
-          data: {
-            orderRef,
-            gameSlug: game.slug,
-            serviceId: service.id,
-            creatorId: actorId,
-            creatorType: 'g4x',
-            advertiserId: null,
-            advertiserRank: null,
-            rankCommissionBps: null,
-            orderType: isMythic ? 'group' : (isPilot ? 'pilot' : 'solo'),
-            orderMode: session.orderMode || 'non_pilot',
-            quantity: runsCount,
-            currency: 'USD',
-            grossAmountMinor: grossCents,
-            platformFeeMinor,
-            advertiserFeeMinor: 0,
-            boosterPoolMinor,
-            paymentStatus,
-            status: orderStatus,
-            paymentVerifiedBy,
-            paymentVerifiedAt,
-            notes: assembledNotes || null,
-            sourceType: 'external',
-            sourceWebsite: session.platform || null,
-            platformAccountId: session.platformAccountId || null,
-            externalOrderId: siteOrderId,
-            runs: {
-              create: Array.from({ length: runsCount }, (_, i) => ({
-                runNumber: i + 1,
-                status: 'pending',
-              })),
-            },
-            ...(isMythic
-              ? {
-                  requiredRoles: {
-                    create: [
-                      { roleName: 'tank', quantity: 1 },
-                      { roleName: 'healer', quantity: 1 },
-                      { roleName: 'dps', quantity: 2 },
-                    ],
-                  },
-                }
-              : {}),
-          },
-          include: {
-            game: true,
-            service: true,
-            requiredRoles: true,
-            platformAccount: true,
-          },
-        });
-
-        // Financial Calculation Engine Integration for external orders
-        if (session.platform) {
-          const snapshot = await calculateOrderFinancialSnapshot(
-            {
-              orderId: ord.id,
-              sourcePlatform: session.platform as any,
-              sourceAmountType: 'gross_sale',
-              sourceAmountMinor: grossCents,
-              explicitBoosterPoolMinor: boosterPoolMinor,
-              platformAccountId: session.platformAccountId,
-              currency: 'USD',
-              gameSlug: game.slug,
-              actorId,
-              allowProvisional: true,
-            },
-            tx
-          );
-
-          await tx.order.update({
-            where: { id: ord.id },
-            data: {
-              platformFeeMinor: snapshot.platformSaleCommissionMinor,
-              boosterPoolMinor: snapshot.boosterPoolMinor,
-            },
-          });
-
-          // Credit platform account pending proceeds
-          if (session.platformAccountRef && snapshot.platformOrderNetMinor > 0) {
-            await creditOrderSalesProceeds(
-              {
-                accountRef: session.platformAccountRef,
-                orderId: ord.id,
-                orderRef: ord.orderRef,
-                amountMinor: snapshot.platformOrderNetMinor,
-                currency: 'USD',
-                isPendingRelease: true,
-                actorId,
-              },
-              tx
-            );
-          }
-        }
-
-        // Record immutable AuditLog
-        await tx.auditLog.create({
-          data: {
-            actorId,
-            action: 'ORDER_CREATED_DISCORD_WIZARD',
-            entityType: 'Order',
-            entityId: String(ord.id),
-            newValues: JSON.stringify({
-              orderId: ord.id,
-              orderRef: ord.orderRef,
-              origin: session.origin,
-              platform: session.platform || null,
-              platformAccountId: session.platformAccountId || null,
-              siteOrderId: siteOrderId || null,
-              gameSlug: ord.gameSlug,
-              serviceId: ord.serviceId,
-              serviceName: service.displayName,
-              orderMode: ord.orderMode,
-              grossAmountUsd: (grossCents / 100).toFixed(2),
-              paymentStatus,
-              status: orderStatus,
-              runsCount,
-            }),
-            reason: `Order created via Discord Dropdown Wizard (${session.origin.toUpperCase()})`,
-            isSuccess: true,
-          },
-        });
-
-        return ord;
+      const externalResult = await createExternalOrder({
+        actorId,
+        gameSlug: game.slug,
+        serviceId: service.id,
+        amountMinor: grossCents,
+        boosterPoolMinor,
+        sourcePlatform: session.platform as any,
+        platformAccountId: session.platformAccountId || undefined,
+        platformAccountRef: session.platformAccountRef || undefined,
+        externalOrderId: siteOrderId || '',
+        sourceAmountType: 'gross_sale',
+        orderMode: isMythic ? 'mythicplus' : isPilot ? 'pilot' : 'selfplay',
+        runsCount,
+        keyLevel: isMythic ? Number(String(keyLevel).replace(/[^\d]/g, '')) : null,
+        dungeonName: isMythic ? String(keyLevel).replace(/^[+\d\s]+/, '').trim() : undefined,
+        notes: assembledNotes,
       });
+      createdOrder = externalResult.order;
     } else {
       // ── FLOW B: Advertiser Direct Order (Authoritative Shared Service) ──
       const createResult = await createAdvertiserBoostOrder({

@@ -142,6 +142,8 @@ async function runExternalPlatformOrderSuite() {
       sourcePlatform: 'g2g',
       platformAccountRef: 'g2g_main',
       sourceAmountType: 'gross_sale',
+      externalOrderId: 'G2G-EXT-1001',
+      boosterPoolMinor: 9101,
       actorId: adminActorId,
       notes: 'G2G gross regression test',
     });
@@ -185,6 +187,8 @@ async function runExternalPlatformOrderSuite() {
       sourcePlatform: 'g2g',
       platformAccountRef: 'g2g_main',
       sourceAmountType: 'platform_net',
+      externalOrderId: 'G2G-EXT-1002',
+      boosterPoolMinor: 10000,
       actorId: adminActorId,
       notes: 'G2G net regression test',
     });
@@ -197,6 +201,25 @@ async function runExternalPlatformOrderSuite() {
       '4. G2G platform_net input deducts 0% fee and preserves net amount without double deduction',
       { fee: g2gNetResult.order.platformFeeMinor, pool: g2gNetResult.order.boosterPoolMinor }
     );
+
+    let netPoolOverGrossRejected = false;
+    try {
+      await createExternalOrder({
+        gameSlug: testGame.slug,
+        serviceId: testService.id,
+        amountMinor: 10000,
+        sourcePlatform: 'g2g',
+        platformAccountRef: 'g2g_main',
+        sourceAmountType: 'platform_net',
+        externalOrderId: 'G2G-EXT-1003',
+        boosterPoolMinor: 10001,
+        actorId: adminActorId,
+      });
+    } catch (error: any) {
+      netPoolOverGrossRejected = error?.message === 'EXCESSIVE_BOOSTER_POOL_GROSS_CAP';
+    }
+    assert(netPoolOverGrossRejected, '5. platform_net pool above gross is rejected by hard cap');
+    assert(g2gNetResult.order.boosterPoolMinor === g2gNetResult.order.grossAmountMinor, '6. platform_net pool equal to gross remains valid');
 
     // ─────────────────────────────────────────────────────────────────────────
     // TEST 3: G2G Batch Withdrawal Fees Not Applied to Individual Orders
@@ -224,6 +247,8 @@ async function runExternalPlatformOrderSuite() {
       sourcePlatform: 'skycoach',
       platformAccountRef: 'skycoach_main',
       sourceAmountType: 'gross_sale',
+      externalOrderId: 'SKY-EXT-1001',
+      boosterPoolMinor: 4500,
       actorId: adminActorId,
       notes: 'SkyCoach gross regression test',
     });
@@ -253,6 +278,8 @@ async function runExternalPlatformOrderSuite() {
       sourcePlatform: 'skycoach',
       platformAccountRef: 'skycoach_main',
       sourceAmountType: 'platform_net',
+      externalOrderId: 'SKY-EXT-1002',
+      boosterPoolMinor: 5000,
       actorId: adminActorId,
     });
 
@@ -274,6 +301,8 @@ async function runExternalPlatformOrderSuite() {
       sourcePlatform: 'eldorado',
       platformAccountRef: 'eldorado_main',
       sourceAmountType: 'gross_sale',
+      externalOrderId: 'ELDO-EXT-1001',
+      boosterPoolMinor: 9850,
       listingCategory: 'currency',
       actorId: adminActorId,
     });
@@ -287,23 +316,24 @@ async function runExternalPlatformOrderSuite() {
     );
 
     // Unknown category (N/A) with Task 9 guard: does NOT allocate entire gross ($15.00) by default!
-    const eldoradoUnknownResult = await createExternalOrder({
-      gameSlug: testGame.slug,
-      serviceId: testService.id,
-      amountMinor: 1500, // $15.00
-      sourcePlatform: 'eldorado',
-      platformAccountRef: 'eldorado_main',
-      sourceAmountType: 'gross_sale',
-      listingCategory: 'unregistered_category_xyz',
-      actorId: adminActorId,
-    });
-
-    assert(
-      eldoradoUnknownResult.snapshot.notes?.includes('ELDORADO_FEE_UNKNOWN') === true &&
-      eldoradoUnknownResult.order.boosterPoolMinor === 0,
-      '10. Eldorado unknown category does NOT allocate entire gross ($15.00) by default (booster pool = 0, provisional)',
-      { notes: eldoradoUnknownResult.snapshot.notes, pool: eldoradoUnknownResult.order.boosterPoolMinor }
-    );
+    let rejectedUnknownCategory = false;
+    try {
+      await createExternalOrder({
+        gameSlug: testGame.slug,
+        serviceId: testService.id,
+        amountMinor: 1500,
+        sourcePlatform: 'eldorado',
+        platformAccountRef: 'eldorado_main',
+        sourceAmountType: 'gross_sale',
+        externalOrderId: 'ELDO-EXT-1002',
+        boosterPoolMinor: 1000,
+        listingCategory: 'unregistered_category_xyz',
+        actorId: adminActorId,
+      });
+    } catch (err: any) {
+      rejectedUnknownCategory = err.message.includes('MISSING_FEE_POLICY');
+    }
+    assert(rejectedUnknownCategory, '10. Eldorado unknown category fails closed without allocating a provisional pool');
 
     // ─────────────────────────────────────────────────────────────────────────
     // TEST 6: Source & Platform Account Security Validations
@@ -318,6 +348,8 @@ async function runExternalPlatformOrderSuite() {
         sourcePlatform: 'kinguin' as any,
         platformAccountRef: 'g2g_main',
         sourceAmountType: 'gross_sale',
+        externalOrderId: 'NEG-UNSUPPORTED-1',
+        boosterPoolMinor: 1000,
         actorId: adminActorId,
       });
     } catch (err: any) {
@@ -336,6 +368,8 @@ async function runExternalPlatformOrderSuite() {
         sourcePlatform: 'g2g',
         platformAccountRef: 'g2g_deactivated_test',
         sourceAmountType: 'gross_sale',
+        externalOrderId: 'NEG-INACTIVE-1',
+        boosterPoolMinor: 1000,
         actorId: adminActorId,
       });
     } catch (err: any) {
@@ -354,6 +388,8 @@ async function runExternalPlatformOrderSuite() {
         sourcePlatform: 'skycoach',
         platformAccountRef: 'g2g_main', // G2G account given for SkyCoach
         sourceAmountType: 'gross_sale',
+        externalOrderId: 'NEG-MISMATCH-1',
+        boosterPoolMinor: 1000,
         actorId: adminActorId,
       });
     } catch (err: any) {
@@ -362,6 +398,108 @@ async function runExternalPlatformOrderSuite() {
       }
     }
     assert(rejectedMismatch, '13. Platform mismatch between source and account is rejected (PLATFORM_MISMATCH)');
+
+    let rejectedMissingSiteId = false;
+    try {
+      await createExternalOrder({
+        gameSlug: testGame.slug, serviceId: testService.id, amountMinor: 5000,
+        sourcePlatform: 'g2g', platformAccountRef: 'g2g_main', sourceAmountType: 'gross_sale',
+        externalOrderId: '', boosterPoolMinor: 4000, actorId: adminActorId,
+      });
+    } catch (err: any) {
+      rejectedMissingSiteId = err.message.includes('MISSING_SITE_ORDER_ID');
+    }
+    assert(rejectedMissingSiteId, '14. Missing Site Order ID is rejected');
+
+    let rejectedMissingPool = false;
+    try {
+      await createExternalOrder({
+        gameSlug: testGame.slug, serviceId: testService.id, amountMinor: 5000,
+        sourcePlatform: 'g2g', platformAccountRef: 'g2g_main', sourceAmountType: 'gross_sale',
+        externalOrderId: 'NEG-MISSING-POOL-1', boosterPoolMinor: undefined as any, actorId: adminActorId,
+      });
+    } catch (err: any) {
+      rejectedMissingPool = err.message.includes('INVALID_BOOSTER_POOL');
+    }
+    assert(rejectedMissingPool, '15. Missing Booster Pool is rejected');
+
+    let rejectedExcessivePool = false;
+    try {
+      await createExternalOrder({
+        gameSlug: testGame.slug, serviceId: testService.id, amountMinor: 10000,
+        sourcePlatform: 'g2g', platformAccountRef: 'g2g_main', sourceAmountType: 'gross_sale',
+        externalOrderId: 'NEG-EXCESSIVE-POOL-1', boosterPoolMinor: 10000, actorId: adminActorId,
+      });
+    } catch (err: any) {
+      rejectedExcessivePool = err.message.includes('EXCESSIVE_BOOSTER_POOL');
+    }
+    assert(rejectedExcessivePool, '16. Booster Pool exceeding seller-fee-adjusted net is rejected');
+
+    let rejectedDuplicateSiteId = false;
+    try {
+      await createExternalOrder({
+        gameSlug: testGame.slug, serviceId: testService.id, amountMinor: 5000,
+        sourcePlatform: 'g2g', platformAccountRef: 'g2g_main', sourceAmountType: 'gross_sale',
+        externalOrderId: 'G2G-EXT-1001', boosterPoolMinor: 4000, actorId: adminActorId,
+      });
+    } catch (err: any) {
+      rejectedDuplicateSiteId = err.message.includes('DUPLICATE_SITE_ORDER_ID');
+    }
+    assert(rejectedDuplicateSiteId, '17. Duplicate Site Order ID is rejected per platform account');
+
+    const crossPlatformSameId = await createExternalOrder({
+      gameSlug: testGame.slug, serviceId: testService.id, amountMinor: 5000,
+      sourcePlatform: 'skycoach', platformAccountRef: 'skycoach_main', sourceAmountType: 'gross_sale',
+      externalOrderId: 'G2G-EXT-1001', boosterPoolMinor: 4000, actorId: adminActorId,
+    });
+    assert(crossPlatformSameId.order.sourceWebsite === 'skycoach', '18. Identical Site Order ID is allowed across platforms');
+
+    const multiBoosterOrder = await createExternalOrder({
+      gameSlug: testGame.slug, serviceId: testService.id, amountMinor: 10000,
+      sourcePlatform: 'g2g', platformAccountRef: 'g2g_main', sourceAmountType: 'gross_sale',
+      externalOrderId: 'G2G-MULTI-BOOSTER-1', boosterPoolMinor: 9000,
+      requiredBoosterCount: 2, orderMode: 'selfplay', actorId: adminActorId,
+    });
+    assert(multiBoosterOrder.order.orderType === 'group', '19. Non-pilot multi-booster order is not marked solo');
+
+    const structuredMythicService = await prisma.gameService.create({
+      data: {
+        gameSlug: testGame.slug,
+        serviceKey: `renamed_service_${Date.now()}`,
+        displayName: 'Seasonal Group Run',
+        serviceMode: 'non_pilot',
+        profileMode: 'raiderio',
+        isActive: true,
+        settings: { create: { requiresKey: true, requiresRoles: true } },
+      },
+    });
+    let rejectedInvalidMythicComposition = false;
+    try {
+      await createExternalOrder({
+        gameSlug: testGame.slug, serviceId: structuredMythicService.id, amountMinor: 10000,
+        sourcePlatform: 'g2g', platformAccountRef: 'g2g_main', sourceAmountType: 'gross_sale',
+        externalOrderId: 'G2G-MYTHIC-INVALID-1', boosterPoolMinor: 9000,
+        orderMode: 'mythicplus', keyLevel: 10, dungeonName: 'The Stonevault',
+        requiredBoosterCount: 3, actorId: adminActorId,
+      });
+    } catch (err: any) {
+      rejectedInvalidMythicComposition = err.message.includes('MYTHIC_COMPOSITION_REQUIRED');
+    }
+    assert(rejectedInvalidMythicComposition, '20. Structured Mythic+ service rejects non-4-booster composition');
+    const structuredMythicOrder = await createExternalOrder({
+      gameSlug: testGame.slug, serviceId: structuredMythicService.id, amountMinor: 10000,
+      sourcePlatform: 'g2g', platformAccountRef: 'g2g_main', sourceAmountType: 'gross_sale',
+      externalOrderId: 'G2G-MYTHIC-VALID-1', boosterPoolMinor: 9000,
+      orderMode: 'mythicplus', keyLevel: 10, dungeonName: 'The Stonevault',
+      requiredBoosterCount: 4, actorId: adminActorId,
+    });
+    assert(
+      structuredMythicOrder.order.requiredRoles?.length === 3 &&
+      structuredMythicOrder.order.requiredRoles.some((r: any) => r.roleName === 'tank' && r.quantity === 1) &&
+      structuredMythicOrder.order.requiredRoles.some((r: any) => r.roleName === 'healer' && r.quantity === 1) &&
+      structuredMythicOrder.order.requiredRoles.some((r: any) => r.roleName === 'dps' && r.quantity === 2),
+      '21. Structured Mythic+ service always creates 1 tank, 1 healer, 2 DPS',
+    );
 
     // ─────────────────────────────────────────────────────────────────────────
     // TEST 7: Settlement Timing Invariant (Task 8)
@@ -375,7 +513,7 @@ async function runExternalPlatformOrderSuite() {
       (accountStateAfterOrders?.salesCreditedMinor ?? 0) > 0 &&
       (accountStateAfterOrders?.pendingReleaseMinor ?? 0) > 0 &&
       (accountStateAfterOrders?.receivedTotalMinor ?? 0) === 0,
-      '14. Order sales proceeds are credited as pending release; receivedTotalMinor remains 0 until actual settlement',
+      '20. Order sales proceeds are credited as pending release; receivedTotalMinor remains 0 until actual settlement',
       {
         salesCredited: accountStateAfterOrders?.salesCreditedMinor,
         pendingRelease: accountStateAfterOrders?.pendingReleaseMinor,

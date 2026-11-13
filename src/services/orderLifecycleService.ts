@@ -445,10 +445,14 @@ export async function publishOrder(
 /**
  * Checks if a service corresponds to a World of Warcraft Mythic+ service.
  */
-export function isMythicPlusService(service: { serviceKey: string; displayName?: string | null }): boolean {
+export function isMythicPlusService(service: {
+  serviceKey: string;
+  displayName?: string | null;
+  settings?: { requiresKey?: boolean | null } | null;
+}): boolean {
   const key = (service.serviceKey || '').toLowerCase();
   const name = (service.displayName || '').toLowerCase();
-  return key === 'mythic_plus' || key.includes('mythic') || name.includes('mythic');
+  return service.settings?.requiresKey === true || key === 'mythic_plus' || key.includes('mythic') || name.includes('mythic');
 }
 
 export interface CreateAdvertiserBoostOrderInput {
