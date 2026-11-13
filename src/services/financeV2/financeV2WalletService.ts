@@ -293,6 +293,15 @@ export async function creditAvailableCents(
 
     const entryRef = options.entryRef || `LEDGER_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
+    if (options.idempotencyKey) {
+      const existing = await tx.ledgerEntryV2.findUnique({
+        where: { idempotencyKey: options.idempotencyKey },
+      });
+      if (existing) {
+        throw new Error(`DUPLICATE_IDEMPOTENCY_KEY: Ledger entry with idempotency key '${options.idempotencyKey}' already exists`);
+      }
+    }
+
     const ledgerEntry = await tx.ledgerEntryV2.create({
       data: {
         entryRef,
@@ -362,6 +371,15 @@ export async function reserveAvailableCents(
     assertWalletInvariants(updatedWallet);
 
     const entryRef = options.entryRef || `LEDGER_RES_${Date.now()}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+
+    if (options.idempotencyKey) {
+      const existing = await tx.ledgerEntryV2.findUnique({
+        where: { idempotencyKey: options.idempotencyKey },
+      });
+      if (existing) {
+        throw new Error(`DUPLICATE_IDEMPOTENCY_KEY: Ledger entry with idempotency key '${options.idempotencyKey}' already exists`);
+      }
+    }
 
     const ledgerEntry = await tx.ledgerEntryV2.create({
       data: {
@@ -765,4 +783,3 @@ export async function releaseConfirmedEarningsToAvailable(
   }
   return await prisma.$transaction(runWithTx);
 }
-
