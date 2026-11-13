@@ -181,6 +181,9 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
   const normalizedRequired = requiredBoosterCount ?? (isMythic ? 4 : 1);
   if (!Number.isSafeInteger(normalizedRequired) || normalizedRequired <= 0) throw new Error('INVALID_REQUIRED_BOOSTER_COUNT');
   if (isMythic && normalizedRequired !== 4) throw new Error('MYTHIC_COMPOSITION_REQUIRED');
+  if (boosterPoolMinor > amountMinor) {
+    throw new Error('EXCESSIVE_BOOSTER_POOL_GROSS_CAP');
+  }
   const defensibleNet = sourceAmountType === 'platform_net'
     ? boosterPoolMinor
     : (await validateExternalOrderDefensibleNet({

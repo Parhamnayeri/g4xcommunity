@@ -202,6 +202,25 @@ async function runExternalPlatformOrderSuite() {
       { fee: g2gNetResult.order.platformFeeMinor, pool: g2gNetResult.order.boosterPoolMinor }
     );
 
+    let netPoolOverGrossRejected = false;
+    try {
+      await createExternalOrder({
+        gameSlug: testGame.slug,
+        serviceId: testService.id,
+        amountMinor: 10000,
+        sourcePlatform: 'g2g',
+        platformAccountRef: 'g2g_main',
+        sourceAmountType: 'platform_net',
+        externalOrderId: 'G2G-EXT-1003',
+        boosterPoolMinor: 10001,
+        actorId: adminActorId,
+      });
+    } catch (error: any) {
+      netPoolOverGrossRejected = error?.message === 'EXCESSIVE_BOOSTER_POOL_GROSS_CAP';
+    }
+    assert(netPoolOverGrossRejected, '5. platform_net pool above gross is rejected by hard cap');
+    assert(g2gNetResult.order.boosterPoolMinor === g2gNetResult.order.grossAmountMinor, '6. platform_net pool equal to gross remains valid');
+
     // ─────────────────────────────────────────────────────────────────────────
     // TEST 3: G2G Batch Withdrawal Fees Not Applied to Individual Orders
     // ─────────────────────────────────────────────────────────────────────────

@@ -623,6 +623,10 @@ async function runAcceptanceSuite() {
       if (finalizeRes.allocations.length !== 1 || finalizeRes.allocations[0].allocatedMinor !== 7500) {
         throw new Error(`Expected 1 allocation of 7500 minor, got ${JSON.stringify(finalizeRes.allocations)}`);
       }
+      const payoutAllocations = await prisma.boosterPayoutAllocation.findMany({ where: { orderId: order.id } });
+      if (payoutAllocations.length !== 1 || payoutAllocations[0].allocatedMinor !== 7500) {
+        throw new Error(`Expected one persisted BoosterPayoutAllocation of 7500, found ${payoutAllocations.length}`);
+      }
 
       // Verify pending earnings in WalletV2
       const walletPending = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
@@ -675,6 +679,12 @@ async function runAcceptanceSuite() {
       const walletIdempotent = await getOrCreateWalletV2(SYNTH_BOOSTER_ID);
       if (walletIdempotent.pendingEarningsCents !== 0 || walletIdempotent.confirmedEarningsCents !== 7500 || walletIdempotent.availableCents !== 0) {
         throw new Error(`Idempotency failure: duplicate balance recorded! confirmed=${walletIdempotent.confirmedEarningsCents}`);
+      }
+      const confirmedLedgersAfterRetry = await prisma.ledgerEntryV2.findMany({
+        where: { orderId: order.id, entryType: 'EARNING_CONFIRMED' },
+      });
+      if (confirmedLedgersAfterRetry.length !== 1) {
+        throw new Error(`Idempotency failure: expected one confirmed ledger entry, found ${confirmedLedgersAfterRetry.length}`);
       }
 
       // 11. Verify locked escrow / financial gates cannot be bypassed
