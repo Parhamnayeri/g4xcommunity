@@ -739,6 +739,15 @@ export async function calculateOrderFinancialSnapshot(
     boosterPoolMinor = 0;
   }
 
+  if (
+    ['g2g', 'skycoach', 'eldorado'].includes(sourcePlatform) &&
+    boosterPoolMinor > sourceAmountMinor
+  ) {
+    throw new Error(
+      `EXCESSIVE_BOOSTER_POOL_GROSS_CAP: Booster pool (${boosterPoolMinor} cents) cannot exceed source amount (${sourceAmountMinor} cents), regardless of source amount type`
+    );
+  }
+
   // ذخیره یا به‌روزرسانی اسنپ‌شات در دیتابیس
   const snapshot = await tx.orderFinancialSnapshot.upsert({
     where: { orderId },

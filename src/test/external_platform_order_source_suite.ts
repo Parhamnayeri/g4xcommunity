@@ -262,6 +262,26 @@ async function runExternalPlatformOrderSuite() {
       { fee: skyNetResult.order.platformFeeMinor, pool: skyNetResult.order.boosterPoolMinor }
     );
 
+    let netPoolOverGrossRejected = false;
+    try {
+      await calculateOrderFinancialSnapshot({
+        orderId: skyNetResult.order.id,
+        sourcePlatform: 'skycoach',
+        sourceAmountType: 'platform_net',
+        sourceAmountMinor: 5000,
+        explicitBoosterPoolMinor: 5001,
+        platformAccountId: skycoachAccount.id,
+        currency: 'USD',
+        allowProvisional: true,
+      });
+    } catch (error: any) {
+      netPoolOverGrossRejected = error?.message?.includes('EXCESSIVE_BOOSTER_POOL');
+    }
+    assert(
+      netPoolOverGrossRejected,
+      '9. platform_net booster pool cannot exceed the source amount (negative regression)',
+    );
+
     // ─────────────────────────────────────────────────────────────────────────
     // TEST 5: Eldorado Category Fee vs Unknown Fee (Task 9 Guard)
     // ─────────────────────────────────────────────────────────────────────────

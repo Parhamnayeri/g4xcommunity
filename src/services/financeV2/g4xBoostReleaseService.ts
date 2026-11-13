@@ -23,7 +23,11 @@ import {
   G4XBoostReleaseStage,
   FINANCE_V2_CONSTANTS,
 } from './financeV2Types';
-import { releaseConfirmedEarningsToAvailable } from './financeV2WalletService';
+import {
+  confirmPendingEarnings,
+  recordPendingEarnings,
+  releaseConfirmedEarningsToAvailable,
+} from './financeV2WalletService';
 
 export interface EligibilityEvaluationResult {
   orderId: number;
@@ -244,33 +248,59 @@ export async function recordAdminFinalApproval(
   const holdHours = tracker.holdDurationHours || FINANCE_V2_CONSTANTS.G4X_BOOST_HOLD_HOURS;
   const holdExpiresAt = new Date(approvedAt.getTime() + holdHours * 3600 * 1000);
 
-  const updatedTracker = await prisma.g4XBoostReleaseTracker.update({
-    where: { id: tracker.id },
-    data: {
-      stage: G4XBoostReleaseStage.HOLD_24_HOURS,
-      adminFinalApprovedAt: approvedAt,
-      adminFinalApprovedBy: adminId,
-      holdExpiresAt,
-      notes: notes ? `${tracker.notes || ''} | Admin: ${notes}`.trim() : tracker.notes,
-    },
-  });
+  return await prisma.$transaction(async (tx) => {
+    const allocations = await tx.boosterPayoutAllocation.findMany({
+      where: { orderId },
+    });
 
-  await prisma.auditLog.create({
-    data: {
-      actorId: adminId,
-      action: 'G4X_BOOST_ADMIN_FINAL_APPROVED',
-      entityType: 'Order',
-      entityId: String(orderId),
-      newValues: JSON.stringify({
+    for (const allocation of allocations) {
+      const ledgerOptions = {
         orderId,
-        approvedAt,
-        holdHours,
-        holdExpiresAt,
-      }),
-    },
-  });
+        idempotencyKey: `G4X_EARNING_PENDING_${orderId}_${allocation.boosterId}`,
+        description: `Recorded G4X boost earnings for order #${orderId}`,
+        createdBy: adminId,
+      };
+      await recordPendingEarnings(allocation.boosterId, allocation.allocatedMinor, ledgerOptions, tx);
+      await confirmPendingEarnings(
+        allocation.boosterId,
+        allocation.allocatedMinor,
+        {
+          ...ledgerOptions,
+          idempotencyKey: `G4X_EARNING_CONFIRMED_${orderId}_${allocation.boosterId}`,
+          description: `Confirmed G4X boost earnings for order #${orderId}`,
+        },
+        tx,
+      );
+    }
 
-  return updatedTracker;
+    const updatedTracker = await tx.g4XBoostReleaseTracker.update({
+      where: { id: tracker.id },
+      data: {
+        stage: G4XBoostReleaseStage.HOLD_24_HOURS,
+        adminFinalApprovedAt: approvedAt,
+        adminFinalApprovedBy: adminId,
+        holdExpiresAt,
+        notes: notes ? `${tracker.notes || ''} | Admin: ${notes}`.trim() : tracker.notes,
+      },
+    });
+
+    await tx.auditLog.create({
+      data: {
+        actorId: adminId,
+        action: 'G4X_BOOST_ADMIN_FINAL_APPROVED',
+        entityType: 'Order',
+        entityId: String(orderId),
+        newValues: JSON.stringify({
+          orderId,
+          approvedAt,
+          holdHours,
+          holdExpiresAt,
+        }),
+      },
+    });
+
+    return updatedTracker;
+  });
 }
 
 /**

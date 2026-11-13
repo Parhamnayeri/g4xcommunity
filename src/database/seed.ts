@@ -210,8 +210,22 @@ export async function seed(): Promise<void> {
     }
     for (const service of GAME_SERVICES) {
       const where = { gameSlug_serviceKey: { gameSlug: service.gameSlug, serviceKey: service.serviceKey } };
-      if (!(await tx.gameService.findUnique({ where }))) {
-        await tx.gameService.create({ data: service });
+      let seededService = await tx.gameService.findUnique({ where });
+      if (!seededService) {
+        seededService = await tx.gameService.create({ data: service });
+      }
+
+      if (service.gameSlug === 'wow_midnight' && service.serviceKey === 'mythic_plus') {
+        await tx.serviceSetting.upsert({
+          where: { serviceId: seededService.id },
+          create: {
+            serviceId: seededService.id,
+            requiresKey: true,
+          },
+          update: {
+            requiresKey: true,
+          },
+        });
       }
     }
   });
@@ -228,4 +242,3 @@ if (require.main === module) {
       await prisma.$disconnect();
     });
 }
-
