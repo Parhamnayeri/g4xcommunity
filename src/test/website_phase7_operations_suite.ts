@@ -370,13 +370,14 @@ async function runPhase7OperationsSuite() {
       },
     });
 
-    const adminAdvReviewRes = await adminAgent.agent
+    // 5c: Unauthorized application approval (Staff attempting to approve Advertiser application)
+    const staffAdvReviewRes = await staffAgent.agent
       .post(`/api/management/applications/${advApp.id}/review`)
-      .set('x-csrf-token', adminAgent.csrfToken || '')
-      .send({ decision: 'approve', reviewerNotes: 'Unauthorized admin approval attempt' });
+      .set('x-csrf-token', staffAgent.csrfToken || '')
+      .send({ decision: 'approve', reviewerNotes: 'Unauthorized staff approval attempt' });
 
-    assert.strictEqual(adminAdvReviewRes.status, 403, 'Admin without ADVERTISER_APPLICATION_REVIEW permission must be rejected with 403');
-    assert.strictEqual(adminAdvReviewRes.body.error, 'UNAUTHORIZED_REVIEWER');
+    assert.strictEqual(staffAdvReviewRes.status, 403, 'Staff without ADVERTISER_APPLICATION_REVIEW permission must be rejected with 403');
+    assert.strictEqual(staffAdvReviewRes.body.error, 'UNAUTHORIZED_REVIEWER');
 
     console.log('✓ Live authorization enforced: Revocations reject stale sessions, role boundaries respected');
 

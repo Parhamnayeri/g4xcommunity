@@ -65,6 +65,7 @@ async function runRegistrationTests() {
   const uPilotApplicant = 'test_reg_applicant_pilot_9906';
   const uAdvertiserApplicant = 'test_reg_applicant_adv_9907';
   const uExchangerApplicant = 'test_reg_applicant_exch_9908';
+  const uSyncApplicant = 'test_reg_sync_9909';
 
   const allTestUsers = [
     uOwner,
@@ -75,6 +76,7 @@ async function runRegistrationTests() {
     uPilotApplicant,
     uAdvertiserApplicant,
     uExchangerApplicant,
+    uSyncApplicant,
   ];
 
   try {
@@ -416,9 +418,9 @@ async function runRegistrationTests() {
     let unauthReviewSuccess = false;
     let unauthReviewError = '';
     try {
-      // ادمین معمولی طبق ماتریس مجوز به ADVERTISER_APPLICATION_REVIEW دسترسی ندارد (منحصراً Manager / Owner)
+      // کاربر عادی بدون مجوز به ADVERTISER_APPLICATION_REVIEW دسترسی ندارد
       await reviewApplication({
-        reviewerId: uAdmin,
+        reviewerId: uRegular,
         applicationId: advAppValid.id,
         decision: 'approve',
       });
@@ -489,9 +491,9 @@ async function runRegistrationTests() {
       },
     };
 
-    // ثبت درخواست بوستر جدید برای uRegular
+    // ثبت درخواست بوستر جدید برای uSyncApplicant
     const boosterToSync = await registerBooster({
-      userId: uRegular,
+      userId: uSyncApplicant,
       gameSlug: 'wow_midnight',
       serviceId: mplusService.id,
       experience: 'Testing sync resilience',

@@ -537,13 +537,14 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
                     >
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Identity Document</div>
                       <div style={{ margin: '0.5rem 0', fontWeight: 600 }}>
-                        {detail.documents.identityDocumentRef ? 'Present' : 'Missing'}
+                        {(detail.documents?.identityDocumentRef || (detail.application as any)?.documents?.identityDocumentRef) ? 'Present' : 'Missing'}
                       </div>
-                      {detail.documents.identityDocumentRef ? (
+                      {(detail.documents?.identityDocumentRef || (detail.application as any)?.documents?.identityDocumentRef) ? (
                         <button
                           type="button"
                           onClick={() => {
-                            setActiveDocRef(detail.documents.identityDocumentRef);
+                            const ref = detail.documents?.identityDocumentRef || (detail.application as any)?.documents?.identityDocumentRef;
+                            setActiveDocRef(ref);
                             setActiveDocType('identityDoc');
                           }}
                           className="btn btn-sm"
@@ -572,13 +573,14 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
                     >
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Passport / National ID</div>
                       <div style={{ margin: '0.5rem 0', fontWeight: 600 }}>
-                        {detail.documents.passportDocumentRef ? 'Present' : 'Missing'}
+                        {(detail.documents?.passportDocumentRef || (detail.application as any)?.documents?.passportDocumentRef) ? 'Present' : 'Missing'}
                       </div>
-                      {detail.documents.passportDocumentRef ? (
+                      {(detail.documents?.passportDocumentRef || (detail.application as any)?.documents?.passportDocumentRef) ? (
                         <button
                           type="button"
                           onClick={() => {
-                            setActiveDocRef(detail.documents.passportDocumentRef);
+                            const ref = detail.documents?.passportDocumentRef || (detail.application as any)?.documents?.passportDocumentRef;
+                            setActiveDocRef(ref);
                             setActiveDocType('passportDoc');
                           }}
                           className="btn btn-sm"
@@ -607,13 +609,14 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
                     >
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Selfie Verification Proof</div>
                       <div style={{ margin: '0.5rem 0', fontWeight: 600 }}>
-                        {detail.documents.selfieDocumentRef ? 'Present' : 'Missing'}
+                        {(detail.documents?.selfieDocumentRef || (detail.application as any)?.documents?.selfieDocumentRef) ? 'Present' : 'Missing'}
                       </div>
-                      {detail.documents.selfieDocumentRef ? (
+                      {(detail.documents?.selfieDocumentRef || (detail.application as any)?.documents?.selfieDocumentRef) ? (
                         <button
                           type="button"
                           onClick={() => {
-                            setActiveDocRef(detail.documents.selfieDocumentRef);
+                            const ref = detail.documents?.selfieDocumentRef || (detail.application as any)?.documents?.selfieDocumentRef;
+                            setActiveDocRef(ref);
                             setActiveDocType('selfieDoc');
                           }}
                           className="btn btn-sm"

@@ -132,8 +132,9 @@ export const ProfileKycPage: React.FC = () => {
     return <LoadingState message="Checking identity verification status..." />;
   }
 
+  const hasSubmittedDocs = Boolean(data?.documents?.identity || data?.documents?.passport || data?.documents?.selfie);
   const isVerified = data?.isVerified || data?.status === 'verified';
-  const isPending = !isVerified && (data?.status === 'pending');
+  const isPending = !isVerified && (data?.status === 'pending') && hasSubmittedDocs;
   const isRejected = !isVerified && (data?.status === 'rejected');
 
   return (

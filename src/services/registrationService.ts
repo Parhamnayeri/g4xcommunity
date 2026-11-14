@@ -593,17 +593,6 @@ export async function registerAdvertiser(input: AdvertiserRegistrationInput) {
   });
 
   if (!existingApprovedKyc) {
-    const existingVerif = await prisma.pilotVerification.findFirst({ where: { userId } });
-    if (!existingVerif) {
-      await prisma.pilotVerification.create({
-        data: {
-          userId,
-          gameSlug: 'advertiser',
-          status: 'pending',
-        },
-      }).catch(() => null);
-    }
-
     sendKycRequestDm(userId, {
       category: 'advertiser',
       reason: 'Identity verification required for Advertiser role',
@@ -704,17 +693,6 @@ export async function registerExchanger(input: ExchangerRegistrationInput) {
   });
 
   if (!isAlreadyKycVerified) {
-    const existingVerif = await prisma.pilotVerification.findFirst({ where: { userId } });
-    if (!existingVerif) {
-      await prisma.pilotVerification.create({
-        data: {
-          userId,
-          gameSlug: 'exchanger',
-          status: 'pending',
-        },
-      }).catch(() => null);
-    }
-
     sendKycRequestDm(userId, {
       category: 'exchanger',
       reason: 'Identity verification required for Exchanger application',
