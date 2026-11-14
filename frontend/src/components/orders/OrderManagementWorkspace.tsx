@@ -124,6 +124,9 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
 
   // Create Order Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createTitle, setCreateTitle] = useState('');
+  const [createBoostModel, setCreateBoostModel] = useState('');
+  const [createVpnRequirement, setCreateVpnRequirement] = useState('');
   const [createGame, setCreateGame] = useState('wow_midnight');
   const [createServiceId, setCreateServiceId] = useState<number | ''>('');
   const [createAmountUsd, setCreateAmountUsd] = useState('');
@@ -310,15 +313,19 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
       }
     }
 
-    const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+    const { externalOrderId: parsedOrderId, title: parsedTitle, cleanNotes } = extractExternalOrderIdAndCleanNotes(
       createNotes,
-      createExternalOrderId
+      createExternalOrderId,
+      createTitle
     );
 
     setSubmittingCreate(true);
     setCreateFeedback(null);
     try {
       const res = await createManagementOrder({
+        title: parsedTitle || undefined,
+        boostModel: createBoostModel || undefined,
+        vpnRequirement: createVpnRequirement || undefined,
         gameSlug: createGame,
         serviceId: Number(createServiceId),
         amountUsd: amount,
@@ -336,6 +343,9 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
       setCreateFeedback({ text: res.message || 'Order created successfully!', type: 'success' });
       setTimeout(() => {
         setShowCreateModal(false);
+        setCreateTitle('');
+        setCreateBoostModel('');
+        setCreateVpnRequirement('');
         setCreateExternalOrderId('');
         setCreateNotes('');
         setRevision((n) => n + 1);
@@ -838,10 +848,27 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                       <tr key={o.id}>
                         <td>
                           <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent-yellow)', fontSize: '0.9rem' }}>
-                            {o.orderRef}
+                            {o.title || o.orderName || o.orderRef}
                           </div>
+                          {(o.title || o.orderName) && (
+                            <div style={{ fontFamily: 'monospace', fontSize: '0.72rem', color: 'var(--accent-lime)' }}>
+                              {o.orderRef}
+                            </div>
+                          )}
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
                             {time(o.createdAt)}
+                          </div>
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '4px' }}>
+                            {o.boostModel && (
+                              <span className="badge badge-purple" style={{ fontSize: '0.65rem', padding: '1px 6px' }}>
+                                {o.boostModel}
+                              </span>
+                            )}
+                            {o.vpnRequirement && (
+                              <span className="badge badge-blue" style={{ fontSize: '0.65rem', padding: '1px 6px' }}>
+                                🛡️ {o.vpnRequirement}
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td>
@@ -955,8 +982,23 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
             <div className="studio-modal-header">
               <div>
                 <h2 id="order-details-title" style={{ margin: 0, fontSize: '1.25rem' }}>
-                  Order {details?.orderRef || `#${selectedId}`}
+                  {details?.title || details?.orderName || `Order ${details?.orderRef || `#${selectedId}`}`}
                 </h2>
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '4px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Ref: <code style={{ color: 'var(--accent-lime)' }}>{details?.orderRef}</code>
+                  </span>
+                  {details?.boostModel && (
+                    <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
+                      {details.boostModel}
+                    </span>
+                  )}
+                  {details?.vpnRequirement && (
+                    <span className="badge badge-blue" style={{ fontSize: '0.72rem' }}>
+                      🛡️ {details.vpnRequirement}
+                    </span>
+                  )}
+                </div>
                 <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                   Lifecycle tracking, financial calculations, booster assignment roster, and proof review.
                 </p>
@@ -1002,6 +1044,24 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                             </span>
                           </span>
                         </div>
+                        {details.title && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Title:</span>
+                            <span style={{ fontWeight: 600, color: '#fff', textAlign: 'right' }}>{details.title}</span>
+                          </div>
+                        )}
+                        {details.boostModel && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Boost Model:</span>
+                            <span style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>{details.boostModel}</span>
+                          </div>
+                        )}
+                        {details.vpnRequirement && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>VPN:</span>
+                            <span style={{ color: 'var(--accent-lime)' }}>{details.vpnRequirement}</span>
+                          </div>
+                        )}
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Customer:</span>
                           <span style={{ fontFamily: 'monospace' }}>{details.customerId || '—'}</span>
@@ -1582,6 +1642,55 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
 
             <form onSubmit={handleCreateOrderSubmit}>
               <div className="studio-modal-body">
+                <label style={{ fontSize: '0.82rem', display: 'block', marginBottom: '0.75rem' }}>
+                  Order Title (Descriptive Name)
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g. Mythic+ 10-20 Timed Bundle (4 Runs)"
+                    value={createTitle}
+                    onChange={(e) => setCreateTitle(e.target.value)}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                  />
+                </label>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                  <label style={{ fontSize: '0.82rem' }}>
+                    Boost Model
+                    <select
+                      className="input"
+                      value={createBoostModel}
+                      onChange={(e) => setCreateBoostModel(e.target.value)}
+                      style={{ width: '100%', marginTop: '0.25rem' }}
+                    >
+                      <option value="">— Select Boost Model —</option>
+                      <option value="Mythic+ Keystone">Mythic+ Keystone</option>
+                      <option value="Raid Run (Normal/Heroic/Mythic)">Raid Run (Normal/Heroic/Mythic)</option>
+                      <option value="Leveling / Campaign">Leveling / Campaign</option>
+                      <option value="PvP / Arena / RBG">PvP / Arena / RBG</option>
+                      <option value="Delves / Farming">Delves / Farming</option>
+                      <option value="Custom">Custom</option>
+                    </select>
+                  </label>
+
+                  <label style={{ fontSize: '0.82rem' }}>
+                    VPN Requirement
+                    <select
+                      className="input"
+                      value={createVpnRequirement}
+                      onChange={(e) => setCreateVpnRequirement(e.target.value)}
+                      style={{ width: '100%', marginTop: '0.25rem' }}
+                    >
+                      <option value="">— Select VPN Requirement —</option>
+                      <option value="No VPN Required (Self-Play)">No VPN Required (Self-Play)</option>
+                      <option value="VPN Required — Client Country (Match IP)">VPN Required — Client Country (Match IP)</option>
+                      <option value="VPN Required — EU Region">VPN Required — EU Region</option>
+                      <option value="VPN Required — US Region">VPN Required — US Region</option>
+                      <option value="ExitLag / Gaming VPN Recommended">ExitLag / Gaming VPN Recommended</option>
+                    </select>
+                  </label>
+                </div>
+
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <label style={{ fontSize: '0.82rem' }}>
                   Game *
@@ -1828,13 +1937,21 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                 <textarea
                   className="input"
                   rows={2}
-                  placeholder="Buyer notes, contact handle, schedule requirements... (e.g. <#JC100> fast)"
+                  placeholder="Buyer notes, contact handle, schedule requirements... (e.g. <t=&quot;Fast 10-20&quot;> <#JC100> fast)"
                   value={createNotes}
                   onChange={(e) => setCreateNotes(e.target.value)}
                   style={{ width: '100%', marginTop: '0.25rem' }}
                 />
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.76rem', marginTop: '0.25rem', marginBottom: '0.25rem' }}>
+                  Tip: You can also use &lt;t="Order Title"&gt; and &lt;#EXT_ID&gt; tags inside Notes.
+                </p>
+                {createNotes.match(/<t=(?:"([^"]*)"|'([^']*)'|([^>]+))>/i) && (
+                  <p style={{ color: 'var(--accent-lime)', fontSize: '0.78rem', marginTop: '0.2rem', marginBottom: 0 }}>
+                    💡 Auto-detected Order Title: <strong>{createNotes.match(/<t=(?:"([^"]*)"|'([^']*)'|([^>]+))>/i)?.[1] || createNotes.match(/<t=(?:"([^"]*)"|'([^']*)'|([^>]+))>/i)?.[2] || createNotes.match(/<t=(?:"([^"]*)"|'([^']*)'|([^>]+))>/i)?.[3]}</strong> (will be automatically extracted and stripped from notes).
+                  </p>
+                )}
                 {createNotes.match(/<#([^>]+)>/) && (
-                  <p style={{ color: 'var(--accent-lime)', fontSize: '0.78rem', marginTop: '0.35rem', marginBottom: 0 }}>
+                  <p style={{ color: 'var(--accent-lime)', fontSize: '0.78rem', marginTop: '0.2rem', marginBottom: 0 }}>
                     💡 Auto-detected External Order ID: <strong>{createNotes.match(/<#([^>]+)>/)?.[1]}</strong> (will be automatically extracted and stripped from notes).
                   </p>
                 )}

@@ -30,6 +30,7 @@ import {
   ADVERTISER_RANK_POLICY_VERSION,
 } from './advertiserRankService';
 import { assertWalletInvariants } from './financeV2/financeV2WalletService';
+import { extractExternalOrderIdAndCleanNotes } from './orderParsingUtils';
 
 import { orderWorkspaceActions } from './orderWorkspacePolicy';
 
@@ -464,6 +465,9 @@ export interface CreateAdvertiserBoostOrderInput {
   vpnLocation?: string | null;
   customerInfo?: string | null;
   notes?: string | null;
+  title?: string | null;
+  boostModel?: string | null;
+  vpnRequirement?: string | null;
   actorId: string;
   idempotencyKey?: string | null;
   actionSource?: 'web' | 'web_portal' | 'discord_wizard';
@@ -541,6 +545,13 @@ export async function createAdvertiserBoostOrder(
     }
   }
 
+  // Parse notes for <#ORDERID> and <t="Title"> and clean notes
+  const { externalOrderId: parsedOrderId, cleanNotes, title: parsedTitle } = extractExternalOrderIdAndCleanNotes(
+    input.notes,
+    null,
+    input.title
+  );
+
   // Assemble notes deterministically
   let assembledNotes = '';
   if (isMythic && (keyLevel || dungeonName)) {
@@ -552,8 +563,8 @@ export async function createAdvertiserBoostOrder(
   if (input.customerInfo && input.customerInfo.trim()) {
     assembledNotes += ` [Customer: ${input.customerInfo.trim()}]`;
   }
-  if (input.notes && input.notes.trim()) {
-    assembledNotes += ` ${input.notes.trim()}`;
+  if (cleanNotes && cleanNotes.trim()) {
+    assembledNotes += ` ${cleanNotes.trim()}`;
   }
   assembledNotes = assembledNotes.trim();
 
@@ -671,6 +682,10 @@ export async function createAdvertiserBoostOrder(
     const ord = await tx.order.create({
       data: {
         orderRef,
+        title: parsedTitle || null,
+        orderName: parsedTitle || null,
+        boostModel: input.boostModel || null,
+        vpnRequirement: input.vpnRequirement || (orderMode === 'pilot' ? (input.vpnLocation ? `VPN Required — ${input.vpnLocation.trim()}` : 'VPN Required') : 'No VPN Required (Self-Play)'),
         gameSlug: game.slug,
         serviceId: service.id,
         creatorId: actorId,
@@ -1304,6 +1319,9 @@ export interface SeparatedOrderListItem {
   notes: string | null;
   externalOrderId: string | null;
   orderName: string | null;
+  title?: string | null;
+  boostModel?: string | null;
+  vpnRequirement?: string | null;
   discordChannelId: string | null;
   discordMessageId: string | null;
   createdAt: string;
@@ -1726,7 +1744,10 @@ export async function getSeparatedOrdersList(
       authorizedActions: actions,
       notes: o.notes,
       externalOrderId: o.externalOrderId,
-      orderName: o.orderName || null,
+      orderName: o.title || o.orderName || null,
+      title: o.title || o.orderName || null,
+      boostModel: o.boostModel || null,
+      vpnRequirement: o.vpnRequirement || null,
       discordChannelId: o.executionChannelId || o.discordChannelId || null,
       discordMessageId: o.discordMessageId,
       createdAt: o.createdAt.toISOString(),

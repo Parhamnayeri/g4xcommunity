@@ -304,6 +304,9 @@ model Order {
   creatorId           String?   @map("creator_id")
   creatorType         String    @default("g4x") @map("creator_type") // g4x | advertiser
   orderName           String?   @map("order_name")
+  title               String?   @map("title")
+  boostModel          String?   @map("boost_model")
+  vpnRequirement      String?   @map("vpn_requirement")
   orderType           String    @map("order_type") // solo | group | pilot
   orderMode           String    @default("non_pilot") @map("order_mode") // non_pilot | pilot
   quantity            Int       @default(1)

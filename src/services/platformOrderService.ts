@@ -117,6 +117,9 @@ export interface CreateExternalOrderInput {
   externalOrderId?: string | null;
   actorId: string;
   currency?: string;
+  title?: string | null;
+  boostModel?: string | null;
+  vpnRequirement?: string | null;
 }
 
 /**
@@ -170,10 +173,11 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
     );
   }
 
-  // Deliverable 2: Parse notes for <#ORDERID> and clean notes
-  const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+  // Deliverable 2: Parse notes for <#ORDERID> and <t="Title"> and clean notes
+  const { externalOrderId: parsedOrderId, cleanNotes, title: parsedTitle } = extractExternalOrderIdAndCleanNotes(
     notes,
-    externalOrderId
+    externalOrderId,
+    input.title
   );
 
   const orderRef = `ORD_EXT_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -185,6 +189,10 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
       data: {
         orderRef,
         externalOrderId: parsedOrderId || null,
+        title: parsedTitle || null,
+        orderName: parsedTitle || null,
+        boostModel: input.boostModel || null,
+        vpnRequirement: input.vpnRequirement || null,
         gameSlug,
         serviceId,
         creatorId: actorId,

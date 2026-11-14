@@ -345,6 +345,9 @@ export async function assignOrderRoster(
 }
 
 export async function createManagementOrder(input: {
+  title?: string;
+  boostModel?: string;
+  vpnRequirement?: string;
   gameSlug: string;
   serviceId: number;
   amountUsd: number;

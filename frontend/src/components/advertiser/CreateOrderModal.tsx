@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { fetchPublicGames, createAdvertiserOrder } from '../../services/advertiser';
 import { PublicGame, AdvertiserRankData, AdvertiserWallet, DiscordIntegrationInfo, CreateOrderRequest } from '../../types/advertiser';
+import { extractExternalOrderIdAndCleanNotes } from '../../utils/orderParsers';
 
 interface CreateOrderModalProps {
   rankData: AdvertiserRankData;
@@ -23,6 +24,9 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 }) => {
   const [games, setGames] = useState<PublicGame[]>([]);
   const [loadingGames, setLoadingGames] = useState(true);
+  const [orderTitle, setOrderTitle] = useState('');
+  const [boostModel, setBoostModel] = useState('');
+  const [vpnRequirement, setVpnRequirement] = useState('');
   const [selectedGameSlug, setSelectedGameSlug] = useState('');
   const [selectedServiceId, setSelectedServiceId] = useState<number | ''>('');
   const [orderMode, setOrderMode] = useState<'non_pilot' | 'pilot'>('non_pilot');
@@ -154,7 +158,15 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       const orderNotes = [notes.trim(), directBooster.trim() ? `Requested booster assignment: ${directBooster.trim()}` : '']
         .filter(Boolean)
         .join('\n');
+      const { title: parsedTitle, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+        orderNotes,
+        null,
+        orderTitle
+      );
       const res = await createOrder({
+        title: parsedTitle || undefined,
+        boostModel: boostModel || undefined,
+        vpnRequirement: vpnRequirement || (orderMode === 'pilot' && vpnLocation.trim() ? `VPN Required — ${vpnLocation.trim()}` : undefined),
         gameSlug: selectedGameSlug,
         serviceId: Number(selectedServiceId),
         grossAmountUsd: parsedGross.toFixed(2),
@@ -163,7 +175,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         keyLevel: isMythicPlus ? keyLevel.trim() : undefined,
         vpnLocation: orderMode === 'pilot' ? vpnLocation.trim() : undefined,
         customerInfo: customerParts || undefined,
-        notes: orderNotes || undefined,
+        notes: cleanNotes || undefined,
       });
 
       onSuccess(res.order.orderRef);
@@ -225,6 +237,38 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           </div>
         ) : (
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+            {/* Order Title */}
+            <div>
+              <label
+                style={{
+                  display: 'block',
+                  fontSize: '0.8rem',
+                  color: 'var(--text-muted, #9490a6)',
+                  marginBottom: '0.35rem',
+                  fontWeight: 600,
+                }}
+              >
+                Order Title (Descriptive Name):
+              </label>
+              <input
+                type="text"
+                value={orderTitle}
+                onChange={(e) => setOrderTitle(e.target.value)}
+                placeholder="e.g. Mythic+ 10-20 Timed Bundle (4 Runs)"
+                style={{
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                  border: '1px solid rgba(124, 58, 237, 0.3)',
+                  borderRadius: '8px',
+                  padding: '0.65rem 0.75rem',
+                  color: 'var(--text-primary, #f4f4f6)',
+                  fontSize: '0.9rem',
+                  outline: 'none',
+                }}
+              />
+            </div>
+
             {/* Game Selector */}
             <div>
               <label
@@ -293,6 +337,80 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Boost Model & VPN Requirement */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted, #9490a6)',
+                    marginBottom: '0.35rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Boost Model:
+                </label>
+                <select
+                  value={boostModel}
+                  onChange={(e) => setBoostModel(e.target.value)}
+                  style={{
+                    width: '100%',
+                    backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                    border: '1px solid rgba(124, 58, 237, 0.3)',
+                    borderRadius: '8px',
+                    padding: '0.65rem 0.75rem',
+                    color: 'var(--text-primary, #f4f4f6)',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                  }}
+                >
+                  <option value="">— Select Boost Model —</option>
+                  <option value="Mythic+ Keystone">Mythic+ Keystone</option>
+                  <option value="Raid Run (Normal/Heroic/Mythic)">Raid Run (Normal/Heroic/Mythic)</option>
+                  <option value="Leveling / Campaign">Leveling / Campaign</option>
+                  <option value="PvP / Arena / RBG">PvP / Arena / RBG</option>
+                  <option value="Delves / Farming">Delves / Farming</option>
+                  <option value="Custom">Custom</option>
+                </select>
+              </div>
+
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted, #9490a6)',
+                    marginBottom: '0.35rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  VPN Requirement:
+                </label>
+                <select
+                  value={vpnRequirement}
+                  onChange={(e) => setVpnRequirement(e.target.value)}
+                  style={{
+                    width: '100%',
+                    backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                    border: '1px solid rgba(124, 58, 237, 0.3)',
+                    borderRadius: '8px',
+                    padding: '0.65rem 0.75rem',
+                    color: 'var(--text-primary, #f4f4f6)',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                  }}
+                >
+                  <option value="">— Select VPN Requirement —</option>
+                  <option value="No VPN Required (Self-Play)">No VPN Required (Self-Play)</option>
+                  <option value="VPN Required — Client Country (Match IP)">VPN Required — Client Country (Match IP)</option>
+                  <option value="VPN Required — EU Region">VPN Required — EU Region</option>
+                  <option value="VPN Required — US Region">VPN Required — US Region</option>
+                  <option value="ExitLag / Gaming VPN Recommended">ExitLag / Gaming VPN Recommended</option>
+                </select>
+              </div>
             </div>
 
             {/* Execution Mode (Pilot vs Non-Pilot) */}
@@ -671,7 +789,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                placeholder="Specific key level, character name, or scheduling instructions..."
+                placeholder="Specific key level, character name, or scheduling instructions... (e.g. <t=&quot;Fast 10-20&quot;> <#JC100> fast)"
                 rows={2}
                 maxLength={400}
                 style={{
@@ -687,6 +805,19 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   resize: 'none',
                 }}
               />
+              <p style={{ color: 'var(--text-muted, #9490a6)', fontSize: '0.76rem', marginTop: '0.25rem', marginBottom: 0 }}>
+                Tip: You can also use &lt;t="Order Title"&gt; and &lt;#EXT_ID&gt; tags inside Notes.
+              </p>
+              {notes.match(/<t=(?:"([^"]*)"|'([^']*)'|([^>]+))>/i) && (
+                <p style={{ color: 'var(--accent-lime, #ccff00)', fontSize: '0.78rem', marginTop: '0.2rem', marginBottom: 0 }}>
+                  💡 Auto-detected Order Title: <strong>{notes.match(/<t=(?:"([^"]*)"|'([^']*)'|([^>]+))>/i)?.[1] || notes.match(/<t=(?:"([^"]*)"|'([^']*)'|([^>]+))>/i)?.[2] || notes.match(/<t=(?:"([^"]*)"|'([^']*)'|([^>]+))>/i)?.[3]}</strong> (will be automatically extracted and stripped from notes).
+                </p>
+              )}
+              {notes.match(/<#([^>]+)>/) && (
+                <p style={{ color: 'var(--accent-lime, #ccff00)', fontSize: '0.78rem', marginTop: '0.2rem', marginBottom: 0 }}>
+                  💡 Auto-detected External Order ID: <strong>{notes.match(/<#([^>]+)>/)?.[1]}</strong> (will be automatically extracted and stripped from notes).
+                </p>
+              )}
             </div>
 
             {/* Discord Order Channel Alternative */}

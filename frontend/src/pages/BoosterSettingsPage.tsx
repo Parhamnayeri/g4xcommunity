@@ -422,7 +422,7 @@ export const BoosterSettingsPage: React.FC = () => {
                     >
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-mono text-xs font-bold text-[var(--accent-yellow)]">
                               #{order.id}
                             </span>
@@ -430,6 +430,16 @@ export const BoosterSettingsPage: React.FC = () => {
                             <span className="badge badge-purple" style={{ fontSize: '0.65rem' }}>
                               {order.gameSlug}
                             </span>
+                            {order.boostModel && (
+                              <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>
+                                {order.boostModel}
+                              </span>
+                            )}
+                            {order.vpnRequirement && (
+                              <span className="badge badge-green" style={{ fontSize: '0.65rem' }}>
+                                🛡️ {order.vpnRequirement}
+                              </span>
+                            )}
                           </div>
                           <p className="text-[11px] text-gray-400 mt-0.5">
                             Order Value: ${(order.totalAmountUsdCents / 100).toFixed(2)} USD

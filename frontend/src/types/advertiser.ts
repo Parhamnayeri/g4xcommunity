@@ -166,6 +166,9 @@ export interface PublicGamesResponse {
 }
 
 export interface CreateOrderRequest {
+  title?: string;
+  boostModel?: string;
+  vpnRequirement?: string;
   gameSlug: string;
   serviceId: number;
   grossAmountUsd: string | number;

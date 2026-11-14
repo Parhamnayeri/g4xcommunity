@@ -926,7 +926,7 @@ export async function handleOrderWizardModalSubmit(
       explicitSiteOrderId = safeGetModalTextInput(interaction, 'site_order_id')?.trim() || null;
     }
 
-    const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+    const { externalOrderId: parsedOrderId, title: parsedTitle, cleanNotes } = extractExternalOrderIdAndCleanNotes(
       rawNotes,
       explicitSiteOrderId
     );
@@ -1034,6 +1034,9 @@ export async function handleOrderWizardModalSubmit(
         const ord = await tx.order.create({
           data: {
             orderRef,
+            title: parsedTitle || null,
+            orderName: parsedTitle || null,
+            vpnRequirement: isPilot && vpnLocation ? `VPN Required — ${vpnLocation}` : (isPilot ? 'VPN Required — Client Country' : 'No VPN Required (Self-Play)'),
             gameSlug: game.slug,
             serviceId: service.id,
             creatorId: actorId,
@@ -1161,6 +1164,8 @@ export async function handleOrderWizardModalSubmit(
       // ── FLOW B: Advertiser Direct Order (Authoritative Shared Service) ──
       const createResult = await createAdvertiserBoostOrder({
         actorId,
+        title: parsedTitle || undefined,
+        vpnRequirement: isPilot && vpnLocation ? `VPN Required — ${vpnLocation}` : undefined,
         gameSlug: game.slug,
         serviceId: service.id,
         grossAmountMinor: grossCents,

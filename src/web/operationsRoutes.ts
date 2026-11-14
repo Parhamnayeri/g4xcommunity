@@ -559,6 +559,10 @@ operationsRouter.get(['/management/orders/:id', '/staff/orders/:id'], requireAut
       advertiserFeeUsd: (order.advertiserFeeMinor / 100).toFixed(2),
       customerId: order.customerId, advertiserId: order.advertiserId,
       notes: order.notes, externalOrderId: order.externalOrderId,
+      title: order.title || order.orderName || null,
+      orderName: order.title || order.orderName || null,
+      boostModel: order.boostModel || null,
+      vpnRequirement: order.vpnRequirement || null,
       discordChannelId: order.discordChannelId, executionChannelId: order.executionChannelId, reviewChannelId: order.reviewChannelId,
       requiredRoles: order.requiredRoles, assignments: order.assignments, presigns: order.presigns,
       runs: order.runs, disputes: order.disputes, escrowHolds: order.escrowHolds,
@@ -608,6 +612,9 @@ operationsRouter.post(
     try {
       const actorId = (req as AuthenticatedRequest).user.discordId;
       const {
+        title,
+        boostModel,
+        vpnRequirement,
         gameSlug,
         serviceId,
         amountUsd,
@@ -634,15 +641,19 @@ operationsRouter.post(
 
       const grossCents = Math.round(amountUsd * 100);
 
-      // Parse externalOrderId from notes (<#ORDERID>) or explicit field
-      const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+      // Parse externalOrderId and title from notes (<#ORDERID>, <t="...">) or explicit fields
+      const { externalOrderId: parsedOrderId, title: parsedTitle, cleanNotes } = extractExternalOrderIdAndCleanNotes(
         notes,
-        externalOrderId
+        externalOrderId,
+        title
       );
 
       // Handle External Platform Order (G2G, SkyCoach, Eldorado, Kingboost, Overgear)
       if (sourcePlatform && sourcePlatform !== 'direct') {
         const externalOrder = await createExternalOrder({
+          title: parsedTitle || undefined,
+          boostModel: boostModel || undefined,
+          vpnRequirement: vpnRequirement || undefined,
           gameSlug,
           serviceId: Number(serviceId),
           amountMinor: grossCents,
@@ -676,6 +687,10 @@ operationsRouter.post(
           data: {
             orderRef,
             externalOrderId: parsedOrderId || null,
+            title: parsedTitle || null,
+            orderName: parsedTitle || null,
+            boostModel: boostModel || null,
+            vpnRequirement: vpnRequirement || null,
             gameSlug,
             serviceId: Number(serviceId),
             creatorId: actorId,

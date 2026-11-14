@@ -7,39 +7,64 @@
 export interface ParsedNotesAndOrderId {
   externalOrderId: string | null;
   cleanNotes: string | null;
+  title: string | null;
 }
 
 /**
- * Parses raw notes to extract an external Order ID embedded as <#ORDERID> (e.g. <#JC100>, <#ord-9923>).
- * Strips the <#...> tag from notes, preserving remaining text cleanly.
- * If an explicit externalOrderId is provided, it takes precedence as the order ID, but any
- * embedded <#...> tag in notes is still cleanly removed.
+ * Parses raw notes to extract:
+ * 1. An external Order ID embedded as <#ORDERID> (e.g. <#JC100>, <#ord-9923>).
+ * 2. An Order Title embedded as <t="Title"> (tolerating double quotes, single quotes, or unquoted: <t='...'>, <t=...>).
+ * Strips both <#...> and <t=...> tags from notes, preserving remaining text cleanly.
+ * If explicit parameters are provided, they take precedence, while tags are still cleanly stripped.
  */
 export function extractExternalOrderIdAndCleanNotes(
   rawNotes?: string | null,
-  explicitOrderId?: string | null
+  explicitOrderId?: string | null,
+  explicitTitle?: string | null
 ): ParsedNotesAndOrderId {
-  const trimmedExplicit = explicitOrderId ? explicitOrderId.trim() : '';
+  const trimmedExplicitOrderId = explicitOrderId ? explicitOrderId.trim() : '';
+  const trimmedExplicitTitle = explicitTitle ? explicitTitle.trim() : '';
+
   let foundOrderId: string | null = null;
+  let foundTitle: string | null = null;
   let cleanNotes: string | null = null;
 
   if (rawNotes && typeof rawNotes === 'string') {
-    const match = rawNotes.match(/<#([^>]+)>/);
-    if (match) {
-      foundOrderId = match[1].trim();
-      const stripped = rawNotes.replace(/<#[^>]+>/g, '').replace(/[ \t]+/g, ' ').trim();
-      cleanNotes = stripped.length > 0 ? stripped : null;
-    } else {
-      const trimmed = rawNotes.trim();
-      cleanNotes = trimmed.length > 0 ? trimmed : null;
+    // 1. Extract <t="..."> title
+    const titleMatch = rawNotes.match(/<t=(?:"([^"]*)"|'([^']*)'|([^>]+))>/i);
+    if (titleMatch) {
+      const extractedTitle = (titleMatch[1] ?? titleMatch[2] ?? titleMatch[3] ?? '').trim();
+      if (extractedTitle.length > 0) {
+        foundTitle = extractedTitle;
+      }
     }
+
+    // 2. Extract <#ORDERID> external order ID
+    const orderIdMatch = rawNotes.match(/<#([^>]+)>/);
+    if (orderIdMatch) {
+      const extractedId = orderIdMatch[1].trim();
+      if (extractedId.length > 0) {
+        foundOrderId = extractedId;
+      }
+    }
+
+    // 3. Clean notes by stripping both tags
+    const stripped = rawNotes
+      .replace(/<t=(?:"[^"]*"|'[^']*'|[^>]+)>/gi, '')
+      .replace(/<#[^>]+>/g, '')
+      .replace(/[ \t]+/g, ' ')
+      .trim();
+
+    cleanNotes = stripped.length > 0 ? stripped : null;
   }
 
-  const effectiveOrderId = trimmedExplicit.length > 0 ? trimmedExplicit : (foundOrderId || null);
+  const effectiveOrderId = trimmedExplicitOrderId.length > 0 ? trimmedExplicitOrderId : (foundOrderId || null);
+  const effectiveTitle = trimmedExplicitTitle.length > 0 ? trimmedExplicitTitle : (foundTitle || null);
 
   return {
     externalOrderId: effectiveOrderId,
     cleanNotes,
+    title: effectiveTitle,
   };
 }
 

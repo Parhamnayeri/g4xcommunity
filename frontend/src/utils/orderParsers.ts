@@ -4,36 +4,51 @@
 
 export interface ParsedNotesAndOrderId {
   externalOrderId: string | null;
+  title: string | null;
   cleanNotes: string | null;
 }
 
 /**
- * Extracts external Order ID embedded as <#ORDERID> in notes and cleans the notes string.
+ * Extracts external Order ID embedded as <#ORDERID> and Title embedded as <t="..."> in notes and cleans the notes string.
  */
 export function extractExternalOrderIdAndCleanNotes(
   rawNotes?: string | null,
-  explicitOrderId?: string | null
+  explicitOrderId?: string | null,
+  explicitTitle?: string | null
 ): ParsedNotesAndOrderId {
-  const trimmedExplicit = explicitOrderId ? explicitOrderId.trim() : '';
+  const trimmedExplicitOrder = explicitOrderId ? explicitOrderId.trim() : '';
+  const trimmedExplicitTitle = explicitTitle ? explicitTitle.trim() : '';
   let foundOrderId: string | null = null;
+  let foundTitle: string | null = null;
   let cleanNotes: string | null = null;
 
   if (rawNotes && typeof rawNotes === 'string') {
-    const match = rawNotes.match(/<#([^>]+)>/);
-    if (match) {
-      foundOrderId = match[1].trim();
-      const stripped = rawNotes.replace(/<#[^>]+>/g, '').replace(/[ \t]+/g, ' ').trim();
-      cleanNotes = stripped.length > 0 ? stripped : null;
-    } else {
-      const trimmed = rawNotes.trim();
-      cleanNotes = trimmed.length > 0 ? trimmed : null;
+    let working = rawNotes;
+
+    // 1. Extract <t="Title"> or <t='Title'> or <t=Title>
+    const titleMatch = working.match(/<t=(?:"([^"]*)"|'([^']*)'|([^>]+))>/i);
+    if (titleMatch) {
+      foundTitle = (titleMatch[1] || titleMatch[2] || titleMatch[3] || '').trim();
+      working = working.replace(/<t=(?:"[^"]*"|'[^']*'|[^>]+)>/gi, '');
     }
+
+    // 2. Extract <#ORDERID>
+    const orderMatch = working.match(/<#([^>]+)>/);
+    if (orderMatch) {
+      foundOrderId = orderMatch[1].trim();
+      working = working.replace(/<#[^>]+>/g, '');
+    }
+
+    const stripped = working.replace(/[ \t]+/g, ' ').trim();
+    cleanNotes = stripped.length > 0 ? stripped : null;
   }
 
-  const effectiveOrderId = trimmedExplicit.length > 0 ? trimmedExplicit : (foundOrderId || null);
+  const effectiveOrderId = trimmedExplicitOrder.length > 0 ? trimmedExplicitOrder : (foundOrderId || null);
+  const effectiveTitle = trimmedExplicitTitle.length > 0 ? trimmedExplicitTitle : (foundTitle || null);
 
   return {
     externalOrderId: effectiveOrderId,
+    title: effectiveTitle,
     cleanNotes,
   };
 }

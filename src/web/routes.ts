@@ -1874,6 +1874,9 @@ router.post(
     try {
       const { user } = req as AuthenticatedRequest;
       const {
+        title,
+        boostModel,
+        vpnRequirement,
         gameSlug,
         serviceId,
         grossAmountUsd,
@@ -1898,14 +1901,18 @@ router.post(
         return;
       }
 
-      const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+      const { externalOrderId: parsedOrderId, title: parsedTitle, cleanNotes } = extractExternalOrderIdAndCleanNotes(
         notes,
-        externalOrderId
+        externalOrderId,
+        title
       );
 
       // If an external platform source is specified, route to platformOrderService
       if (sourcePlatform) {
         const extResult = await createExternalOrder({
+          title: parsedTitle || undefined,
+          boostModel: boostModel || undefined,
+          vpnRequirement: vpnRequirement || undefined,
           gameSlug,
           serviceId: Number(serviceId),
           amountMinor: grossCents,
@@ -1938,6 +1945,9 @@ router.post(
 
       const createResult = await createAdvertiserBoostOrder({
         actorId: user.discordId,
+        title: parsedTitle || undefined,
+        boostModel: boostModel || undefined,
+        vpnRequirement: vpnRequirement || undefined,
         gameSlug,
         serviceId: Number(serviceId),
         grossAmountMinor: grossCents,

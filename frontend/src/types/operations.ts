@@ -222,6 +222,9 @@ export interface OrderItem {
   notes?: string | null;
   externalOrderId?: string | null;
   orderName?: string | null;
+  title?: string | null;
+  boostModel?: string | null;
+  vpnRequirement?: string | null;
   createdAt: string;
   boostReleaseTracker?: {
     stage: string;
@@ -238,6 +241,7 @@ export interface OrderDiagnosticsData {
   grossAmountUsd: string; boosterPoolUsd: string; platformFeeUsd: string; advertiserFeeUsd: string; currency: string;
   customerId: string | null; creatorId: string | null; advertiserId: string | null;
   notes: string | null; externalOrderId: string | null;
+  title?: string | null; orderName?: string | null; boostModel?: string | null; vpnRequirement?: string | null;
   discordMessageId: string | null; discordChannelId: string | null;
   executionChannelId: string | null; reviewChannelId: string | null;
   isPublishable: boolean; publicationBlockReasons: string[];

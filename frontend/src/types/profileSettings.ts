@@ -231,6 +231,8 @@ export interface AvailableQueueOrder {
   id: number;
   orderRef?: string;
   title: string;
+  boostModel?: string | null;
+  vpnRequirement?: string | null;
   gameSlug: string;
   gameName?: string;
   serviceName?: string;
@@ -271,6 +273,8 @@ export interface BoosterOrder {
   orderId: number;
   orderRef: string;
   title: string;
+  boostModel?: string | null;
+  vpnRequirement?: string | null;
   gameSlug: string;
   gameName: string;
   serviceName: string;

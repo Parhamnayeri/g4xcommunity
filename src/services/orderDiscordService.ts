@@ -27,6 +27,7 @@ import {
   toggleBoosterKeyOwner,
   toggleBoosterRolePresign,
 } from './presignReviewService';
+import { extractExternalOrderIdAndCleanNotes } from './orderParsingUtils';
 
 let _globalDiscordClient: any = null;
 export function setGlobalDiscordClient(c: any): void {
@@ -129,19 +130,27 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
   }
 
   embed.setColor(statusColor);
-  embed.setTitle(`🎮 Boost Order #${order.id} • ${order.orderRef}`);
-
+  const customTitle = order.title || order.orderName;
   const gameTitle = order.game?.displayName || order.gameSlug || 'Unknown Game';
   const serviceTitle = order.service?.displayName || `Service #${order.serviceId}`;
+
+  const embedTitle = customTitle ? `🎮 ${customTitle}` : `🎮 ${gameTitle} — ${serviceTitle}`;
+  embed.setTitle(embedTitle.slice(0, 256));
+
   const modeText =
     order.orderMode === 'pilot'
-      ? 'Pilot (Account Play)'
-      : `Selfplay (${order.orderType?.toUpperCase() || 'GROUP'})`;
+      ? 'Pilot'
+      : `Self-Play (${order.orderType?.toUpperCase() || 'GROUP'})`;
+  const boostTypeAndModel = order.boostModel ? `${modeText} · ${order.boostModel}` : modeText;
+
+  const vpnRequirementText =
+    order.vpnRequirement ||
+    (order.orderMode === 'pilot' ? 'VPN Required — Client Country' : 'No VPN Required (Self-Play)');
 
   embed.setDescription(
-    `**Game:** ${gameTitle}\n` +
-      `**Service:** ${serviceTitle}\n` +
-      `**Boost Type:** ${modeText}\n` +
+    `**Game & Service:** ${gameTitle} · ${serviceTitle}\n` +
+      `**Boost Type & Model:** ${boostTypeAndModel}\n` +
+      `**VPN & Region Requirement:** ${vpnRequirementText}\n` +
       `**Status:** ${statusEmoji} **${statusText}**`
   );
 
@@ -233,8 +242,9 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
 
   // Safe requirements & notes (excluding financial secrets & private customer data)
   if (order.notes && typeof order.notes === 'string' && order.notes.trim().length > 0) {
+    const { cleanNotes } = extractExternalOrderIdAndCleanNotes(order.notes);
     // Strip sensitive customer information and financial terms against leakage
-    const sanitizedNotes = order.notes
+    const sanitizedNotes = (cleanNotes || '')
       .replace(/\[Customer[^\]]*\]/gi, '')
       .replace(/\[Required VPN[^\]]*\]/gi, '')
       .replace(/fee|price|commission|wallet|gross|payout/gi, '***')
@@ -274,7 +284,7 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
   }
 
   embed.setFooter({
-    text: `G4X Community • Real Order Card | ID: #${order.id}`,
+    text: `G4X Community • Order #${order.id} (${order.orderRef})`,
   });
   embed.setTimestamp(order.publishedAt || order.createdAt || new Date());
 

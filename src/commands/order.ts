@@ -442,12 +442,14 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
         paymentVerifiedAt = new Date();
       }
 
-      const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(notes);
+      const { externalOrderId: parsedOrderId, title: parsedTitle, cleanNotes } = extractExternalOrderIdAndCleanNotes(notes);
 
       const ord = await tx.order.create({
         data: {
           orderRef,
           externalOrderId: parsedOrderId || null,
+          title: parsedTitle || null,
+          orderName: parsedTitle || null,
           gameSlug,
           serviceId,
           creatorId: actorId,
