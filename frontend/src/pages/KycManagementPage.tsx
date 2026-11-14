@@ -15,6 +15,50 @@ import { sendUserKycDm } from '../services/adminPortal';
 import { AssistedKycModal } from '../components/admin/AssistedKycModal';
 import { LoadingState } from '../components/ui/LoadingState';
 
+function renderQualifications(quals: any): React.ReactNode {
+  if (!quals) return 'No qualifications stated';
+  if (typeof quals === 'string') {
+    try {
+      const parsed = JSON.parse(quals);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return renderQualifications(parsed);
+      }
+    } catch {
+      return quals;
+    }
+    return quals;
+  }
+  if (typeof quals === 'object') {
+    const items: React.ReactNode[] = [];
+    if (quals.experience) {
+      items.push(<div key="exp"><strong>Experience:</strong> {quals.experience}</div>);
+    }
+    if (quals.notes) {
+      items.push(<div key="notes"><strong>Notes:</strong> {quals.notes}</div>);
+    }
+    if (quals.contactPreferences) {
+      const contactStr = typeof quals.contactPreferences === 'object'
+        ? JSON.stringify(quals.contactPreferences)
+        : String(quals.contactPreferences);
+      items.push(<div key="contact"><strong>Contact:</strong> {contactStr}</div>);
+    }
+    if (quals.identityVerificationState) {
+      items.push(<div key="idState"><strong>Verification State:</strong> {quals.identityVerificationState}</div>);
+    }
+    const otherKeys = Object.keys(quals).filter(
+      (k) => !['experience', 'notes', 'contactPreferences', 'identityVerificationState', 'identityDocumentRef', 'passportDocumentRef', 'selfieDocumentRef'].includes(k)
+    );
+    for (const k of otherKeys) {
+      const val = quals[k];
+      items.push(<div key={k}><strong>{k}:</strong> {typeof val === 'object' ? JSON.stringify(val) : String(val)}</div>);
+    }
+    return items.length > 0 ? (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', marginTop: '0.25rem' }}>{items}</div>
+    ) : 'No qualifications stated';
+  }
+  return String(quals);
+}
+
 export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
   const { user } = useAuth();
 
@@ -463,7 +507,7 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
                   </div>
                   <div style={{ gridColumn: '1 / -1' }}>
                     <span style={{ color: 'var(--text-muted)', display: 'block' }}>Qualifications:</span>
-                    <div>{detail.application.qualifications || 'No qualifications stated'}</div>
+                    <div>{renderQualifications(detail.application.qualifications)}</div>
                   </div>
                 </div>
 

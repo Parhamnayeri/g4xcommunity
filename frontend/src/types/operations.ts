@@ -318,7 +318,7 @@ export interface KycDetailResponse {
     category: string;
     status: string;
     identityStatus: string;
-    qualifications: string | null;
+    qualifications: any;
     supplementalInfo: string | null;
     verificationStatus: string | null;
     reviewNote: string | null;
