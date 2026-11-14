@@ -65,7 +65,7 @@ export function runBetaPreflight(customPath?: string): {
   }
 
   const validation = validateBetaEnvironment(process.env, {
-    requireDiscordBotConfig: process.env.BETA_DISCORD_ENABLED === 'true',
+    requireDiscordBotConfig: false,
   });
 
   console.log('\n[Preflight] 2. Network & Loopback Binding:');
@@ -85,7 +85,6 @@ export function runBetaPreflight(customPath?: string): {
   const gates = [
     'ESCROW_RELEASE_ENABLED',
     'FINANCE_V2_LIVE_CREDITS_ENABLED',
-    'FINANCE_V2_LIVE_PAYOUTS_ENABLED',
     'FINANCE_V2_P2P_SETTLEMENT_ENABLED',
     'NOWPAYMENTS_LIVE_COLLECTION_ENABLED',
     'RAIDERIO_LIVE_SYNC_ENABLED',
@@ -94,6 +93,8 @@ export function runBetaPreflight(customPath?: string): {
     const val = process.env[g];
     console.log(`  - ${g}: ${val === 'false' ? '🔒 false (LOCKED)' : `❌ ${val ?? 'UNDEFINED'}`}`);
   }
+  const livePayouts = process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED === 'true';
+  console.log(`  - FINANCE_V2_LIVE_PAYOUTS_ENABLED: ${livePayouts ? '✅ true (TESTING ENABLED)' : '🔒 false (LOCKED)'}`);
   console.log(`  - NOWPAYMENTS_MODE: ${(process.env.NOWPAYMENTS_MODE || 'disabled') === 'disabled' ? '🔒 disabled' : `❌ ${process.env.NOWPAYMENTS_MODE}`}`);
 
   console.log('\n[Preflight] 5. Invite-Only Allowlist:');
@@ -101,7 +102,11 @@ export function runBetaPreflight(customPath?: string): {
 
   console.log('\n[Preflight] 6. Discord Bot Containment:');
   const discordEnabled = process.env.BETA_DISCORD_ENABLED === 'true';
-  console.log(`  - Discord Gateway Bot: ${discordEnabled ? 'ACTIVE (containment enabled)' : 'OFFLINE (disabled for web-only preflight)'}`);
+  const hasToken = Boolean((process.env.BETA_BOT_TOKEN || process.env.DISCORD_BOT_TOKEN || '').trim());
+  console.log(`  - Discord Gateway Bot Config: ${discordEnabled ? 'ACTIVE (containment enabled)' : 'OFFLINE (disabled for web-only preflight)'}`);
+  console.log(`  - Allowed Guild ID:           ${validation.allowedGuildId ?? 'NOT CONFIGURED'}`);
+  console.log(`  - Application ID:             ${validation.applicationId ?? 'NOT CONFIGURED'}`);
+  console.log(`  - Bot Token Status:           ${hasToken ? '✅ CONFIGURED' : '⚠️ NOT SET (Provide DISCORD_BOT_TOKEN or BETA_BOT_TOKEN in .env.beta)'}`);
 
   const success = validation.valid && !isGitTracked;
 

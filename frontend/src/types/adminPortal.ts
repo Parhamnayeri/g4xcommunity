@@ -148,3 +148,64 @@ export interface RolesMatrixResponse {
   permissionsMatrix: Record<string, string[]>;
   allPermissions: string[];
 }
+
+export interface PlatformFinanceBreakdown {
+  source: 'direct' | 'g2g' | 'skycoach' | 'eldorado' | 'kingboost' | 'overgear';
+  displayName: string;
+  icon: string;
+  feeRatePercent: string;
+  orderCounts: {
+    total: number;
+    active: number;
+    completed: number;
+    cancelled: number;
+  };
+  grossVolumeMinor: number;
+  grossVolumeUsd: string;
+  feeDeductedMinor: number;
+  feeDeductedUsd: string;
+  netRevenueMinor: number;
+  netRevenueUsd: string;
+  boosterPoolMinor: number;
+  boosterPoolUsd: string;
+  availableBalanceMinor: number;
+  availableBalanceUsd: string;
+  pendingReleaseMinor: number;
+  pendingReleaseUsd: string;
+  withdrawnTotalMinor: number;
+  withdrawnTotalUsd: string;
+  receivedTotalMinor: number;
+  receivedTotalUsd: string;
+}
+
+export interface FinanceTotals {
+  grossVolumeMinor: number;
+  grossVolumeUsd: string;
+  platformFeesMinor: number;
+  platformFeesUsd: string;
+  netPlatformProfitMinor: number;
+  netPlatformProfitUsd: string;
+  boosterPoolMinor: number;
+  boosterPoolUsd: string;
+  activeEscrowMinor: number;
+  activeEscrowUsd: string;
+  completedVolumeMinor: number;
+  completedVolumeUsd: string;
+  boosterWalletLiabilityMinor: number;
+  boosterWalletLiabilityUsd: string;
+  pendingWithdrawalsCount: number;
+  pendingWithdrawalsMinor: number;
+  pendingWithdrawalsUsd: string;
+  paidWithdrawalsCount: number;
+  paidWithdrawalsMinor: number;
+  paidWithdrawalsUsd: string;
+  netLiquidReserveMinor: number;
+  netLiquidReserveUsd: string;
+}
+
+export interface AdminFinanceOverviewResponse {
+  success: boolean;
+  totals: FinanceTotals;
+  byPlatform: PlatformFinanceBreakdown[];
+}
+

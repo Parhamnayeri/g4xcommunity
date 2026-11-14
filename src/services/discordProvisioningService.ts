@@ -206,11 +206,12 @@ async function getOrCreateTextChannel(
           c.parentId === parentCategory.id &&
           allAliases.includes(c.name.trim().toLowerCase())
       );
-    } else {
+    }
+    // Fallback: search across entire guild if not found under parent category
+    if (!channel) {
       channel = guild.channels.cache.find(
         (c: any) =>
           (c.type === ChannelType.GuildText || c.type === 0) &&
-          !c.parentId &&
           allAliases.includes(c.name.trim().toLowerCase())
       );
     }
@@ -435,6 +436,7 @@ export async function provisionAllChannels(
         rulesChannel = guild.channels.cache.get(existingRulesMapping.discordChannelId);
       }
 
+      const botId = me?.id || guild.client?.user?.id || options.client?.user?.id;
       if (!rulesChannel) {
         const { channel: foundOrCreated, isNew } = await getOrCreateTextChannel(
           guild,
@@ -445,15 +447,20 @@ export async function provisionAllChannels(
             aliases: ['rules', 'rules-policies', 'official-rules', 'rules-and-guidelines'],
             permissionOverwrites: [
               {
-                id: guild.roles.everyone.id,
+                id: guild.roles?.everyone?.id || guild.id,
                 allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
-                deny: [
-                  PermissionFlagsBits.SendMessages,
-                  PermissionFlagsBits.CreatePublicThreads,
-                  PermissionFlagsBits.CreatePrivateThreads,
-                  PermissionFlagsBits.AddReactions,
-                ],
+                deny: [PermissionFlagsBits.SendMessages],
               },
+              ...(botId ? [{
+                id: botId,
+                allow: [
+                  PermissionFlagsBits.ViewChannel,
+                  PermissionFlagsBits.SendMessages,
+                  PermissionFlagsBits.EmbedLinks,
+                  PermissionFlagsBits.AttachFiles,
+                  PermissionFlagsBits.ReadMessageHistory,
+                ],
+              }] : []),
             ],
           }
         );
@@ -465,6 +472,17 @@ export async function provisionAllChannels(
       }
 
       if (rulesChannel?.id) {
+        // اطمینان از دسترسی بات در کانال قوانین موجود
+        if (botId && typeof rulesChannel.permissionOverwrites?.edit === 'function') {
+          await rulesChannel.permissionOverwrites.edit(botId, {
+            ViewChannel: true,
+            SendMessages: true,
+            EmbedLinks: true,
+            AttachFiles: true,
+            ReadMessageHistory: true,
+          }).catch(() => {});
+        }
+
         await upsertMapping({
           guildId,
           channelKey: 'rules:channel:official',
@@ -479,18 +497,37 @@ export async function provisionAllChannels(
         synced++;
 
         // If a published policy already exists, check if it needs sync or placeholder
-        const { getPublishedPolicy, syncPolicyToDiscord } = await import('./policyService');
-        const publishedVer = await getPublishedPolicy('community-rules');
+        const { getPublishedPolicy, seedInitialPolicyDraft, publishPolicyVersion, syncPolicyToDiscord } = await import('./policyService');
+        let publishedVer = await getPublishedPolicy('community-rules');
+        const activeClient = options.client || (global as any).discordClient;
+
+        if (!publishedVer) {
+          try {
+            const draft = await seedInitialPolicyDraft(actorId || 'system');
+            if (draft?.id) {
+              publishedVer = await publishPolicyVersion({
+                versionId: draft.id,
+                actorId: actorId || 'system',
+                changelog: 'Initial publication of G4X Community Official Policy & Rules',
+                acknowledgedDiscrepancies: ['ALL_DISCREPANCIES_ACKNOWLEDGED'],
+                discordClient: activeClient,
+              });
+            }
+          } catch (pubErr: any) {
+            console.warn('[DiscordProvisioning] Auto-publish initial policy notice:', pubErr?.message || pubErr);
+          }
+        }
+
         if (publishedVer) {
-          if (options.client || (global as any).discordClient) {
-            await syncPolicyToDiscord(publishedVer.id, options.client || (global as any).discordClient);
+          if (activeClient) {
+            await syncPolicyToDiscord(publishedVer.id, activeClient);
           }
         } else {
           // No published policy: send safe placeholder if channel is empty, without exposing draft
           try {
             if (typeof rulesChannel.messages?.fetch === 'function') {
-              const msgs = await rulesChannel.messages.fetch({ limit: 1 });
-              if (msgs.size === 0 && typeof rulesChannel.send === 'function') {
+              const msgs = await rulesChannel.messages.fetch({ limit: 1 }).catch(() => null);
+              if ((!msgs || msgs.size === 0) && typeof rulesChannel.send === 'function') {
                 await rulesChannel.send(
                   '# 📜 G4X Community Rules & Policies\nOfficial community policies and platform standards are available at: https://g4x.online/rules'
                 );

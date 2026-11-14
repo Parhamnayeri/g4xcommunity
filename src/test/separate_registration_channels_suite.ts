@@ -24,6 +24,8 @@
  * 20. Character not found / API downtime handled safely with manual review status.
  */
 
+import fs from 'fs';
+import path from 'path';
 import prisma from '../database/db';
 import {
   parseRaiderIOProfileUrl,
@@ -89,6 +91,11 @@ async function runSeparateChannelsSuite() {
       where: { userId_roleKey: { userId: adminId, roleKey: 'manager' } },
       update: {},
       create: { userId: adminId, roleKey: 'manager' },
+    });
+    await prisma.userRole.upsert({
+      where: { userId_roleKey: { userId: adminId, roleKey: 'admin' } },
+      update: {},
+      create: { userId: adminId, roleKey: 'admin' },
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -305,6 +312,20 @@ async function runSeparateChannelsSuite() {
     // ─────────────────────────────────────────────────────────────────────────
     // تست ۱۳: عملیات Verify ID روند بازبینی را تخریب نمی‌کند
     // ─────────────────────────────────────────────────────────────────────────
+    const testKycDir = path.join(process.cwd(), 'storage', 'kyc_documents');
+    if (!fs.existsSync(testKycDir)) {
+      fs.mkdirSync(testKycDir, { recursive: true });
+    }
+    const testKycFile = path.join(testKycDir, 'test_exch_doc.png');
+    fs.writeFileSync(testKycFile, 'mock-kyc-evidence-bytes');
+
+    const exchQuals = JSON.parse(appExch1.qualifications || '{}');
+    exchQuals.identityDocumentRef = 'test_exch_doc.png';
+    await prisma.registrationApplication.update({
+      where: { id: appExch1.id },
+      data: { qualifications: JSON.stringify(exchQuals) },
+    });
+
     await reviewApplication({
       applicationId: appExch1.id,
       reviewerId: adminId,

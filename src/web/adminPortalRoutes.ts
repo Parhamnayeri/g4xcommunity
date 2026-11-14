@@ -19,6 +19,8 @@ import { requireAuth, requireCsrf, AuthenticatedRequest } from './middleware/aut
 import { authorize } from '../services/authorizationService';
 import { Permission, SystemRoleKey, ROLE_PERMISSIONS } from '../services/permissionTypes';
 import { adminReviewFunding } from '../services/financeV2/walletPageService';
+import { getOrCreatePlatformAccount } from '../services/platformBalanceService';
+import { getUserKycStatus, assistUserKyc, sendKycRequestDm } from '../services/kycDocumentSecurity';
 
 export const adminPortalRouter = Router();
 
@@ -179,6 +181,226 @@ adminPortalRouter.get(
       });
     } catch (err: any) {
       res.status(500).json({ error: 'METRICS_FETCH_FAILED', message: err.message || 'Failed to fetch overview metrics' });
+    }
+  }
+);
+
+/**
+ * Format integer minor units (USD cents) to clean "$X,XXX.XX" strings.
+ */
+function formatCentsToUsd(cents: number): string {
+  const isNeg = cents < 0;
+  const abs = Math.abs(cents);
+  const dollars = (abs / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return isNeg ? `-$${dollars}` : `$${dollars}`;
+}
+
+const PLATFORMS_CONFIG = [
+  { source: 'direct', displayName: 'G4X Direct', icon: '⚡', feeRatePercent: 'Variable / Tiered' },
+  { source: 'g2g', displayName: 'G2G Marketplace', icon: '🛒', feeRatePercent: '8.99%' },
+  { source: 'skycoach', displayName: 'SkyCoach', icon: '✈️', feeRatePercent: '13%' },
+  { source: 'eldorado', displayName: 'Eldorado', icon: '🏰', feeRatePercent: '1.5% - 10%' },
+  { source: 'kingboost', displayName: 'Kingboost', icon: '👑', feeRatePercent: '13%' },
+  { source: 'overgear', displayName: 'Overgear', icon: '⚙️', feeRatePercent: '13%' },
+] as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 1.1 AUTHORITATIVE FINANCIAL OVERVIEW & PER-PLATFORM METRICS
+// ─────────────────────────────────────────────────────────────────────────────
+
+adminPortalRouter.get(
+  ['/admin/finance/overview', '/api/admin/finance/overview'],
+  requireAuth,
+  requireAdminPortalAccess,
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      // Ensure default accounts exist for all 5 external platforms
+      await Promise.all([
+        getOrCreatePlatformAccount('g2g_main', 'g2g', 'G2G (Main Store)'),
+        getOrCreatePlatformAccount('skycoach_main', 'skycoach', 'SkyCoach (Main)'),
+        getOrCreatePlatformAccount('eldorado_main', 'eldorado', 'Eldorado (Main Store)'),
+        getOrCreatePlatformAccount('kingboost_main', 'kingboost', 'Kingboost (Main)'),
+        getOrCreatePlatformAccount('overgear_main', 'overgear', 'Overgear (Main)'),
+      ]);
+
+      const [orders, platformAccounts, walletAgg, pendingWithdrawals, paidWithdrawals] = await Promise.all([
+        prisma.order.findMany({
+          select: {
+            id: true,
+            orderRef: true,
+            status: true,
+            paymentStatus: true,
+            sourceWebsite: true,
+            creatorType: true,
+            currency: true,
+            grossAmountMinor: true,
+            platformFeeMinor: true,
+            advertiserFeeMinor: true,
+            boosterPoolMinor: true,
+            createdAt: true,
+          },
+        }),
+        prisma.platformAccount.findMany(),
+        prisma.walletV2.aggregate({
+          _sum: {
+            availableCents: true,
+            reservedCents: true,
+            pendingEarningsCents: true,
+            confirmedEarningsCents: true,
+            paidCents: true,
+          },
+        }),
+        prisma.boosterWithdrawalRequest.aggregate({
+          where: {
+            status: { in: ['RESERVED', 'PROCESSING', 'QUOTED', 'UNDER_ADMIN_REVIEW', 'REQUESTED', 'USER_CONFIRMED'] },
+          },
+          _sum: { requestedUsdCents: true },
+          _count: { id: true },
+        }),
+        prisma.boosterWithdrawalRequest.aggregate({
+          where: { status: 'PAID' },
+          _sum: { requestedUsdCents: true },
+          _count: { id: true },
+        }),
+      ]);
+
+      const byPlatform = PLATFORMS_CONFIG.map((cfg) => {
+        const isDirect = cfg.source === 'direct';
+        const platformOrders = orders.filter((o) => {
+          const rawSrc = (o.sourceWebsite || '').trim().toLowerCase();
+          if (isDirect) {
+            return !rawSrc || rawSrc === 'direct' || !['g2g', 'skycoach', 'eldorado', 'kingboost', 'overgear'].includes(rawSrc);
+          }
+          return rawSrc === cfg.source;
+        });
+
+        const matchingAccounts = platformAccounts.filter(
+          (acc) => acc.platform.toLowerCase() === cfg.source
+        );
+
+        const totalOrders = platformOrders.length;
+        const activeOrders = platformOrders.filter((o) =>
+          ['open_presign', 'presign_closed', 'assigned', 'in_progress'].includes(o.status.toLowerCase())
+        ).length;
+        const completedOrders = platformOrders.filter(
+          (o) => o.status.toLowerCase() === 'completed'
+        ).length;
+        const cancelledOrders = platformOrders.filter(
+          (o) => ['cancelled', 'rejected'].includes(o.status.toLowerCase())
+        ).length;
+
+        const validOrders = platformOrders.filter(
+          (o) => !['cancelled', 'rejected'].includes(o.status.toLowerCase())
+        );
+
+        const grossVolumeMinor = validOrders.reduce((sum, o) => sum + (o.grossAmountMinor || 0), 0);
+        const feeDeductedMinor = validOrders.reduce((sum, o) => sum + (o.platformFeeMinor || 0), 0);
+        const boosterPoolMinor = validOrders.reduce((sum, o) => sum + (o.boosterPoolMinor || 0), 0);
+        const netRevenueMinor = isDirect
+          ? validOrders.reduce((sum, o) => sum + (o.platformFeeMinor || 0) + (o.advertiserFeeMinor || 0), 0)
+          : feeDeductedMinor;
+
+        const accEligible = matchingAccounts.reduce((sum, acc) => sum + (acc.eligibleBalanceMinor || 0), 0);
+        const accPending = matchingAccounts.reduce((sum, acc) => sum + (acc.pendingReleaseMinor || 0), 0);
+        const accWithdrawn = matchingAccounts.reduce((sum, acc) => sum + (acc.withdrawnTotalMinor || 0), 0);
+        const accReceived = matchingAccounts.reduce((sum, acc) => sum + (acc.receivedTotalMinor || 0), 0);
+
+        const availableBalanceMinor = isDirect
+          ? Math.max(0, netRevenueMinor)
+          : accEligible;
+
+        const pendingReleaseMinor = isDirect
+          ? platformOrders
+              .filter((o) => ['open_presign', 'presign_closed', 'assigned', 'in_progress'].includes(o.status.toLowerCase()))
+              .reduce((sum, o) => sum + (o.grossAmountMinor || 0), 0)
+          : accPending;
+
+        return {
+          source: cfg.source,
+          displayName: cfg.displayName,
+          icon: cfg.icon,
+          feeRatePercent: cfg.feeRatePercent,
+          orderCounts: {
+            total: totalOrders,
+            active: activeOrders,
+            completed: completedOrders,
+            cancelled: cancelledOrders,
+          },
+          grossVolumeMinor,
+          grossVolumeUsd: formatCentsToUsd(grossVolumeMinor),
+          feeDeductedMinor,
+          feeDeductedUsd: formatCentsToUsd(feeDeductedMinor),
+          netRevenueMinor,
+          netRevenueUsd: formatCentsToUsd(netRevenueMinor),
+          boosterPoolMinor,
+          boosterPoolUsd: formatCentsToUsd(boosterPoolMinor),
+          availableBalanceMinor,
+          availableBalanceUsd: formatCentsToUsd(availableBalanceMinor),
+          pendingReleaseMinor,
+          pendingReleaseUsd: formatCentsToUsd(pendingReleaseMinor),
+          withdrawnTotalMinor: accWithdrawn,
+          withdrawnTotalUsd: formatCentsToUsd(accWithdrawn),
+          receivedTotalMinor: accReceived,
+          receivedTotalUsd: formatCentsToUsd(accReceived),
+        };
+      });
+
+      const totalGrossVolumeMinor = byPlatform.reduce((sum, p) => sum + p.grossVolumeMinor, 0);
+      const totalPlatformFeesMinor = byPlatform.reduce((sum, p) => sum + p.feeDeductedMinor, 0);
+      const totalNetPlatformProfitMinor = byPlatform.reduce((sum, p) => sum + p.netRevenueMinor, 0);
+      const totalBoosterPoolMinor = byPlatform.reduce((sum, p) => sum + p.boosterPoolMinor, 0);
+
+      const activeEscrowMinor = orders
+        .filter((o) => ['open_presign', 'presign_closed', 'assigned', 'in_progress'].includes(o.status.toLowerCase()))
+        .reduce((sum, o) => sum + (o.grossAmountMinor || 0), 0);
+
+      const completedVolumeMinor = orders
+        .filter((o) => o.status.toLowerCase() === 'completed')
+        .reduce((sum, o) => sum + (o.grossAmountMinor || 0), 0);
+
+      const boosterWalletLiabilityMinor =
+        (walletAgg._sum.availableCents || 0) + (walletAgg._sum.reservedCents || 0);
+
+      const pendingWithdrawalsCount = pendingWithdrawals._count?.id || 0;
+      const pendingWithdrawalsMinor = pendingWithdrawals._sum?.requestedUsdCents || 0;
+      const paidWithdrawalsCount = paidWithdrawals._count?.id || 0;
+      const paidWithdrawalsMinor = paidWithdrawals._sum?.requestedUsdCents || 0;
+
+      const totalAvailableLiquidMinor = byPlatform.reduce((sum, p) => sum + p.availableBalanceMinor, 0);
+      const netLiquidReserveMinor = totalAvailableLiquidMinor - pendingWithdrawalsMinor;
+
+      const totals = {
+        grossVolumeMinor: totalGrossVolumeMinor,
+        grossVolumeUsd: formatCentsToUsd(totalGrossVolumeMinor),
+        platformFeesMinor: totalPlatformFeesMinor,
+        platformFeesUsd: formatCentsToUsd(totalPlatformFeesMinor),
+        netPlatformProfitMinor: totalNetPlatformProfitMinor,
+        netPlatformProfitUsd: formatCentsToUsd(totalNetPlatformProfitMinor),
+        boosterPoolMinor: totalBoosterPoolMinor,
+        boosterPoolUsd: formatCentsToUsd(totalBoosterPoolMinor),
+        activeEscrowMinor,
+        activeEscrowUsd: formatCentsToUsd(activeEscrowMinor),
+        completedVolumeMinor,
+        completedVolumeUsd: formatCentsToUsd(completedVolumeMinor),
+        boosterWalletLiabilityMinor,
+        boosterWalletLiabilityUsd: formatCentsToUsd(boosterWalletLiabilityMinor),
+        pendingWithdrawalsCount,
+        pendingWithdrawalsMinor,
+        pendingWithdrawalsUsd: formatCentsToUsd(pendingWithdrawalsMinor),
+        paidWithdrawalsCount,
+        paidWithdrawalsMinor,
+        paidWithdrawalsUsd: formatCentsToUsd(paidWithdrawalsMinor),
+        netLiquidReserveMinor,
+        netLiquidReserveUsd: formatCentsToUsd(netLiquidReserveMinor),
+      };
+
+      res.json({
+        success: true,
+        totals,
+        byPlatform,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'FINANCE_OVERVIEW_FAILED', message: err.message || 'Failed to fetch finance overview' });
     }
   }
 );
@@ -617,3 +839,113 @@ adminPortalRouter.get(
     }
   }
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. ADMIN ASSISTED KYC & DIRECT REQUEST DM ENDPOINTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+adminPortalRouter.get(
+  ['/admin/kyc/users/:discordId', '/api/admin/kyc/users/:discordId'],
+  requireAuth,
+  requireAdminPortalAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { discordId } = req.params;
+      if (!discordId) {
+        res.status(400).json({ error: 'USER_ID_REQUIRED' });
+        return;
+      }
+      const kycStatus = await getUserKycStatus(discordId);
+      res.json({
+        success: true,
+        ...kycStatus,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'KYC_FETCH_FAILED', message: err.message });
+    }
+  }
+);
+
+adminPortalRouter.post(
+  ['/admin/kyc/users/:discordId/assist', '/api/admin/kyc/users/:discordId/assist'],
+  requireAuth,
+  requireAdminPortalAccess,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { discordId } = req.params;
+      const actor = (req as AuthenticatedRequest).user;
+      if (!actor || !actor.discordId) {
+        res.status(401).json({ error: 'UNAUTHORIZED' });
+        return;
+      }
+
+      const {
+        legalName,
+        country,
+        idType,
+        idNumber,
+        phoneNumber,
+        vpnConfirmed,
+        adminNotes,
+        identityDocData,
+        identityDocName,
+        selfieDocData,
+        selfieDocName,
+        markAsVerified,
+      } = req.body;
+
+      const result = await assistUserKyc({
+        targetUserId: discordId,
+        actorId: actor.discordId,
+        legalName,
+        country,
+        idType,
+        idNumber,
+        phoneNumber,
+        vpnConfirmed: Boolean(vpnConfirmed),
+        adminNotes,
+        identityDocData,
+        identityDocName,
+        selfieDocData,
+        selfieDocName,
+        markAsVerified: Boolean(markAsVerified),
+      });
+
+      res.json({
+        success: true,
+        result,
+        message: markAsVerified ? 'KYC verified and updated successfully.' : 'Assisted KYC data updated successfully.',
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'ASSISTED_KYC_FAILED', message: err.message });
+    }
+  }
+);
+
+adminPortalRouter.post(
+  ['/admin/users/:discordId/send-kyc-dm', '/api/admin/users/:discordId/send-kyc-dm'],
+  requireAuth,
+  requireAdminPortalAccess,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { discordId } = req.params;
+      const actor = (req as AuthenticatedRequest).user;
+      const { reason } = req.body;
+
+      const dmResult = await sendKycRequestDm(discordId, {
+        requestedBy: actor?.displayName || actor?.username || 'G4X Staff',
+        reason,
+      });
+
+      res.json({
+        success: true,
+        ...dmResult,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'SEND_KYC_DM_FAILED', message: err.message });
+    }
+  }
+);
+

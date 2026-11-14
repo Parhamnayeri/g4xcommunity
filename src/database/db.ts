@@ -4,6 +4,23 @@
  * اتصال به دیتابیس SQLite با استفاده از Prisma Client
  */
 import { PrismaClient } from '@prisma/client';
+import fs from 'fs';
+import path from 'path';
+
+// اطمینان از مقداردهی DATABASE_URL در محیط‌های تست و اجراهای مستقل
+if (!process.env.DATABASE_URL) {
+  try {
+    const dotenv = require('dotenv');
+    dotenv.config();
+    if (!process.env.DATABASE_URL) {
+      if (fs.existsSync(path.resolve(process.cwd(), '.env.beta'))) {
+        dotenv.config({ path: path.resolve(process.cwd(), '.env.beta') });
+      } else if (fs.existsSync(path.resolve(process.cwd(), '.env.staging'))) {
+        dotenv.config({ path: path.resolve(process.cwd(), '.env.staging') });
+      }
+    }
+  } catch {}
+}
 
 let activePrismaOverride: PrismaClient | null = null;
 let defaultPrismaInstance: PrismaClient | null = null;

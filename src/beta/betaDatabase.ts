@@ -17,7 +17,8 @@ import { spawnSync } from 'child_process';
 import { PrismaClient } from '@prisma/client';
 import { findPrismaSchemaDir } from '../database/canonicalDbPath';
 import { ensureSecurityAndIntegrityIndexes } from '../database/db';
-import { validateBetaDatabaseUrl } from './validateBetaEnv';
+import { validateBetaDatabaseUrl, parseBetaInviteAllowlist } from './validateBetaEnv';
+import { SYSTEM_ROLES, SUPPORTED_GAMES, GAME_SERVICES } from '../database/seed';
 
 const SQLITE_HEADER_MAGIC = Buffer.from('SQLite format 3\0', 'utf8');
 
@@ -148,7 +149,7 @@ export async function runIntegrityCheckOnClient(
 
 export async function initializeBetaDatabase(
   databaseUrl?: string,
-  options: { silent?: boolean } = {}
+  options: { silent?: boolean; seed?: boolean } = {}
 ): Promise<BetaDatabaseHandle> {
   const rawUrl =
     databaseUrl ||
@@ -230,6 +231,10 @@ export async function initializeBetaDatabase(
 
   await ensureSecurityAndIntegrityIndexes(client);
 
+  if (options.seed) {
+    await seedBetaDatabase(client, { silent: options.silent });
+  }
+
   const report = await runIntegrityCheckOnClient(client, dbPath);
   if (!report.integrityOk || report.fkViolationCount > 0) {
     await client.$disconnect();
@@ -253,6 +258,269 @@ export async function initializeBetaDatabase(
       await client.$disconnect();
     },
   };
+}
+
+export async function seedBetaDatabase(
+  client: PrismaClient,
+  options: { ownerDiscordId?: string; inviteAllowlistIds?: string[]; silent?: boolean } = {}
+): Promise<{
+  rolesCount: number;
+  gamesCount: number;
+  servicesCount: number;
+  platformAccountsCount: number;
+  ownerId: string | null;
+}> {
+  return await client.$transaction(async (tx) => {
+    // 1. System Roles
+    for (const role of SYSTEM_ROLES) {
+      if (!(await tx.role.findUnique({ where: { roleKey: role.roleKey } }))) {
+        await tx.role.create({ data: role });
+      }
+    }
+
+    // 2. Supported Games
+    for (const game of SUPPORTED_GAMES) {
+      if (!(await tx.game.findUnique({ where: { slug: game.slug } }))) {
+        await tx.game.create({ data: game });
+      }
+    }
+
+    // 3. Game Services
+    for (const service of GAME_SERVICES) {
+      const where = { gameSlug_serviceKey: { gameSlug: service.gameSlug, serviceKey: service.serviceKey } };
+      if (!(await tx.gameService.findUnique({ where }))) {
+        await tx.gameService.create({ data: service });
+      }
+    }
+
+    // 4. Default Platform Accounts (all 5 external platforms)
+    const defaultAccounts = [
+      { accountRef: 'g2g_main', platform: 'g2g', displayName: 'G2G Main Account' },
+      { accountRef: 'skycoach_main', platform: 'skycoach', displayName: 'SkyCoach Main Account' },
+      { accountRef: 'eldorado_main', platform: 'eldorado', displayName: 'Eldorado Main Account' },
+      { accountRef: 'kingboost_main', platform: 'kingboost', displayName: 'Kingboost Main Account' },
+      { accountRef: 'overgear_main', platform: 'overgear', displayName: 'Overgear Main Account' },
+    ];
+    for (const acct of defaultAccounts) {
+      const existing = await tx.platformAccount.findUnique({ where: { accountRef: acct.accountRef } });
+      if (!existing) {
+        await tx.platformAccount.create({
+          data: { ...acct, currency: 'USD', isActive: true },
+        });
+      } else if (!existing.isActive) {
+        await tx.platformAccount.update({
+          where: { accountRef: acct.accountRef },
+          data: { isActive: true },
+        });
+      }
+    }
+
+    // 5. Initial Owner / Admin User
+    const allowlisted = parseBetaInviteAllowlist(process.env);
+    const ownerId =
+      options.ownerDiscordId ||
+      process.env.OWNER_DISCORD_ID ||
+      (options.inviteAllowlistIds && options.inviteAllowlistIds[0]) ||
+      (allowlisted.length > 0 ? allowlisted[0] : null);
+
+    if (ownerId && /^\d{17,20}$/.test(ownerId)) {
+      const existingUser = await tx.user.findUnique({ where: { discordId: ownerId } });
+      if (!existingUser) {
+        await tx.user.create({
+          data: {
+            discordId: ownerId,
+            username: 'BetaOwner',
+            displayName: 'Beta Owner',
+            isActive: true,
+          },
+        });
+      } else if (!existingUser.isActive) {
+        await tx.user.update({
+          where: { discordId: ownerId },
+          data: { isActive: true },
+        });
+      }
+
+      // Assign owner, admin, manager, staff roles
+      const ownerRoles = ['owner', 'admin', 'manager', 'staff'];
+      for (const roleKey of ownerRoles) {
+        const hasRole = await tx.userRole.findUnique({
+          where: { userId_roleKey: { userId: ownerId, roleKey } },
+        });
+        if (!hasRole) {
+          await tx.userRole.create({
+            data: { userId: ownerId, roleKey },
+          });
+        }
+      }
+
+      // Ensure WalletV2
+      const existingWallet = await tx.walletV2.findUnique({ where: { userId: ownerId } });
+      if (!existingWallet) {
+        await tx.walletV2.create({
+          data: {
+            userId: ownerId,
+            availableCents: 100000,
+            reservedCents: 0,
+            pendingEarningsCents: 0,
+            confirmedEarningsCents: 0,
+            paidCents: 0,
+            refundedCents: 0,
+          },
+        });
+      }
+    }
+
+    // 6. Additional tester account if present in allowlist
+    const allAllowlist = options.inviteAllowlistIds || allowlisted;
+    const testerId = allAllowlist.find((id) => id !== ownerId && /^\d{17,20}$/.test(id)) || null;
+
+    if (testerId) {
+      const existingTester = await tx.user.findUnique({ where: { discordId: testerId } });
+      if (!existingTester) {
+        await tx.user.create({
+          data: {
+            discordId: testerId,
+            username: 'BetaTester',
+            displayName: 'Beta Tester',
+            isActive: true,
+          },
+        });
+      } else if (!existingTester.isActive) {
+        await tx.user.update({
+          where: { discordId: testerId },
+          data: { isActive: true },
+        });
+      }
+
+      const testerRoles = ['booster', 'pilot', 'advertiser'];
+      for (const roleKey of testerRoles) {
+        const hasRole = await tx.userRole.findUnique({
+          where: { userId_roleKey: { userId: testerId, roleKey } },
+        });
+        if (!hasRole) {
+          await tx.userRole.create({
+            data: { userId: testerId, roleKey },
+          });
+        }
+      }
+
+      const existingTesterWallet = await tx.walletV2.findUnique({ where: { userId: testerId } });
+      if (!existingTesterWallet) {
+        await tx.walletV2.create({
+          data: {
+            userId: testerId,
+            availableCents: 50000,
+            reservedCents: 0,
+            pendingEarningsCents: 0,
+            confirmedEarningsCents: 0,
+            paidCents: 0,
+            refundedCents: 0,
+          },
+        });
+      }
+    }
+
+    // 7. Official Rules & Policies Initial Publication
+    try {
+      let policyDoc = await tx.policyDocument.findUnique({
+        where: { slug: 'community-rules' },
+        include: { versions: true },
+      });
+      if (!policyDoc) {
+        policyDoc = await tx.policyDocument.create({
+          data: {
+            slug: 'community-rules',
+            title: 'G4X Community Official Policy & Rules',
+            description: 'Authoritative rules and operating guidelines for G4X Community members, boosters, advertisers, and exchangers.',
+          },
+          include: { versions: true },
+        });
+      }
+
+      if (!policyDoc.currentPublishedVersionId) {
+        let targetVer = policyDoc.versions.find((v) => v.status === 'DRAFT' || v.status === 'PUBLISHED');
+        if (!targetVer) {
+          const { INITIAL_SECTIONS_SEED, buildMarkdownFromSections } = await import('../services/policyContentConstants');
+          const rawMarkdown = buildMarkdownFromSections('G4X Community Official Policy & Rules', INITIAL_SECTIONS_SEED);
+          targetVer = await tx.policyVersion.create({
+            data: {
+              documentId: policyDoc.id,
+              versionNumber: 1,
+              status: 'PUBLISHED',
+              title: 'G4X Community Official Policy & Rules',
+              effectiveDate: new Date(),
+              publishedAt: new Date(),
+              authorDiscordId: ownerId || 'system',
+              publisherDiscordId: ownerId || 'system',
+              changelog: 'Official G4X Community Policy & Rules initial publication.',
+              discordSyncStatus: 'NOT_CONFIGURED',
+              rawContentMarkdown: rawMarkdown,
+              sections: {
+                create: INITIAL_SECTIONS_SEED.map((sec) => ({
+                  sectionNumber: sec.sectionNumber,
+                  sectionKey: sec.sectionKey,
+                  title: sec.title,
+                  sortOrder: sec.sortOrder,
+                  content: sec.content || null,
+                  subsections: {
+                    create: sec.subsections.map((sub) => ({
+                      subsectionKey: sub.subsectionKey || null,
+                      title: sub.title,
+                      sortOrder: sub.sortOrder,
+                      content: sub.content,
+                      contentType: sub.contentType,
+                      tableDataJson: sub.tableDataJson || null,
+                    })),
+                  },
+                })),
+              },
+            },
+          });
+        } else {
+          await tx.policyVersion.update({
+            where: { id: targetVer.id },
+            data: {
+              status: 'PUBLISHED',
+              publishedAt: new Date(),
+              publisherDiscordId: ownerId || 'system',
+            },
+          });
+        }
+        await tx.policyDocument.update({
+          where: { id: policyDoc.id },
+          data: { currentPublishedVersionId: targetVer.id },
+        });
+      }
+    } catch (policyErr: any) {
+      console.warn('[BetaDatabase] Policy document seed notice:', policyErr?.message || policyErr);
+    }
+
+    const rolesCount = await tx.role.count();
+    const gamesCount = await tx.game.count();
+    const servicesCount = await tx.gameService.count();
+    const platformAccountsCount = await tx.platformAccount.count();
+
+    if (!options.silent) {
+      console.log(
+        `[BetaDatabase] ✅ Seeded: ${rolesCount} roles, ${gamesCount} games, ${servicesCount} services, ${platformAccountsCount} platform accounts.`
+      );
+      if (ownerId) {
+        console.log(`[BetaDatabase] ✅ Owner account initialized: ${ownerId} (Owner, Admin, Manager, Staff)`);
+      }
+      if (testerId) {
+        console.log(`[BetaDatabase] ✅ Tester account initialized: ${testerId} (Booster, Pilot, Advertiser)`);
+      }
+    }
+
+    return {
+      rolesCount,
+      gamesCount,
+      servicesCount,
+      platformAccountsCount,
+      ownerId,
+    };
+  });
 }
 
 async function inspectDatabaseSnapshotCounts(dbPath: string): Promise<{

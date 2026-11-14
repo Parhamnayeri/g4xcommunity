@@ -880,8 +880,8 @@ export const RulesManagementWorkspace: React.FC = () => {
             Policy Publication Snapshots &amp; History
           </h3>
 
-          <div className="table-responsive-container">
-            <table className="data-table" style={{ width: '100%', fontSize: '0.85rem' }}>
+          <div className="table-scroll">
+            <table className="data-table">
               <thead>
                 <tr>
                   <th>Version</th>
@@ -900,7 +900,7 @@ export const RulesManagementWorkspace: React.FC = () => {
                     <td>
                       <strong>v{ver.versionNumber}.0</strong>
                       {ver.isCurrentPublished && (
-                        <span className="badge badge-success" style={{ marginLeft: '0.4rem', fontSize: '0.68rem' }}>
+                        <span className="badge badge-green" style={{ marginLeft: '0.4rem', fontSize: '0.68rem' }}>
                           Current
                         </span>
                       )}
@@ -909,10 +909,10 @@ export const RulesManagementWorkspace: React.FC = () => {
                       <span
                         className={`badge ${
                           ver.status === 'PUBLISHED'
-                            ? 'badge-success'
+                            ? 'badge-green'
                             : ver.status === 'ARCHIVED'
                             ? 'badge-purple'
-                            : 'badge-warning'
+                            : 'badge-amber'
                         }`}
                         style={{ fontSize: '0.72rem' }}
                       >
@@ -938,7 +938,7 @@ export const RulesManagementWorkspace: React.FC = () => {
                           fontSize: '0.75rem',
                           color:
                             ver.discordSyncStatus === 'SYNCED'
-                              ? 'var(--accent-lime)'
+                              ? 'var(--accent-yellow)'
                               : ver.discordSyncStatus === 'FAILED'
                               ? '#ef4444'
                               : '#94a3b8',
@@ -952,8 +952,7 @@ export const RulesManagementWorkspace: React.FC = () => {
                         {ver.status === 'PUBLISHED' && ver.discordSyncStatus !== 'SYNCED' && (
                           <button
                             type="button"
-                            className="btn btn-secondary btn-sm"
-                            style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                            className="btn btn-secondary btn-xs"
                             onClick={() => handleRetryDiscordSync(ver.id)}
                             disabled={retryingSync}
                           >
@@ -962,8 +961,7 @@ export const RulesManagementWorkspace: React.FC = () => {
                         )}
                         <button
                           type="button"
-                          className="btn btn-secondary btn-sm"
-                          style={{ fontSize: '0.72rem', padding: '0.2rem 0.5rem' }}
+                          className="btn btn-secondary btn-xs"
                           onClick={() => handleRestoreVersion(ver.id)}
                           title="Restore this version into a new draft"
                         >
@@ -981,53 +979,21 @@ export const RulesManagementWorkspace: React.FC = () => {
 
       {/* ─── PUBLISH CONFIRMATION MODAL WITH DISCREPANCY ACKNOWLEDGMENTS ─ */}
       {showPublishModal && (
-        <div
-          className="modal-backdrop"
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '1rem',
-          }}
-        >
+        <div className="studio-modal-backdrop" onClick={() => setShowPublishModal(false)}>
           <div
-            className="card-surface modal-dialog"
-            style={{
-              maxWidth: '720px',
-              width: '100%',
-              maxHeight: '90vh',
-              overflowY: 'auto',
-              padding: '2rem',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-md)',
-            }}
+            className="studio-modal-card studio-modal-card-lg"
+            onClick={(e) => e.stopPropagation()}
           >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                borderBottom: '1px solid var(--border-subtle)',
-                paddingBottom: '0.75rem',
-                marginBottom: '1.25rem',
-              }}
-            >
+            <div className="studio-modal-header">
               <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
                 🚀 Confirm Policy Publication (Version {draft?.versionNumber}.0)
               </h3>
               <button
                 type="button"
-                className="btn btn-secondary btn-sm"
+                className="studio-modal-close"
                 onClick={() => setShowPublishModal(false)}
               >
-                ✕ Close
+                ✕
               </button>
             </div>
 
@@ -1121,7 +1087,7 @@ export const RulesManagementWorkspace: React.FC = () => {
             </div>
 
             {/* Modal Actions */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '1rem' }}>
+            <div className="studio-modal-footer">
               <button
                 type="button"
                 className="btn btn-secondary"

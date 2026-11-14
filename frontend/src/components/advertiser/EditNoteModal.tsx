@@ -34,152 +34,96 @@ export const EditNoteModal: React.FC<EditNoteModalProps> = ({ order, onClose, on
   };
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.75)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-        padding: '1rem',
-      }}
-    >
-      <div
-        style={{
-          backgroundColor: 'var(--bg-surface, #181524)',
-          border: '1px solid rgba(124, 58, 237, 0.4)',
-          borderRadius: '16px',
-          width: '100%',
-          maxWidth: '520px',
-          padding: '1.75rem',
-          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '1.25rem',
-        }}
-      >
+    <div className="studio-modal-backdrop">
+      <div className="studio-modal-card">
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="studio-modal-header">
           <div>
-            <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-primary, #f4f4f6)' }}>
+            <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-primary)' }}>
               Edit Order Notes
             </h3>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted, #9490a6)', fontFamily: 'monospace' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
               Order #{order.id} ({order.orderRef})
             </span>
           </div>
           <button
+            type="button"
+            className="studio-modal-close"
             onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--text-muted, #9490a6)',
-              fontSize: '1.25rem',
-              cursor: 'pointer',
-              padding: '0.25rem',
-            }}
           >
             ✕
           </button>
         </div>
 
-        {error && (
-          <div
-            style={{
-              backgroundColor: 'rgba(239, 68, 68, 0.12)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
-              borderRadius: '8px',
-              padding: '0.75rem',
-              color: '#f87171',
-              fontSize: '0.85rem',
-            }}
-          >
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div>
-            <label
-              style={{
-                display: 'block',
-                fontSize: '0.8rem',
-                color: 'var(--text-muted, #9490a6)',
-                marginBottom: '0.4rem',
-                fontWeight: 600,
-              }}
-            >
-              Order Instructions &amp; Notes for Boosters:
-            </label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="E.g., Specific dungeon keystones, scheduling preferences, or customer character info..."
-              rows={5}
-              maxLength={500}
-              style={{
-                width: '100%',
-                boxSizing: 'border-box',
-                backgroundColor: 'rgba(13, 11, 18, 0.8)',
-                border: '1px solid rgba(124, 58, 237, 0.3)',
-                borderRadius: '8px',
-                padding: '0.75rem',
-                color: 'var(--text-primary, #f4f4f6)',
-                fontSize: '0.9rem',
-                fontFamily: 'inherit',
-                resize: 'vertical',
-                outline: 'none',
-              }}
-              onFocus={(e) => (e.target.style.borderColor = 'var(--primary-purple, #7c3aed)')}
-              onBlur={(e) => (e.target.style.borderColor = 'rgba(124, 58, 237, 0.3)')}
-            />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
-              <span
+        <form id="edit-note-form" onSubmit={handleSubmit}>
+          <div className="studio-modal-body">
+            {error && (
+              <div
                 style={{
-                  fontSize: '0.75rem',
-                  color: notes.length > 450 ? '#f87171' : 'var(--text-muted, #9490a6)',
+                  backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid var(--status-danger)',
+                  borderRadius: '8px',
+                  padding: '0.75rem',
+                  color: '#f87171',
+                  fontSize: '0.85rem',
+                  marginBottom: '1rem',
                 }}
               >
-                {notes.length} / 500 characters
-              </span>
+                {error}
+              </div>
+            )}
+
+            <div>
+              <label
+                style={{
+                  display: 'block',
+                  fontSize: '0.8rem',
+                  color: 'var(--text-muted)',
+                  marginBottom: '0.4rem',
+                  fontWeight: 600,
+                }}
+              >
+                Order Instructions &amp; Notes for Boosters:
+              </label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="E.g., Specific dungeon keystones, scheduling preferences, or customer character info..."
+                rows={5}
+                maxLength={500}
+                className="input"
+                style={{
+                  width: '100%',
+                  minHeight: '120px',
+                  resize: 'vertical',
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    color: notes.length > 450 ? 'var(--status-danger)' : 'var(--text-muted)',
+                  }}
+                >
+                  {notes.length} / 500 characters
+                </span>
+              </div>
             </div>
           </div>
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+          <div className="studio-modal-footer">
             <button
               type="button"
+              className="btn-secondary"
               onClick={onClose}
               disabled={submitting}
-              style={{
-                backgroundColor: 'transparent',
-                border: '1px solid rgba(148, 144, 166, 0.3)',
-                borderRadius: '8px',
-                padding: '0.6rem 1.2rem',
-                color: 'var(--text-muted, #9490a6)',
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-              }}
             >
               Cancel
             </button>
-
             <button
               type="submit"
+              className="btn-cta"
               disabled={submitting}
-              style={{
-                backgroundColor: 'var(--primary-purple, #7c3aed)',
-                border: 'none',
-                borderRadius: '8px',
-                padding: '0.6rem 1.4rem',
-                color: '#ffffff',
-                fontWeight: 700,
-                cursor: submitting ? 'wait' : 'pointer',
-                fontSize: '0.9rem',
-                boxShadow: '0 4px 12px rgba(124, 58, 237, 0.35)',
-              }}
             >
               {submitting ? 'Saving...' : 'Save Notes'}
             </button>

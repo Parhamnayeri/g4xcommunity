@@ -11,9 +11,6 @@ import {
   UserSettingsUpdateRequest,
   UserSettings,
   BoosterPortalDataResponse,
-  WowCharacter,
-  RaiderIOPreviewData,
-  CharacterDetailsResponse,
 } from '../types/profileSettings';
 
 export async function fetchUserProfile(): Promise<UserProfileResponse> {
@@ -46,85 +43,108 @@ export async function fetchBoosterPortalData(): Promise<BoosterPortalDataRespons
   return apiRequest<BoosterPortalDataResponse>('/api/booster/portal-data');
 }
 
-export async function fetchUserCharacters(includeInactive = false): Promise<WowCharacter[]> {
-  const query = includeInactive ? '?includeInactive=true' : '';
-  return apiRequest<WowCharacter[]>(`/characters${query}`);
-}
-
-export async function fetchCharacterDetails(characterId: number | string): Promise<CharacterDetailsResponse> {
-  return apiRequest<CharacterDetailsResponse>(`/characters/${characterId}`);
-}
-
-export async function previewRaiderIOCharacter(params: {
-  url?: string;
-  region?: string;
-  realm?: string;
-  characterName?: string;
-}): Promise<{
-  success: boolean;
-  preview: RaiderIOPreviewData;
-  attribution: { notice: string; poweredBy: string; apiTermsUrl: string; commercialNotice: string };
-}> {
-  return apiRequest('/characters/preview', {
-    method: 'POST',
-    body: JSON.stringify(params),
-  });
-}
-
 export async function addWowCharacter(characterData: {
-  characterName?: string;
-  name?: string;
-  realm?: string;
-  region?: string;
-  raiderioUrl?: string;
-  class?: string;
+  name: string;
+  realm: string;
+  region: string;
+  class: string;
   spec?: string;
   role?: string;
-}): Promise<{ success: boolean; character: WowCharacter }> {
-  const payload = {
-    characterName: characterData.characterName || characterData.name || '',
-    realm: characterData.realm || '',
-    region: characterData.region || 'eu',
-    raiderioUrl: characterData.raiderioUrl,
-  };
-  return apiRequest<{ success: boolean; character: WowCharacter }>('/characters/add', {
+}): Promise<any> {
+  return apiRequest('/characters/add', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: JSON.stringify(characterData),
   });
 }
 
-export async function setMainCharacter(characterId: number): Promise<{ success: boolean; character: WowCharacter }> {
-  return apiRequest<{ success: boolean; character: WowCharacter }>('/characters/set-main', {
+export async function setMainCharacter(characterId: number): Promise<any> {
+  return apiRequest('/characters/set-main', {
     method: 'POST',
     body: JSON.stringify({ characterId }),
   });
 }
 
-export async function syncWowCharacter(characterId: number): Promise<{
+export async function removeCharacter(characterId: number): Promise<any> {
+  return apiRequest('/characters/remove', {
+    method: 'POST',
+    body: JSON.stringify({ characterId }),
+  });
+}
+
+export async function submitRoleApplication(data: {
+  category: 'booster' | 'pilot' | 'advertiser' | 'exchanger';
+  gameSlug?: string;
+  experience?: string;
+  raiderioUrl?: string;
+  vpnAvailability?: boolean;
+  notes?: string;
+  introduction?: string;
+}): Promise<{ success: boolean; application: any }> {
+  return apiRequest('/api/applications', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export interface UserKycStatusResponse {
   success: boolean;
-  result: any;
-  character: WowCharacter;
-}> {
-  return apiRequest<{
-    success: boolean;
-    result: any;
-    character: WowCharacter;
-  }>('/characters/sync-request', {
-    method: 'POST',
-    body: JSON.stringify({ characterId }),
-  });
+  isVerified: boolean;
+  status: 'verified' | 'pending' | 'rejected' | 'none';
+  verifiedAt: string | null;
+  pilotVerification?: {
+    id: number;
+    status: string;
+    gameSlug: string;
+    submittedAt: string;
+    reviewedAt?: string | null;
+    reviewNote?: string | null;
+  } | null;
+  latestApplication?: {
+    id: number;
+    category: string;
+    status: string;
+    identityStatus: string;
+    submittedAt: string;
+    reviewedAt?: string | null;
+    reviewNotes?: string | null;
+  } | null;
+  documents?: {
+    identity?: string | null;
+    passport?: string | null;
+    selfie?: string | null;
+  };
+  profileData?: {
+    legalName?: string;
+    country?: string;
+    idNumber?: string;
+    phoneNumber?: string;
+    vpnConfirmed?: boolean;
+    adminNotes?: string;
+  };
+  message?: string;
 }
 
-export async function removeCharacter(characterId: number): Promise<{ success: boolean; character: WowCharacter }> {
-  return apiRequest<{ success: boolean; character: WowCharacter }>('/characters/remove', {
-    method: 'POST',
-    body: JSON.stringify({ characterId }),
-  });
+export interface UserKycSubmitRequest {
+  legalName: string;
+  country: string;
+  idType?: string;
+  idNumber: string;
+  phoneNumber?: string;
+  vpnConfirmed?: boolean;
+  notes?: string;
+  identityDocData?: string;
+  identityDocName?: string;
+  selfieDocData?: string;
+  selfieDocName?: string;
 }
 
-export async function reactivateCharacter(characterId: number): Promise<{ success: boolean; character: WowCharacter }> {
-  return apiRequest<{ success: boolean; character: WowCharacter }>('/characters/reactivate', {
+export async function fetchMyKyc(): Promise<UserKycStatusResponse> {
+  return apiRequest<UserKycStatusResponse>('/api/profile/kyc');
+}
+
+export async function submitMyKyc(data: UserKycSubmitRequest): Promise<{ success: boolean; result?: any; isVerified?: boolean; message?: string }> {
+  return apiRequest<{ success: boolean; result?: any; isVerified?: boolean; message?: string }>('/api/profile/kyc', {
     method: 'POST',
-    body: JSON.stringify({ characterId }),
+    body: JSON.stringify(data),
   });
 }

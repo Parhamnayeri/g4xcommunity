@@ -11,7 +11,6 @@ import {
   PaginationMeta,
   OrderDiagnosticsData,
 } from '../types/operations';
-import { AdvertiserOrder, CreateOrderRequest } from '../types/advertiser';
 
 /**
  * Universal pagination normalizer
@@ -22,7 +21,6 @@ export function normalizePagination(raw: any, defaultLimit: number = 10): Pagina
   if (!raw || typeof raw !== 'object') {
     return { page: 1, limit: defaultLimit, total: 0, totalPages: 1 };
   }
-
   if (raw.pagination && typeof raw.pagination === 'object') {
     const p = raw.pagination;
     const total = Number(p.total ?? p.totalCount ?? 0) || 0;
@@ -36,15 +34,6 @@ export function normalizePagination(raw: any, defaultLimit: number = 10): Pagina
   const page = Number(raw.page) || 1;
   const totalPages = Number(raw.totalPages) || (total > 0 ? Math.ceil(total / limit) : 1);
   return { page, limit, total, totalPages: Math.max(1, totalPages) };
-}
-
-export async function createOperationalOrder(
-  orderData: CreateOrderRequest
-): Promise<{ success: boolean; order: AdvertiserOrder; isFunded?: boolean }> {
-  return apiRequest<{ success: boolean; order: AdvertiserOrder; isFunded?: boolean }>('/api/orders/create', {
-    method: 'POST',
-    body: JSON.stringify(orderData),
-  });
 }
 
 // ==========================================
@@ -139,46 +128,6 @@ export async function fetchStaffDisputes(params?: {
   };
 }
 
-export async function fetchStaffOrders(params?: {
-  tab?: 'g4x' | 'advertiser';
-  source?: 'advertiser' | 'external_g4x';
-  status?: string;
-  paymentStatus?: string;
-  gameSlug?: string;
-  sourceWebsite?: string;
-  search?: string;
-  startDate?: string;
-  endDate?: string;
-  page?: number;
-  limit?: number;
-}): Promise<{
-  orders: OrderItem[];
-  pagination: PaginationMeta;
-  counts?: { g4x: number; advertiser: number; needsReview: number };
-  tab?: string;
-}> {
-  const query = new URLSearchParams();
-  if (params?.tab) query.set('tab', params.tab);
-  if (params?.source) query.set('source', params.source);
-  if (params?.status) query.set('status', params.status);
-  if (params?.paymentStatus) query.set('paymentStatus', params.paymentStatus);
-  if (params?.gameSlug) query.set('gameSlug', params.gameSlug);
-  if (params?.sourceWebsite) query.set('source', params.sourceWebsite);
-  if (params?.search) query.set('search', params.search);
-  if (params?.startDate) query.set('startDate', params.startDate);
-  if (params?.endDate) query.set('endDate', params.endDate);
-  if (params?.page) query.set('page', String(params.page));
-  if (params?.limit) query.set('limit', String(params.limit));
-
-  const res = await apiRequest<any>(`/api/staff/orders?${query.toString()}`);
-  return {
-    orders: Array.isArray(res?.orders) ? res.orders : [],
-    pagination: normalizePagination(res, params?.limit || 15),
-    counts: res?.counts,
-    tab: res?.tab,
-  };
-}
-
 // ==========================================
 // Management Operations APIs
 // ==========================================
@@ -231,12 +180,6 @@ export async function fetchOrderDiagnostics(
   orderId: number
 ): Promise<{ success: boolean; order: OrderDiagnosticsData }> {
   return apiRequest(`/api/management/orders/${orderId}`);
-}
-
-export async function fetchStaffOrderDetails(
-  orderId: number
-): Promise<{ success: boolean; order: OrderDiagnosticsData }> {
-  return apiRequest(`/api/staff/orders/${orderId}`);
 }
 
 export async function fetchOrderAuditHistory(
@@ -390,8 +333,54 @@ export async function submitKycDecision(
   });
 }
 
-export async function assignOrderRoster(orderId: number, candidates: Array<{ claimId: number; assignedRole: string }>): Promise<{ success: boolean; message: string }> {
-  return apiRequest(`/api/management/orders/${orderId}/assign`, { method: 'POST', body: JSON.stringify({ candidates }) });
+export async function assignOrderRoster(
+  orderId: number,
+  candidates: Array<{ claimId?: number; userId?: string; assignedRole: string }>,
+  requireCompleteRegisteredRoster?: boolean
+): Promise<{ success: boolean; message: string }> {
+  return apiRequest(`/api/management/orders/${orderId}/assign`, {
+    method: 'POST',
+    body: JSON.stringify({ candidates, requireCompleteRegisteredRoster }),
+  });
+}
+
+export async function createManagementOrder(input: {
+  gameSlug: string;
+  serviceId: number;
+  amountUsd: number;
+  boosterPoolUsd?: number;
+  orderType?: string;
+  orderMode?: string;
+  runsCount?: number;
+  notes?: string;
+  externalOrderId?: string;
+  mythicKeyLevel?: number;
+  dungeonName?: string;
+  vpnLocation?: string;
+  sourcePlatform?: string;
+  platformAccountId?: number;
+  platformAccountRef?: string;
+  sourceAmountType?: string;
+}): Promise<{ success: boolean; order: any; message?: string }> {
+  return apiRequest('/api/management/orders/create', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchApprovedBoosters(gameSlug?: string): Promise<{
+  boosters: Array<{
+    userId: string;
+    username: string;
+    displayName: string;
+    roles: string[];
+    hasActiveReservation: boolean;
+    activeOrderId: number | null;
+    approvals: Array<{ gameSlug: string; approvalType: string; status: string }>;
+  }>;
+}> {
+  const query = gameSlug ? `?gameSlug=${encodeURIComponent(gameSlug)}` : '';
+  return apiRequest(`/api/management/approved-boosters${query}`);
 }
 
 export async function verifyOrderPayment(orderId: number, receiptRef: string): Promise<{ success: boolean; message: string }> {

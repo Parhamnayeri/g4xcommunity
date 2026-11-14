@@ -43,7 +43,7 @@ export const Footer: React.FC = () => {
                 fontSize: '0.9rem',
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
-                color: 'var(--accent-lime)',
+                color: 'var(--accent-yellow)',
                 marginBottom: '1rem',
               }}
             >
@@ -66,9 +66,9 @@ export const Footer: React.FC = () => {
                 </a>
               </li>
               <li>
-                <a href="/legacy" style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                <Link to="/dashboard" style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                   Member Dashboard
-                </a>
+                </Link>
               </li>
             </ul>
           </div>
@@ -80,7 +80,7 @@ export const Footer: React.FC = () => {
                 fontSize: '0.9rem',
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
-                color: 'var(--accent-lime)',
+                color: 'var(--accent-yellow)',
                 marginBottom: '1rem',
               }}
             >
@@ -97,11 +97,6 @@ export const Footer: React.FC = () => {
                   Privacy Policy
                 </Link>
               </li>
-              <li>
-                <a href="/OwnerGate" style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                  OwnerGate Portal
-                </a>
-              </li>
             </ul>
           </div>
 
@@ -112,7 +107,7 @@ export const Footer: React.FC = () => {
                 fontSize: '0.9rem',
                 textTransform: 'uppercase',
                 letterSpacing: '0.08em',
-                color: 'var(--accent-lime)',
+                color: 'var(--accent-yellow)',
                 marginBottom: '1rem',
               }}
             >
@@ -171,9 +166,6 @@ export const Footer: React.FC = () => {
             <Link to="/privacy" style={{ color: 'var(--text-muted)' }}>
               Privacy
             </Link>
-            <a href="/legacy" style={{ color: 'var(--accent-lime)' }}>
-              Legacy Platform
-            </a>
           </div>
         </div>
       </div>

@@ -30,6 +30,7 @@ import {
   submitSupplementalInfo,
   getUserActiveApplications,
   getReviewChannelForCategory,
+  resolveReviewChannelForCategory,
   RegistrationCategory,
   SUPPORTED_PILOT_GAMES,
   SUPPORTED_EXCHANGER_GAME_CURRENCIES,
@@ -247,80 +248,108 @@ export async function handleRegistrationButton(interaction: ButtonInteraction): 
       break;
     }
     case 'booster': {
-      // ارسال منوی انتخاب بازی برای بوستر
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('reg_select:game:booster')
-        .setPlaceholder('Select the game you want to boost in')
-        .addOptions(
-          new StringSelectMenuOptionBuilder()
-            .setLabel('World of Warcraft Midnight')
-            .setDescription('Supports Raider.IO profile verification')
-            .setValue('wow_midnight')
-            .setEmoji('⚔️'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel('Rainbow Six Siege')
-            .setDescription('Manual qualification review')
-            .setValue('rainbow_six_siege')
-            .setEmoji('🎯')
-        );
+      // باز کردن مستقیم مودال ثبت‌نام بوستر سراسری بدون نیاز به انتخاب بازی جداگانه
+      const modal = new ModalBuilder()
+        .setCustomId('reg_modal:booster:global')
+        .setTitle('Booster Registration — G4X');
 
-      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+      const gamesInput = new TextInputBuilder()
+        .setCustomId('main_games')
+        .setLabel('Primary Games You Boost')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. WoW, PoE 2, Rainbow Six, Aion 2')
+        .setRequired(true);
 
-      await interaction.reply({
-        content: 'Please select the game for your booster application:',
-        components: [row],
-        ephemeral: true,
-      });
+      const roleInput = new TextInputBuilder()
+        .setCustomId('role_spec')
+        .setLabel('Main Roles & Specializations')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. Tank / Blood DK 3.3k RIO, Grandmaster, Top 500')
+        .setRequired(true);
+
+      const expInput = new TextInputBuilder()
+        .setCustomId('experience')
+        .setLabel('Relevant Boosting Experience')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('Ranks achieved, tournament history or previous booster teams.')
+        .setRequired(true);
+
+      const proofInput = new TextInputBuilder()
+        .setCustomId('raiderio_or_proof')
+        .setLabel('Raider.IO or Proof URL (Optional)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('https://raider.io/characters/eu/... or tracker link')
+        .setRequired(false);
+
+      const langInput = new TextInputBuilder()
+        .setCustomId('language')
+        .setLabel('Preferred Language & Timezone')
+        .setStyle(TextInputStyle.Short)
+        .setValue('English')
+        .setRequired(true);
+
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(gamesInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(roleInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(expInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(proofInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(langInput)
+      );
+
+      await interaction.showModal(modal);
       break;
     }
 
     case 'pilot': {
-      // ارسال منوی ۸ بازی پشتیبانی‌شده پایلوت
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('reg_select:game:pilot')
-        .setPlaceholder('Select the game for Pilot service')
-        .addOptions(
-          new StringSelectMenuOptionBuilder()
-            .setLabel('World of Warcraft Midnight')
-            .setValue('wow_midnight')
-            .setEmoji('⚔️'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel('WoW Classic TBC')
-            .setValue('wow_classic_tbc')
-            .setEmoji('🛡️'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel('WoW Classic Era')
-            .setValue('wow_classic_era')
-            .setEmoji('📜'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel('WoW Classic Pandaria')
-            .setValue('wow_classic_pandaria')
-            .setEmoji('🐼'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel('WoW Forever')
-            .setValue('wow_forever')
-            .setEmoji('⏳'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel('Aion 2')
-            .setValue('aion_2')
-            .setEmoji('🏹'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel('Path of Exile 2')
-            .setValue('poe2')
-            .setEmoji('💎'),
-          new StringSelectMenuOptionBuilder()
-            .setLabel('Escape from Tarkov')
-            .setValue('escape_from_tarkov')
-            .setEmoji('🔫')
-        );
+      // باز کردن مستقیم مودال پایلوت سراسری بدون نیاز به اپلای برای تک‌تک بازی‌ها
+      const modal = new ModalBuilder()
+        .setCustomId('reg_modal:pilot:global')
+        .setTitle('Pilot Booster Application — G4X');
 
-      const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+      const gamesInput = new TextInputBuilder()
+        .setCustomId('main_games')
+        .setLabel('Games You Can Pilot')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('e.g. WoW Midnight/Classic, PoE 2, Tarkov, Aion 2')
+        .setRequired(true);
 
-      await interaction.reply({
-        content: 'Please select the supported game for your Pilot application:',
-        components: [row],
-        ephemeral: true,
-      });
+      const expInput = new TextInputBuilder()
+        .setCustomId('experience')
+        .setLabel('Relevant Pilot Experience')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('Past pilot orders completed, games, security experience.')
+        .setRequired(true);
+
+      const phoneInput = new TextInputBuilder()
+        .setCustomId('contact_phone')
+        .setLabel('Phone Number (Confidential)')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('+1 234 567 8900')
+        .setRequired(true);
+
+      const socialInput = new TextInputBuilder()
+        .setCustomId('contact_social')
+        .setLabel('WhatsApp or Telegram Handle')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('@username or number')
+        .setRequired(true);
+
+      const notesInput = new TextInputBuilder()
+        .setCustomId('notes')
+        .setLabel('VPN Setup & Security (Mandatory for Pilot)')
+        .setStyle(TextInputStyle.Paragraph)
+        .setPlaceholder('Mention VPN setups or available hours.')
+        .setRequired(false);
+
+      modal.addComponents(
+        new ActionRowBuilder<TextInputBuilder>().addComponents(gamesInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(expInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(phoneInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(socialInput),
+        new ActionRowBuilder<TextInputBuilder>().addComponents(notesInput)
+      );
+
+      await interaction.showModal(modal);
       break;
     }
 
@@ -675,10 +704,42 @@ export async function handleRegistrationModalSubmit(interaction: ModalSubmitInte
   const userId = interaction.user.id;
 
   try {
-    if (customId.startsWith('reg_modal:booster:')) {
-      const gameSlug = customId.replace('reg_modal:booster:', '');
+    if (customId.startsWith('reg_modal:booster')) {
+      const isGlobal = customId === 'reg_modal:booster:global' || customId === 'reg_modal:booster';
+      const gameSlug = isGlobal ? null : customId.replace('reg_modal:booster:', '');
 
-      if (gameSlug === 'wow_midnight') {
+      if (isGlobal) {
+        const mainGames = interaction.fields.getTextInputValue('main_games');
+        const roleSpec = interaction.fields.getTextInputValue('role_spec');
+        const experience = interaction.fields.getTextInputValue('experience');
+        let proofUrl: string | undefined;
+        try {
+          proofUrl = interaction.fields.getTextInputValue('raiderio_or_proof')?.trim() || undefined;
+        } catch {}
+        const language = interaction.fields.getTextInputValue('language') || 'English';
+
+        let raiderioUrl: string | undefined;
+        if (proofUrl && proofUrl.includes('raider.io')) {
+          const parsed = parseRaiderIOProfileUrl(proofUrl);
+          if (parsed) raiderioUrl = parsed.canonicalUrl;
+        }
+
+        const app = await registerBooster({
+          userId,
+          gameSlug: undefined,
+          mainRole: roleSpec,
+          experience: `[Games: ${mainGames}]\n${experience}${proofUrl ? `\n[Profile/Proof: ${proofUrl}]` : ''}`,
+          raiderioUrl,
+          preferredLanguage: language,
+        });
+
+        await interaction.reply({
+          content: `✅ **Booster Application Submitted!**\nApplication ID: **#${app.id}**\nYour global booster application has been recorded and routed to **#app-boosters** for review by management.`,
+          ephemeral: true,
+        });
+
+        await notifyStaffReview(interaction.client, app.id);
+      } else if (gameSlug === 'wow_midnight') {
         const raiderioUrl = interaction.fields.getTextInputValue('raiderio_url');
         const roleSpec = interaction.fields.getTextInputValue('role_spec');
         const experience = interaction.fields.getTextInputValue('experience');
@@ -728,52 +789,94 @@ export async function handleRegistrationModalSubmit(interaction: ModalSubmitInte
 
         await notifyStaffReview(interaction.client, app.id);
       }
-    } else if (customId.startsWith('reg_modal:pilot:')) {
-      const gameSlug = customId.replace('reg_modal:pilot:', '');
-      const experience = interaction.fields.getTextInputValue('experience');
-      const language = interaction.fields.getTextInputValue('language') || 'English';
-      const phone = interaction.fields.getTextInputValue('contact_phone');
-      const social = interaction.fields.getTextInputValue('contact_social');
-      const notes = interaction.fields.getTextInputValue('notes') || '';
-      let raiderioUrl: string | undefined;
+    } else if (customId.startsWith('reg_modal:pilot')) {
+      const isGlobal = customId === 'reg_modal:pilot:global' || customId === 'reg_modal:pilot';
+      const gameSlug = isGlobal ? null : customId.replace('reg_modal:pilot:', '');
 
-      if (gameSlug === 'wow_midnight') {
-        raiderioUrl = interaction.fields.getTextInputValue('raiderio_url');
-        const parsed = parseRaiderIOProfileUrl(raiderioUrl);
-        if (!parsed) {
-          await interaction.reply({
-            content: '❌ **Invalid Raider.IO URL**: Please provide a legitimate Raider.IO character profile URL (e.g. `https://raider.io/characters/eu/realm-name/character-name`).',
-            ephemeral: true,
-          });
-          return;
+      if (isGlobal) {
+        const mainGames = interaction.fields.getTextInputValue('main_games');
+        const experience = interaction.fields.getTextInputValue('experience');
+        const phone = interaction.fields.getTextInputValue('contact_phone');
+        const social = interaction.fields.getTextInputValue('contact_social');
+        const notes = interaction.fields.getTextInputValue('notes') || '';
+        const language = 'English';
+
+        const rawBaseUrl = process.env.PUBLIC_WEB_URL || process.env.WEB_BASE_URL || 'http://localhost:3001';
+        const kycUrl = `${rawBaseUrl.replace(/\/+$/, '')}/profile/kyc`;
+
+        const app = await registerPilot({
+          userId,
+          gameSlug: undefined,
+          preferredLanguage: language,
+          experience: `[Games: ${mainGames}]\n${experience}`,
+          contactPreferences: {
+            phone,
+            whatsapp: social,
+            telegram: social,
+          },
+          notes,
+          discordClient: interaction.client,
+        });
+
+        await interaction.reply({
+          content: `✅ **Pilot Application Submitted!**\nApplication ID: **#${app.id}**\n\n🪪 **Mandatory Identity Verification (KYC):**\nPlease complete your identity verification here: <${kycUrl}>\n*(A direct link has also been dispatched to your Discord DMs)*\n\nYour pilot application is currently **Pending** and routed to **#app-pilots**. Authorized management will review your file and verify identity. Do not share identity documents in public channels.`,
+          ephemeral: true,
+        });
+
+        await notifyStaffReview(interaction.client, app.id);
+      } else {
+        const experience = interaction.fields.getTextInputValue('experience');
+        const language = interaction.fields.getTextInputValue('language') || 'English';
+        const phone = interaction.fields.getTextInputValue('contact_phone');
+        const social = interaction.fields.getTextInputValue('contact_social');
+        const notes = interaction.fields.getTextInputValue('notes') || '';
+        let raiderioUrl: string | undefined;
+
+        if (gameSlug === 'wow_midnight') {
+          raiderioUrl = interaction.fields.getTextInputValue('raiderio_url');
+          const parsed = parseRaiderIOProfileUrl(raiderioUrl);
+          if (!parsed) {
+            await interaction.reply({
+              content: '❌ **Invalid Raider.IO URL**: Please provide a legitimate Raider.IO character profile URL (e.g. `https://raider.io/characters/eu/realm-name/character-name`).',
+              ephemeral: true,
+            });
+            return;
+          }
         }
+
+        const rawBaseUrl = process.env.PUBLIC_WEB_URL || process.env.WEB_BASE_URL || 'http://localhost:3001';
+        const kycUrl = `${rawBaseUrl.replace(/\/+$/, '')}/profile/kyc`;
+
+        const app = await registerPilot({
+          userId,
+          gameSlug,
+          preferredLanguage: language,
+          experience,
+          raiderioUrl,
+          contactPreferences: {
+            phone,
+            whatsapp: social,
+            telegram: social,
+          },
+          notes,
+          discordClient: interaction.client,
+        });
+
+        await interaction.reply({
+          content: `✅ **Pilot Application Submitted!**\nApplication ID: **#${app.id}**\n\n🪪 **Mandatory Identity Verification (KYC):**\nPlease complete your identity verification here: <${kycUrl}>\n*(A direct link has also been dispatched to your Discord DMs)*\n\nYour pilot application is currently **Pending** and routed to **#app-pilots**. Authorized management will initiate private identity verification with you. Do not share identity documents in public channels.`,
+          ephemeral: true,
+        });
+
+        await notifyStaffReview(interaction.client, app.id);
       }
-
-      const app = await registerPilot({
-        userId,
-        gameSlug,
-        preferredLanguage: language,
-        experience,
-        raiderioUrl,
-        contactPreferences: {
-          phone,
-          whatsapp: social,
-          telegram: social,
-        },
-        notes,
-      });
-
-      await interaction.reply({
-        content: `✅ **Pilot Application Submitted!**\nApplication ID: **#${app.id}**\nYour pilot application is currently **Pending** and routed to **#app-pilots**. Authorized management will initiate private identity verification with you. Do not share identity documents in public channels.`,
-        ephemeral: true,
-      });
-
-      await notifyStaffReview(interaction.client, app.id);
     } else if (customId === 'reg_modal:advertiser') {
       const intro = interaction.fields.getTextInputValue('intro');
       const salesExp = interaction.fields.getTextInputValue('sales_exp');
       const language = interaction.fields.getTextInputValue('language') || 'English';
       const contactInfo = interaction.fields.getTextInputValue('contact_info');
+
+      const rawBaseUrl = process.env.PUBLIC_WEB_URL || process.env.WEB_BASE_URL || 'http://localhost:3001';
+      const kycUrl = `${rawBaseUrl.replace(/\/+$/, '')}/profile/kyc`;
 
       const app = await registerAdvertiser({
         userId,
@@ -781,10 +884,11 @@ export async function handleRegistrationModalSubmit(interaction: ModalSubmitInte
         priorExperience: salesExp,
         preferredLanguage: language,
         contactInfo,
+        discordClient: interaction.client,
       });
 
       await interaction.reply({
-        content: `✅ **Advertiser Application Submitted!**\nApplication ID: **#${app.id}**\nYour application is in pending status and will be reviewed by platform managers.`,
+        content: `✅ **Advertiser Application Submitted!**\nApplication ID: **#${app.id}**\n\n🪪 **Identity Verification (KYC):**\nPlease complete your identity verification here: <${kycUrl}>\n*(A direct link has also been dispatched to your Discord DMs)*\n\nYour application is in pending status and will be reviewed by platform managers.`,
         ephemeral: true,
       });
 
@@ -799,6 +903,9 @@ export async function handleRegistrationModalSubmit(interaction: ModalSubmitInte
       const language = interaction.fields.getTextInputValue('language') || 'English';
       const contactInfo = interaction.fields.getTextInputValue('contact_info');
 
+      const rawBaseUrl = process.env.PUBLIC_WEB_URL || process.env.WEB_BASE_URL || 'http://localhost:3001';
+      const kycUrl = `${rawBaseUrl.replace(/\/+$/, '')}/profile/kyc`;
+
       const app = await registerExchanger({
         userId,
         introduction: intro,
@@ -807,10 +914,11 @@ export async function handleRegistrationModalSubmit(interaction: ModalSubmitInte
         gameCurrencies,
         settlementCurrencies,
         contactInfo,
+        discordClient: interaction.client,
       });
 
       await interaction.reply({
-        content: `✅ **Exchanger Application Submitted!**\nApplication ID: **#${app.id}**\nYour application has been received for administrative review and identity verification.`,
+        content: `✅ **Exchanger Application Submitted!**\nApplication ID: **#${app.id}**\n\n🪪 **Identity Verification (KYC):**\nPlease complete your identity verification here: <${kycUrl}>\n*(A direct link has also been dispatched to your Discord DMs)*\n\nYour application has been received for administrative review and identity verification.`,
         ephemeral: true,
       });
 
@@ -1349,20 +1457,43 @@ export async function renderOrUpdateStaffReviewCard(client: any, applicationId: 
   }
 
   // هدایت پیام بازبینی به کانال اختصاصی همان دسته‌بندی
-  const channelId = getReviewChannelForCategory(app.category as RegistrationCategory, client);
+  const channelId = await resolveReviewChannelForCategory(app.category as RegistrationCategory, client);
   if (!channelId) {
     console.warn(`[ReviewCard] No review channel configured for category '${app.category}' (App #${applicationId})`);
     return;
   }
 
   try {
-    const channel = (await client.channels.fetch(channelId).catch(() => null)) as TextChannel | null;
-    if (!channel) return;
+    const channel = (await client.channels.fetch(channelId).catch((fetchErr: any) => {
+      console.error(`[ReviewCard] Failed to fetch channel ${channelId} for app #${applicationId}:`, fetchErr?.message || fetchErr);
+      return null;
+    })) as TextChannel | null;
+
+    if (!channel) {
+      console.error(`[ReviewCard] Channel ${channelId} not found/unreachable for app #${applicationId}`);
+      return;
+    }
+
+    // اطمینان از دسترسی بات در کانال بازبینی
+    const botUser = client.user;
+    if (botUser && typeof channel.permissionOverwrites?.edit === 'function') {
+      await channel.permissionOverwrites.edit(botUser.id, {
+        ViewChannel: true,
+        SendMessages: true,
+        EmbedLinks: true,
+        AttachFiles: true,
+        ReadMessageHistory: true,
+      }).catch((permErr: any) => {
+        console.warn(`[ReviewCard] Could not ensure bot permissions in #${channel.name}:`, permErr?.message);
+      });
+    }
 
     const sentMsg = await channel.send({
       embeds: [embed],
       components,
     });
+
+    console.log(`[ReviewCard] Successfully posted review card for app #${applicationId} (${app.category}) in #${channel.name} (${channel.id})`);
 
     await prisma.registrationApplication.update({
       where: { id: applicationId },
@@ -1371,8 +1502,8 @@ export async function renderOrUpdateStaffReviewCard(client: any, applicationId: 
         reviewMessageId: sentMsg.id,
       },
     });
-  } catch (err) {
-    console.warn(`[ReviewCard] Failed to post staff review card for #${applicationId}:`, err);
+  } catch (err: any) {
+    console.error(`[ReviewCard] Failed to post staff review card for #${applicationId}:`, err?.message || err);
   }
 }
 

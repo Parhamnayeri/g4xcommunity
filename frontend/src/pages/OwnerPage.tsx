@@ -17,7 +17,14 @@ import {
   fetchOwnerWalletsLedgers,
   fetchOwnerAuditLogs,
   fetchOwnerSecurityHealth,
+  fetchOwnerBackups,
+  triggerOwnerBackup,
+  restoreOwnerBackup,
 } from '../services/ownerPortal';
+import {
+  OwnerBackupsResponse,
+  BackupSnapshotItem,
+} from '../types/ownerPortal';
 import { useSearchParams } from 'react-router-dom';
 import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
 import { UserManagementWorkspace } from '../components/admin/UserManagementWorkspace';
@@ -46,7 +53,8 @@ export type OwnerTab =
   | 'ledgers'
   | 'gates'
   | 'audit'
-  | 'security';
+  | 'security'
+  | 'backups';
 
 const VALID_OWNER_TABS: OwnerTab[] = [
   'overview',
@@ -64,6 +72,7 @@ const VALID_OWNER_TABS: OwnerTab[] = [
   'gates',
   'audit',
   'security',
+  'backups',
 ];
 
 export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'overview' }) => {
@@ -122,6 +131,18 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
   // Security Health state
   const [securityHealth, setSecurityHealth] = useState<SecurityHealthResponse | null>(null);
   const [securityLoading, setSecurityLoading] = useState(false);
+
+  // Google Drive Backups & Disaster Recovery state
+  const [backupsData, setBackupsData] = useState<OwnerBackupsResponse | null>(null);
+  const [backupsLoading, setBackupsLoading] = useState(false);
+  const [backupsError, setBackupsError] = useState<string | null>(null);
+  const [runningBackup, setRunningBackup] = useState(false);
+  const [backupFeedback, setBackupFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [selectedSnapshotForRestore, setSelectedSnapshotForRestore] = useState<BackupSnapshotItem | null>(null);
+  const [confirmPhrase, setConfirmPhrase] = useState('');
+  const [restoreStorage, setRestoreStorage] = useState(false);
+  const [restoringBackup, setRestoringBackup] = useState(false);
+  const [restoreFeedback, setRestoreFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
 
   // Load Overview
@@ -219,6 +240,74 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
     }
   }, []);
 
+  // Load Google Drive Backups
+  const loadBackups = useCallback(async () => {
+    setBackupsLoading(true);
+    setBackupsError(null);
+    try {
+      const data = await fetchOwnerBackups();
+      setBackupsData(data);
+    } catch (err: any) {
+      setBackupsError(err.message || 'Failed to query backup infrastructure status.');
+    } finally {
+      setBackupsLoading(false);
+    }
+  }, []);
+
+  const handleTriggerBackup = async () => {
+    setRunningBackup(true);
+    setBackupFeedback(null);
+    try {
+      const res = await triggerOwnerBackup();
+      const snapName = res?.backup?.snapshotFilename || 'snapshot';
+      const snapSize = res?.backup?.snapshotSizeFormatted || '';
+      const isRemote = res?.backup?.uploadedToRemote;
+      setBackupFeedback({
+        text: `Backup created successfully! Snapshot: ${snapName} (${snapSize}). Destination: ${isRemote ? 'Uploaded to Google Drive ☁️' : 'Saved to Local Staging Mirror 💽'}.`,
+        type: 'success',
+      });
+      await loadBackups();
+    } catch (err: any) {
+      setBackupFeedback({
+        text: err.message || 'Failed to execute backup.',
+        type: 'error',
+      });
+    } finally {
+      setRunningBackup(false);
+    }
+  };
+
+  const handleConfirmRestore = async () => {
+    if (!selectedSnapshotForRestore) return;
+    if (confirmPhrase.trim() !== 'RESTORE') {
+      setRestoreFeedback({ text: 'You must type RESTORE in all uppercase to confirm restore.', type: 'error' });
+      return;
+    }
+    setRestoringBackup(true);
+    setRestoreFeedback(null);
+    try {
+      const res = await restoreOwnerBackup(selectedSnapshotForRestore.filename, confirmPhrase, restoreStorage);
+      const safetySnap = res?.report?.safetySnapshotFilename || 'saved in pre-restore';
+      setRestoreFeedback({
+        text: `Database successfully restored from ${selectedSnapshotForRestore.filename}! Pre-restore safety snapshot archived (${safetySnap}).`,
+        type: 'success',
+      });
+      setTimeout(() => {
+        setSelectedSnapshotForRestore(null);
+        setConfirmPhrase('');
+        setRestoreFeedback(null);
+        loadBackups();
+      }, 3000);
+    } catch (err: any) {
+      setRestoreFeedback({
+        text: err.message || 'Database restoration failed.',
+        type: 'error',
+      });
+    } finally {
+      setRestoringBackup(false);
+    }
+  };
+
   useEffect(() => {
     if (isOwner) {
       loadOverview();
@@ -232,7 +321,8 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
     if (activeTab === 'gates') loadGates();
     if (activeTab === 'audit') loadAudit(1);
     if (activeTab === 'security') loadSecurity();
-  }, [activeTab, isOwner, loadConfig, loadLedgers, loadGates, loadAudit, loadSecurity]);
+    if (activeTab === 'backups') loadBackups();
+  }, [activeTab, isOwner, loadConfig, loadLedgers, loadGates, loadAudit, loadSecurity, loadBackups]);
 
   if (!isOwner) {
     return (
@@ -300,6 +390,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
               if (activeTab === 'gates') loadGates();
               if (activeTab === 'audit') loadAudit(auditPagination.page);
               if (activeTab === 'security') loadSecurity();
+              if (activeTab === 'backups') loadBackups();
             }}
           >
             ↻ Refresh System State
@@ -333,6 +424,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
           { key: 'gates', label: 'Feature Gates Status', icon: '🔒' },
           { key: 'audit', label: 'Executive Audit Logs', icon: '📜' },
           { key: 'security', label: 'Security & Health', icon: '🛡️' },
+          { key: 'backups', label: 'Drive Backups & Recovery', icon: '💾' },
         ].map((t) => (
           <button
             key={t.key}
@@ -780,66 +872,72 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
           {/* Save Confirmation Modal with Mandatory Reason */}
           {saveModalOpen && (
             <div
-              style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                zIndex: 1000,
-                padding: '1rem',
+              className="studio-modal-backdrop"
+              onClick={() => {
+                setSaveModalOpen(false);
+                setSaveReason('');
+                setConfigMsg(null);
               }}
             >
-              <div className="card-surface" style={{ maxWidth: '480px', width: '100%', padding: '2rem' }}>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-                  Confirm Financial Configuration Update
-                </h3>
-                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
-                  Modifying platform exchange rates or banking coordinates affects future quote generation.
-                  All changes are immutably audited under your Owner credentials.
-                </p>
-
-                <div style={{ marginBottom: '1.25rem' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                    Mandatory Audit Justification (min 5 characters)
-                  </label>
-                  <textarea
-                    rows={3}
-                    placeholder="E.g. Adjusted market reference rate following central bank FX revision..."
-                    value={saveReason}
-                    onChange={(e) => setSaveReason(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-main)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)',
-                      fontSize: '0.85rem',
-                    }}
-                  />
-                </div>
-
-                {configMsg && (
-                  <div
-                    style={{
-                      padding: '0.65rem 0.85rem',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '0.82rem',
-                      marginBottom: '1rem',
-                      backgroundColor: configMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                      color: configMsg.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+              <div
+                className="studio-modal-card"
+                style={{ maxWidth: '520px' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="studio-modal-header">
+                  <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }}>
+                    Confirm Financial Configuration Update
+                  </h3>
+                  <button
+                    type="button"
+                    className="studio-modal-close"
+                    onClick={() => {
+                      setSaveModalOpen(false);
+                      setSaveReason('');
+                      setConfigMsg(null);
                     }}
                   >
-                    {configMsg.text}
-                  </div>
-                )}
+                    &times;
+                  </button>
+                </div>
 
-                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <div className="studio-modal-body">
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: 0, lineHeight: '1.5' }}>
+                    Modifying platform exchange rates or banking coordinates affects future quote generation.
+                    All changes are immutably audited under your Owner credentials.
+                  </p>
+
+                  <div>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                      Mandatory Audit Justification (min 5 characters)
+                    </label>
+                    <textarea
+                      rows={3}
+                      placeholder="E.g. Adjusted market reference rate following central bank FX revision..."
+                      value={saveReason}
+                      onChange={(e) => setSaveReason(e.target.value)}
+                      className="input"
+                      style={{ resize: 'vertical' }}
+                    />
+                  </div>
+
+                  {configMsg && (
+                    <div
+                      style={{
+                        padding: '0.65rem 0.85rem',
+                        borderRadius: '8px',
+                        fontSize: '0.82rem',
+                        backgroundColor: configMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                        color: configMsg.type === 'success' ? '#10b981' : '#ef4444',
+                        border: `1px solid ${configMsg.type === 'success' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                      }}
+                    >
+                      {configMsg.text}
+                    </div>
+                  )}
+                </div>
+
+                <div className="studio-modal-footer">
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
@@ -936,45 +1034,45 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
               </div>
 
               {/* Ledger Entries Table */}
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <div className="table-scroll">
+                <table className="data-table">
                   <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>Entry Ref</th>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>User</th>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>Direction / Amount</th>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>Entry Type</th>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>Associated Entity</th>
-                      <th style={{ padding: '0.75rem 0.5rem' }}>Timestamp</th>
+                    <tr>
+                      <th>Entry Ref</th>
+                      <th>User</th>
+                      <th>Direction / Amount</th>
+                      <th>Entry Type</th>
+                      <th>Associated Entity</th>
+                      <th>Timestamp</th>
                     </tr>
                   </thead>
                   <tbody>
                     {ledgersData.recentEntries.map((e) => (
-                      <tr key={e.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                        <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace' }}>{e.entryRef}</td>
-                        <td style={{ padding: '0.75rem 0.5rem' }}>
+                      <tr key={e.id}>
+                        <td style={{ fontFamily: 'monospace' }}>{e.entryRef}</td>
+                        <td>
                           <div>{e.username || 'System Account'}</div>
                           {e.userId && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{e.userId}</div>}
                         </td>
-                        <td style={{ padding: '0.75rem 0.5rem' }}>
+                        <td>
                           <span
                             style={{
                               fontWeight: 700,
-                              color: e.direction === 'CREDIT' ? 'var(--status-success)' : 'var(--status-danger)',
+                              color: e.direction === 'CREDIT' ? '#10b981' : '#ef4444',
                             }}
                           >
                             {e.direction === 'CREDIT' ? '+' : '-'} {e.amountFormatted}
                           </span>
                         </td>
-                        <td style={{ padding: '0.75rem 0.5rem' }}>
-                          <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
+                        <td>
+                          <span className="badge badge-purple">
                             {e.entryType}
                           </span>
                         </td>
-                        <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
+                        <td style={{ color: 'var(--text-muted)' }}>
                           {e.relatedEntity || '—'}
                         </td>
-                        <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
+                        <td style={{ color: 'var(--text-muted)' }}>
                           {new Date(e.createdAt).toLocaleString()}
                         </td>
                       </tr>
@@ -1106,50 +1204,53 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
           {auditLoading ? (
             <LoadingState message="Loading audit trail..." />
           ) : auditLogs.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-              No audit logs matching query.
+            <div className="empty-state-box">
+              <div className="empty-state-icon">📜</div>
+              <div style={{ color: 'var(--text-muted)' }}>No audit logs matching query.</div>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Time</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Actor</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Action</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Entity</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Reason</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditLogs.map((l) => (
-                    <tr key={l.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                      <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                        {new Date(l.createdAt).toLocaleString()}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div>{l.actor}</div>
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.actorId}</div>
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace', color: 'var(--accent-lime)' }}>
-                        {l.action}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        {l.entityType} #{l.entityId}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem', maxWidth: '320px', color: 'var(--text-muted)' }}>
-                        {l.reason || '—'}
-                      </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <span className={`badge ${l.isSuccess ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.72rem' }}>
-                          {l.isSuccess ? 'SUCCESS' : 'FAILED'}
-                        </span>
-                      </td>
+            <>
+              <div className="table-scroll">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Time</th>
+                      <th>Actor</th>
+                      <th>Action</th>
+                      <th>Entity</th>
+                      <th>Reason</th>
+                      <th>Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {auditLogs.map((l) => (
+                      <tr key={l.id}>
+                        <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {new Date(l.createdAt).toLocaleString()}
+                        </td>
+                        <td>
+                          <div>{l.actor}</div>
+                          {l.actorId && <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.actorId}</div>}
+                        </td>
+                        <td style={{ fontFamily: 'monospace', color: 'var(--accent-yellow)', fontWeight: 600 }}>
+                          {l.action}
+                        </td>
+                        <td>
+                          {l.entityType} #{l.entityId}
+                        </td>
+                        <td style={{ maxWidth: '320px', color: 'var(--text-muted)' }}>
+                          {l.reason || '—'}
+                        </td>
+                        <td>
+                          <span className={`badge ${l.isSuccess ? 'badge-green' : 'badge-danger'}`}>
+                            {l.isSuccess ? 'SUCCESS' : 'FAILED'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
 
               {/* Pagination */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
@@ -1175,7 +1276,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
                   </button>
                 </div>
               </div>
-            </div>
+            </>
           )}
         </div>
       )}
@@ -1242,6 +1343,514 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
       {/* RULES & POLICIES CMS WORKSPACE                                                */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'rules' && <RulesManagementWorkspace />}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: GOOGLE DRIVE HYBRID BACKUP & DISASTER RECOVERY                           */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'backups' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Header & Status Card */}
+          <div className="card-surface" style={{ padding: '1.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.25rem' }}>
+                  <span style={{ fontSize: '1.4rem' }}>💾</span>
+                  <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>Google Drive Hybrid Backup &amp; Recovery</h2>
+                  <span
+                    className="badge"
+                    style={{
+                      backgroundColor: backupsData?.rcloneStatus?.remoteReachable
+                        ? 'rgba(34, 197, 94, 0.15)'
+                        : 'rgba(250, 204, 21, 0.15)',
+                      color: backupsData?.rcloneStatus?.remoteReachable ? 'var(--status-success)' : 'var(--accent-lime)',
+                      border: `1px solid ${
+                        backupsData?.rcloneStatus?.remoteReachable
+                          ? 'rgba(34, 197, 94, 0.3)'
+                          : 'rgba(250, 204, 21, 0.3)'
+                      }`,
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                    }}
+                  >
+                    {backupsData?.rcloneStatus?.remoteReachable
+                      ? '5TB Google Drive Connected'
+                      : backupsData?.rcloneStatus?.rcloneInstalled
+                      ? 'Rclone Configured'
+                      : 'Local Mirror Active'}
+                  </span>
+                </div>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0 }}>
+                  Atomic online SQLite snapshots (<code>VACUUM INTO</code> + <code>gzip</code>), SHA-256 manifests, incremental <code>storage/</code> synchronization to 5TB Google Drive, and crash-safe transactional disaster recovery.
+                </p>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-cta"
+                  disabled={runningBackup}
+                  onClick={handleTriggerBackup}
+                  style={{
+                    backgroundColor: 'var(--accent-lime)',
+                    color: '#000',
+                    fontWeight: 700,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                  }}
+                >
+                  {runningBackup ? (
+                    <>
+                      <span className="spinner" style={{ width: '14px', height: '14px' }} />
+                      Taking Atomic Snapshot...
+                    </>
+                  ) : (
+                    <>
+                      <span>☁️</span>
+                      Backup Now to Google Drive
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline btn-sm"
+                  onClick={loadBackups}
+                  disabled={backupsLoading}
+                  style={{ color: 'var(--text-muted)' }}
+                >
+                  ↻ Refresh
+                </button>
+              </div>
+            </div>
+
+            {/* Backup Feedback Alert Banner */}
+            {backupFeedback && (
+              <div
+                style={{
+                  padding: '0.85rem 1.25rem',
+                  borderRadius: 'var(--radius-sm)',
+                  marginBottom: '1.25rem',
+                  backgroundColor:
+                    backupFeedback.type === 'success'
+                      ? 'rgba(34, 197, 94, 0.12)'
+                      : 'rgba(239, 68, 68, 0.12)',
+                  border: `1px solid ${
+                    backupFeedback.type === 'success'
+                      ? 'rgba(34, 197, 94, 0.3)'
+                      : 'rgba(239, 68, 68, 0.3)'
+                  }`,
+                  color: backupFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                  fontSize: '0.85rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <span>{backupFeedback.text}</span>
+                <button
+                  type="button"
+                  onClick={() => setBackupFeedback(null)}
+                  style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '1rem' }}
+                >
+                  &times;
+                </button>
+              </div>
+            )}
+
+            {/* Diagnostic Metric Cards Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: '1rem' }}>
+              {/* Card 1: Cloud Remote */}
+              <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em' }}>
+                  Google Drive Target
+                </div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 800, color: backupsData?.rcloneStatus?.remoteReachable ? 'var(--status-success)' : 'var(--accent-lime)', marginTop: '0.35rem' }}>
+                  {backupsData?.rcloneStatus?.remoteName || 'gdrive'}:{backupsData?.rcloneStatus?.baseFolder || 'G4X-Backups'}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                  {backupsData?.rcloneStatus?.remoteReachable
+                    ? 'Cloud sync connected & reachable'
+                    : backupsData?.rcloneStatus?.rcloneInstalled
+                    ? 'Rclone installed, remote pending verify'
+                    : 'Local mirror mode active'}
+                </div>
+              </div>
+
+              {/* Card 2: Scheduler */}
+              <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em' }}>
+                  Automated Scheduler
+                </div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 800, color: backupsData?.schedulerStatus?.enabled ? 'var(--accent-lime)' : 'var(--text-muted)', marginTop: '0.35rem' }}>
+                  {backupsData?.schedulerStatus?.enabled
+                    ? `Active (Every ${backupsData.schedulerStatus.intervalHours}h)`
+                    : 'Paused / Manual Only'}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                  {backupsData?.schedulerStatus?.nextRunAt
+                    ? `Next: ${new Date(backupsData.schedulerStatus.nextRunAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                    : 'Auto-prune older than 60 days'}
+                </div>
+              </div>
+
+              {/* Card 3: Storage Safety */}
+              <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em' }}>
+                  SQLite Snapshot Lock
+                </div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#38bdf8', marginTop: '0.35rem' }}>
+                  VACUUM INTO Online Lock
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                  Zero corruption during live traffic
+                </div>
+              </div>
+
+              {/* Card 4: Disaster Recovery Safeguards */}
+              <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em' }}>
+                  Recovery Safeguard
+                </div>
+                <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--primary-purple)', marginTop: '0.35rem' }}>
+                  Auto Pre-Restore Snapshots
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                  Integrity + WAL purge on swap
+                </div>
+              </div>
+            </div>
+
+            {/* Setup Instructions banner if rclone not installed */}
+            {(!backupsData?.rcloneStatus?.rcloneInstalled || !backupsData?.rcloneStatus?.remoteConfigured) && (
+              <div
+                style={{
+                  marginTop: '1.25rem',
+                  padding: '1.1rem 1.25rem',
+                  backgroundColor: 'rgba(250, 204, 21, 0.05)',
+                  border: '1px solid rgba(250, 204, 21, 0.2)',
+                  borderRadius: 'var(--radius-sm)',
+                  fontSize: '0.85rem',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, color: 'var(--accent-lime)', marginBottom: '0.4rem' }}>
+                  <span>ℹ️</span>
+                  <span>Connect 5TB Google Drive Remote via Rclone</span>
+                </div>
+                <p style={{ color: 'var(--text-muted)', margin: '0 0 0.6rem 0', lineHeight: '1.5' }}>
+                  Local atomic snapshots are actively saved in <code>backups/database/</code>. To enable automatic cloud synchronization to your 5TB Google Drive, configure rclone on your host:
+                </p>
+                <div style={{ backgroundColor: 'var(--bg-main)', padding: '0.65rem 0.85rem', borderRadius: 'var(--radius-sm)', fontFamily: 'monospace', fontSize: '0.8rem', color: '#e2e8f0', overflowX: 'auto' }}>
+                  1. Run: <span style={{ color: 'var(--accent-lime)' }}>rclone config</span> &rarr; Choose <strong>n</strong> (New remote) &rarr; Name: <strong>gdrive</strong> &rarr; Type: <strong>drive</strong><br />
+                  2. Leave Client ID / Secret blank &rarr; Select Scope: <strong>1</strong> (Full access) &rarr; Authorize in browser.<br />
+                  3. Verify: <span style={{ color: 'var(--accent-lime)' }}>npm run backup:gdrive</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Snapshots Data Table Card */}
+          <div className="card-surface" style={{ padding: '1.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.1rem', fontWeight: 700, margin: 0 }}>Available Snapshots &amp; Manifests</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: '0.2rem 0 0 0' }}>
+                  Cryptographically verified SQLite database archives stored in Google Drive and local staging.
+                </p>
+              </div>
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                Total Snapshots: <strong style={{ color: '#fff' }}>{backupsData?.snapshots?.length || 0}</strong>
+              </div>
+            </div>
+
+            {backupsLoading ? (
+              <LoadingState message="Querying Google Drive & local backup catalog..." />
+            ) : backupsError ? (
+              <div style={{ padding: '1.5rem', color: 'var(--status-danger)', textAlign: 'center' }}>
+                {backupsError}
+              </div>
+            ) : !backupsData?.snapshots || backupsData.snapshots.length === 0 ? (
+              <div style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                No database snapshots found yet. Click &quot;Backup Now to Google Drive&quot; above to create your first atomic snapshot.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                      <th style={{ padding: '0.75rem 0.6rem' }}>Snapshot Filename</th>
+                      <th style={{ padding: '0.75rem 0.6rem' }}>Timestamp</th>
+                      <th style={{ padding: '0.75rem 0.6rem' }}>Size</th>
+                      <th style={{ padding: '0.75rem 0.6rem' }}>Location</th>
+                      <th style={{ padding: '0.75rem 0.6rem' }}>Checksum (SHA-256)</th>
+                      <th style={{ padding: '0.75rem 0.6rem' }}>Row Counts</th>
+                      <th style={{ padding: '0.75rem 0.6rem', textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backupsData.snapshots.map((s) => {
+                      const manifest = s.manifest;
+                      const rowSummary = manifest?.tableCounts
+                        ? `Users: ${manifest.tableCounts.users ?? 0} | Orders: ${manifest.tableCounts.orders ?? 0} | Ledgers: ${manifest.tableCounts.ledgerEntries ?? 0}`
+                        : '—';
+                      return (
+                        <tr
+                          key={s.filename}
+                          style={{
+                            borderBottom: '1px solid var(--border-subtle)',
+                            transition: 'background 0.15s ease',
+                          }}
+                        >
+                          <td style={{ padding: '0.85rem 0.6rem', fontFamily: 'monospace', fontWeight: 600, color: '#fff' }}>
+                            {s.filename}
+                          </td>
+                          <td style={{ padding: '0.85rem 0.6rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                            {s.modifiedAt ? new Date(s.modifiedAt).toLocaleString() : '—'}
+                          </td>
+                          <td style={{ padding: '0.85rem 0.6rem', fontWeight: 700, color: 'var(--accent-lime)' }}>
+                            {s.sizeFormatted}
+                          </td>
+                          <td style={{ padding: '0.85rem 0.6rem' }}>
+                            <span
+                              className="badge"
+                              style={{
+                                backgroundColor: s.isRemote ? 'rgba(56, 189, 248, 0.15)' : 'rgba(139, 92, 246, 0.15)',
+                                color: s.isRemote ? '#38bdf8' : 'var(--primary-purple)',
+                                border: `1px solid ${s.isRemote ? 'rgba(56, 189, 248, 0.3)' : 'rgba(139, 92, 246, 0.3)'}`,
+                                fontSize: '0.72rem',
+                                fontWeight: 700,
+                              }}
+                            >
+                              {s.isRemote ? '☁️ Google Drive' : '💽 Local Staging'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '0.85rem 0.6rem', fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                            {s.sha256 ? `${s.sha256.substring(0, 12)}...` : 'Manifest verified'}
+                          </td>
+                          <td style={{ padding: '0.85rem 0.6rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                            {rowSummary}
+                          </td>
+                          <td style={{ padding: '0.85rem 0.6rem', textAlign: 'right' }}>
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              onClick={() => {
+                                setSelectedSnapshotForRestore(s);
+                                setConfirmPhrase('');
+                                setRestoreStorage(false);
+                                setRestoreFeedback(null);
+                              }}
+                              style={{
+                                color: 'var(--status-danger)',
+                                borderColor: 'rgba(239, 68, 68, 0.35)',
+                                fontSize: '0.75rem',
+                                padding: '0.35rem 0.75rem',
+                                fontWeight: 600,
+                              }}
+                            >
+                              ⚠️ Restore
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Disaster Recovery Restore Confirmation Modal */}
+          {selectedSnapshotForRestore && (
+            <div
+              className="studio-modal-backdrop"
+              onClick={() => {
+                if (!restoringBackup) {
+                  setSelectedSnapshotForRestore(null);
+                  setConfirmPhrase('');
+                  setRestoreFeedback(null);
+                }
+              }}
+            >
+              <div
+                className="studio-modal-card"
+                style={{ maxWidth: '580px' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="studio-modal-header">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ fontSize: '1.25rem' }}>⚠️</span>
+                    <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 700, color: 'var(--status-danger)' }}>
+                      Authoritative Database Restore Confirmation
+                    </h3>
+                  </div>
+                  <button
+                    type="button"
+                    className="studio-modal-close"
+                    disabled={restoringBackup}
+                    onClick={() => {
+                      setSelectedSnapshotForRestore(null);
+                      setConfirmPhrase('');
+                      setRestoreFeedback(null);
+                    }}
+                  >
+                    &times;
+                  </button>
+                </div>
+
+                <div className="studio-modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+                  {/* Danger Notice Banner */}
+                  <div
+                    style={{
+                      padding: '0.9rem 1.1rem',
+                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.84rem',
+                      lineHeight: '1.5',
+                      color: '#fca5a5',
+                    }}
+                  >
+                    <strong style={{ display: 'block', color: 'var(--status-danger)', marginBottom: '0.3rem' }}>
+                      CRITICAL DISASTER RECOVERY SAFEGUARDS:
+                    </strong>
+                    Restoring this snapshot will immediately replace the active SQLite database with the selected point-in-time state.
+                    An automatic pre-restore safety snapshot will be created in <code>backups/database/pre-restore/</code> prior to replacement.
+                    Stale SQLite WAL and SHM frame caches will be purged automatically to prevent replay corruption.
+                  </div>
+
+                  {/* Target Snapshot Details */}
+                  <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)' }}>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.4rem', textTransform: 'uppercase', fontWeight: 700 }}>
+                      Selected Archive
+                    </div>
+                    <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#fff', fontSize: '0.92rem', wordBreak: 'break-all' }}>
+                      {selectedSnapshotForRestore.filename}
+                    </div>
+                    <div style={{ display: 'flex', gap: '1.5rem', marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      <span>Size: <strong style={{ color: 'var(--accent-lime)' }}>{selectedSnapshotForRestore.sizeFormatted}</strong></span>
+                      <span>Modified: <strong style={{ color: '#fff' }}>{new Date(selectedSnapshotForRestore.modifiedAt).toLocaleString()}</strong></span>
+                    </div>
+                  </div>
+
+                  {/* Optional Incremental Storage Restore Checkbox */}
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.6rem',
+                      cursor: 'pointer',
+                      fontSize: '0.85rem',
+                      color: 'var(--text-muted)',
+                      backgroundColor: 'var(--bg-main)',
+                      padding: '0.75rem 1rem',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={restoreStorage}
+                      disabled={restoringBackup}
+                      onChange={(e) => setRestoreStorage(e.target.checked)}
+                      style={{ accentColor: 'var(--accent-lime)' }}
+                    />
+                    <span>Also synchronize <code>storage/</code> files (KYC identities, receipts) from Google Drive</span>
+                  </label>
+
+                  {/* Confirmation Challenge Input */}
+                  <div>
+                    <label style={{ fontSize: '0.84rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem', color: '#fff' }}>
+                      Type <span style={{ color: 'var(--status-danger)', fontFamily: 'monospace', fontWeight: 800 }}>RESTORE</span> to authorize disaster recovery:
+                    </label>
+                    <input
+                      type="text"
+                      value={confirmPhrase}
+                      disabled={restoringBackup}
+                      onChange={(e) => setConfirmPhrase(e.target.value)}
+                      placeholder="RESTORE"
+                      style={{
+                        width: '100%',
+                        padding: '0.65rem 0.85rem',
+                        backgroundColor: 'var(--bg-main)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-sm)',
+                        color: '#fff',
+                        fontFamily: 'monospace',
+                        fontSize: '0.95rem',
+                        letterSpacing: '0.08em',
+                      }}
+                    />
+                  </div>
+
+                  {/* Restore Feedback */}
+                  {restoreFeedback && (
+                    <div
+                      style={{
+                        padding: '0.75rem 1rem',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor:
+                          restoreFeedback.type === 'success'
+                            ? 'rgba(34, 197, 94, 0.12)'
+                            : 'rgba(239, 68, 68, 0.12)',
+                        border: `1px solid ${
+                          restoreFeedback.type === 'success'
+                            ? 'rgba(34, 197, 94, 0.3)'
+                            : 'rgba(239, 68, 68, 0.3)'
+                        }`,
+                        color: restoreFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                        fontSize: '0.82rem',
+                      }}
+                    >
+                      {restoreFeedback.text}
+                    </div>
+                  )}
+                </div>
+
+                <div className="studio-modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.25rem' }}>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    disabled={restoringBackup}
+                    onClick={() => {
+                      setSelectedSnapshotForRestore(null);
+                      setConfirmPhrase('');
+                      setRestoreFeedback(null);
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-cta"
+                    disabled={confirmPhrase.trim() !== 'RESTORE' || restoringBackup}
+                    onClick={handleConfirmRestore}
+                    style={{
+                      backgroundColor: 'var(--status-danger)',
+                      color: '#fff',
+                      fontWeight: 700,
+                      opacity: confirmPhrase.trim() !== 'RESTORE' || restoringBackup ? 0.5 : 1,
+                      cursor: confirmPhrase.trim() !== 'RESTORE' || restoringBackup ? 'not-allowed' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                    }}
+                  >
+                    {restoringBackup ? (
+                      <>
+                        <span className="spinner" style={{ width: '14px', height: '14px' }} />
+                        Executing Atomic Restore...
+                      </>
+                    ) : (
+                      'Authorize & Restore Live Database'
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

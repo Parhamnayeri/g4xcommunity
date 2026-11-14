@@ -11,6 +11,7 @@ import {
   WalletsLedgersResponse,
   OwnerAuditLogItem,
   SecurityHealthResponse,
+  OwnerBackupsResponse,
 } from '../types/ownerPortal';
 
 export async function fetchOwnerOverview(): Promise<OwnerOverviewResponse> {
@@ -81,3 +82,26 @@ export async function fetchOwnerAuditLogs(params?: {
 export async function fetchOwnerSecurityHealth(): Promise<SecurityHealthResponse> {
   return apiRequest<SecurityHealthResponse>('/api/owner/security-health');
 }
+
+export async function fetchOwnerBackups(): Promise<OwnerBackupsResponse> {
+  return apiRequest<OwnerBackupsResponse>('/api/owner/backups');
+}
+
+export async function triggerOwnerBackup(): Promise<{ success: boolean; backup: any }> {
+  return apiRequest('/api/owner/backups/run', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export async function restoreOwnerBackup(
+  snapshotFilename: string,
+  confirmPhrase: string,
+  restoreStorage: boolean = false
+): Promise<{ success: boolean; report: any }> {
+  return apiRequest('/api/owner/backups/restore', {
+    method: 'POST',
+    body: JSON.stringify({ snapshotFilename, confirmPhrase, restoreStorage }),
+  });
+}
+

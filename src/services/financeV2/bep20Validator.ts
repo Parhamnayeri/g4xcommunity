@@ -46,7 +46,7 @@ export function validateBep20Address(
 ): Bep20ValidationResult {
   // ۱. بررسی انطباق شبکه
   const normalizedNetwork = network ? network.trim().toUpperCase() : '';
-  if (normalizedNetwork !== 'BSC_BEP20' && normalizedNetwork !== 'BEP20') {
+  if (normalizedNetwork !== 'BSC_BEP20' && normalizedNetwork !== 'BEP20' && normalizedNetwork !== 'BNB_SMART_CHAIN_BEP20') {
     throw new Error(
       `UNSUPPORTED_PAYOUT_NETWORK: Only BNB Smart Chain (BSC BEP-20) is supported for USDT withdrawals, received '${network}'`
     );

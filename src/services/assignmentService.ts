@@ -38,8 +38,8 @@ export async function verifyAssignmentActorPermissions(
   });
   const roleKeys = userRoles.map((r) => r.roleKey);
 
-  // مدیران ارشد همواره مجاز هستند
-  const isManagement = roleKeys.some((k) => ['owner', 'manager', 'admin'].includes(k));
+  // مدیران ارشد و استاف همواره مجاز هستند
+  const isManagement = roleKeys.some((k) => ['owner', 'manager', 'admin', 'staff'].includes(k));
   if (isManagement) {
     return true;
   }
@@ -128,10 +128,14 @@ export async function assignOrderBoosters(
       }
       if (new Set(effectiveCandidates.map(c => c.userId)).size !== effectiveCandidates.length) throw new Error('DUPLICATE_BOOSTER');
       for (const candidate of effectiveCandidates) {
-        const claim = candidate.claimId ? await tx.orderPresign.findFirst({ where: {
-          id: candidate.claimId, orderId: order.id, userId: candidate.userId, status: 'registered',
-        } }) : null;
-        if (!claim || !claim.registeredRole.split(',').map(r => r.trim().toLowerCase()).includes(candidate.assignedRole)) throw new Error('INVALID_REGISTERED_ROLE');
+        if (candidate.claimId) {
+          const claim = await tx.orderPresign.findFirst({ where: {
+            id: candidate.claimId, orderId: order.id, userId: candidate.userId, status: 'registered',
+          } });
+          if (!claim || !claim.registeredRole.split(',').map(r => r.trim().toLowerCase()).includes(candidate.assignedRole.toLowerCase())) {
+            throw new Error('INVALID_REGISTERED_ROLE');
+          }
+        }
       }
       const service = await tx.gameService.findUniqueOrThrow({ where: { id: order.serviceId } });
       const required = order.requiredRoles.length ? order.requiredRoles : service.serviceKey === 'mythic_plus' ?

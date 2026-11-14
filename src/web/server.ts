@@ -71,9 +71,9 @@ if (fs.existsSync(frontendDist)) {
 // سرو فایل‌های استاتیک داشبورد
 app.use(express.static(path.join(process.cwd(), 'public')));
 
-// دسترسی به پنل قدیمی و دست‌نخورده برای حفظ کامل قابلیت‌های داشبورد، امور مالی و ادمین در فاز ۱
+// هدایت روت‌های قدیمی به صفحه اصلی
 app.get(['/legacy', '/legacy/*'], (_req, res) => {
-  res.sendFile(path.join(process.cwd(), 'public', 'legacy.html'));
+  res.redirect('/');
 });
 
 // ─── روت‌های API و احراز هویت ──────────────────────────────────────────────
@@ -93,7 +93,7 @@ function sendReactEntry(_req: express.Request, res: express.Response): void {
 // HTML navigation (including refresh) must reach React without an API session.
 // Explicit JSON clients retain the old aliases and all their authorization checks.
 const reactPages = [
-  '/', '/rules', '/privacy', '/discord-commands', '/dashboard', '/wallet', '/withdraw', '/profile',
+  '/', '/rules', '/privacy', '/discord-commands', '/dashboard', '/wallet', '/withdraw', '/profile', '/profile/kyc',
   '/booster/settings', '/settings', '/advertiser', '/exchange', '/exchanger',
   '/orders', '/staff', '/management', '/management/orders', '/management/kyc',
   '/admin', '/management/applications', '/admin/applications', '/admin/games',
@@ -125,6 +125,8 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: 'Internal server error' });
 });
 
+import { startBackupScheduler } from '../services/backupScheduler';
+
 /**
  * راه‌اندازی وب‌سرور
  */
@@ -133,6 +135,11 @@ export function startWebServer(port: number): void {
   app.listen(port, host, () => {
     console.log(`[Web] ✅ Server running at http://${host}:${port}`);
     console.log(`[Web] Public URL: ${process.env.WEB_BASE_URL ?? 'http://localhost:' + port}`);
+    try {
+      startBackupScheduler();
+    } catch (schedErr) {
+      console.error('[Web] Failed to initialize backup scheduler:', schedErr);
+    }
   });
 }
 

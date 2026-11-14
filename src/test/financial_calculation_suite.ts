@@ -27,6 +27,19 @@
  * 23. No automatic escrow release.
  */
 
+import path from 'path';
+import fs from 'fs';
+import dotenv from 'dotenv';
+
+if (!process.env.DATABASE_URL) {
+  const stagingEnv = path.resolve(__dirname, '../../.env.staging');
+  if (fs.existsSync(stagingEnv)) {
+    dotenv.config({ path: stagingEnv, override: true });
+  } else {
+    dotenv.config();
+  }
+}
+
 import prisma from '../database/db';
 import {
   allocateProportionalWithRemainder,
@@ -164,7 +177,7 @@ async function runFinancialEngineTests() {
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // تست ۳: SkyCoach 10% order fee accurately calculated at order level (replaces 5% + $5)
+    // تست ۳: SkyCoach 13% order fee accurately calculated at order level (replaces 5% + $5)
     // ─────────────────────────────────────────────────────────────────────────
     const ordSky_1 = await createTestOrder('ORD-FIN-SKY-01', 8000); // $80.00
     const snapSky_1 = await calculateOrderFinancialSnapshot({
@@ -173,18 +186,18 @@ async function runFinancialEngineTests() {
       sourceAmountType: 'gross_sale',
       sourceAmountMinor: 8000,
     });
-    // 10% per order replaces old 5% + $5. Never charge both. No $5 flat fee on every order!
+    // 13% per order replaces old 5% + $5. Never charge both. No $5 flat fee on every order!
     assert(
       snapSky_1.grossSaleMinor === 8000 &&
-        snapSky_1.platformSaleCommissionMinor === 800 &&
-        snapSky_1.platformOrderNetMinor === 7200 &&
+        snapSky_1.platformSaleCommissionMinor === 1040 &&
+        snapSky_1.platformOrderNetMinor === 6960 &&
         snapSky_1.allocatedWithdrawalFeeMinor === 0,
-      '3. SkyCoach 10% fee is accurately applied per order, replacing legacy 5% plus $5',
+      '3. SkyCoach 13% fee is accurately applied per order, replacing legacy 5% plus $5',
       `Platform Net: ${snapSky_1.platformOrderNetMinor}, Commission: ${snapSky_1.platformSaleCommissionMinor}`
     );
 
     // ─────────────────────────────────────────────────────────────────────────
-    // تست ۴: SkyCoach batch reconciliation does not double-count 10% or charge $5 flat fee
+    // تست ۴: SkyCoach batch reconciliation does not double-count 13% or charge $5 flat fee
     // ─────────────────────────────────────────────────────────────────────────
     const ordSky_2 = await createTestOrder('ORD-FIN-SKY-02', 12000); // $120.00
     const snapSky_2 = await calculateOrderFinancialSnapshot({
@@ -194,8 +207,8 @@ async function runFinancialEngineTests() {
       sourceAmountMinor: 12000,
     });
     assert(
-      snapSky_2.platformSaleCommissionMinor === 1200 && snapSky_2.platformOrderNetMinor === 10800,
-      '4a. Second SkyCoach order has 10% commission ($12.00) recognized at order level',
+      snapSky_2.platformSaleCommissionMinor === 1560 && snapSky_2.platformOrderNetMinor === 10440,
+      '4a. Second SkyCoach order has 13% commission ($15.60) recognized at order level',
       `Order 2 Net: ${snapSky_2.platformOrderNetMinor}`
     );
 

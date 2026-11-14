@@ -64,7 +64,7 @@ export const LedgerActivityTable: React.FC<LedgerActivityTableProps> = ({ refres
         <button
           onClick={() => loadLedger(page)}
           disabled={loading}
-          className="btn btn-outline btn-sm"
+          className="btn btn-secondary btn-sm"
         >
           {loading ? 'Refreshing...' : '↻ Refresh'}
         </button>
@@ -87,19 +87,19 @@ export const LedgerActivityTable: React.FC<LedgerActivityTableProps> = ({ refres
       )}
 
       {/* Table Container */}
-      <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-        <table className="table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+      <div className="table-scroll">
+        <table className="data-table">
           <thead>
-            <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-              <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Entry Ref</th>
-              <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Direction</th>
-              <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Type</th>
-              <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Amount USD</th>
-              <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Available After</th>
-              <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Reserved After</th>
-              <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Description</th>
-              <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Order Ref</th>
-              <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Date</th>
+            <tr>
+              <th>Entry Ref</th>
+              <th>Direction</th>
+              <th>Type</th>
+              <th>Amount USD</th>
+              <th>Available After</th>
+              <th>Reserved After</th>
+              <th>Description</th>
+              <th>Order Ref</th>
+              <th>Date</th>
             </tr>
           </thead>
           <tbody>
@@ -112,62 +112,52 @@ export const LedgerActivityTable: React.FC<LedgerActivityTableProps> = ({ refres
             ) : entries.length === 0 ? (
               <tr>
                 <td colSpan={9} style={{ padding: '2.5rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                  No ledger activity recorded yet.
+                  <div className="empty-state-box">
+                    <span className="empty-state-icon">📊</span>
+                    <p>No ledger activity recorded yet.</p>
+                  </div>
                 </td>
               </tr>
             ) : (
               entries.map((item) => (
-                <tr
-                  key={item.id}
-                  style={{
-                    borderBottom: '1px solid var(--border-subtle)',
-                    transition: 'background-color 0.15s ease',
-                  }}
-                >
-                  <td style={{ padding: '0.75rem 0.5rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                <tr key={item.id}>
+                  <td style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
                     {item.entryRef}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                  <td>
                     <span
-                      style={{
-                        padding: '0.2rem 0.5rem',
-                        borderRadius: '4px',
-                        fontSize: '0.7rem',
-                        fontWeight: 800,
-                        backgroundColor: item.direction === 'CREDIT' ? 'rgba(204, 255, 0, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                        color: item.direction === 'CREDIT' ? 'var(--accent-lime)' : '#ef4444',
-                      }}
+                      className={`badge ${item.direction === 'CREDIT' ? 'badge-green' : 'badge-danger'}`}
+                      style={{ fontSize: '0.7rem' }}
                     >
                       {item.direction === 'CREDIT' ? '+ CREDIT' : '- DEBIT'}
                     </span>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-primary)' }}>
-                    <span className="badge badge-gray" style={{ fontSize: '0.68rem' }}>
+                  <td>
+                    <span className="badge badge-purple" style={{ fontSize: '0.68rem' }}>
                       {item.entryType}
                     </span>
                   </td>
                   <td
                     style={{
-                      padding: '0.75rem 0.5rem',
                       fontWeight: 800,
-                      color: item.direction === 'CREDIT' ? 'var(--accent-lime)' : '#ef4444',
+                      color: item.direction === 'CREDIT' ? 'var(--accent-yellow)' : '#ef4444',
                     }}
                   >
                     {item.direction === 'CREDIT' ? `+$${item.amountUsd}` : `-$${item.amountUsd}`}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                  <td style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
                     {item.balanceAfterAvailableUsd !== null ? `$${item.balanceAfterAvailableUsd}` : '—'}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
+                  <td style={{ color: 'var(--text-muted)' }}>
                     {item.balanceAfterReservedUsd !== null ? `$${item.balanceAfterReservedUsd}` : '—'}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                  <td style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
                     {item.description}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--accent-lime)', fontSize: '0.75rem' }}>
+                  <td style={{ color: 'var(--accent-yellow)', fontSize: '0.75rem', fontFamily: 'monospace' }}>
                     {item.orderRef || '—'}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                  <td style={{ color: 'var(--text-muted)', fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
                     {new Date(item.createdAt).toLocaleDateString()} {new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </td>
                 </tr>
@@ -199,14 +189,14 @@ export const LedgerActivityTable: React.FC<LedgerActivityTableProps> = ({ refres
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1 || loading}
-              className="btn btn-outline btn-sm"
+              className="btn btn-secondary btn-sm"
             >
               &larr; Previous
             </button>
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages || loading}
-              className="btn btn-outline btn-sm"
+              className="btn btn-secondary btn-sm"
             >
               Next &rarr;
             </button>

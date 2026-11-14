@@ -75,11 +75,6 @@ export const DashboardLayout: React.FC = () => {
               Welcome back, <span style={{ color: 'var(--accent-lime)', fontWeight: 600 }}>{user.displayName || user.username}</span>
             </p>
           </div>
-          <div style={{ display: 'flex', gap: '0.75rem' }}>
-            <a href="/legacy" className="btn btn-cta btn-sm">
-              Launch Full Legacy Dashboard &rarr;
-            </a>
-          </div>
         </div>
       </div>
 

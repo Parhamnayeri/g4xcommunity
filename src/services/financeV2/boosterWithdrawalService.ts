@@ -98,10 +98,6 @@ export interface PayoutScheduleResult {
   details: string;
 }
 
-/**
- * بازیابی امن کلید اختصاصی امضای پیش‌فاکتورهای تسویه با اعتبارسنجی حداقل ۳۲ کاراکتر انتروپی
- * در صورت فقدان یا ناکافی بودن انتروپی، سامانه Fail-Closed شده و خطای صریح صادر می‌کند.
- */
 export function validateWithdrawalQuoteSigningConfig(
   secretValue?: string
 ): { valid: boolean; reason?: string } {
@@ -677,7 +673,6 @@ export async function confirmAndSubmitWithdrawalRequest(
         postingGroupId: `POSTING_GRP_WDR_${request.withdrawalRef}`,
         accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
         entryRef: `LEDGER_WDR_RES_${request.withdrawalRef}`,
-        idempotencyKey: `WDR_RES_${request.id}`,
         description: `Reserved funds for ${request.payoutMethod} withdrawal (#${request.id})`,
       },
       tx
@@ -757,9 +752,10 @@ export async function adminExecuteManualPayout(
 ) {
   assertLivePayoutsEnabled();
 
-  const auth = await authorize(actorId, Permission.FINANCE_ADJUST);
-  if (!auth.allowed) {
-    throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions to execute payouts'}`);
+  const authReview = await authorize(actorId, Permission.WITHDRAWAL_REVIEW);
+  const authAdjust = await authorize(actorId, Permission.FINANCE_ADJUST);
+  if (!authReview.allowed && !authAdjust.allowed) {
+    throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${authReview.reason || authAdjust.reason || 'Insufficient permissions to execute payouts'}`);
   }
 
   const { externalTxHash, bankReceiptRef, notes, secondReviewerId, bscVerificationOptions, bankSettlementRecord } = options;
@@ -951,7 +947,6 @@ export async function adminExecuteManualPayout(
         postingGroupId,
         accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_RESERVED,
         entryRef: `LEDGER_WDR_PAID_${request.withdrawalRef}`,
-        idempotencyKey: `WDR_SETTLE_${request.id}`,
         description: `Settled ${request.payoutMethod} payout for withdrawal #${request.id}`,
         metadata: {
           maskedTxHash: request.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20 ? maskCryptoAddress(normalizedRef) : null,
@@ -995,9 +990,9 @@ export async function adminExecuteManualPayout(
 }
 
 /**
- * ۶.۵ تایید بررسی اداری و آماده‌سازی برای انتقال دستی برون‌سیستمی (Approve for Processing)
- * بدون آزادسازی/کاهش موجودی رزروشده و بدون ثبت PAID پیش از تایید مستقل انتقال واقعی
- */
+  * ۶.۵ تایید بررسی اداری و آماده‌سازی برای انتقال دستی برون‌سیستمی (Approve for Processing)
+  * بدون آزادسازی/کاهش موجودی رزروشده و بدون ثبت PAID پیش از تایید مستقل انتقال واقعی
+  */
 export async function adminApproveWithdrawalForProcessing(
   requestId: number,
   actorId: string,
@@ -1076,7 +1071,7 @@ export async function adminApproveWithdrawalForProcessing(
 }
 
 /**
- * ۷. رد درخواست برداشت توسط ادمین یا مالک و استرداد وجوه به موجودی در دسترس (Admin Reject)
+ * ۷. رد درخواست برداشت توسط ادمین و استرداد وجوه به موجودی در دسترس (Admin Reject)
  */
 export async function adminRejectWithdrawal(
   requestId: number,
@@ -1145,7 +1140,6 @@ export async function adminRejectWithdrawal(
         {
           withdrawalRequestId: request.id,
           entryRef: `LEDGER_WDR_REJ_${request.withdrawalRef}`,
-          idempotencyKey: `WDR_REV_${request.id}`,
           createdBy: actorId,
         },
         tx
@@ -1164,13 +1158,6 @@ export async function adminRejectWithdrawal(
         entityType: 'BoosterWithdrawalRequest',
         entityId: String(requestId),
         reason: rejectionReason,
-        previousValues: JSON.stringify({ status: request.status }),
-        newValues: JSON.stringify({
-          status: BoosterWithdrawalStatus.REJECTED,
-          withdrawalRef: request.withdrawalRef,
-          refundedUsdCents: request.requestedUsdCents,
-          rejectionReason,
-        }),
       },
     });
 
@@ -1241,7 +1228,6 @@ export async function boosterCancelWithdrawal(
         {
           withdrawalRequestId: request.id,
           entryRef: `LEDGER_WDR_CANCEL_${request.withdrawalRef}`,
-          idempotencyKey: `WDR_REV_${request.id}`,
           createdBy: boosterId,
         },
         tx

@@ -88,6 +88,9 @@ import {
 } from '../services/financeV2/financeV2Types';
 
 async function runFinanceV21HardeningSuite() {
+  if (!process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET) {
+    process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET = 'stage_test_quote_secret_entropy_32chars_long!';
+  }
   console.log('=== STARTING G4X FINANCE V2.1 HARDENING REGRESSION SUITE ===\n');
 
   let passed = 0;
@@ -923,9 +926,9 @@ async function runFinanceV21HardeningSuite() {
       allowProvisional: false,
     });
     assert(
-      skycoachSnapshot.platformSaleCommissionMinor === 1000 &&
-        skycoachSnapshot.boosterPoolMinor === 9000,
-      '22. SkyCoach charges exactly 10% order commission ($10.00 on $100.00) without legacy 5% + $5'
+      skycoachSnapshot.platformSaleCommissionMinor === 1300 &&
+        skycoachSnapshot.boosterPoolMinor === 8700,
+      '22. SkyCoach charges exactly 13% order commission ($13.00 on $100.00) without legacy 5% + $5'
     );
 
     // =========================================================================

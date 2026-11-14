@@ -259,24 +259,6 @@ export const UserProfileCard: React.FC<UserProfileCardProps> = ({ profile }) => 
           <span>Availability &amp; Preferences</span>
           <span style={{ color: 'var(--accent-lime)' }}>&rarr;</span>
         </Link>
-        <a
-          href="/legacy"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            fontSize: '0.85rem',
-            color: 'var(--text-muted)',
-            padding: '0.4rem 0.6rem',
-            borderRadius: 'var(--radius-xs)',
-            transition: 'background var(--transition-fast)',
-          }}
-          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
-          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-        >
-          <span>Legacy Portal &amp; Modals</span>
-          <span>&rarr;</span>
-        </a>
       </div>
     </Card>
   );

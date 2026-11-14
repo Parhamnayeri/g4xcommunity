@@ -743,3 +743,99 @@ ownerPortalRouter.get(
     }
   }
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. GOOGLE DRIVE BACKUPS & DISASTER RECOVERY
+// ─────────────────────────────────────────────────────────────────────────────
+
+import {
+  checkRcloneHealth,
+  runFullHybridBackup,
+  listRemoteBackups,
+  restoreFromRemoteBackup,
+} from '../services/googleDriveBackupService';
+import { getSchedulerStatus } from '../services/backupScheduler';
+
+// ۱. وضعیت سیستم پشتیبان‌گیری و فهرست اسنپ‌شات‌ها
+ownerPortalRouter.get(
+  ['/owner/backups', '/api/owner/backups'],
+  requireAuth,
+  requireOwnerPortalAccess,
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const rcloneStatus = checkRcloneHealth();
+      const schedulerStatus = getSchedulerStatus();
+      const snapshots = listRemoteBackups();
+
+      res.json({
+        success: true,
+        rcloneStatus,
+        schedulerStatus,
+        snapshots,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'BACKUP_FETCH_FAILED', message: err.message || 'Failed to inspect backups' });
+    }
+  }
+);
+
+// ۲. اجرای دستی پشتیبان‌گیری اتمیک هیبریدی و همگام‌سازی ابری
+ownerPortalRouter.post(
+  ['/owner/backups/run', '/api/owner/backups/run'],
+  requireAuth,
+  requireOwnerPortalAccess,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const result = await runFullHybridBackup('manual', actorId);
+
+      res.json({
+        success: true,
+        backup: result,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'BACKUP_RUN_FAILED', message: err.message || 'Backup execution failed' });
+    }
+  }
+);
+
+// ۳. بازگردانی تاییدشده دیتابیس از اسنپ‌شات با اسنپ‌شات ایمنی پیش از ریستور
+ownerPortalRouter.post(
+  ['/owner/backups/restore', '/api/owner/backups/restore'],
+  requireAuth,
+  requireOwnerPortalAccess,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const { snapshotFilename, confirmPhrase, restoreStorage } = req.body;
+
+      if (!snapshotFilename || typeof snapshotFilename !== 'string') {
+        res.status(400).json({ error: 'INVALID_REQUEST', message: 'snapshotFilename is required.' });
+        return;
+      }
+
+      if (confirmPhrase !== 'RESTORE') {
+        res.status(400).json({
+          error: 'CONFIRMATION_REQUIRED',
+          message: 'Explicit safety confirmation phrase RESTORE is strictly required.',
+        });
+        return;
+      }
+
+      const report = await restoreFromRemoteBackup(snapshotFilename, {
+        restoreStorage: Boolean(restoreStorage),
+        actorId,
+      });
+
+      res.json({
+        success: true,
+        report,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'RESTORE_FAILED', message: err.message || 'Database restore failed' });
+    }
+  }
+);
+

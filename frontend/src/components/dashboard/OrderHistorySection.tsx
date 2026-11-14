@@ -119,7 +119,7 @@ export const OrderHistorySection: React.FC = () => {
               height: '28px',
               borderRadius: '50%',
               border: '2px solid var(--border-subtle)',
-              borderTopColor: 'var(--accent-lime)',
+              borderTopColor: 'var(--accent-yellow)',
               animation: 'spin 0.8s linear infinite',
               margin: '0 auto 0.75rem',
             }}
@@ -127,77 +127,59 @@ export const OrderHistorySection: React.FC = () => {
           Loading historical orders...
         </Card>
       ) : orders.length === 0 ? (
-        <Card style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-            No past orders matching the selected filter.
-          </p>
-        </Card>
+        <div className="empty-state-box" style={{ padding: '2.5rem 1rem' }}>
+          <span className="empty-state-icon">📋</span>
+          <p>No past orders matching the selected filter.</p>
+        </div>
       ) : (
-        <Card style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.86rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', backgroundColor: 'rgba(13, 11, 18, 0.4)', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '0.85rem 1rem' }}>Order Ref</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Game &amp; Service</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Your Role</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Status</th>
-                  <th style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>Amount</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Completed Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {orders.map((o) => {
-                  const isCompleted = o.status === 'completed';
-                  return (
-                    <tr
-                      key={o.id}
-                      style={{
-                        borderBottom: '1px solid rgba(45, 38, 69, 0.3)',
-                        transition: 'background var(--transition-fast)',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                    >
-                      <td style={{ padding: '0.85rem 1rem', fontFamily: 'monospace', fontWeight: 700, color: '#fff' }}>
-                        #{o.orderRef}
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem' }}>
-                        <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{o.serviceDisplayName}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{o.gameDisplayName}</div>
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem' }}>
-                        <span className={`badge ${o.userRelation === 'booster' ? 'badge-lime' : 'badge-purple'}`} style={{ fontSize: '0.68rem' }}>
-                          {o.userRelation}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem' }}>
-                        <span
-                          style={{
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '0.3rem',
-                            fontWeight: 700,
-                            fontSize: '0.75rem',
-                            textTransform: 'uppercase',
-                            color: isCompleted ? 'var(--status-success)' : 'var(--status-danger)',
-                          }}
-                        >
-                          {isCompleted ? '✓ Completed' : '✕ Cancelled'}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem', textAlign: 'right', fontWeight: 700, color: isCompleted ? 'var(--accent-lime)' : 'var(--text-muted)' }}>
-                        ${o.amountUsd} USD
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                        {o.completedAt ? new Date(o.completedAt).toLocaleDateString() : new Date(o.createdAt).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Order Ref</th>
+                <th>Game &amp; Service</th>
+                <th>Your Role</th>
+                <th>Status</th>
+                <th style={{ textAlign: 'right' }}>Amount</th>
+                <th>Completed Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((o) => {
+                const isCompleted = o.status === 'completed';
+                return (
+                  <tr key={o.id}>
+                    <td style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--text-primary)' }}>
+                      #{o.orderRef}
+                    </td>
+                    <td>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{o.serviceDisplayName}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{o.gameDisplayName}</div>
+                    </td>
+                    <td>
+                      <span className={`badge ${o.userRelation === 'booster' ? 'badge-yellow' : 'badge-purple'}`} style={{ fontSize: '0.68rem' }}>
+                        {o.userRelation}
+                      </span>
+                    </td>
+                    <td>
+                      <span
+                        className={`badge ${isCompleted ? 'badge-green' : 'badge-danger'}`}
+                        style={{ fontSize: '0.72rem' }}
+                      >
+                        {isCompleted ? '✓ Completed' : '✕ Cancelled'}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'right', fontWeight: 700, color: isCompleted ? 'var(--accent-yellow)' : 'var(--text-muted)' }}>
+                      ${o.amountUsd} USD
+                    </td>
+                    <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                      {o.completedAt ? new Date(o.completedAt).toLocaleDateString() : new Date(o.createdAt).toLocaleDateString()}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
 
           {/* Pagination Controls */}
           {totalPages > 1 && (
@@ -208,7 +190,6 @@ export const OrderHistorySection: React.FC = () => {
                 justifyContent: 'space-between',
                 padding: '0.75rem 1rem',
                 borderTop: '1px solid var(--border-subtle)',
-                backgroundColor: 'rgba(13, 11, 18, 0.4)',
               }}
             >
               <Button
@@ -220,7 +201,7 @@ export const OrderHistorySection: React.FC = () => {
                 &larr; Previous
               </Button>
               <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                Page <strong style={{ color: '#fff' }}>{page}</strong> of <strong style={{ color: '#fff' }}>{totalPages}</strong>
+                Page <strong style={{ color: 'var(--text-primary)' }}>{page}</strong> of <strong style={{ color: 'var(--text-primary)' }}>{totalPages}</strong>
               </span>
               <Button
                 variant="outline"
@@ -232,7 +213,7 @@ export const OrderHistorySection: React.FC = () => {
               </Button>
             </div>
           )}
-        </Card>
+        </div>
       )}
     </div>
   );

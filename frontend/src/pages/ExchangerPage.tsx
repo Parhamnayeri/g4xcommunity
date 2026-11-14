@@ -33,7 +33,6 @@ export const ExchangerPage: React.FC = () => {
 
   // Offers State
   const [offers, setOffers] = useState<ExchangerOffer[]>([]);
-  const [offersLoading, setOffersLoading] = useState(false);
 
   // Trades State
   const [trades, setTrades] = useState<GoldTrade[]>([]);
@@ -65,14 +64,11 @@ export const ExchangerPage: React.FC = () => {
   // Load Exchanger's Offers
   const loadMyOffers = useCallback(async () => {
     if (!statusData?.isApproved) return;
-    setOffersLoading(true);
     try {
       const res = await fetchExchangerOffers();
       setOffers(Array.isArray(res?.offers) ? res.offers : []);
     } catch (err) {
       console.error('Failed to load exchanger offers:', err);
-    } finally {
-      setOffersLoading(false);
     }
   }, [statusData?.isApproved]);
 
@@ -157,7 +153,8 @@ export const ExchangerPage: React.FC = () => {
 
   // 3. Not an Approved Exchanger (Unapproved, Application Pending, or Rejected)
   if (!statusData?.isApproved) {
-    const isManagement = ['admin', 'owner', 'manager'].includes(user?.role?.toLowerCase() || '');
+    const userRoleList = (user?.roles || []).map((r: string) => r.toLowerCase());
+    const isManagement = ['admin', 'owner', 'manager'].some((r) => userRoleList.includes(r));
 
     return (
       <div style={{ maxWidth: '800px', margin: '0 auto', padding: '24px 16px' }}>
@@ -173,7 +170,7 @@ export const ExchangerPage: React.FC = () => {
               color: 'var(--text-primary)',
             }}
           >
-            🛡️ <strong>Management Oversight Notice:</strong> You are logged in with role <code>{user?.role}</code>.
+            🛡️ <strong>Management Oversight Notice:</strong> You are logged in with role(s) <code>{(user?.roles || []).join(', ')}</code>.
             While you possess administrative oversight, domain policy requires a designated certified Exchanger account
             to publish offers and fulfill trades.
           </div>

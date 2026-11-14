@@ -258,17 +258,27 @@ export async function acceptP2pFundingQuote(quote: P2pFundingQuote): Promise<{ s
 }
 
 export async function submitExchangerApplication(input: {
-  introduction: string;
-  experience: string;
-  gameCurrencies: string[];
-  settlementCurrencies: string[];
+  fullName?: string;
+  contactHandle?: string;
+  supportedMethods?: string[];
+  estimatedDailyVolume?: string;
+  experienceNotes?: string;
+  introduction?: string;
+  experience?: string;
+  gameCurrencies?: string[];
+  settlementCurrencies?: string[];
   contactInfo?: string;
 }): Promise<{ success: boolean; application: any }> {
+  const payload = {
+    category: 'exchanger',
+    introduction: input.introduction || input.fullName || 'Exchanger Applicant',
+    experience: input.experience || input.experienceNotes || input.estimatedDailyVolume || 'Community exchanger',
+    gameCurrencies: input.gameCurrencies || ['wow_gold'],
+    settlementCurrencies: input.settlementCurrencies || input.supportedMethods || ['IRT', 'USDT'],
+    contactInfo: input.contactInfo || input.contactHandle || undefined,
+  };
   return apiRequest<{ success: boolean; application: any }>('/api/applications', {
     method: 'POST',
-    body: JSON.stringify({
-      category: 'exchanger',
-      ...input,
-    }),
+    body: JSON.stringify(payload),
   });
 }

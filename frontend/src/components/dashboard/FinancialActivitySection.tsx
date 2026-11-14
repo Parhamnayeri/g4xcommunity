@@ -81,7 +81,7 @@ export const FinancialActivitySection: React.FC = () => {
               height: '28px',
               borderRadius: '50%',
               border: '2px solid var(--border-subtle)',
-              borderTopColor: 'var(--accent-lime)',
+              borderTopColor: 'var(--accent-yellow)',
               animation: 'spin 0.8s linear infinite',
               margin: '0 auto 0.75rem',
             }}
@@ -89,79 +89,67 @@ export const FinancialActivitySection: React.FC = () => {
           Loading ledger entries...
         </Card>
       ) : transactions.length === 0 ? (
-        <Card style={{ textAlign: 'center', padding: '2.5rem 1rem' }}>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-            No financial activity recorded yet for this wallet.
-          </p>
-        </Card>
+        <div className="empty-state-box" style={{ padding: '2.5rem 1rem' }}>
+          <span className="empty-state-icon">💳</span>
+          <p>No financial activity recorded yet for this wallet.</p>
+        </div>
       ) : (
-        <Card style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', backgroundColor: 'rgba(13, 11, 18, 0.4)', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '0.85rem 1rem' }}>Entry Ref</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Transaction Type</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Description / Order</th>
-                  <th style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>Amount</th>
-                  <th style={{ padding: '0.85rem 1rem', textAlign: 'right' }}>Available After</th>
-                  <th style={{ padding: '0.85rem 1rem' }}>Timestamp</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.map((t) => {
-                  const isCredit = t.direction === 'CREDIT';
-                  return (
-                    <tr
-                      key={t.id}
-                      style={{
-                        borderBottom: '1px solid rgba(45, 38, 69, 0.3)',
-                        transition: 'background var(--transition-fast)',
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                    >
-                      <td style={{ padding: '0.85rem 1rem', fontFamily: 'monospace', fontSize: '0.78rem', color: '#fff' }}>
-                        {t.entryRef}
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem' }}>
-                        <span
-                          className={`badge ${isCredit ? 'badge-lime' : 'badge-purple'}`}
-                          style={{ fontSize: '0.68rem', textTransform: 'none' }}
-                        >
-                          {formatEntryType(t.entryType)}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>
-                        <div>{t.description || '—'}</div>
-                        {t.orderRef && (
-                          <span style={{ fontSize: '0.72rem', color: 'var(--accent-lime)', fontFamily: 'monospace' }}>
-                            Ref: #{t.orderRef}
-                          </span>
-                        )}
-                      </td>
-                      <td
-                        style={{
-                          padding: '0.85rem 1rem',
-                          textAlign: 'right',
-                          fontWeight: 700,
-                          color: isCredit ? 'var(--accent-lime)' : 'var(--status-danger)',
-                        }}
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Entry Ref</th>
+                <th>Transaction Type</th>
+                <th>Description / Order</th>
+                <th style={{ textAlign: 'right' }}>Amount</th>
+                <th style={{ textAlign: 'right' }}>Available After</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.map((t) => {
+                const isCredit = t.direction === 'CREDIT';
+                return (
+                  <tr key={t.id}>
+                    <td style={{ fontFamily: 'monospace', fontSize: '0.78rem', color: 'var(--text-primary)', fontWeight: 700 }}>
+                      {t.entryRef}
+                    </td>
+                    <td>
+                      <span
+                        className={`badge ${isCredit ? 'badge-green' : 'badge-danger'}`}
+                        style={{ fontSize: '0.68rem', textTransform: 'none' }}
                       >
-                        {isCredit ? `+$${t.amountUsd}` : `-$${t.amountUsd}`} USD
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem', textAlign: 'right', color: '#fff', fontWeight: 600 }}>
-                        {t.balanceAfterAvailableUsd !== null ? `$${t.balanceAfterAvailableUsd}` : '—'}
-                      </td>
-                      <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
-                        {new Date(t.createdAt).toLocaleString()}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        {formatEntryType(t.entryType)}
+                      </span>
+                    </td>
+                    <td style={{ color: 'var(--text-muted)' }}>
+                      <div>{t.description || '—'}</div>
+                      {t.orderRef && (
+                        <span style={{ fontSize: '0.72rem', color: 'var(--accent-yellow)', fontFamily: 'monospace' }}>
+                          Ref: #{t.orderRef}
+                        </span>
+                      )}
+                    </td>
+                    <td
+                      style={{
+                        textAlign: 'right',
+                        fontWeight: 700,
+                        color: isCredit ? 'var(--accent-yellow)' : 'var(--status-danger)',
+                      }}
+                    >
+                      {isCredit ? `+$${t.amountUsd}` : `-$${t.amountUsd}`} USD
+                    </td>
+                    <td style={{ textAlign: 'right', color: 'var(--text-primary)', fontWeight: 600 }}>
+                      {t.balanceAfterAvailableUsd !== null ? `$${t.balanceAfterAvailableUsd}` : '—'}
+                    </td>
+                    <td style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                      {new Date(t.createdAt).toLocaleString()}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
 
           {/* Pagination Controls */}
           {totalPages > 1 && (
@@ -172,7 +160,6 @@ export const FinancialActivitySection: React.FC = () => {
                 justifyContent: 'space-between',
                 padding: '0.75rem 1rem',
                 borderTop: '1px solid var(--border-subtle)',
-                backgroundColor: 'rgba(13, 11, 18, 0.4)',
               }}
             >
               <Button
@@ -184,7 +171,7 @@ export const FinancialActivitySection: React.FC = () => {
                 &larr; Previous
               </Button>
               <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                Page <strong style={{ color: '#fff' }}>{page}</strong> of <strong style={{ color: '#fff' }}>{totalPages}</strong>
+                Page <strong style={{ color: 'var(--text-primary)' }}>{page}</strong> of <strong style={{ color: 'var(--text-primary)' }}>{totalPages}</strong>
               </span>
               <Button
                 variant="outline"
@@ -196,7 +183,7 @@ export const FinancialActivitySection: React.FC = () => {
               </Button>
             </div>
           )}
-        </Card>
+        </div>
       )}
     </div>
   );

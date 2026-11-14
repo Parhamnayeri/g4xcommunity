@@ -357,50 +357,52 @@ export function ApplicationsWorkspace({ embedded = false }: { embedded?: boolean
       {list.error ? null : list.loading ? (
         <p role="status" style={{ color: 'var(--text-muted)' }}>Loading applications…</p>
       ) : !applications.length ? (
-        <p style={{ color: 'var(--text-muted)' }}>No matching applications.</p>
+        <div className="empty-state-box">
+          <div className="empty-state-icon">📋</div>
+          <p style={{ color: 'var(--text-muted)', margin: 0 }}>No matching applications found.</p>
+        </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <div className="table-scroll">
+          <table className="data-table">
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Applicant</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Type</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Status</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Submitted</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Details</th>
+              <tr>
+                <th>Applicant</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Submitted</th>
+                <th style={{ textAlign: 'right' }}>Details</th>
               </tr>
             </thead>
             <tbody>
               {applications.map((a) => (
-                <tr key={a.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                <tr key={a.id}>
+                  <td>
                     <div style={{ fontWeight: 600 }}>{a.displayName || a.username}</div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{a.userId}</div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{a.userId}</div>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>{a.category}</span>
+                  <td>
+                    <span className="badge badge-purple">{a.category}</span>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                  <td>
                     <span
                       className={`badge ${
                         a.status === 'approved'
-                          ? 'badge-success'
+                          ? 'badge-green'
                           : a.status === 'rejected'
                             ? 'badge-danger'
-                            : 'badge-warning'
+                            : 'badge-amber'
                       }`}
-                      style={{ fontSize: '0.72rem' }}
                     >
                       {a.status}
                     </span>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
+                  <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                     {new Date(a.submittedAt).toLocaleString()}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
+                  <td style={{ textAlign: 'right' }}>
                     <button
                       type="button"
-                      className="btn btn-secondary btn-sm"
+                      className="btn btn-secondary btn-xs"
                       onClick={() => {
                         setSelected(a.id);
                         setNotes('');
@@ -628,284 +630,399 @@ export function GamesWorkspace({ embedded = false }: { embedded?: boolean } = {}
     <Shell title="Game Registry & Services" embedded={embedded}>
       <ErrorMessage error={resource.error || action.error} />
       {action.message && <p role="status">{action.message}</p>}
-      <div style={grid}>
-        <Field
-          label="Search games"
-          value={search}
-          onChange={(v) => {
-            setSearch(v);
-            setPage(1);
-          }}
-        />
-        <Select
-          label="Enabled"
-          value={status}
-          values={['', 'true', 'false']}
-          onChange={(v) => {
-            setStatus(v);
-            setPage(1);
-          }}
-        />
-        <button onClick={resource.reload}>Refresh registry</button>
+      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        <div style={{ flex: 1, minWidth: '200px' }}>
+          <Field
+            label="Search games"
+            value={search}
+            onChange={(v) => {
+              setSearch(v);
+              setPage(1);
+            }}
+          />
+        </div>
+        <div style={{ minWidth: '150px' }}>
+          <Select
+            label="Status"
+            value={status}
+            values={['', 'true', 'false']}
+            onChange={(v) => {
+              setStatus(v);
+              setPage(1);
+            }}
+          />
+        </div>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={resource.reload}>
+          ↻ Refresh Registry
+        </button>
       </div>
+
       {resource.error ? null : resource.loading ? (
-        <p>Loading registry…</p>
+        <p role="status" style={{ color: 'var(--text-muted)' }}>Loading registry…</p>
       ) : !filtered.length ? (
-        <p>No matching games.</p>
+        <div className="empty-state-box">
+          <div className="empty-state-icon">🎮</div>
+          <p style={{ color: 'var(--text-muted)', margin: 0 }}>No matching games found.</p>
+        </div>
       ) : (
-        filtered.slice((current - 1) * 10, current * 10).map((g) => (
-          <div key={g.slug} style={grid}>
-            <strong>
-              {g.displayName} ({g.slug})
-            </strong>
-            <span>
-              {g.serviceCategory} · {g.isActive ? 'Enabled' : 'Disabled'} · Order references:{' '}
-              {g._count?.orders || 0}
-            </span>
-            <button
-              onClick={() => {
-                setSelected(g.slug);
-                setServiceOpen(false);
-              }}
-            >
-              Manage services
-            </button>
-            <button
-              onClick={() => {
-                setEditGame(g.slug);
-                setGameForm({ ...emptyGame, ...g, description: g.description || '' });
-              }}
-            >
-              Edit game
-            </button>
-            <button
-              disabled={action.busy}
-              onClick={() => {
-                if (
-                  window.confirm(
-                    `${g.isActive ? 'Disable' : 'Enable'} ${g.displayName}? Historical orders are retained.`,
-                  )
-                )
-                  void action.run(`/api/admin/games/${encodeURIComponent(g.slug)}/status`, 'PATCH', {
-                    isActive: !g.isActive,
-                  });
-              }}
-            >
-              {g.isActive ? 'Disable' : 'Enable'}
-            </button>
-          </div>
-        ))
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Game / Slug</th>
+                <th>Category</th>
+                <th>Orders</th>
+                <th>Status</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.slice((current - 1) * 10, current * 10).map((g) => (
+                <tr key={g.slug}>
+                  <td>
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{g.displayName}</div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{g.slug}</div>
+                  </td>
+                  <td>
+                    <span className="badge badge-purple">{g.serviceCategory}</span>
+                  </td>
+                  <td>
+                    <span style={{ fontFamily: 'monospace' }}>{g._count?.orders || 0}</span>
+                  </td>
+                  <td>
+                    <span className={`badge ${g.isActive ? 'badge-green' : 'badge-danger'}`}>
+                      {g.isActive ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <div className="action-btn-group" style={{ justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-xs"
+                        onClick={() => {
+                          setSelected(g.slug);
+                          setServiceOpen(false);
+                        }}
+                      >
+                        Services ({g.services?.length || 0})
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-xs"
+                        onClick={() => {
+                          setEditGame(g.slug);
+                          setGameForm({ ...emptyGame, ...g, description: g.description || '' });
+                        }}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className={`btn ${g.isActive ? 'btn-danger' : 'btn-secondary'} btn-xs`}
+                        disabled={action.busy}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `${g.isActive ? 'Disable' : 'Enable'} ${g.displayName}? Historical orders are retained.`,
+                            )
+                          )
+                            void action.run(`/api/admin/games/${encodeURIComponent(g.slug)}/status`, 'PATCH', {
+                              isActive: !g.isActive,
+                            });
+                        }}
+                      >
+                        {g.isActive ? 'Disable' : 'Enable'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       <Pagination page={current} totalPages={pages} onChange={setPage} />
-      <h3>{editGame ? `Edit ${editGame}` : 'Create game'}</h3>
-      <form
-        style={grid}
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (
-            await action.run(
-              editGame ? `/api/admin/games/${encodeURIComponent(editGame)}` : '/api/admin/games',
-              editGame ? 'PUT' : 'POST',
-              gameForm,
-            )
-          ) {
-            setEditGame(null);
-            setGameForm(emptyGame);
-          }
-        }}
-      >
-        <Field
-          label="Unique slug"
-          value={gameForm.slug}
-          onChange={(slug) => setGameForm({ ...gameForm, slug })}
-          required
-          pattern="[a-z0-9_-]{2,50}"
-          disabled={editGame !== null}
-        />
-        <Field
-          label="Display name"
-          value={gameForm.displayName}
-          onChange={(displayName) => setGameForm({ ...gameForm, displayName })}
-          required
-        />
-        <Field
-          label="Description"
-          value={gameForm.description}
-          onChange={(description) => setGameForm({ ...gameForm, description })}
-        />
-        <Select
-          label="Service category"
-          value={gameForm.serviceCategory}
-          values={['both', 'non_pilot', 'pilot']}
-          onChange={(serviceCategory) => setGameForm({ ...gameForm, serviceCategory })}
-        />
-        <Field
-          label="Display order"
-          type="number"
-          value={gameForm.sortOrder}
-          onChange={(v) => setGameForm({ ...gameForm, sortOrder: Number(v) })}
-        />
-        <button disabled={action.busy}>Save game</button>
-        <button
-          type="button"
-          onClick={() => {
-            setEditGame(null);
-            setGameForm(emptyGame);
+
+      <div className="card-surface" style={{ padding: '1.25rem', marginTop: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+        <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 1rem 0' }}>
+          {editGame ? `Edit Game: ${editGame}` : 'Create New Game'}
+        </h3>
+        <form
+          style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.85rem' }}
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (
+              await action.run(
+                editGame ? `/api/admin/games/${encodeURIComponent(editGame)}` : '/api/admin/games',
+                editGame ? 'PUT' : 'POST',
+                gameForm,
+              )
+            ) {
+              setEditGame(null);
+              setGameForm(emptyGame);
+            }
           }}
         >
-          New / Cancel edit
-        </button>
-      </form>
-      {game && (
-        <section style={box}>
-          <h3>{game.displayName}: services</h3>
-          <p>
-            Identifiers remain fixed when editing. Disable obsolete services; historical references are
-            retained.
-          </p>
-          {(Array.isArray(game.services) ? game.services : []).map((s) => (
-            <div key={s.id} style={grid}>
-              <span>
-                {s.displayName} · {s.serviceKey} · {s.isActive ? 'Enabled' : 'Disabled'} · Orders:{' '}
-                {s._count?.orders || 0}
-              </span>
-              <button
-                onClick={() => {
-                  setEditService(s.id);
-                  setServiceForm({
-                    ...emptyService,
-                    ...s,
-                    description: s.description || '',
-                    settings: { ...emptyService.settings, ...s.settings },
-                  });
-                  setServiceOpen(true);
-                }}
-              >
-                Edit service
-              </button>
-              <button
-                disabled={action.busy}
-                onClick={() => {
-                  if (window.confirm(`Change availability of ${s.displayName}?`))
-                    void action.run(`/api/admin/services/${s.id}/status`, 'PATCH', { isActive: !s.isActive });
-                }}
-              >
-                Toggle availability
-              </button>
-            </div>
-          ))}
-          <button
-            onClick={() => {
-              setEditService(null);
-              setServiceForm(emptyService);
-              setServiceOpen(true);
-            }}
-          >
-            Create service
-          </button>
-          {serviceOpen && (
-            <form
-              style={grid}
-              onSubmit={async (e) => {
-                e.preventDefault();
-                if (
-                  await action.run(
-                    editService
-                      ? `/api/admin/services/${editService}`
-                      : `/api/admin/games/${encodeURIComponent(game.slug)}/services`,
-                    editService ? 'PUT' : 'POST',
-                    serviceForm,
-                  )
-                )
-                  setServiceOpen(false);
+          <Field
+            label="Unique slug"
+            value={gameForm.slug}
+            onChange={(slug) => setGameForm({ ...gameForm, slug })}
+            required
+            pattern="[a-z0-9_-]{2,50}"
+            disabled={editGame !== null}
+          />
+          <Field
+            label="Display name"
+            value={gameForm.displayName}
+            onChange={(displayName) => setGameForm({ ...gameForm, displayName })}
+            required
+          />
+          <Field
+            label="Description"
+            value={gameForm.description}
+            onChange={(description) => setGameForm({ ...gameForm, description })}
+          />
+          <Select
+            label="Service category"
+            value={gameForm.serviceCategory}
+            values={['both', 'non_pilot', 'pilot']}
+            onChange={(serviceCategory) => setGameForm({ ...gameForm, serviceCategory })}
+          />
+          <Field
+            label="Display order"
+            type="number"
+            value={gameForm.sortOrder}
+            onChange={(v) => setGameForm({ ...gameForm, sortOrder: Number(v) })}
+          />
+          <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                setEditGame(null);
+                setGameForm(emptyGame);
               }}
             >
-              <Field
-                label="Unique service key"
-                value={serviceForm.serviceKey}
-                required
-                pattern="[a-z0-9_-]{2,50}"
-                disabled={editService !== null}
-                onChange={(serviceKey) => setServiceForm({ ...serviceForm, serviceKey })}
-              />
-              <Field
-                label="Service display name"
-                value={serviceForm.displayName}
-                required
-                onChange={(displayName) => setServiceForm({ ...serviceForm, displayName })}
-              />
-              <Field
-                label="Service description"
-                value={serviceForm.description}
-                onChange={(description) => setServiceForm({ ...serviceForm, description })}
-              />
-              <Select
-                label="Execution mode"
-                value={serviceForm.serviceMode}
-                values={['non_pilot', 'pilot']}
-                onChange={(serviceMode) => setServiceForm({ ...serviceForm, serviceMode })}
-              />
-              <Select
-                label="Profile mode"
-                value={serviceForm.profileMode}
-                values={['none', 'manual', 'raiderio']}
-                onChange={(profileMode) => setServiceForm({ ...serviceForm, profileMode })}
-              />
-              <Field
-                label="Service display order"
-                type="number"
-                value={serviceForm.sortOrder}
-                onChange={(v) => setServiceForm({ ...serviceForm, sortOrder: Number(v) })}
-              />
-              <label>
-                <input
-                  type="checkbox"
-                  checked={serviceForm.requiresPilotApproval}
-                  onChange={(e) =>
-                    setServiceForm({ ...serviceForm, requiresPilotApproval: e.target.checked })
-                  }
+              {editGame ? 'Cancel' : 'Clear'}
+            </button>
+            <button type="submit" className="btn btn-cta btn-sm" disabled={action.busy}>
+              {editGame ? 'Save Changes' : 'Create Game'}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {game && (
+        <section className="card-surface" style={{ padding: '1.25rem', marginTop: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700 }}>{game.displayName}: Services</h3>
+              <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                Identifiers remain fixed when editing. Disable obsolete services; historical references are retained.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => {
+                setEditService(null);
+                setServiceForm(emptyService);
+                setServiceOpen(true);
+              }}
+            >
+              + Create Service
+            </button>
+          </div>
+
+          {(!Array.isArray(game.services) || game.services.length === 0) ? (
+            <div className="empty-state-box" style={{ padding: '1.5rem' }}>
+              <p style={{ color: 'var(--text-muted)', margin: 0 }}>No services configured for this game yet.</p>
+            </div>
+          ) : (
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Service Key</th>
+                    <th>Display Name</th>
+                    <th>Mode</th>
+                    <th>Orders</th>
+                    <th>Status</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {game.services.map((s) => (
+                    <tr key={s.id}>
+                      <td>
+                        <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{s.serviceKey}</span>
+                      </td>
+                      <td>
+                        <span style={{ fontWeight: 600 }}>{s.displayName}</span>
+                      </td>
+                      <td>
+                        <span className="badge badge-purple">{s.serviceMode}</span>
+                      </td>
+                      <td>
+                        <span style={{ fontFamily: 'monospace' }}>{s._count?.orders || 0}</span>
+                      </td>
+                      <td>
+                        <span className={`badge ${s.isActive ? 'badge-green' : 'badge-danger'}`}>
+                          {s.isActive ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div className="action-btn-group" style={{ justifyContent: 'flex-end' }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-xs"
+                            onClick={() => {
+                              setEditService(s.id);
+                              setServiceForm({
+                                ...emptyService,
+                                ...s,
+                                description: s.description || '',
+                                settings: { ...emptyService.settings, ...s.settings },
+                              });
+                              setServiceOpen(true);
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className={`btn ${s.isActive ? 'btn-danger' : 'btn-secondary'} btn-xs`}
+                            disabled={action.busy}
+                            onClick={() => {
+                              if (window.confirm(`Change availability of ${s.displayName}?`))
+                                void action.run(`/api/admin/services/${s.id}/status`, 'PATCH', { isActive: !s.isActive });
+                            }}
+                          >
+                            {s.isActive ? 'Disable' : 'Enable'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {serviceOpen && (
+            <div className="card-surface" style={{ marginTop: '1rem', padding: '1.25rem', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+              <h4 style={{ margin: '0 0 1rem', fontSize: '0.95rem', fontWeight: 700 }}>
+                {editService ? `Edit Service #${editService}` : 'Create New Service'}
+              </h4>
+              <form
+                style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.85rem' }}
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (
+                    await action.run(
+                      editService
+                        ? `/api/admin/services/${editService}`
+                        : `/api/admin/games/${encodeURIComponent(game.slug)}/services`,
+                      editService ? 'PUT' : 'POST',
+                      serviceForm,
+                    )
+                  )
+                    setServiceOpen(false);
+                }}
+              >
+                <Field
+                  label="Unique service key"
+                  value={serviceForm.serviceKey}
+                  required
+                  pattern="[a-z0-9_-]{2,50}"
+                  disabled={editService !== null}
+                  onChange={(serviceKey) => setServiceForm({ ...serviceForm, serviceKey })}
                 />
-                Pilot approval required
-              </label>
-              <Field
-                label="Claim window (seconds)"
-                type="number"
-                value={serviceForm.settings.claimWindowSeconds}
-                onChange={(v) =>
-                  setServiceForm({
-                    ...serviceForm,
-                    settings: { ...serviceForm.settings, claimWindowSeconds: Number(v) },
-                  })
-                }
-              />
-              {[
-                'proofRequired',
-                'allowPause',
-                'allowReplacement',
-                'acceptsSquads',
-                'requiresRoles',
-                'requiresKey',
-                'isActive',
-              ].map((k) => (
-                <label key={k}>
+                <Field
+                  label="Service display name"
+                  value={serviceForm.displayName}
+                  required
+                  onChange={(displayName) => setServiceForm({ ...serviceForm, displayName })}
+                />
+                <Field
+                  label="Service description"
+                  value={serviceForm.description}
+                  onChange={(description) => setServiceForm({ ...serviceForm, description })}
+                />
+                <Select
+                  label="Execution mode"
+                  value={serviceForm.serviceMode}
+                  values={['non_pilot', 'pilot']}
+                  onChange={(serviceMode) => setServiceForm({ ...serviceForm, serviceMode })}
+                />
+                <Select
+                  label="Profile mode"
+                  value={serviceForm.profileMode}
+                  values={['none', 'manual', 'raiderio']}
+                  onChange={(profileMode) => setServiceForm({ ...serviceForm, profileMode })}
+                />
+                <Field
+                  label="Service display order"
+                  type="number"
+                  value={serviceForm.sortOrder}
+                  onChange={(v) => setServiceForm({ ...serviceForm, sortOrder: Number(v) })}
+                />
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
-                    checked={Boolean(serviceForm.settings[k])}
+                    checked={serviceForm.requiresPilotApproval}
                     onChange={(e) =>
-                      setServiceForm({
-                        ...serviceForm,
-                        settings: { ...serviceForm.settings, [k]: e.target.checked },
-                      })
+                      setServiceForm({ ...serviceForm, requiresPilotApproval: e.target.checked })
                     }
                   />
-                  {k}
+                  Pilot approval required
                 </label>
-              ))}
-              <button disabled={action.busy}>Save service</button>
-              <button type="button" onClick={() => setServiceOpen(false)}>
-                Cancel
-              </button>
-            </form>
+                <Field
+                  label="Claim window (seconds)"
+                  type="number"
+                  value={serviceForm.settings.claimWindowSeconds}
+                  onChange={(v) =>
+                    setServiceForm({
+                      ...serviceForm,
+                      settings: { ...serviceForm.settings, claimWindowSeconds: Number(v) },
+                    })
+                  }
+                />
+                <div style={{ gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap', gap: '1rem', padding: '0.5rem 0' }}>
+                  {[
+                    'proofRequired',
+                    'allowPause',
+                    'allowReplacement',
+                    'acceptsSquads',
+                    'requiresRoles',
+                    'requiresKey',
+                    'isActive',
+                  ].map((k) => (
+                    <label key={k} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(serviceForm.settings[k])}
+                        onChange={(e) =>
+                          setServiceForm({
+                            ...serviceForm,
+                            settings: { ...serviceForm.settings, [k]: e.target.checked },
+                          })
+                        }
+                      />
+                      {k}
+                    </label>
+                  ))}
+                </div>
+                <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={() => setServiceOpen(false)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-cta btn-sm" disabled={action.busy}>
+                    {editService ? 'Save Service' : 'Create Service'}
+                  </button>
+                </div>
+              </form>
+            </div>
           )}
         </section>
       )}
@@ -975,164 +1092,193 @@ export function ChannelsWorkspace({ embedded = false }: { embedded?: boolean } =
       <ErrorMessage error={resource.error || action.error} />
       {action.message && <p role="status">{action.message}</p>}
       {verification && <p role="status">{verification}</p>}
-      <div style={grid}>
-        <Field
-          label="Purpose / key / game"
-          value={search}
-          onChange={(v) => {
-            setSearch(v);
-            setPage(1);
-          }}
-        />
-        <Field
-          label="Guild ID filter"
-          value={guild}
-          onChange={(v) => {
-            setGuild(v);
-            setPage(1);
-          }}
-        />
-        <Select
-          label="Saved status"
-          value={status}
-          values={['', 'SAVED', 'VERIFIED', 'UNAVAILABLE', 'DEGRADED', 'RECONCILIATION_REQUIRED', 'PENDING', 'MANUAL', 'DISABLED']}
-          onChange={(v) => {
-            setStatus(v);
-            setPage(1);
-          }}
-        />
-        <button onClick={resource.reload}>Refresh mappings</button>
+      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        <div style={{ flex: 1, minWidth: '180px' }}>
+          <Field
+            label="Purpose / key / game"
+            value={search}
+            onChange={(v) => {
+              setSearch(v);
+              setPage(1);
+            }}
+          />
+        </div>
+        <div style={{ minWidth: '140px' }}>
+          <Field
+            label="Guild ID filter"
+            value={guild}
+            onChange={(v) => {
+              setGuild(v);
+              setPage(1);
+            }}
+          />
+        </div>
+        <div style={{ minWidth: '160px' }}>
+          <Select
+            label="Saved status"
+            value={status}
+            values={['', 'SAVED', 'VERIFIED', 'UNAVAILABLE', 'DEGRADED', 'RECONCILIATION_REQUIRED', 'PENDING', 'MANUAL', 'DISABLED']}
+            onChange={(v) => {
+              setStatus(v);
+              setPage(1);
+            }}
+          />
+        </div>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={resource.reload}>
+          ↻ Refresh Mappings
+        </button>
       </div>
+
       {resource.error ? null : resource.loading ? (
-        <p>Loading saved mappings…</p>
+        <p role="status" style={{ color: 'var(--text-muted)' }}>Loading saved mappings…</p>
       ) : !filtered.length ? (
-        <p>No matching channel mappings.</p>
+        <div className="empty-state-box">
+          <div className="empty-state-icon">💬</div>
+          <p style={{ color: 'var(--text-muted)', margin: 0 }}>No matching channel mappings found.</p>
+        </div>
       ) : (
-        filtered.slice((current - 1) * 10, current * 10).map((m) => (
-          <div key={m.channelKey} className="card-surface" style={box}>
-            <strong>
-              {m.channelKey} · {m.purpose}
-              <span
-                style={{
-                  display: 'inline-block',
-                  marginLeft: '8px',
-                  padding: '2px 8px',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  backgroundColor:
-                    m.syncStatus === 'VERIFIED' || m.syncStatus === 'SYNCED'
-                      ? '#065f46'
-                      : m.syncStatus === 'DEGRADED'
-                        ? '#78350f'
-                        : m.syncStatus === 'UNAVAILABLE' || m.syncStatus === 'MISSING' || m.syncStatus === 'INVALID'
-                          ? '#7f1d1d'
-                          : m.syncStatus === 'RECONCILIATION_REQUIRED'
-                            ? '#581c87'
-                            : '#374151',
-                  color:
-                    m.syncStatus === 'VERIFIED' || m.syncStatus === 'SYNCED'
-                      ? '#6ee7b7'
-                      : m.syncStatus === 'DEGRADED'
-                        ? '#fde68a'
-                        : m.syncStatus === 'UNAVAILABLE' || m.syncStatus === 'MISSING' || m.syncStatus === 'INVALID'
-                          ? '#fca5a5'
-                          : m.syncStatus === 'RECONCILIATION_REQUIRED'
-                            ? '#d8b4fe'
-                            : '#d1d5db',
-                }}
-              >
-                {m.syncStatus}
-              </span>
-            </strong>
-            <p>
-              Guild: {m.guildId} · Channel: {m.discordChannelId || 'Not configured'}
-            </p>
-            <p>
-              {m.gameSlug || 'Global workflow'} · Service: {m.serviceId || '—'} · {m.serviceMode || 'all'} ·{' '}
-              {m.isActive ? 'Enabled' : 'Disabled'} · Saved status: {m.syncStatus}
-            </p>
-            <p>{m.lastSyncResult}</p>
-            {writable && (
-              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '8px' }}>
-                <button
-                  onClick={() => {
-                    setEditing(m.channelKey);
-                    setForm({
-                      ...emptyMapping,
-                      ...m,
-                      discordChannelId: m.discordChannelId || '',
-                      gameSlug: m.gameSlug || '',
-                      serviceId: m.serviceId ? String(m.serviceId) : '',
-                      serviceMode: m.serviceMode || '',
-                    });
-                  }}
-                >
-                  Edit mapping
-                </button>
-                <button
-                  disabled={action.busy}
-                  onClick={async () => {
-                    if (
-                      window.confirm(
-                        `Remove saved mapping ${m.channelKey}? The Discord channel itself is retained.`,
-                      )
-                    )
-                      await action.run(
-                        `/api/management/channel-mappings/${encodeURIComponent(m.channelKey)}`,
-                        'DELETE',
-                      );
-                  }}
-                >
-                  Remove mapping
-                </button>
-                <button
-                  onClick={async () => {
-                    try {
-                      const result = await apiRequest<{ valid: boolean; status?: string; error?: string; checkedAt?: string }>(
-                        `/api/management/channel-mappings/${encodeURIComponent(m.channelKey)}/verify`,
-                        { method: 'POST' },
-                      );
-                      setVerification(
-                        `${m.channelKey}: ${result.valid ? `Live channel verified at ${result.checkedAt}` : `${result.status || 'FAILED'}: ${result.error || 'Live validation failed'}`}`,
-                      );
-                      resource.reload();
-                    } catch (e: any) {
-                      setVerification(e.message);
-                    }
-                  }}
-                >
-                  Verify live connectivity
-                </button>
-                <button
-                  onClick={async () => {
-                    try {
-                      const result = await apiRequest<{ success: boolean; observation?: { valid: boolean; status?: string; error?: string } }>(
-                        `/api/management/channel-mappings/${encodeURIComponent(m.channelKey)}/reconcile`,
-                        { method: 'POST' },
-                      );
-                      setVerification(
-                        `${m.channelKey}: Reconciled (Status: ${result.observation?.status || (result.observation?.valid ? 'VERIFIED' : 'UNAVAILABLE')}).`,
-                      );
-                      resource.reload();
-                    } catch (e: any) {
-                      setVerification(e.message);
-                    }
-                  }}
-                >
-                  Reconcile mapping
-                </button>
-              </div>
-            )}
-          </div>
-        ))
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Channel Key &amp; Purpose</th>
+                <th>Guild &amp; Channel ID</th>
+                <th>Workflow Scope</th>
+                <th>Status</th>
+                {writable && <th style={{ textAlign: 'right' }}>Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.slice((current - 1) * 10, current * 10).map((m) => {
+                const badgeClass =
+                  m.syncStatus === 'VERIFIED' || m.syncStatus === 'SYNCED'
+                    ? 'badge-green'
+                    : m.syncStatus === 'DEGRADED' || m.syncStatus === 'PENDING'
+                      ? 'badge-amber'
+                      : m.syncStatus === 'UNAVAILABLE' || m.syncStatus === 'MISSING' || m.syncStatus === 'INVALID'
+                        ? 'badge-danger'
+                        : m.syncStatus === 'RECONCILIATION_REQUIRED'
+                          ? 'badge-purple'
+                          : 'badge-muted';
+
+                return (
+                  <tr key={m.channelKey}>
+                    <td>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{m.purpose}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{m.channelKey}</div>
+                      {m.lastSyncResult && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{m.lastSyncResult}</div>
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ fontSize: '0.78rem' }}>Guild: <span style={{ fontFamily: 'monospace' }}>{m.guildId}</span></div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Channel: <span style={{ fontFamily: 'monospace' }}>{m.discordChannelId || 'Not configured'}</span></div>
+                    </td>
+                    <td>
+                      <div>{m.gameSlug || 'Global workflow'}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                        Mode: {m.serviceMode || 'all'} · {m.isActive ? 'Enabled' : 'Disabled'}
+                      </div>
+                    </td>
+                    <td>
+                      <span className={`badge ${badgeClass}`}>{m.syncStatus}</span>
+                    </td>
+                    {writable && (
+                      <td style={{ textAlign: 'right' }}>
+                        <div className="action-btn-group" style={{ justifyContent: 'flex-end' }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-xs"
+                            onClick={() => {
+                              setEditing(m.channelKey);
+                              setForm({
+                                ...emptyMapping,
+                                ...m,
+                                discordChannelId: m.discordChannelId || '',
+                                gameSlug: m.gameSlug || '',
+                                serviceId: m.serviceId ? String(m.serviceId) : '',
+                                serviceMode: m.serviceMode || '',
+                              });
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-xs"
+                            onClick={async () => {
+                              try {
+                                const result = await apiRequest<{ valid: boolean; status?: string; error?: string; checkedAt?: string }>(
+                                  `/api/management/channel-mappings/${encodeURIComponent(m.channelKey)}/verify`,
+                                  { method: 'POST' },
+                                );
+                                setVerification(
+                                  `${m.channelKey}: ${result.valid ? `Live channel verified at ${result.checkedAt}` : `${result.status || 'FAILED'}: ${result.error || 'Live validation failed'}`}`,
+                                );
+                                resource.reload();
+                              } catch (e: any) {
+                                setVerification(e.message);
+                              }
+                            }}
+                          >
+                            Verify
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-xs"
+                            onClick={async () => {
+                              try {
+                                const result = await apiRequest<{ success: boolean; observation?: { valid: boolean; status?: string; error?: string } }>(
+                                  `/api/management/channel-mappings/${encodeURIComponent(m.channelKey)}/reconcile`,
+                                  { method: 'POST' },
+                                );
+                                setVerification(
+                                  `${m.channelKey}: Reconciled (Status: ${result.observation?.status || (result.observation?.valid ? 'VERIFIED' : 'UNAVAILABLE')}).`,
+                                );
+                                resource.reload();
+                              } catch (e: any) {
+                                setVerification(e.message);
+                              }
+                            }}
+                          >
+                            Reconcile
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-danger btn-xs"
+                            disabled={action.busy}
+                            onClick={async () => {
+                              if (
+                                window.confirm(
+                                  `Remove saved mapping ${m.channelKey}? The Discord channel itself is retained.`,
+                                )
+                              )
+                                await action.run(
+                                  `/api/management/channel-mappings/${encodeURIComponent(m.channelKey)}`,
+                                  'DELETE',
+                                );
+                            }}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
       <Pagination page={current} totalPages={pages} onChange={setPage} />
       {writable && (
-        <>
-          <h3>{editing ? 'Edit mapping' : 'Create mapping'}</h3>
+        <div className="card-surface" style={{ padding: '1.25rem', marginTop: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+          <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: '0 0 1rem 0' }}>
+            {editing ? `Edit Channel Mapping: ${editing}` : 'Create Channel Mapping'}
+          </h3>
           <form
-            style={grid}
+            style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.85rem' }}
             onSubmit={async (e) => {
               e.preventDefault();
               if (
@@ -1193,12 +1339,13 @@ export function ChannelsWorkspace({ embedded = false }: { embedded?: boolean } =
               values={['GUILD_TEXT', 'GUILD_CATEGORY']}
               onChange={(channelType) => setForm({ ...form, channelType })}
             />
-            <label>
+            <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
               Related game
               <select
                 className="input"
                 value={form.gameSlug}
                 onChange={(e) => setForm({ ...form, gameSlug: e.target.value, serviceId: '' })}
+                style={{ padding: '0.45rem 0.75rem', fontSize: '0.85rem' }}
               >
                 <option value="">Global</option>
                 {games.map((g) => (
@@ -1208,12 +1355,13 @@ export function ChannelsWorkspace({ embedded = false }: { embedded?: boolean } =
                 ))}
               </select>
             </label>
-            <label>
+            <label style={{ fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
               Related service
               <select
                 className="input"
                 value={form.serviceId}
                 onChange={(e) => setForm({ ...form, serviceId: e.target.value })}
+                style={{ padding: '0.45rem 0.75rem', fontSize: '0.85rem' }}
               >
                 <option value="">All services</option>
                 {(game && Array.isArray(game.services) ? game.services : []).map((s) => (
@@ -1229,7 +1377,7 @@ export function ChannelsWorkspace({ embedded = false }: { embedded?: boolean } =
               values={['', 'non_pilot', 'pilot']}
               onChange={(serviceMode) => setForm({ ...form, serviceMode })}
             />
-            <label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: 'var(--text-primary)', cursor: 'pointer' }}>
               <input
                 type="checkbox"
                 checked={form.isActive}
@@ -1237,24 +1385,29 @@ export function ChannelsWorkspace({ embedded = false }: { embedded?: boolean } =
               />
               Enabled
             </label>
-            <button disabled={action.busy}>Save configuration (unverified)</button>
-            <button
-              type="button"
-              onClick={() => {
-                setEditing(null);
-                setForm(emptyMapping);
-              }}
-            >
-              New / Cancel edit
-            </button>
+            <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  setEditing(null);
+                  setForm(emptyMapping);
+                }}
+              >
+                {editing ? 'Cancel' : 'Clear'}
+              </button>
+              <button type="submit" className="btn btn-cta btn-sm" disabled={action.busy}>
+                {editing ? 'Save Configuration' : 'Create Mapping'}
+              </button>
+            </div>
           </form>
-          <p>
+          <p style={{ margin: '0.75rem 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
             Editing cannot repurpose a mapping's game, service, mode or channel type; create a separate
             mapping for a new workflow. Use existing workflow keys (reg:public, reg:mgmt, order_panel,
             publication or execution). Purpose is a display description; it does not create a new bot
             workflow.
           </p>
-        </>
+        </div>
       )}
     </Shell>
   );

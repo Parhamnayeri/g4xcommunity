@@ -276,11 +276,63 @@ export async function handleSetupCommand(message: Message, args: string[]): Prom
         content: `❌ Failed to auto-provision Discord channels: ${err?.message || err}`,
       });
     }
+  } else if (subCommand === 'rules' || subCommand === 'policy' || subCommand === 'policies') {
+    // ۱. اعتبارسنجی سطح دسترسی متمرکز
+    const authResult = await authorize(message.author.id, Permission.SERVICE_CONFIG_MANAGE);
+    if (!authResult.allowed) {
+      await message.reply({
+        content: '❌ **Permission Denied**: Only authorized management may set up or sync rules channels.',
+      });
+      return;
+    }
+
+    if (!message.guild) {
+      await message.reply({ content: '❌ This command must be executed within a Discord server (guild).' });
+      return;
+    }
+
+    try {
+      const { provisionAllChannels } = await import('../services/discordProvisioningService');
+      const result = await provisionAllChannels({
+        guild: message.guild,
+        actorId: message.author.id,
+        client: message.client,
+      });
+
+      const rulesMapping = result.mappings.find((m) => m.channelKey === 'rules:channel:official');
+      let responseText = '✅ **Rules & Policies Channel Architecture Setup Completed Successfully!**\n\n';
+      if (rulesMapping?.discordChannelId) {
+        responseText += `• **Channel:** <#${rulesMapping.discordChannelId}> (\`#${rulesMapping.channelName}\`)\n`;
+        responseText += `• **Category:** \`START HERE\`\n`;
+        responseText += `• **Sync Status:** **${rulesMapping.syncStatus}**\n`;
+        responseText += `• **Details:** ${rulesMapping.lastSyncResult || 'Synchronized'}\n`;
+      } else {
+        responseText += `⚠️ Rules channel mapping status: **${rulesMapping?.syncStatus || 'MISSING'}**\n`;
+        if (rulesMapping?.lastSyncResult) {
+          responseText += `• Details: ${rulesMapping.lastSyncResult}\n`;
+        }
+      }
+
+      const warnings = result.warnings.filter(
+        (w) => w.toLowerCase().includes('rule') || w.toLowerCase().includes('policy')
+      );
+      if (warnings.length > 0) {
+        responseText += '\n⚠️ **Notes & Warnings:**\n' + warnings.map((w) => `• ${w}`).join('\n');
+      }
+
+      await message.reply({ content: responseText });
+    } catch (err: any) {
+      console.error('[SetupCommand] Failed to deploy rules channel:', err);
+      await message.reply({
+        content: `❌ Failed to set up rules channel: ${err?.message || err}`,
+      });
+    }
   } else {
     await message.reply({
       content:
         '❌ Unknown setup target. Usage:\n' +
-        '• `G4!setup all` — Automatically create, reuse & sync ALL categories and channels\n' +
+        '• `G4!setup all` — Automatically create, reuse & sync ALL categories, channels, panels, and rules\n' +
+        '• `G4!setup rules` — Deploy or refresh #rules-and-policies channel and synchronize official rules\n' +
         '• `G4!setup registration` — Deploy or refresh 8 registration & review channels\n' +
         '• `G4!setup orders` — Deploy or refresh 2 categories & 6 order creation panels\n' +
         '• `G4!setup publications` — Deploy or refresh dedicated game & service order publication channels',

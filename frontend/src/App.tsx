@@ -13,7 +13,6 @@ import { WalletPage } from './pages/WalletPage';
 import { ExchangePage } from './pages/ExchangePage';
 import { ExchangerPage } from './pages/ExchangerPage';
 import { ApplicationsWorkspace, GamesWorkspace, ChannelsWorkspace } from './components/admin/NativeAdminModules';
-import { LegacyTransitionPage } from './pages/LegacyTransitionPage';
 
 import { StaffPage } from './pages/StaffPage';
 import { ManagementPage } from './pages/ManagementPage';
@@ -21,6 +20,7 @@ import { KycManagementPage } from './pages/KycManagementPage';
 import { AdminPage } from './pages/AdminPage';
 import { OwnerPage } from './pages/OwnerPage';
 import { ProfilePage } from './pages/ProfilePage';
+import { ProfileKycPage } from './pages/ProfileKycPage';
 import { BoosterSettingsPage } from './pages/BoosterSettingsPage';
 import { DiscordCommandsPage } from './pages/DiscordCommandsPage';
 
@@ -44,6 +44,7 @@ export const App: React.FC = () => {
             <Route path="/wallet" element={<RouteErrorBoundary routeName="Wallet"><WalletPage /></RouteErrorBoundary>} />
             <Route path="/withdraw" element={<RouteErrorBoundary routeName="Withdraw"><WithdrawPage /></RouteErrorBoundary>} />
             <Route path="/profile" element={<RouteErrorBoundary routeName="Profile"><ProfilePage /></RouteErrorBoundary>} />
+            <Route path="/profile/kyc" element={<RouteErrorBoundary routeName="Identity Verification (KYC)"><ProfileKycPage /></RouteErrorBoundary>} />
             <Route path="/discord-commands" element={<RouteErrorBoundary routeName="Discord Commands"><DiscordCommandsPage /></RouteErrorBoundary>} />
             <Route path="/booster/settings" element={<RouteErrorBoundary routeName="Booster Settings"><BoosterSettingsPage /></RouteErrorBoundary>} />
             <Route path="/settings" element={<RouteErrorBoundary routeName="Settings"><BoosterSettingsPage /></RouteErrorBoundary>} />
@@ -71,59 +72,15 @@ export const App: React.FC = () => {
             <Route path="/owner" element={<RouteErrorBoundary routeName="Owner Portal"><OwnerPage /></RouteErrorBoundary>} />
             <Route path="/owner/orders" element={<RouteErrorBoundary routeName="Owner Orders"><OwnerPage defaultTab="orders" /></RouteErrorBoundary>} />
             <Route path="/owner/finance" element={<RouteErrorBoundary routeName="Owner Finance"><OwnerPage /></RouteErrorBoundary>} />
-            <Route
-              path="/owner/games"
-              element={
-                <RouteErrorBoundary routeName="Game Registry">
-                  <LegacyTransitionPage
-                    moduleName="Game & Service Registry"
-                    category="Owner"
-                    description="Configure supported games, active service categories, profile modes, and order publishing routes."
-                    legacyTab="owner-games"
-                  />
-                </RouteErrorBoundary>
-              }
-            />
-            <Route
-              path="/owner/discord"
-              element={
-                <RouteErrorBoundary routeName="Discord Infrastructure">
-                  <LegacyTransitionPage
-                    moduleName="Discord Infrastructure"
-                    category="Owner"
-                    description="Channel mappings, auto-provisioning, role assignments, and bot diagnostics."
-                    legacyTab="owner-discord"
-                  />
-                </RouteErrorBoundary>
-              }
-            />
-            <Route
-              path="/owner/users"
-              element={
-                <RouteErrorBoundary routeName="User & Role Management">
-                  <LegacyTransitionPage
-                    moduleName="User & Role Management (RBAC)"
-                    category="Owner"
-                    description="Assign and revoke system roles, inspect audit histories, and manage member statuses."
-                    legacyTab="owner-users"
-                  />
-                </RouteErrorBoundary>
-              }
-            />
-            <Route
-              path="/owner/website"
-              element={
-                <RouteErrorBoundary routeName="Website Configuration">
-                  <LegacyTransitionPage
-                    moduleName="Website Configuration"
-                    category="Owner"
-                    description="Landing page banners, announcement policies, and brand configurations."
-                    legacyTab="owner-website"
-                  />
-                </RouteErrorBoundary>
-              }
-            />
+            <Route path="/owner/games" element={<RouteErrorBoundary routeName="Game Registry"><OwnerPage defaultTab="games" /></RouteErrorBoundary>} />
+            <Route path="/owner/discord" element={<RouteErrorBoundary routeName="Discord Infrastructure"><OwnerPage defaultTab="discord" /></RouteErrorBoundary>} />
+            <Route path="/owner/users" element={<RouteErrorBoundary routeName="User & Role Management"><OwnerPage defaultTab="users" /></RouteErrorBoundary>} />
+            <Route path="/owner/website" element={<RouteErrorBoundary routeName="Website Configuration"><OwnerPage defaultTab="config" /></RouteErrorBoundary>} />
           </Route>
+
+          {/* Legacy route redirects */}
+          <Route path="/legacy" element={<Navigate to="/" replace />} />
+          <Route path="/legacy/*" element={<Navigate to="/" replace />} />
 
           {/* Fallback for unmatched routes */}
           <Route path="*" element={<Navigate to="/" replace />} />

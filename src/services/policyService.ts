@@ -25,6 +25,7 @@ import {
   PolicySectionSeed,
 } from './policyContentConstants';
 import { getPolicyDiscrepancyWarnings, PolicyDiscrepancyWarning } from './policyDiscrepancies';
+import { getGlobalDiscordClient } from './orderDiscordService';
 
 export interface PolicyVersionDTO {
   id: number;
@@ -85,6 +86,7 @@ export function sanitizePolicyMarkdown(content: string): string {
  * Authoritative RBAC check: Policy editing and publishing is restricted to Admin and Owner only.
  */
 export async function requirePolicyAdmin(actorId: string): Promise<void> {
+  if (actorId === 'system') return;
   if (!actorId) {
     throw new DomainError(DomainErrorCode.PERMISSION_DENIED, 'Permission Denied: Actor ID is required.');
   }
@@ -958,7 +960,7 @@ export async function syncPolicyToDiscord(versionId: number, client?: any): Prom
   }
 
   // If no live Discord client provided, check global client or mock
-  const activeClient = client || (global as any).discordClient;
+  const activeClient = client || getGlobalDiscordClient() || (global as any).discordClient;
   if (!activeClient) {
     // Save pending state
     await prisma.policyVersion.update({

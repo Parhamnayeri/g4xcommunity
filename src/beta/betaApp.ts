@@ -272,7 +272,7 @@ export function createBetaApp(options: BetaAppOptions): Express {
   app.use(express.static(path.join(process.cwd(), 'public')));
 
   app.get(['/legacy', '/legacy/*'], (_req, res) => {
-    res.sendFile(path.join(process.cwd(), 'public', 'legacy.html'));
+    res.redirect('/');
   });
 
   app.use('/api', router);

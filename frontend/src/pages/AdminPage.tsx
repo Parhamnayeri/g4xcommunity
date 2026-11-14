@@ -5,16 +5,16 @@ import { LoadingState } from '../components/ui/LoadingState';
 import { OrderManagementWorkspace } from '../components/orders/OrderManagementWorkspace';
 import { UserManagementWorkspace } from '../components/admin/UserManagementWorkspace';
 import { WithdrawalQueueWorkspace } from '../components/admin/WithdrawalQueueWorkspace';
-import { DepositQueueWorkspace } from '../components/admin/DepositQueueWorkspace';
+import { AdminFinanceOverviewWorkspace } from '../components/admin/AdminFinanceOverviewWorkspace';
 import {
   ApplicationsWorkspace,
   GamesWorkspace,
   ChannelsWorkspace,
 } from '../components/admin/NativeAdminModules';
 import { KycManagementPage } from './KycManagementPage';
-import { RulesManagementWorkspace } from '../components/admin/RulesManagementWorkspace';
 import {
   AdminOverviewResponse,
+  AdminDepositItem,
   AdminTradeItem,
   AdminOfferItem,
   AdminAuditLogItem,
@@ -22,6 +22,8 @@ import {
 } from '../types/adminPortal';
 import {
   fetchAdminOverview,
+  fetchAdminDeposits,
+  reviewAdminDeposit,
   fetchAdminTrades,
   fetchAdminOffers,
   fetchAdminAuditLogs,
@@ -30,6 +32,7 @@ import {
 
 export type AdminTab =
   | 'overview'
+  | 'finance'
   | 'orders'
   | 'users'
   | 'deposits'
@@ -39,12 +42,12 @@ export type AdminTab =
   | 'exchange'
   | 'games'
   | 'discord'
-  | 'rules'
   | 'audit'
   | 'roles';
 
 const VALID_ADMIN_TABS: AdminTab[] = [
   'overview',
+  'finance',
   'orders',
   'users',
   'deposits',
@@ -54,13 +57,12 @@ const VALID_ADMIN_TABS: AdminTab[] = [
   'exchange',
   'games',
   'discord',
-  'rules',
   'audit',
   'roles',
 ];
 
 export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'overview' }) => {
-  const { hasRole } = useAuth();
+  const { user, hasRole } = useAuth();
   const isAdminOrOwner = hasRole('owner', 'manager', 'admin');
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab') as AdminTab | null;
@@ -85,6 +87,17 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
   const [overview, setOverview] = useState<AdminOverviewResponse | null>(null);
   const [loadingOverview, setLoadingOverview] = useState(true);
   const [overviewError, setOverviewError] = useState<string | null>(null);
+
+  // Deposits state
+  const [deposits, setDeposits] = useState<AdminDepositItem[]>([]);
+  const [depositsPagination, setDepositsPagination] = useState({ page: 1, limit: 15, total: 0, totalPages: 0 });
+  const [depositsLoading, setDepositsLoading] = useState(false);
+  const [depositStatusFilter, setDepositStatusFilter] = useState('PENDING_ADMIN_VERIFICATION');
+  const [selectedDeposit, setSelectedDeposit] = useState<AdminDepositItem | null>(null);
+  const [depositAction, setDepositAction] = useState<'APPROVE' | 'REJECT'>('APPROVE');
+  const [depositNotes, setDepositNotes] = useState('');
+  const [submittingDeposit, setSubmittingDeposit] = useState(false);
+  const [depositReviewMsg, setDepositReviewMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Exchange state
   const [trades, setTrades] = useState<AdminTradeItem[]>([]);
@@ -116,6 +129,23 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
     }
   }, []);
 
+  // Load Deposits
+  const loadDeposits = useCallback(async (page = 1) => {
+    setDepositsLoading(true);
+    try {
+      const data = await fetchAdminDeposits({
+        page,
+        limit: depositsPagination.limit,
+        status: depositStatusFilter,
+      });
+      setDeposits(data?.deposits || []);
+      setDepositsPagination(data?.pagination || { page: 1, limit: 15, total: 0, totalPages: 1 });
+    } catch (err) {
+      console.error('Failed to load deposits:', err);
+    } finally {
+      setDepositsLoading(false);
+    }
+  }, [depositsPagination.limit, depositStatusFilter]);
 
   // Load Exchange Oversight
   const loadExchange = useCallback(async (page = 1) => {
@@ -174,10 +204,11 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
 
   useEffect(() => {
     if (!isAdminOrOwner) return;
+    if (activeTab === 'deposits') loadDeposits(1);
     if (activeTab === 'exchange') loadExchange(1);
     if (activeTab === 'audit') loadAuditLogs(1);
     if (activeTab === 'roles') loadMatrix();
-  }, [activeTab, isAdminOrOwner, loadExchange, loadAuditLogs, loadMatrix]);
+  }, [activeTab, isAdminOrOwner, loadDeposits, loadExchange, loadAuditLogs, loadMatrix]);
 
   if (!isAdminOrOwner) {
     return (
@@ -230,6 +261,7 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
             className="btn btn-secondary btn-sm"
             onClick={() => {
               if (activeTab === 'overview') loadOverview();
+              if (activeTab === 'deposits') loadDeposits(depositsPagination.page);
               if (activeTab === 'exchange') loadExchange(tradesPagination.page);
               if (activeTab === 'audit') loadAuditLogs(auditPagination.page);
               if (activeTab === 'roles') loadMatrix();
@@ -257,6 +289,7 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
       >
         {[
           { key: 'overview', label: 'Overview & KPIs', icon: '📊' },
+          { key: 'finance', label: 'Finance Overview', icon: '💰' },
           { key: 'orders', label: 'Order Workspace', icon: '📦' },
           { key: 'users', label: 'User Management', icon: '👥' },
           { key: 'deposits', label: 'Manual IRT Deposits', icon: '💳' },
@@ -266,7 +299,6 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
           { key: 'exchange', label: 'Marketplace Oversight', icon: '🪙' },
           { key: 'games', label: 'Games & Services', icon: '🎮' },
           { key: 'discord', label: 'Discord Channels', icon: '💬' },
-          { key: 'rules', label: 'Rules & Policies', icon: '⚖️' },
           { key: 'audit', label: 'Audit Trail', icon: '📜' },
           { key: 'roles', label: 'Role & Permissions', icon: '🛡️' },
         ].map((t) => (
@@ -277,9 +309,9 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
             style={{
               padding: '0.55rem 1rem',
               borderRadius: 'var(--radius-sm)',
-              border: 'none',
-              backgroundColor: activeTab === t.key ? 'var(--bg-surface-hover)' : 'transparent',
-              color: activeTab === t.key ? 'var(--accent-lime)' : 'var(--text-muted)',
+              border: activeTab === t.key ? '1px solid rgba(250, 204, 21, 0.4)' : '1px solid transparent',
+              backgroundColor: activeTab === t.key ? 'var(--bg-surface-elevated)' : 'transparent',
+              color: activeTab === t.key ? 'var(--accent-yellow)' : 'var(--text-muted)',
               fontWeight: 600,
               fontSize: '0.85rem',
               cursor: 'pointer',
@@ -287,6 +319,7 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
               alignItems: 'center',
               gap: '0.45rem',
               transition: 'all 0.15s ease',
+              boxShadow: activeTab === t.key ? '0 0 10px rgba(250, 204, 21, 0.08)' : 'none',
             }}
           >
             <span>{t.icon}</span>
@@ -448,6 +481,13 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB 1.2: UNIFIED FINANCE OVERVIEW & PLATFORM BALANCES                         */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'finance' && (
+        <AdminFinanceOverviewWorkspace onNavigateTab={(t) => handleTabChange(t as AdminTab)} />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 1.5: UNIFIED ORDER MANAGEMENT WORKSPACE                                   */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'orders' && (
@@ -464,23 +504,397 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
         <UserManagementWorkspace
           canBan={true}
           canManageRoles={true}
-          allowPrivilegedRoles={false}
+          allowPrivilegedRoles={hasRole('owner')}
           title="Community User Registry & RBAC"
-          subtitle="Search users, review verification status, apply ban/unban moderation with mandatory reasons, and assign non-privileged operational roles."
+          subtitle="Search users, review verification status, apply ban/unban moderation with mandatory reasons, and assign operational roles."
         />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 3: MANUAL DEPOSITS REVIEW QUEUE                                           */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
-      {/* ───────────────────────────────────────────────────────────────────────────── */}
-      {/* TAB 3: MANUAL DEPOSITS REVIEW QUEUE                                           */}
-      {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'deposits' && (
-        <DepositQueueWorkspace
-          title="Manual IRT Deposit Administration"
-          subtitle="Review incoming card-to-card IRT payment slips and confirm authoritative receipt."
-        />
+        <div className="card-surface" style={{ padding: '1.75rem' }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+            <div>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>Manual IRT Deposit Administration</h2>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: '0.25rem 0 0' }}>
+                Review incoming card-to-card IRT payment slips and confirm authoritative receipt.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem' }}>
+              <select
+                value={depositStatusFilter}
+                onChange={(e) => setDepositStatusFilter(e.target.value)}
+                style={{
+                  padding: '0.45rem 0.85rem',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'var(--bg-main)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.85rem',
+                }}
+              >
+                <option value="PENDING_ADMIN_VERIFICATION">Pending Verification</option>
+                <option value="CONFIRMED_CREDITED">Confirmed &amp; Credited</option>
+                <option value="REJECTED">Rejected</option>
+                <option value="all">All Statuses</option>
+              </select>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => loadDeposits(1)}
+              >
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {depositsLoading ? (
+            <LoadingState message="Loading deposit requests..." />
+          ) : deposits.length === 0 ? (
+            <div className="empty-state-box">
+              <div className="empty-state-icon">💳</div>
+              <p style={{ color: 'var(--text-muted)', margin: 0 }}>No deposit requests currently pending verification.</p>
+            </div>
+          ) : (
+            <div className="table-scroll">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Ref / Date</th>
+                    <th>Advertiser</th>
+                    <th>Method / Currency</th>
+                    <th>Target USD</th>
+                    <th>Payer Evidence</th>
+                    <th>Status</th>
+                    <th style={{ textAlign: 'right' }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deposits.map((d) => (
+                    <tr key={d.id}>
+                      <td>
+                        <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>{d.fundingRef}</div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                          {new Date(d.createdAt).toLocaleDateString()}
+                        </div>
+                      </td>
+                      <td>
+                        <div>{d.advertiserName}</div>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{d.advertiserId}</div>
+                      </td>
+                      <td>
+                        <span className="badge badge-purple">
+                          {d.fundingMethod} ({d.externalAmountUnits} {d.externalCurrency})
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: 700, color: 'var(--accent-lime)' }}>
+                        {d.targetUsdFormatted}
+                      </td>
+                      <td>
+                        <div style={{ fontSize: '0.8rem' }}>Card: {d.payerIdentifier || '—'}</div>
+                        {d.evidenceRef && (
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Doc: {d.evidenceRef}</div>
+                        )}
+                      </td>
+                      <td>
+                        <span
+                          className={`badge ${
+                            d.status === 'CONFIRMED_CREDITED'
+                              ? 'badge-green'
+                              : d.status === 'REJECTED'
+                              ? 'badge-danger'
+                              : 'badge-amber'
+                          }`}
+                        >
+                          {d.status}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {d.status === 'PENDING_ADMIN_VERIFICATION' && (
+                          <button
+                            type="button"
+                            className="btn btn-cta btn-xs"
+                            onClick={() => {
+                              setSelectedDeposit(d);
+                              setDepositAction('APPROVE');
+                              setDepositNotes('');
+                              setDepositReviewMsg(null);
+                            }}
+                          >
+                            Review Slip
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Enhanced Deposit Review Modal */}
+          {selectedDeposit && (() => {
+            const isSelfReview = Boolean(user && user.discordId === selectedDeposit.advertiserId);
+            const isRejectionInvalid = depositAction === 'REJECT' && (!depositNotes || depositNotes.trim().length < 5);
+
+            return (
+              <div className="studio-modal-backdrop" onClick={() => setSelectedDeposit(null)}>
+                <div className="studio-modal-card studio-modal-card-lg" onClick={(e) => e.stopPropagation()}>
+                  <div className="studio-modal-header">
+                    <div>
+                      <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800 }}>
+                        Review Manual Deposit #{selectedDeposit.id}
+                      </h3>
+                      <span style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                        {selectedDeposit.fundingRef}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="studio-modal-close"
+                      onClick={() => setSelectedDeposit(null)}
+                    >
+                      &times;
+                    </button>
+                  </div>
+
+                  <div className="studio-modal-body">
+                    {/* Anti-Self-Approval Guard Alert */}
+                    {isSelfReview && (
+                      <div
+                        style={{
+                          backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                          border: '1px solid var(--status-danger)',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '0.75rem 1rem',
+                          fontSize: '0.82rem',
+                          color: 'var(--status-danger)',
+                          marginBottom: '1rem',
+                          fontWeight: 600,
+                        }}
+                      >
+                        ⚠️ <strong>Anti-Self-Approval Guard:</strong> You are the depositor of this funding request. An independent administrator or owner must perform this review.
+                      </div>
+                    )}
+
+                    {/* Deposit Information Box */}
+                    <div
+                      style={{
+                        backgroundColor: 'var(--bg-main)',
+                        padding: '1rem',
+                        borderRadius: 'var(--radius-sm)',
+                        marginBottom: '1rem',
+                        fontSize: '0.84rem',
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                        gap: '0.6rem',
+                        border: '1px solid var(--border-subtle)',
+                      }}
+                    >
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Advertiser: </span>
+                        <strong>{selectedDeposit.advertiserName}</strong>
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>{selectedDeposit.advertiserId}</span>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Requested IRT: </span>
+                        <strong style={{ color: 'var(--accent-lime)' }}>
+                          {Number(selectedDeposit.externalAmountUnits).toLocaleString()} {selectedDeposit.externalCurrency}
+                        </strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Quoted USD Credit: </span>
+                        <strong>{selectedDeposit.targetUsdFormatted}</strong>
+                        {selectedDeposit.exchangeRate && (
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>
+                            Rate: {selectedDeposit.exchangeRate.toLocaleString()} IRT/USD
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Depositor Name / Card: </span>
+                        <strong>{selectedDeposit.rawPayerIdentifier || selectedDeposit.payerIdentifier}</strong>
+                        {selectedDeposit.senderCardLast4 && (
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>
+                            Card Last 4: {selectedDeposit.senderCardLast4}
+                          </span>
+                        )}
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Bank Tracking Reference: </span>
+                        <strong style={{ fontFamily: 'monospace' }}>{selectedDeposit.evidenceRef || 'None'}</strong>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Payment Date: </span>
+                        <strong>{selectedDeposit.paymentDate || new Date(selectedDeposit.createdAt).toLocaleDateString()}</strong>
+                      </div>
+                      {selectedDeposit.payerDescription && (
+                        <div style={{ gridColumn: '1 / -1', borderTop: '1px solid rgba(45, 38, 69, 0.4)', paddingTop: '0.4rem' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Payer Description / Remarks: </span>
+                          <span>{selectedDeposit.payerDescription}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Secure Receipt Screenshot Preview */}
+                    {selectedDeposit.receiptUrl ? (
+                      <div
+                        style={{
+                          backgroundColor: 'var(--bg-main)',
+                          padding: '0.85rem',
+                          borderRadius: 'var(--radius-sm)',
+                          marginBottom: '1rem',
+                          textAlign: 'center',
+                          border: '1px solid var(--border-subtle)',
+                        }}
+                      >
+                        <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '0.5rem', textTransform: 'uppercase' }}>
+                          Payment Receipt Screenshot Evidence
+                        </div>
+                        <a href={selectedDeposit.receiptUrl} target="_blank" rel="noopener noreferrer" title="Click to view full image in a new tab">
+                          <img
+                            src={selectedDeposit.receiptUrl}
+                            alt="Payment Receipt Slip"
+                            style={{
+                              maxHeight: '180px',
+                              maxWidth: '100%',
+                              borderRadius: '6px',
+                              border: '1px solid var(--border-subtle)',
+                              objectFit: 'contain',
+                              cursor: 'pointer',
+                            }}
+                          />
+                        </a>
+                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>
+                          Click screenshot to inspect original in new browser tab
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          backgroundColor: 'var(--bg-main)',
+                          padding: '0.75rem',
+                          borderRadius: 'var(--radius-sm)',
+                          marginBottom: '1rem',
+                          textAlign: 'center',
+                          fontSize: '0.8rem',
+                          color: 'var(--text-muted)',
+                          border: '1px solid var(--border-subtle)',
+                        }}
+                      >
+                        📎 No receipt screenshot attached (Historical deposit submission)
+                      </div>
+                    )}
+
+                    {/* Gate Notice Warning */}
+                    <div
+                      style={{
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        border: '1px solid rgba(239, 68, 68, 0.25)',
+                        padding: '0.75rem 1rem',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.8rem',
+                        color: '#fca5a5',
+                        marginBottom: '1rem',
+                      }}
+                    >
+                      ⚠️ <strong>Live Credits Feature Gate Notice:</strong> Live balance crediting is currently disabled by system policy (FINANCE_V2_LIVE_CREDITS_ENABLED=false). Approving will record verified status without injecting live balances.
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.88rem' }}>
+                        <input
+                          type="radio"
+                          name="depAction"
+                          checked={depositAction === 'APPROVE'}
+                          onChange={() => setDepositAction('APPROVE')}
+                        />
+                        Approve &amp; Record Verification
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.88rem' }}>
+                        <input
+                          type="radio"
+                          name="depAction"
+                          checked={depositAction === 'REJECT'}
+                          onChange={() => setDepositAction('REJECT')}
+                        />
+                        Reject Deposit
+                      </label>
+                    </div>
+
+                    <div style={{ marginBottom: '1.25rem' }}>
+                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                        Reviewer Notes / Verification Reference {depositAction === 'REJECT' && <span style={{ color: 'var(--status-danger)' }}>* (Min 5 chars required)</span>}
+                      </label>
+                      <textarea
+                        className="input"
+                        rows={2}
+                        placeholder={
+                          depositAction === 'REJECT'
+                            ? 'Please provide a clear reason for rejecting this deposit (min 5 chars)...'
+                            : 'E.g. Bank tracking number verified via online banking statement'
+                        }
+                        value={depositNotes}
+                        onChange={(e) => setDepositNotes(e.target.value)}
+                        style={{ padding: '0.6rem' }}
+                      />
+                    </div>
+
+                    {depositReviewMsg && (
+                      <div
+                        style={{
+                          padding: '0.65rem 0.85rem',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '0.82rem',
+                          marginBottom: '1rem',
+                          backgroundColor: depositReviewMsg.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                          color: depositReviewMsg.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                        }}
+                      >
+                        {depositReviewMsg.text}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="studio-modal-footer">
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setSelectedDeposit(null)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={submittingDeposit || isSelfReview || isRejectionInvalid}
+                      className="btn btn-cta btn-sm"
+                      onClick={async () => {
+                        setSubmittingDeposit(true);
+                        setDepositReviewMsg(null);
+                        try {
+                          await reviewAdminDeposit(selectedDeposit.id, depositAction, depositNotes);
+                          setDepositReviewMsg({ text: 'Decision successfully processed.', type: 'success' });
+                          setTimeout(() => {
+                            setSelectedDeposit(null);
+                            loadDeposits(depositsPagination.page);
+                          }, 800);
+                        } catch (err: any) {
+                          setDepositReviewMsg({ text: err.message || 'Review submission failed', type: 'error' });
+                        } finally {
+                          setSubmittingDeposit(false);
+                        }
+                      }}
+                    >
+                      {submittingDeposit ? 'Submitting...' : 'Submit Decision'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
@@ -534,28 +948,31 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
             {exchangeLoading ? (
               <LoadingState message="Loading exchange offers..." />
             ) : offers.length === 0 ? (
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No fee offers registered.</div>
+              <div className="empty-state-box">
+                <div className="empty-state-icon">🪙</div>
+                <p style={{ color: 'var(--text-muted)', margin: 0 }}>No fee offers registered.</p>
+              </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <div className="table-scroll">
+                <table className="data-table">
                   <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Offer Ref</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Exchanger</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Service Type</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Commission</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Status</th>
+                    <tr>
+                      <th>Offer Ref</th>
+                      <th>Exchanger</th>
+                      <th>Service Type</th>
+                      <th>Commission</th>
+                      <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {offers.map((o) => (
-                      <tr key={o.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                        <td style={{ padding: '0.65rem 0.5rem', fontFamily: 'monospace' }}>{o.offerRef}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{o.exchanger}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{o.serviceType}</td>
-                        <td style={{ padding: '0.65rem 0.5rem', color: 'var(--accent-lime)' }}>{o.commissionFormatted}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>
-                          <span className="badge badge-success" style={{ fontSize: '0.72rem' }}>{o.status}</span>
+                      <tr key={o.id}>
+                        <td style={{ fontFamily: 'monospace' }}>{o.offerRef}</td>
+                        <td style={{ fontWeight: 600 }}>{o.exchanger}</td>
+                        <td>{o.serviceType}</td>
+                        <td style={{ color: 'var(--accent-lime)', fontWeight: 700 }}>{o.commissionFormatted}</td>
+                        <td>
+                          <span className="badge badge-green">{o.status}</span>
                         </td>
                       </tr>
                     ))}
@@ -571,32 +988,35 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
             {exchangeLoading ? (
               <LoadingState message="Loading gold trades..." />
             ) : trades.length === 0 ? (
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No gold trades executed yet.</div>
+              <div className="empty-state-box">
+                <div className="empty-state-icon">🤝</div>
+                <p style={{ color: 'var(--text-muted)', margin: 0 }}>No gold trades executed yet.</p>
+              </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+              <div className="table-scroll">
+                <table className="data-table">
                   <thead>
-                    <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Trade Ref</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Seller (Adv)</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Buyer (Exchanger)</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Gold Quantity</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Valuation</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Method</th>
-                      <th style={{ padding: '0.65rem 0.5rem' }}>Status</th>
+                    <tr>
+                      <th>Trade Ref</th>
+                      <th>Seller (Adv)</th>
+                      <th>Buyer (Exchanger)</th>
+                      <th>Gold Quantity</th>
+                      <th>Valuation</th>
+                      <th>Method</th>
+                      <th>Status</th>
                     </tr>
                   </thead>
                   <tbody>
                     {trades.map((t) => (
-                      <tr key={t.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                        <td style={{ padding: '0.65rem 0.5rem', fontFamily: 'monospace' }}>{t.tradeRef}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{t.seller}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{t.buyer}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{t.goldQuantity.toLocaleString()} Gold</td>
-                        <td style={{ padding: '0.65rem 0.5rem', color: 'var(--accent-lime)' }}>{t.valuationFormatted}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>{t.settlementMethod}</td>
-                        <td style={{ padding: '0.65rem 0.5rem' }}>
-                          <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>{t.tradeStatus}</span>
+                      <tr key={t.id}>
+                        <td style={{ fontFamily: 'monospace' }}>{t.tradeRef}</td>
+                        <td style={{ fontWeight: 600 }}>{t.seller}</td>
+                        <td style={{ fontWeight: 600 }}>{t.buyer}</td>
+                        <td>{t.goldQuantity.toLocaleString()} Gold</td>
+                        <td style={{ color: 'var(--accent-lime)', fontWeight: 700 }}>{t.valuationFormatted}</td>
+                        <td>{t.settlementMethod}</td>
+                        <td>
+                          <span className="badge badge-purple">{t.tradeStatus}</span>
                         </td>
                       </tr>
                     ))}
@@ -618,17 +1038,11 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
             <div style={{ display: 'flex', gap: '0.75rem' }}>
               <input
                 type="text"
+                className="input"
                 placeholder="Filter by action name..."
                 value={auditActionFilter}
                 onChange={(e) => setAuditActionFilter(e.target.value)}
-                style={{
-                  padding: '0.45rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--bg-main)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  fontSize: '0.85rem',
-                }}
+                style={{ width: '220px', padding: '0.45rem 0.85rem', fontSize: '0.85rem' }}
               />
               <button
                 type="button"
@@ -643,43 +1057,44 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
           {auditLoading ? (
             <LoadingState message="Loading audit history..." />
           ) : auditLogs.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-              No audit records matching query.
+            <div className="empty-state-box">
+              <div className="empty-state-icon">📜</div>
+              <p style={{ color: 'var(--text-muted)', margin: 0 }}>No audit records matching query.</p>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+            <div className="table-scroll">
+              <table className="data-table">
                 <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Timestamp</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Actor</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Action</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Entity</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Reason / Notes</th>
-                    <th style={{ padding: '0.75rem 0.5rem' }}>Outcome</th>
+                  <tr>
+                    <th>Timestamp</th>
+                    <th>Actor</th>
+                    <th>Action</th>
+                    <th>Entity</th>
+                    <th>Reason / Notes</th>
+                    <th>Outcome</th>
                   </tr>
                 </thead>
                 <tbody>
                   {auditLogs.map((l) => (
-                    <tr key={l.id} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                      <td style={{ padding: '0.75rem 0.5rem', color: 'var(--text-muted)' }}>
+                    <tr key={l.id}>
+                      <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                         {new Date(l.createdAt).toLocaleString()}
                       </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <div>{l.actor}</div>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{l.actor}</div>
                         <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.actorId}</div>
                       </td>
-                      <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace', color: 'var(--accent-lime)' }}>
+                      <td style={{ fontFamily: 'monospace', color: 'var(--accent-lime)' }}>
                         {l.action}
                       </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
+                      <td>
                         {l.entityType} #{l.entityId}
                       </td>
-                      <td style={{ padding: '0.75rem 0.5rem', maxWidth: '280px', color: 'var(--text-muted)' }}>
+                      <td style={{ maxWidth: '280px', color: 'var(--text-muted)', fontSize: '0.82rem' }}>
                         {l.reason || '—'}
                       </td>
-                      <td style={{ padding: '0.75rem 0.5rem' }}>
-                        <span className={`badge ${l.isSuccess ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.72rem' }}>
+                      <td>
+                        <span className={`badge ${l.isSuccess ? 'badge-green' : 'badge-danger'}`}>
                           {l.isSuccess ? 'SUCCESS' : 'FAILED'}
                         </span>
                       </td>
@@ -718,11 +1133,6 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
-      {/* RULES & POLICIES CMS WORKSPACE                                                */}
-      {/* ───────────────────────────────────────────────────────────────────────────── */}
-      {activeTab === 'rules' && <RulesManagementWorkspace />}
-
-      {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB 7: ROLE & PERMISSION MATRIX                                               */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'roles' && (
@@ -737,9 +1147,9 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
           ) : rolesMatrix ? (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
               {rolesMatrix.roles.map((role) => (
-                <div key={role} style={{ backgroundColor: 'var(--bg-main)', padding: '1.25rem', borderRadius: 'var(--radius-sm)' }}>
+                <div key={role} className="card-surface" style={{ padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
-                    <span style={{ fontWeight: 800, textTransform: 'uppercase', color: 'var(--accent-lime)', fontSize: '0.95rem' }}>
+                    <span style={{ fontWeight: 800, textTransform: 'uppercase', color: 'var(--accent-yellow)', fontSize: '0.95rem' }}>
                       {role}
                     </span>
                     <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>

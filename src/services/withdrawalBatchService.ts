@@ -18,7 +18,7 @@
 import prisma from '../database/db';
 import { authorize } from './authorizationService';
 import { Permission } from './permissionTypes';
-import { getOrCreatePlatformAccount } from './platformBalanceService';
+import { getOrCreatePlatformAccount, ExternalPlatform } from './platformBalanceService';
 import { getPlatformWithdrawalThreshold } from './financialPolicyService';
 import { allocateProportionalWithRemainder } from './financialCalculationEngine';
 import { Prisma } from '@prisma/client';
@@ -40,7 +40,7 @@ export interface OrderContributionItem {
 }
 
 export interface CreateBatchInput {
-  platform: 'g2g' | 'skycoach' | 'eldorado';
+  platform: ExternalPlatform;
   accountRef: string;
   currency?: string;
   orderContributions: OrderContributionItem[];

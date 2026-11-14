@@ -1428,6 +1428,10 @@ export async function getSeparatedOrdersList(
       andFilters.push({ sourceWebsite: 'skycoach', advertiserId: null });
     } else if (query.source === 'eldorado') {
       andFilters.push({ sourceWebsite: 'eldorado', advertiserId: null });
+    } else if (query.source === 'kingboost') {
+      andFilters.push({ sourceWebsite: 'kingboost', advertiserId: null });
+    } else if (query.source === 'overgear') {
+      andFilters.push({ sourceWebsite: 'overgear', advertiserId: null });
     } else if (query.source === 'direct') {
       andFilters.push({ sourceWebsite: null, advertiserId: null, creatorType: { not: 'advertiser' } });
     } else if (query.source === 'needs_review') {

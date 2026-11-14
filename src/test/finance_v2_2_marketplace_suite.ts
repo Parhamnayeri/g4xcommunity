@@ -48,6 +48,9 @@ import {
 import { getOrCreateWalletV2 } from '../services/financeV2/financeV2WalletService';
 
 async function runFinanceV2_2TestSuite() {
+  if (!process.env.EXCHANGE_QUOTE_SIGNING_SECRET) {
+    process.env.EXCHANGE_QUOTE_SIGNING_SECRET = 'marketplace_quote_secret_entropy_32chars_long!';
+  }
   console.log('=== STARTING G4X FINANCE V2.2 MARKETPLACE & P2P TEST SUITE ===\n');
 
   let passed = 0;

@@ -214,6 +214,18 @@ export async function seed(): Promise<void> {
         await tx.gameService.create({ data: service });
       }
     }
+    const defaultAccounts = [
+      { accountRef: 'g2g_main', platform: 'g2g', displayName: 'G2G Main Account' },
+      { accountRef: 'skycoach_main', platform: 'skycoach', displayName: 'SkyCoach Main Account' },
+      { accountRef: 'eldorado_main', platform: 'eldorado', displayName: 'Eldorado Main Account' },
+      { accountRef: 'kingboost_main', platform: 'kingboost', displayName: 'Kingboost Main Account' },
+      { accountRef: 'overgear_main', platform: 'overgear', displayName: 'Overgear Main Account' },
+    ];
+    for (const acct of defaultAccounts) {
+      if (!(await tx.platformAccount.findUnique({ where: { accountRef: acct.accountRef } }))) {
+        await tx.platformAccount.create({ data: { ...acct, currency: 'USD', isActive: true } });
+      }
+    }
   });
   console.log('[Seed] ✅ Missing defaults initialized; existing configuration preserved.');
 }

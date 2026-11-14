@@ -24,7 +24,7 @@ import { Permission } from './permissionTypes';
 import { getPlatformWithdrawalThreshold } from './financialPolicyService';
 import { Prisma } from '@prisma/client';
 
-export type ExternalPlatform = 'g2g' | 'skycoach' | 'eldorado';
+export type ExternalPlatform = 'g2g' | 'skycoach' | 'eldorado' | 'kingboost' | 'overgear';
 
 export interface CreatePlatformAccountInput {
   accountRef: string;

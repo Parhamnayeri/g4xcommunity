@@ -1,29 +1,68 @@
 /**
  * G4X Design System — Design Tokens (Source of Truth)
- * Mandatory brand color palette and system variables
+ * Studio-grade dark gaming/fintech aesthetic:
+ * Deep obsidian/black canvas (#09090B), elevated dark slate cards (#13151C / #181B24),
+ * Neon Yellow primary (#FACC15), Electric Purple secondary (#8B5CF6).
  */
 
 :root {
-  /* Mandatory Core Palette */
-  --bg-main: #0d0b12;
-  --bg-surface: #181524;
-  --bg-surface-hover: #231e34;
-  --primary-purple: #7c3aed;
-  --primary-purple-hover: #6d28d9;
-  --purple-glow: rgba(124, 58, 237, 0.35);
-  --accent-lime: #ccff00;
-  --accent-lime-hover: #b8e600;
-  --accent-lime-glow: rgba(204, 255, 0, 0.4);
-  --text-primary: #f4f4f6;
-  --text-muted: #94a3b8;
-  --text-inverse: #0d0b12;
-  --border-subtle: #2d2645;
+  /* Deep Obsidian Canvas & Elevated Dark Slate Surfaces */
+  --bg-main: #09090b;
+  --bg-canvas: #09090b;
+  --bg-surface: #13151c;
+  --bg-surface-elevated: #181b24;
+  --bg-surface-hover: #1f2330;
+  --bg-card: #13151c;
+  --bg-input: #0d0f15;
+  --bg-modal: #14161f;
+  --bg-modal-backdrop: rgba(5, 6, 10, 0.82);
 
-  /* Status Colors (Harmonious with Dark/Purple aesthetic) */
+  /* Primary Accent: Neon Yellow */
+  --accent-yellow: #facc15;
+  --accent-yellow-hover: #eab308;
+  --accent-yellow-glow: rgba(250, 204, 21, 0.35);
+
+  /* Backward-compatible alias for existing accent-lime usage */
+  --accent-lime: #facc15;
+  --accent-lime-hover: #eab308;
+  --accent-lime-glow: rgba(250, 204, 21, 0.35);
+
+  /* Secondary Accent: Electric Purple */
+  --primary-purple: #8b5cf6;
+  --primary-purple-hover: #7c3aed;
+  --primary-purple-glow: rgba(139, 92, 246, 0.35);
+  --purple-glow: rgba(139, 92, 246, 0.35);
+
+  /* Typography & High-Contrast Neutral Scale */
+  --text-primary: #f9fafb;
+  --text-secondary: #d1d5db;
+  --text-muted: #9ca3af;
+  --text-subtle: #6b7280;
+  --text-inverse: #09090b;
+
+  /* Subtle Crisp Borders & Glassmorphic Highlights */
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --border-focus: #facc15;
+  --border-purple: rgba(139, 92, 246, 0.3);
+  --border-yellow: rgba(250, 204, 21, 0.3);
+
+  /* Semantic Status Colors */
   --status-success: #10b981;
+  --status-success-bg: rgba(16, 185, 129, 0.12);
+  --status-success-border: rgba(16, 185, 129, 0.3);
+
   --status-warning: #f59e0b;
+  --status-warning-bg: rgba(245, 158, 11, 0.12);
+  --status-warning-border: rgba(245, 158, 11, 0.3);
+
   --status-danger: #ef4444;
+  --status-danger-bg: rgba(239, 68, 68, 0.12);
+  --status-danger-border: rgba(239, 68, 68, 0.3);
+
   --status-info: #38bdf8;
+  --status-info-bg: rgba(56, 189, 248, 0.12);
+  --status-info-border: rgba(56, 189, 248, 0.3);
 
   /* Typography */
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -33,15 +72,17 @@
   --radius-xs: 4px;
   --radius-sm: 8px;
   --radius-md: 12px;
-  --radius-lg: 18px;
+  --radius-lg: 16px;
   --radius-xl: 24px;
   --radius-full: 9999px;
 
-  /* Shadows & Glows */
-  --shadow-subtle: 0 4px 20px rgba(0, 0, 0, 0.35);
-  --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.5);
-  --shadow-purple-sm: 0 0 15px var(--purple-glow);
-  --shadow-lime-cta: 0 0 15px var(--accent-lime-glow);
+  /* Shadows, Elevation & Glows */
+  --shadow-subtle: 0 4px 20px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 8px 30px rgba(0, 0, 0, 0.6);
+  --shadow-modal: 0 24px 60px rgba(0, 0, 0, 0.75);
+  --shadow-purple-sm: 0 0 15px var(--primary-purple-glow);
+  --shadow-yellow-cta: 0 0 18px var(--accent-yellow-glow);
+  --shadow-lime-cta: 0 0 18px var(--accent-yellow-glow);
 
   /* Transitions */
   --transition-fast: 0.15s ease;

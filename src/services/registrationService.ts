@@ -11,7 +11,13 @@ import { fetchCharacterData, fetchRaiderIOProfile, parseRaiderIOProfileUrl, Raid
 import { Prisma } from '@prisma/client';
 import { PermissionFlagsBits } from 'discord.js';
 import { processNotificationOutbox } from './notificationWorker';
-import { validateApplicationKycDocuments } from './kycDocumentSecurity';
+import {
+  validateApplicationKycDocuments,
+  sendKycRequestDm,
+  getUserKycStatus,
+  assistUserKyc,
+  saveKycDocument,
+} from './kycDocumentSecurity';
 
 export type RegistrationCategory = 'booster' | 'pilot' | 'advertiser' | 'exchanger';
 
@@ -26,7 +32,7 @@ export type ApplicationStatus =
 
 export interface BoosterRegistrationInput {
   userId: string;
-  gameSlug: string;
+  gameSlug?: string | null;
   serviceId?: number;
   preferredLanguage?: string;
   experience?: string;
@@ -40,7 +46,7 @@ export interface BoosterRegistrationInput {
 
 export interface PilotRegistrationInput {
   userId: string;
-  gameSlug: string;
+  gameSlug?: string | null;
   serviceId?: number;
   preferredLanguage?: string;
   experience?: string;
@@ -51,6 +57,7 @@ export interface PilotRegistrationInput {
     telegram?: string;
   };
   notes?: string;
+  discordClient?: any;
 }
 
 export interface AdvertiserRegistrationInput {
@@ -60,6 +67,7 @@ export interface AdvertiserRegistrationInput {
   priorExperience: string;
   contactInfo: string;
   requestedCommission?: any;
+  discordClient?: any;
 }
 
 export interface ExchangerRegistrationInput {
@@ -70,6 +78,7 @@ export interface ExchangerRegistrationInput {
   gameCurrencies: string[];
   settlementCurrencies: string[];
   contactInfo?: string;
+  discordClient?: any;
 }
 
 export interface ApplicationReviewInput {
@@ -181,35 +190,37 @@ export async function upsertUserGameApproval(
  * ۱. ثبت‌نام بوستر
  */
 export async function registerBooster(input: BoosterRegistrationInput) {
-  const { userId, gameSlug, serviceId, preferredLanguage = 'en' } = input;
+  const normalizedGameSlug = (input.gameSlug && input.gameSlug !== 'all') ? input.gameSlug.trim() : undefined;
+  const { userId, serviceId, preferredLanguage = 'en' } = input;
+  const gameSlug = normalizedGameSlug;
 
   await ensureUserExists(userId);
 
-  const game = await prisma.game.findUnique({ where: { slug: gameSlug } });
-  if (!game || !game.isActive) {
-    throw new Error(`INVALID_GAME: Game '${gameSlug}' is invalid or inactive`);
-  }
+  if (gameSlug) {
+    const game = await prisma.game.findUnique({ where: { slug: gameSlug } });
+    if (!game || !game.isActive) {
+      throw new Error(`INVALID_GAME: Game '${gameSlug}' is invalid or inactive`);
+    }
 
-  if (serviceId) {
-    const service = await prisma.gameService.findUnique({ where: { id: serviceId } });
-    if (!service || service.gameSlug !== gameSlug || !service.isActive) {
-      throw new Error(`INVALID_GAME_SERVICE: Service ID ${serviceId} does not belong to game '${gameSlug}' or is inactive`);
+    if (serviceId) {
+      const service = await prisma.gameService.findUnique({ where: { id: serviceId } });
+      if (!service || service.gameSlug !== gameSlug || !service.isActive) {
+        throw new Error(`INVALID_GAME_SERVICE: Service ID ${serviceId} does not belong to game '${gameSlug}' or is inactive`);
+      }
     }
   }
 
-  // جلوگیری از درخواست‌های فعال همزمان
+  // جلوگیری از درخواست‌های فعال همزمان — بوستر به صورت سراسری اپلای می‌کند و نیازی به اپلای مجزا برای هر گیم ندارد
   const existingPending = await prisma.registrationApplication.findFirst({
     where: {
       userId,
       category: 'booster',
-      gameSlug,
-      serviceId: serviceId ?? null,
       status: { in: ACTIVE_APPLICATION_STATUSES },
     },
   });
 
   if (existingPending) {
-    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have an active booster application for this game and service');
+    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have an active booster application');
   }
 
   let wowCharacterId: number | null = null;
@@ -275,11 +286,12 @@ export async function registerBooster(input: BoosterRegistrationInput) {
           .join(' | ')
       : null;
 
+    const charGameSlug = gameSlug || 'wow_midnight';
     const savedChar = await prisma.wowCharacter.upsert({
       where: {
         userId_gameSlug_region_realm_characterName: {
           userId,
-          gameSlug,
+          gameSlug: charGameSlug,
           region,
           realm,
           characterName: charName,
@@ -300,7 +312,7 @@ export async function registerBooster(input: BoosterRegistrationInput) {
       },
       create: {
         userId,
-        gameSlug,
+        gameSlug: charGameSlug,
         region,
         realm,
         characterName: charName,
@@ -332,7 +344,7 @@ export async function registerBooster(input: BoosterRegistrationInput) {
     data: {
       userId,
       category: 'booster',
-      gameSlug,
+      gameSlug: gameSlug || null,
       serviceId: serviceId ?? null,
       preferredLanguage,
       qualifications: JSON.stringify(qualificationsData),
@@ -341,7 +353,9 @@ export async function registerBooster(input: BoosterRegistrationInput) {
     },
   });
 
-  await upsertUserGameApproval(prisma, userId, gameSlug, serviceId ?? null, 'booster', 'pending');
+  if (gameSlug) {
+    await upsertUserGameApproval(prisma, userId, gameSlug, serviceId ?? null, 'booster', 'pending');
+  }
 
   await prisma.auditLog.create({
     data: {
@@ -375,37 +389,41 @@ export async function registerBooster(input: BoosterRegistrationInput) {
  * ۲. ثبت‌نام پایلوت
  */
 export async function registerPilot(input: PilotRegistrationInput) {
-  const { userId, gameSlug, serviceId, preferredLanguage = 'en' } = input;
+  const normalizedGameSlug = (input.gameSlug && input.gameSlug !== 'all') ? input.gameSlug.trim() : undefined;
+  const { userId, serviceId, preferredLanguage = 'en' } = input;
+  const gameSlug = normalizedGameSlug;
 
   await ensureUserExists(userId);
 
-  if (!SUPPORTED_PILOT_GAMES.includes(gameSlug)) {
-    throw new Error(`UNSUPPORTED_PILOT_GAME: Game '${gameSlug}' is not supported for pilot operations`);
-  }
+  if (gameSlug) {
+    if (!SUPPORTED_PILOT_GAMES.includes(gameSlug)) {
+      throw new Error(`UNSUPPORTED_PILOT_GAME: Game '${gameSlug}' is not supported for pilot operations`);
+    }
 
-  const game = await prisma.game.findUnique({ where: { slug: gameSlug } });
-  if (!game || !game.isActive) {
-    throw new Error(`INVALID_GAME: Game '${gameSlug}' is invalid or inactive`);
-  }
+    const game = await prisma.game.findUnique({ where: { slug: gameSlug } });
+    if (!game || !game.isActive) {
+      throw new Error(`INVALID_GAME: Game '${gameSlug}' is invalid or inactive`);
+    }
 
-  if (serviceId) {
-    const service = await prisma.gameService.findUnique({ where: { id: serviceId } });
-    if (!service || service.gameSlug !== gameSlug || !service.isActive) {
-      throw new Error(`INVALID_GAME_SERVICE: Service ID ${serviceId} does not belong to game '${gameSlug}'`);
+    if (serviceId) {
+      const service = await prisma.gameService.findUnique({ where: { id: serviceId } });
+      if (!service || service.gameSlug !== gameSlug || !service.isActive) {
+        throw new Error(`INVALID_GAME_SERVICE: Service ID ${serviceId} does not belong to game '${gameSlug}'`);
+      }
     }
   }
 
+  // پایلوت بوستر به صورت سراسری اپلای می‌کند و نیازی به اپلای مجزا برای هر گیم ندارد
   const existingPending = await prisma.registrationApplication.findFirst({
     where: {
       userId,
       category: 'pilot',
-      gameSlug,
       status: { in: ACTIVE_APPLICATION_STATUSES },
     },
   });
 
   if (existingPending) {
-    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have an active pilot application for this game');
+    throw new Error('DUPLICATE_PENDING_APPLICATION: You already have an active pilot application');
   }
 
   let rioSnapshot: RaiderIOSnapshot | null = null;
@@ -425,11 +443,17 @@ export async function registerPilot(input: PilotRegistrationInput) {
     canonicalRioUrl = parsed.canonicalUrl;
   }
 
+  const existingApprovedKyc = await prisma.pilotVerification.findFirst({
+    where: { userId, status: 'approved' },
+    orderBy: { reviewedAt: 'desc' },
+  });
+  const isAlreadyKycVerified = Boolean(existingApprovedKyc);
+
   const qualificationsData: Record<string, any> = {
     experience: input.experience ?? '',
     contactPreferences: input.contactPreferences ?? {},
     notes: input.notes ?? '',
-    identityVerificationState: 'awaiting_secure_submission',
+    identityVerificationState: isAlreadyKycVerified ? 'previously_verified' : 'awaiting_secure_submission',
     ...(rioSnapshot ? { raiderioSnapshot: rioSnapshot, raiderioUrl: canonicalRioUrl } : {}),
   };
 
@@ -437,28 +461,59 @@ export async function registerPilot(input: PilotRegistrationInput) {
     data: {
       userId,
       category: 'pilot',
-      gameSlug,
+      gameSlug: gameSlug || null,
       serviceId: serviceId ?? null,
       preferredLanguage,
       qualifications: JSON.stringify(qualificationsData),
       status: 'pending',
       roleSyncStatus: 'pending',
-      identityStatus: 'awaiting_submission',
+      identityStatus: isAlreadyKycVerified ? 'verified' : 'awaiting_submission',
     },
   });
 
-  await prisma.pilotVerification.create({
-    data: {
-      userId,
-      gameSlug,
-      status: 'pending',
-      identityDocumentRef: null,
-      passportDocumentRef: null,
-      selfieDocumentRef: null,
-    },
-  });
+  if (isAlreadyKycVerified && existingApprovedKyc) {
+    const existingForGame = await prisma.pilotVerification.findFirst({
+      where: { userId, gameSlug: gameSlug || 'wow_midnight' },
+    });
+    if (!existingForGame) {
+      await prisma.pilotVerification.create({
+        data: {
+          userId,
+          gameSlug: gameSlug || 'wow_midnight',
+          status: 'approved',
+          identityDocumentRef: existingApprovedKyc.identityDocumentRef,
+          passportDocumentRef: existingApprovedKyc.passportDocumentRef,
+          selfieDocumentRef: existingApprovedKyc.selfieDocumentRef,
+          reviewedBy: existingApprovedKyc.reviewedBy,
+          reviewedAt: existingApprovedKyc.reviewedAt,
+          reviewNote: 'Reused previously approved KYC verification',
+        },
+      });
+    }
+  } else {
+    await prisma.pilotVerification.create({
+      data: {
+        userId,
+        gameSlug: gameSlug || 'wow_midnight',
+        status: 'pending',
+        identityDocumentRef: null,
+        passportDocumentRef: null,
+        selfieDocumentRef: null,
+      },
+    });
 
-  await upsertUserGameApproval(prisma, userId, gameSlug, serviceId ?? null, 'pilot', 'pending');
+    // Automatically dispatch Discord DM with direct KYC link
+    sendKycRequestDm(userId, {
+      category: 'pilot',
+      reason: 'Identity verification required for Pilot application',
+      applicationId: application.id,
+      client: input.discordClient,
+    }).catch(() => null);
+  }
+
+  if (gameSlug) {
+    await upsertUserGameApproval(prisma, userId, gameSlug, serviceId ?? null, 'pilot', 'pending');
+  }
 
   await prisma.auditLog.create({
     data: {
@@ -518,6 +573,13 @@ export async function registerAdvertiser(input: AdvertiserRegistrationInput) {
     contactInfo: input.contactInfo.trim(),
   };
 
+  // Check if user already holds globally approved identity verification (Single-Verification Reuse)
+  const existingApprovedKyc = await prisma.pilotVerification.findFirst({
+    where: { userId, status: 'approved' },
+  });
+
+  const identityStatus = existingApprovedKyc ? 'verified' : 'awaiting_submission';
+
   const application = await prisma.registrationApplication.create({
     data: {
       userId,
@@ -526,8 +588,29 @@ export async function registerAdvertiser(input: AdvertiserRegistrationInput) {
       qualifications: JSON.stringify(qualificationsData),
       status: 'pending',
       roleSyncStatus: 'pending',
+      identityStatus,
     },
   });
+
+  if (!existingApprovedKyc) {
+    const existingVerif = await prisma.pilotVerification.findFirst({ where: { userId } });
+    if (!existingVerif) {
+      await prisma.pilotVerification.create({
+        data: {
+          userId,
+          gameSlug: 'advertiser',
+          status: 'pending',
+        },
+      }).catch(() => null);
+    }
+
+    sendKycRequestDm(userId, {
+      category: 'advertiser',
+      reason: 'Identity verification required for Advertiser role',
+      applicationId: application.id,
+      client: input.discordClient,
+    }).catch(() => null);
+  }
 
   await prisma.auditLog.create({
     data: {
@@ -602,6 +685,12 @@ export async function registerExchanger(input: ExchangerRegistrationInput) {
     contactInfo: input.contactInfo?.trim() || '',
   };
 
+  const existingApprovedKyc = await prisma.pilotVerification.findFirst({
+    where: { userId, status: 'approved' },
+    orderBy: { reviewedAt: 'desc' },
+  });
+  const isAlreadyKycVerified = Boolean(existingApprovedKyc);
+
   const application = await prisma.registrationApplication.create({
     data: {
       userId,
@@ -610,9 +699,29 @@ export async function registerExchanger(input: ExchangerRegistrationInput) {
       qualifications: JSON.stringify(qualificationsData),
       status: 'pending',
       roleSyncStatus: 'pending',
-      identityStatus: 'awaiting_submission',
+      identityStatus: isAlreadyKycVerified ? 'verified' : 'awaiting_submission',
     },
   });
+
+  if (!isAlreadyKycVerified) {
+    const existingVerif = await prisma.pilotVerification.findFirst({ where: { userId } });
+    if (!existingVerif) {
+      await prisma.pilotVerification.create({
+        data: {
+          userId,
+          gameSlug: 'exchanger',
+          status: 'pending',
+        },
+      }).catch(() => null);
+    }
+
+    sendKycRequestDm(userId, {
+      category: 'exchanger',
+      reason: 'Identity verification required for Exchanger application',
+      applicationId: application.id,
+      client: input.discordClient,
+    }).catch(() => null);
+  }
 
   await prisma.auditLog.create({
     data: {
@@ -865,6 +974,21 @@ export async function reviewApplication(input: ApplicationReviewInput) {
           reviewerId,
           reviewNotes
         );
+      } else if (['booster', 'pilot'].includes(currentApp.category)) {
+        // برای اپلیکیشن گلوبال بوستر یا پایلوت، تایید سراسری برای تمام بازی‌های فعال ثبت می‌شود
+        const activeGames = await tx.game.findMany({ where: { isActive: true } });
+        for (const g of activeGames) {
+          await upsertUserGameApproval(
+            tx,
+            applicantId,
+            g.slug,
+            null,
+            currentApp.category,
+            'approved',
+            reviewerId,
+            reviewNotes
+          );
+        }
       }
 
       // ۴. ثبت لاگ ممیزی تایید
@@ -927,6 +1051,19 @@ export async function reviewApplication(input: ApplicationReviewInput) {
             userId: applicantId,
             gameSlug: currentApp.gameSlug,
             serviceId: currentApp.serviceId ?? null,
+            approvalType: currentApp.category,
+          },
+          data: {
+            status: 'rejected',
+            reviewedBy: reviewerId,
+            reviewedAt: new Date(),
+            reviewNote: reason || 'Application rejected',
+          },
+        });
+      } else if (['booster', 'pilot'].includes(currentApp.category)) {
+        await tx.userGameApproval.updateMany({
+          where: {
+            userId: applicantId,
             approvalType: currentApp.category,
           },
           data: {
@@ -1070,6 +1207,14 @@ export async function reviewApplication(input: ApplicationReviewInput) {
       if (discordClient) {
         processNotificationOutbox(discordClient).catch(() => null);
       }
+
+      sendKycRequestDm(applicantId, {
+        category: currentApp.category,
+        requestedBy: reviewerId,
+        reason: reviewNotes || reason,
+        applicationId,
+        client: discordClient,
+      }).catch(() => null);
 
       return updatedApp;
 
@@ -1435,17 +1580,17 @@ export function getReviewChannelForCategory(
   }
 
   if (clientOrGuild) {
+    const targetName =
+      category === 'booster'
+        ? 'app-boosters'
+        : category === 'advertiser'
+        ? 'app-adv'
+        : category === 'pilot'
+        ? 'app-pilots'
+        : 'app-exchangers';
+
     const channelCache = clientOrGuild.channels?.cache;
     if (channelCache) {
-      const targetName =
-        category === 'booster'
-          ? 'app-boosters'
-          : category === 'advertiser'
-          ? 'app-adv'
-          : category === 'pilot'
-          ? 'app-pilots'
-          : 'app-exchangers';
-
       const found = channelCache.find(
         (c: any) =>
           c.name === targetName ||
@@ -1453,9 +1598,87 @@ export function getReviewChannelForCategory(
       );
       if (found) return found.id;
     }
+
+    if (clientOrGuild.guilds?.cache) {
+      for (const guild of clientOrGuild.guilds.cache.values()) {
+        const found = guild.channels?.cache?.find(
+          (c: any) =>
+            c.name === targetName ||
+            (category === 'advertiser' && c.name === 'app-advertisers')
+        );
+        if (found) return found.id;
+      }
+    }
   }
 
   return process.env.CHANNEL_APPLY_REQUESTS || null;
+}
+
+/**
+ * بازیابی مطمئن و ناهمگام کانال بازبینی با اولویت: متغیرهای محیطی -> دیتابیس -> کش دیسکورد -> فال‌بک
+ */
+export async function resolveReviewChannelForCategory(
+  category: RegistrationCategory,
+  clientOrGuild?: any
+): Promise<string | null> {
+  // ۱. بررسی متغیرهای محیطی
+  const envChannel = getReviewChannelForCategory(category);
+  if (envChannel && envChannel !== process.env.CHANNEL_APPLY_REQUESTS) {
+    return envChannel;
+  }
+
+  // ۲. بررسی جدول discord_channel_mappings در دیتابیس
+  try {
+    const mapping = await prisma.discordChannelMapping.findFirst({
+      where: {
+        channelKey: `reg:mgmt:${category}`,
+        isActive: true,
+      },
+    });
+    if (mapping?.discordChannelId) {
+      return mapping.discordChannelId;
+    }
+  } catch (err: any) {
+    console.warn(`[ReviewChannel] Failed to resolve from discordChannelMapping for '${category}':`, err?.message || err);
+  }
+
+  // ۳. بررسی کش کانال‌های دیسکورد بر اساس نام کانال اختصاصی (#app-boosters, #app-adv, #app-pilots, #app-exchangers)
+  const cachedChannelId = getReviewChannelForCategory(category, clientOrGuild);
+  if (cachedChannelId) {
+    return cachedChannelId;
+  }
+
+  // ۴. جستجوی فال‌بک در کانال‌های عمومی استاف و ثبت‌نام
+  if (clientOrGuild) {
+    const searchGuilds: any[] = clientOrGuild.guilds?.cache
+      ? Array.from(clientOrGuild.guilds.cache.values())
+      : clientOrGuild.channels?.cache
+      ? [clientOrGuild]
+      : [];
+
+    const fallbackNames = [
+      'apply-requests',
+      'staff-review',
+      'admin-review',
+      'become-requests',
+      'applications',
+      'app-reviews',
+      'staff-applications',
+    ];
+
+    for (const g of searchGuilds) {
+      const channelCache = g.channels?.cache;
+      if (channelCache) {
+        for (const name of fallbackNames) {
+          const found = channelCache.find((c: any) => c.name === name || c.name?.includes(name));
+          if (found) return found.id;
+        }
+      }
+    }
+  }
+
+  // ۵. فال‌بک نهایی به کانال عمومی همان دسته تا اعلان به هیچ وجه مفقود نشود
+  return getPublicChannelForCategory(category, clientOrGuild);
 }
 
 /**
@@ -1500,4 +1723,11 @@ export function getPublicChannelForCategory(
 
   return null;
 }
+
+export {
+  sendKycRequestDm,
+  getUserKycStatus,
+  assistUserKyc,
+  saveKycDocument,
+};
 

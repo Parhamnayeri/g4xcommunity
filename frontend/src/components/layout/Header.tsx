@@ -100,21 +100,6 @@ export const Header: React.FC = () => {
           >
             Privacy
           </Link>
-
-          {/* Legacy Portal Direct Access */}
-          <a
-            href="/legacy"
-            className="badge badge-purple"
-            style={{
-              textDecoration: 'none',
-              padding: '0.35rem 0.75rem',
-              fontSize: '0.78rem',
-              transition: 'transform var(--transition-fast)',
-            }}
-            title="Access double-entry accounting, order claim, and admin tools"
-          >
-            Legacy Portal
-          </a>
         </nav>
 
         {/* Right: Auth State / Discord Profile */}
@@ -230,24 +215,6 @@ export const Header: React.FC = () => {
                       {user.username}
                     </div>
                   </div>
-
-                  <a
-                    href="/legacy"
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                      padding: '0.6rem 0.75rem',
-                      borderRadius: 'var(--radius-sm)',
-                      fontSize: '0.85rem',
-                      color: 'var(--text-primary)',
-                      transition: 'background 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                  >
-                    Legacy Dashboard &amp; Admin
-                  </a>
 
                   <Link
                     to="/dashboard"
@@ -415,20 +382,6 @@ export const Header: React.FC = () => {
               🤖 Discord Commands Guide
             </Link>
           )}
-          <a
-            href="/legacy"
-            onClick={() => setMenuOpen(false)}
-            style={{
-              fontSize: '1rem',
-              fontWeight: 700,
-              color: 'var(--accent-lime)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-            }}
-          >
-            Legacy Member &amp; Admin Portal &rarr;
-          </a>
         </div>
       )}
 

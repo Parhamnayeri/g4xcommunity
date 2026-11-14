@@ -37,6 +37,19 @@
  * 33. Existing application and registration data remain untouched.
  */
 
+import path from 'path';
+import fs from 'fs';
+import dotenv from 'dotenv';
+
+if (!process.env.DATABASE_URL) {
+  const stagingEnv = path.resolve(__dirname, '../../.env.staging');
+  if (fs.existsSync(stagingEnv)) {
+    dotenv.config({ path: stagingEnv, override: true });
+  } else {
+    dotenv.config();
+  }
+}
+
 import prisma from '../database/db';
 import {
   getOrCreatePlatformAccount,

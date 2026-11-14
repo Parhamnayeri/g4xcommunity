@@ -30,6 +30,7 @@ import {
   cancelOrderWithLifecycle,
 } from '../services/orderLifecycleService';
 import { verifyOrderWithReceipt } from '../services/payment/paymentReconciliationService';
+import { extractExternalOrderIdAndCleanNotes } from '../services/orderParsingUtils';
 
 import { handleAssignCommand } from './assign';
 
@@ -441,9 +442,12 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
         paymentVerifiedAt = new Date();
       }
 
+      const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(notes);
+
       const ord = await tx.order.create({
         data: {
           orderRef,
+          externalOrderId: parsedOrderId || null,
           gameSlug,
           serviceId,
           creatorId: actorId,
@@ -462,7 +466,7 @@ async function handleOrderCreate(message: Message, args: string[]): Promise<void
           status: orderStatus,
           paymentVerifiedBy,
           paymentVerifiedAt,
-          notes,
+          notes: cleanNotes || null,
           runs: {
             create: [{ runNumber: 1, status: 'pending' }],
           },
@@ -557,7 +561,7 @@ async function handleExternalOrderCreate(message: Message, args: string[]): Prom
       content:
         '❌ **Missing Arguments**.\n' +
         'Usage: `G4!order ext-create <gameSlug> <serviceId> <amountUsd> <platform> [accountRef] [gross|net] [orderType] [notes...]`\n' +
-        'Supported platforms: `g2g`, `skycoach`, `eldorado`\n' +
+        'Supported platforms: `g2g`, `skycoach`, `eldorado`, `kingboost`, `overgear`\n' +
         'Example: `G4!order ext-create wow_midnight 1 50 g2g g2g_main gross group Fast M+ Run`',
     });
     return;

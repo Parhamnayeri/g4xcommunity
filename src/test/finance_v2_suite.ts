@@ -67,6 +67,9 @@ import {
 } from '../services/financeV2/financeV2Types';
 
 async function runFinanceV2TestSuite() {
+  if (!process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET) {
+    process.env.WITHDRAWAL_QUOTE_SIGNING_SECRET = 'stage_test_quote_secret_entropy_32chars_long!';
+  }
   console.log('=== STARTING G4X FINANCE V2 COMPREHENSIVE TEST SUITE ===\n');
 
   let passed = 0;
@@ -350,10 +353,10 @@ async function runFinanceV2TestSuite() {
     });
 
     assert(
-      skycoachSnapshot.platformSaleCommissionMinor === 800 &&
+      skycoachSnapshot.platformSaleCommissionMinor === 1040 &&
         skycoachSnapshot.allocatedWithdrawalFeeMinor === 0,
-      '7. SkyCoach applies clean 10% order commission ($8.00 on $80) without legacy $5 flat fee',
-      `Platform Commission: ${skycoachSnapshot.platformSaleCommissionMinor} minor ($8.00)`
+      '7. SkyCoach applies clean 13% order commission ($10.40 on $80) without legacy $5 flat fee',
+      `Platform Commission: ${skycoachSnapshot.platformSaleCommissionMinor} minor ($10.40)`
     );
 
     // =========================================================================
@@ -577,6 +580,8 @@ async function runFinanceV2TestSuite() {
     );
 
     // 10c-1. Verify fail-closed live payout gate blocks execution by default
+    const prevPayoutFlag = process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED;
+    process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED = 'false';
     const validHexTx = '0x' + 'abcdef1234567890'.repeat(4);
     let livePayoutBlocked = false;
     try {

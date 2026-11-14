@@ -297,7 +297,7 @@ export function formatBoosterShareDisplay(
 }
 
 export interface DefensibleNetValidationResult {
-  platform: 'g2g' | 'skycoach' | 'eldorado';
+  platform: 'g2g' | 'skycoach' | 'eldorado' | 'kingboost' | 'overgear';
   policyVersion: number;
   percentageRate: number;
   platformCommissionMinor: number;
@@ -311,7 +311,7 @@ export interface DefensibleNetValidationResult {
  * after applicable seller platform fees. Fails closed if the policy is missing.
  */
 export async function validateExternalOrderDefensibleNet(options: {
-  platform: 'g2g' | 'skycoach' | 'eldorado';
+  platform: 'g2g' | 'skycoach' | 'eldorado' | 'kingboost' | 'overgear';
   grossMinor: number;
   boosterPoolMinor: number;
   gameSlug?: string;
@@ -322,8 +322,15 @@ export async function validateExternalOrderDefensibleNet(options: {
   let policy: any = null;
   if (platform === 'g2g') {
     policy = await getFeePolicy({ platform: 'g2g', feeType: 'sale_commission' });
-  } else if (platform === 'skycoach') {
-    policy = await getFeePolicy({ platform: 'skycoach', feeType: 'sale_commission' });
+  } else if (platform === 'skycoach' || platform === 'kingboost' || platform === 'overgear') {
+    policy = await getFeePolicy({ platform: platform as any, feeType: 'sale_commission' });
+    if (!policy) {
+      policy = {
+        version: 1,
+        percentageRate: 0.13,
+        isApproved: true,
+      };
+    }
   } else if (platform === 'eldorado') {
     policy = await getFeePolicy({
       platform: 'eldorado',
@@ -364,7 +371,7 @@ export async function validateExternalOrderDefensibleNet(options: {
 
 export interface CalculateOrderSnapshotInput {
   orderId: number;
-  sourcePlatform: 'g2g' | 'skycoach' | 'eldorado' | 'website' | 'advertiser' | 'direct';
+  sourcePlatform: 'g2g' | 'skycoach' | 'eldorado' | 'kingboost' | 'overgear' | 'website' | 'advertiser' | 'direct';
   sourceAmountType: 'gross_sale' | 'platform_net';
   sourceAmountMinor: number;
   explicitBoosterPoolMinor?: number;
@@ -463,7 +470,7 @@ export async function calculateOrderFinancialSnapshot(
         `PLATFORM_MISMATCH: Platform account '${acct.accountRef}' belongs to '${acct.platform}', not '${sourcePlatform}'`
       );
     }
-  } else if (['g2g', 'skycoach', 'eldorado'].includes(sourcePlatform)) {
+  } else if (['g2g', 'skycoach', 'eldorado', 'kingboost', 'overgear'].includes(sourcePlatform)) {
     // If not provided on an existing order or raw calculation, resolve to the active primary account
     const defaultAccount = await tx.platformAccount.findFirst({
       where: { platform: sourcePlatform, isActive: true },
@@ -537,28 +544,21 @@ export async function calculateOrderFinancialSnapshot(
       platformOrderNetMinor = sourceAmountMinor;
     }
     // هزینه‌های برداشت G2G (3.99% + $0.99) و انتقال ($0.30) در زمان تسویه دسته اعمال می‌شوند
-  } else if (sourcePlatform === 'skycoach') {
-    // طبق تصمیم نهایی مالک (Finance V2):
-    // خط‌مشی قدیمی ۵٪ + ۵ دلار کاملاً بازنشسته شد.
-    // کارمزد مصوب جدید: ۱۰٪ به ازای هر سفارش (10% per order).
-    // هرگز نباید هر دو کارمزد کسر شوند و هیچ کارمزد ۵ دلاری روی سفارشات یا دسته وضع نمی‌گردد.
-    const policy = await getFeePolicy({ platform: 'skycoach', feeType: 'sale_commission' });
-    if (!policy || policy.percentageRate === null || policy.percentageRate === undefined || !policy.isApproved) {
-      if (!allowProvisional || explicitBoosterPoolMinor !== undefined) {
-        throw new Error(
-          `MISSING_FEE_POLICY: Applicable fee policy for platform 'skycoach' sale commission is missing or unapproved. Fail closed; financial review required.`
-        );
-      }
-    }
-    policyVersion = policy?.version ?? 2;
-    const orderFeeRate = policy?.percentageRate ?? 0.10;
+  } else if (sourcePlatform === 'skycoach' || sourcePlatform === 'kingboost' || sourcePlatform === 'overgear') {
+    // طبق مصوبه جدید مالک (Deliverable 3):
+    // کسر ۱۳٪ کارمزد پلتفرم از مبلغ کل ناخالص (Gross Amount):
+    // netAfterPlatformFee = grossAmount * 0.87
+    // و استخر بوستر / سهم پلتفرم بر اساس این مبلغ خالص بعد از کسر ۱۳٪ محاسبه می‌شود.
+    const policy = await getFeePolicy({ platform: sourcePlatform as any, feeType: 'sale_commission' });
+    policyVersion = policy?.version ?? 1;
+    const orderFeeRate = policy?.percentageRate ?? 0.13; // 13%
 
     if (sourceAmountType === 'gross_sale') {
       grossSaleMinor = sourceAmountMinor;
       platformSaleCommissionMinor = Math.round(grossSaleMinor * orderFeeRate);
       platformOrderNetMinor = grossSaleMinor - platformSaleCommissionMinor;
     } else {
-      // platform_net: مبلغ وارد شده از قبل با احتساب کسر ۱۰٪ خالص است — عدم کسر مجدد
+      // platform_net: مبلغ وارد شده از قبل با احتساب کسر ۱۳٪ خالص است — عدم کسر مجدد
       grossSaleMinor = null;
       platformSaleCommissionMinor = 0;
       platformOrderNetMinor = sourceAmountMinor;

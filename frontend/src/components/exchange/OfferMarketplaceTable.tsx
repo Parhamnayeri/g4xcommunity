@@ -175,14 +175,14 @@ export const OfferMarketplaceTable: React.FC<OfferMarketplaceTableProps> = ({
       )}
 
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)' }}>
+        <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
           <div
             style={{
               width: '32px',
               height: '32px',
               borderRadius: '50%',
               border: '2px solid var(--border-subtle)',
-              borderTopColor: 'var(--primary-purple)',
+              borderTopColor: 'var(--accent-yellow)',
               animation: 'spin 0.8s linear infinite',
               margin: '0 auto 1rem',
             }}
@@ -190,42 +190,34 @@ export const OfferMarketplaceTable: React.FC<OfferMarketplaceTableProps> = ({
           Loading verified marketplace offers...
         </div>
       ) : offers.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)' }}>
-          <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📭</div>
+        <div className="empty-state-box" style={{ padding: '3rem 1rem' }}>
+          <span className="empty-state-icon">📭</span>
           <p style={{ margin: 0, fontWeight: 600 }}>No active exchanger offers matching your filters.</p>
           <p style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>Try clearing filters or check back later as certified exchangers publish liquidity.</p>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+        <div className="table-scroll">
+          <table className="data-table">
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)', fontSize: '0.78rem', textTransform: 'uppercase' }}>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Offer Ref</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Exchanger</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Service Type</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Currency</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Commission</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Limits / Terms</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Actions</th>
+              <tr>
+                <th>Offer Ref</th>
+                <th>Exchanger</th>
+                <th>Service Type</th>
+                <th>Currency</th>
+                <th>Commission</th>
+                <th>Limits / Terms</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {offers.map((offer) => {
                 const isP2p = offer.serviceType === 'IRT_TO_USD_FUNDING';
                 return (
-                  <tr
-                    key={offer.id}
-                    style={{
-                      borderBottom: '1px solid rgba(45, 38, 69, 0.4)',
-                      transition: 'background-color 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                  >
-                    <td style={{ padding: '0.85rem 0.5rem' }}>
-                      <code style={{ fontSize: '0.8rem', color: 'var(--accent-lime)' }}>{offer.offerRef}</code>
+                  <tr key={offer.id}>
+                    <td>
+                      <code style={{ fontSize: '0.8rem', color: 'var(--accent-yellow)' }}>{offer.offerRef}</code>
                     </td>
-                    <td style={{ padding: '0.85rem 0.5rem' }}>
+                    <td>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <div
                           style={{
@@ -248,7 +240,7 @@ export const OfferMarketplaceTable: React.FC<OfferMarketplaceTableProps> = ({
                         </span>
                       </div>
                     </td>
-                    <td style={{ padding: '0.85rem 0.5rem' }}>
+                    <td>
                       <span
                         className={isP2p ? 'badge badge-amber' : 'badge badge-purple'}
                         style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
@@ -256,15 +248,15 @@ export const OfferMarketplaceTable: React.FC<OfferMarketplaceTableProps> = ({
                         {formatServiceLabel(offer.serviceType)}
                       </span>
                     </td>
-                    <td style={{ padding: '0.85rem 0.5rem' }}>
+                    <td>
                       <strong style={{ color: 'var(--text-primary)' }}>{offer.settlementCurrency}</strong>
                     </td>
-                    <td style={{ padding: '0.85rem 0.5rem' }}>
-                      <span style={{ color: 'var(--accent-lime)', fontWeight: 800 }}>
+                    <td>
+                      <span style={{ color: 'var(--accent-yellow)', fontWeight: 800 }}>
                         {(offer.commissionPercentage * 100).toFixed(2)}%
                       </span>
                     </td>
-                    <td style={{ padding: '0.85rem 0.5rem', color: 'var(--text-muted)', fontSize: '0.82rem', maxWidth: '240px' }}>
+                    <td style={{ color: 'var(--text-muted)', fontSize: '0.82rem', maxWidth: '240px' }}>
                       {offer.minAmount || offer.maxAmount ? (
                         <div style={{ marginBottom: '0.15rem' }}>
                           Limits: {offer.minAmount ? `${offer.minAmount.toLocaleString()}` : '0'} - {offer.maxAmount ? `${offer.maxAmount.toLocaleString()}` : '∞'}
@@ -274,10 +266,10 @@ export const OfferMarketplaceTable: React.FC<OfferMarketplaceTableProps> = ({
                         {offer.terms || 'Standard terms'}
                       </span>
                     </td>
-                    <td style={{ padding: '0.85rem 0.5rem', textAlign: 'right' }}>
+                    <td style={{ textAlign: 'right' }}>
                       {isP2p ? (
                         <Button
-                          variant="lime"
+                          variant="cta"
                           size="sm"
                           onClick={() => onSelectForP2p(offer)}
                           style={{ fontSize: '0.78rem', padding: '0.35rem 0.75rem' }}
@@ -313,7 +305,7 @@ export const OfferMarketplaceTable: React.FC<OfferMarketplaceTableProps> = ({
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={pagination.page <= 1}
-              className="btn btn-outline btn-sm"
+              className="btn btn-secondary btn-sm"
               style={{ fontSize: '0.78rem', opacity: pagination.page <= 1 ? 0.4 : 1 }}
             >
               &larr; Previous
@@ -321,7 +313,7 @@ export const OfferMarketplaceTable: React.FC<OfferMarketplaceTableProps> = ({
             <button
               onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
               disabled={pagination.page >= pagination.totalPages}
-              className="btn btn-outline btn-sm"
+              className="btn btn-secondary btn-sm"
               style={{ fontSize: '0.78rem', opacity: pagination.page >= pagination.totalPages ? 0.4 : 1 }}
             >
               Next &rarr;

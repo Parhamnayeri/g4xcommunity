@@ -10,7 +10,7 @@ export const Logo: React.FC<LogoProps> = ({ size = 'md', showSubtitle = true }) 
   const iconSize = size === 'sm' ? 26 : size === 'lg' ? 44 : 34;
   const textSize = size === 'sm' ? '1.1rem' : size === 'lg' ? '1.75rem' : '1.35rem';
 
-  const customLogoUrl = import.meta.env.VITE_APP_LOGO_URL;
+  const customLogoUrl = (import.meta as any).env?.VITE_APP_LOGO_URL;
   const [imgError, setImgError] = useState(false);
 
   return (

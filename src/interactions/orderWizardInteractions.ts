@@ -53,6 +53,7 @@ import {
 import { creditOrderSalesProceeds } from '../services/platformBalanceService';
 import { publishOrRefreshOrderCard } from '../services/orderDiscordService';
 import { createAdvertiserBoostOrder } from '../services/orderLifecycleService';
+import { extractExternalOrderIdAndCleanNotes } from '../services/orderParsingUtils';
 
 /**
  * Safely reads modal text input without throwing DiscordjsTypeError.
@@ -185,10 +186,12 @@ export async function buildPlatformSelectRow(
   const g2gAcc = accounts.find((a) => a.platform.toLowerCase() === 'g2g');
   const skyAcc = accounts.find((a) => a.platform.toLowerCase() === 'skycoach');
   const eldAcc = accounts.find((a) => a.platform.toLowerCase() === 'eldorado');
+  const kingAcc = accounts.find((a) => a.platform.toLowerCase() === 'kingboost');
+  const overAcc = accounts.find((a) => a.platform.toLowerCase() === 'overgear');
 
   const select = new StringSelectMenuBuilder()
     .setCustomId(`ord_wiz:platform:${sessionId}`)
-    .setPlaceholder('Select Source Platform (G2G, SkyCoach, Eldorado)...')
+    .setPlaceholder('Select Source Platform (G2G, SkyCoach, Eldorado, Kingboost, Overgear)...')
     .addOptions(
       new StringSelectMenuOptionBuilder()
         .setLabel('G2G Marketplace')
@@ -198,13 +201,23 @@ export async function buildPlatformSelectRow(
       new StringSelectMenuOptionBuilder()
         .setLabel('SkyCoach Platform')
         .setValue('skycoach')
-        .setDescription(skyAcc ? `Active Account: ${skyAcc.displayName}` : 'Externally sourced from SkyCoach (10% fee policy)')
+        .setDescription(skyAcc ? `Active Account: ${skyAcc.displayName}` : 'Externally sourced from SkyCoach (13% fee policy)')
         .setEmoji('🔵'),
       new StringSelectMenuOptionBuilder()
         .setLabel('Eldorado Platform')
         .setValue('eldorado')
         .setDescription(eldAcc ? `Active Account: ${eldAcc.displayName}` : 'Externally sourced from Eldorado (category fee policy)')
-        .setEmoji('🟡')
+        .setEmoji('🟡'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Kingboost Platform')
+        .setValue('kingboost')
+        .setDescription(kingAcc ? `Active Account: ${kingAcc.displayName}` : 'Externally sourced from Kingboost (13% fee policy)')
+        .setEmoji('👑'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Overgear Platform')
+        .setValue('overgear')
+        .setDescription(overAcc ? `Active Account: ${overAcc.displayName}` : 'Externally sourced from Overgear (13% fee policy)')
+        .setEmoji('⚙️')
     );
 
   return new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select);
@@ -557,7 +570,7 @@ export async function handleOrderWizardSelectMenu(
     const session = await validateWizardSession(sessionId, interaction.user, interaction.guildId);
 
     if (step === 'platform') {
-      const selectedPlatform = interaction.values[0] as 'g2g' | 'skycoach' | 'eldorado';
+      const selectedPlatform = interaction.values[0] as 'g2g' | 'skycoach' | 'eldorado' | 'kingboost' | 'overgear';
 
       // Find active PlatformAccount for selected platform
       const account = await prisma.platformAccount.findFirst({
@@ -907,11 +920,23 @@ export async function handleOrderWizardModalSubmit(
     let assembledNotes = '';
     let siteOrderId: string | null = null;
 
+    const rawNotes = safeGetModalTextInput(interaction, 'notes')?.trim() || null;
+    let explicitSiteOrderId: string | null = null;
     if (!isAdv) {
-      siteOrderId = safeGetModalTextInput(interaction, 'site_order_id')?.trim() || null;
+      explicitSiteOrderId = safeGetModalTextInput(interaction, 'site_order_id')?.trim() || null;
+    }
+
+    const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+      rawNotes,
+      explicitSiteOrderId
+    );
+    siteOrderId = parsedOrderId;
+    let notes: string | null = cleanNotes;
+
+    if (!isAdv) {
       if (!siteOrderId) {
         await interaction.reply({
-          content: '❌ **Missing Site Order ID**: External marketplace Order ID is required for G4X orders (e.g. `G2G-123456`).',
+          content: '❌ **Missing Site Order ID**: External marketplace Order ID is required for G4X orders (e.g. `G2G-123456` or `<#G2G-123456>` in notes).',
           ephemeral: true,
         });
         return;
@@ -938,7 +963,6 @@ export async function handleOrderWizardModalSubmit(
     let keyLevel: string | null = null;
     let vpnLocation: string | null = null;
     let customerInfo: string | null = null;
-    let notes: string | null = null;
 
     // 5. Extract fields tailored exclusively to the rendered modal type (Requirement 8 & 9)
     if (isMythic) {
@@ -962,7 +986,6 @@ export async function handleOrderWizardModalSubmit(
       runsCount = parseInt(rawRuns, 10);
 
       customerInfo = safeGetModalTextInput(interaction, 'customer_info')?.trim() || null;
-      notes = safeGetModalTextInput(interaction, 'notes')?.trim() || null;
 
       assembledNotes = `[Mythic+ Target: ${keyLevel}]`;
       if (customerInfo) assembledNotes += ` [Customer: ${customerInfo}]`;
@@ -978,7 +1001,6 @@ export async function handleOrderWizardModalSubmit(
       }
 
       customerInfo = safeGetModalTextInput(interaction, 'customer_info')?.trim() || null;
-      notes = safeGetModalTextInput(interaction, 'notes')?.trim() || null;
 
       assembledNotes = `[Required VPN: ${vpnLocation}]`;
       if (customerInfo) assembledNotes += ` [Customer/Platform: ${customerInfo}]`;
@@ -991,7 +1013,6 @@ export async function handleOrderWizardModalSubmit(
       }
 
       customerInfo = safeGetModalTextInput(interaction, 'customer_info')?.trim() || null;
-      notes = safeGetModalTextInput(interaction, 'notes')?.trim() || null;
 
       assembledNotes = notes || '';
       if (customerInfo) assembledNotes = `[Customer: ${customerInfo}] ${assembledNotes}`.trim();
@@ -1154,6 +1175,12 @@ export async function handleOrderWizardModalSubmit(
       });
 
       createdOrder = createResult.order;
+      if (parsedOrderId && createdOrder?.id) {
+        await prisma.order.update({
+          where: { id: createdOrder.id },
+          data: { externalOrderId: parsedOrderId },
+        }).catch(() => {});
+      }
     }
 
     // 8. Ephemeral Confirmation in English

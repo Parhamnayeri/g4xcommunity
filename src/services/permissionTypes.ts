@@ -148,6 +148,7 @@ export const ROLE_PERMISSIONS: Record<SystemRoleKey, Permission[]> = {
     Permission.USER_BAN,
     Permission.BOOSTER_APPLICATION_REVIEW,
     Permission.PILOT_APPLICATION_REVIEW,
+    Permission.ADVERTISER_APPLICATION_REVIEW,
     Permission.EXCHANGER_APPLICATION_REVIEW,
     Permission.ORDER_VIEW_PERMITTED,
     Permission.ORDER_VIEW_PRIVATE,
@@ -182,6 +183,7 @@ export const ROLE_PERMISSIONS: Record<SystemRoleKey, Permission[]> = {
     Permission.USER_BAN,
     Permission.BOOSTER_APPLICATION_REVIEW,
     Permission.PILOT_APPLICATION_REVIEW,
+    Permission.ADVERTISER_APPLICATION_REVIEW,
     Permission.EXCHANGER_APPLICATION_REVIEW,
     Permission.ORDER_VIEW_PERMITTED,
     Permission.ORDER_VIEW_PRIVATE,
@@ -205,10 +207,11 @@ export const ROLE_PERMISSIONS: Record<SystemRoleKey, Permission[]> = {
   ],
 
   staff: [
-    // ۴. پشتیبان/استاف: محیط کاری سفارشات و فهرست کاربران صرفاً فقط‌خواندنی؛ بررسی مدارک ران‌ها، تیکت‌ها و اختلافات
-    // فاقد: ایجاد، ویرایش، لغو، انتساب بوستر، بررسی پرداخت، تایید نهایی، بن/آن‌بن و دسترسی به اسناد حساس
+    // ۴. پشتیبان/استاف: نظارت و عملیات اجرایی، ایجاد سفارشات داخلی پلتفرم، تخصیص بوستر، بررسی مدارک ران‌ها، تیکت‌ها و اختلافات
     Permission.ORDER_VIEW_PERMITTED,
     Permission.USER_VIEW_PERMITTED,
+    Permission.ORDER_CREATE_INTERNAL,
+    Permission.ORDER_ASSIGN,
     Permission.PROOF_REVIEW,
     Permission.DISPUTE_REVIEW,
     Permission.DISPUTE_CREATE,

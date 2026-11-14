@@ -593,42 +593,35 @@ export const DiscordCommandsPage: React.FC = () => {
                     <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.5rem', letterSpacing: '0.04em' }}>
                       Parameters &amp; Arguments
                     </div>
-                    <div
-                      style={{
-                        overflowX: 'auto',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: '6px',
-                        backgroundColor: 'rgba(0, 0, 0, 0.2)',
-                      }}
-                    >
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
+                    <div className="table-scroll">
+                      <table className="data-table">
                         <thead>
-                          <tr style={{ borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'rgba(255, 255, 255, 0.02)' }}>
-                            <th style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Parameter</th>
-                            <th style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Type</th>
-                            <th style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Requirement</th>
-                            <th style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Allowed Values / Default</th>
-                            <th style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>Description</th>
+                          <tr>
+                            <th>Parameter</th>
+                            <th>Type</th>
+                            <th>Requirement</th>
+                            <th>Allowed Values / Default</th>
+                            <th>Description</th>
                           </tr>
                         </thead>
                         <tbody>
                           {cmd.parameters.map((p, idx) => (
-                            <tr key={idx} style={{ borderBottom: idx < cmd.parameters.length - 1 ? '1px solid rgba(255, 255, 255, 0.04)' : 'none' }}>
-                              <td style={{ padding: '0.5rem 0.75rem', fontFamily: 'monospace', color: 'var(--accent-lime)', fontWeight: 600 }}>
+                            <tr key={idx}>
+                              <td style={{ fontFamily: 'monospace', color: 'var(--accent-yellow)', fontWeight: 600 }}>
                                 {p.name}
                               </td>
-                              <td style={{ padding: '0.5rem 0.75rem', color: 'var(--text-secondary)' }}>{p.type}</td>
-                              <td style={{ padding: '0.5rem 0.75rem' }}>
+                              <td style={{ color: 'var(--text-secondary)' }}>{p.type}</td>
+                              <td>
                                 {p.required ? (
-                                  <span style={{ color: '#ef4444', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase' }}>Required</span>
+                                  <span className="badge badge-danger" style={{ fontSize: '0.72rem' }}>Required</span>
                                 ) : (
-                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem', textTransform: 'uppercase' }}>Optional</span>
+                                  <span className="badge badge-muted" style={{ fontSize: '0.72rem' }}>Optional</span>
                                 )}
                               </td>
-                              <td style={{ padding: '0.5rem 0.75rem', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                              <td style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>
                                 {p.allowedValues ? p.allowedValues.map((v) => `\`${v}\``).join(', ') : p.defaultValue ? `default: \`${p.defaultValue}\`` : '—'}
                               </td>
-                              <td style={{ padding: '0.5rem 0.75rem', color: 'var(--text-secondary)' }}>{p.description}</td>
+                              <td style={{ color: 'var(--text-secondary)' }}>{p.description}</td>
                             </tr>
                           ))}
                         </tbody>

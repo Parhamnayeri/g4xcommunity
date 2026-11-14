@@ -110,15 +110,43 @@ async function executeOutboxBatch(client: any): Promise<number> {
 
           const components: ActionRowBuilder<ButtonBuilder>[] = [];
 
+          const rawBaseUrl =
+            process.env.PUBLIC_WEB_URL ||
+            process.env.WEB_BASE_URL ||
+            'http://localhost:3001';
+          const baseUrl = rawBaseUrl.replace(/\/+$/, '');
+          const kycUrl = `${baseUrl}/profile/kyc`;
+          let directMessageContent: string | undefined;
+
           switch (notif.notificationType) {
-            case 'REGISTRATION_SUBMITTED':
+            case 'REGISTRATION_SUBMITTED': {
+              const cat = payload.category?.toLowerCase();
+              const requiresKyc = cat === 'pilot' || cat === 'advertiser' || cat === 'exchanger';
               embed
                 .setTitle('🛡️ Application Submitted')
                 .setDescription(
-                  `Your application for **${payload.category?.toUpperCase() || 'ROLE'}** (ID: #${payload.applicationId || 'N/A'}) has been submitted for review.\n` +
-                  `Our management team will review your application privately.`
+                  `Your application for **${payload.category?.toUpperCase() || 'ROLE'}** (ID: #${payload.applicationId || 'N/A'}) has been submitted for review.\n\n` +
+                  (requiresKyc
+                    ? `🪪 **Mandatory Identity Verification (KYC):**\nThis role requires identity verification. Please complete verification using the link below:\n🔗 **[Complete Identity Verification (KYC)](${kycUrl})**\n*(Verification status will be automatically synchronized with your application)*`
+                    : `Our management team will review your application privately.`)
                 );
+
+              if (requiresKyc) {
+                directMessageContent = `🔗 **Complete Identity Verification:** <${kycUrl}>`;
+                if (kycUrl.startsWith('https://')) {
+                  components.push(
+                    new ActionRowBuilder<ButtonBuilder>().addComponents(
+                      new ButtonBuilder()
+                        .setLabel('Complete Identity Verification')
+                        .setStyle(ButtonStyle.Link)
+                        .setURL(kycUrl)
+                        .setEmoji('🪪')
+                    )
+                  );
+                }
+              }
               break;
+            }
 
             case 'APPLICATION_APPROVED':
               embed
@@ -171,15 +199,31 @@ async function executeOutboxBatch(client: any): Promise<number> {
                 );
               break;
 
-            case 'APPLICATION_IDENTITY_INITIATED':
+            case 'APPLICATION_IDENTITY_INITIATED': {
               embed
-                .setTitle('🔒 Identity Verification Initiated')
-                .setColor(0x5865f2)
+                .setTitle('🪪 Identity Verification (KYC) Required')
+                .setColor(0x8b5cf6)
                 .setDescription(
-                  `Your application (ID: #${payload.applicationId}) requires private identity verification.\n` +
-                  `Please await secure instructions from authorized management. Do not send sensitive identity documents in public channels.`
+                  `Your application (ID: #${payload.applicationId}) requires private identity verification.\n\n` +
+                  `Please complete your secure identity verification using the link below:\n` +
+                  `🔗 **[Complete Identity Verification (KYC)](${kycUrl})**\n\n` +
+                  `*Once verified, your status will be saved and reused across all platform applications.*`
                 );
+
+              directMessageContent = `🔗 **Complete Identity Verification:** <${kycUrl}>`;
+              if (kycUrl.startsWith('https://')) {
+                components.push(
+                  new ActionRowBuilder<ButtonBuilder>().addComponents(
+                    new ButtonBuilder()
+                      .setLabel('Complete Identity Verification')
+                      .setStyle(ButtonStyle.Link)
+                      .setURL(kycUrl)
+                      .setEmoji('🪪')
+                  )
+                );
+              }
               break;
+            }
 
             default:
               embed
@@ -190,6 +234,7 @@ async function executeOutboxBatch(client: any): Promise<number> {
 
           // ارسال پیام خصوصی
           await user.send({
+            content: directMessageContent,
             embeds: [embed],
             components,
           });

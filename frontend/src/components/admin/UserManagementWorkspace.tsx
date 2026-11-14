@@ -5,7 +5,9 @@ import {
   updateAdminUserStatus,
   updateAdminUserRole,
   fetchUserBanHistory,
+  sendUserKycDm,
 } from '../../services/adminPortal';
+import { AssistedKycModal } from './AssistedKycModal';
 
 interface UserItem {
   discordId: string;
@@ -67,6 +69,37 @@ export const UserManagementWorkspace: React.FC<Props> = ({
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
+  // Assisted KYC State
+  const [assistedUser, setAssistedUser] = useState<UserItem | null>(null);
+  const [kycDmFeedback, setKycDmFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [sendingDmId, setSendingDmId] = useState<string | null>(null);
+
+  const handleSendKycDm = async (u: UserItem) => {
+    setSendingDmId(u.discordId);
+    setKycDmFeedback(null);
+    try {
+      const res = await sendUserKycDm(u.discordId);
+      if (res.dmSent) {
+        setKycDmFeedback({
+          text: `✓ Verification link sent to ${u.displayName || u.username}'s Discord DM!`,
+          type: 'success',
+        });
+      } else {
+        setKycDmFeedback({
+          text: `⚠️ User's Discord DMs are closed (${res.error || 'DM blocked'}). Direct URL: ${res.kycUrl}`,
+          type: 'error',
+        });
+      }
+    } catch (err: any) {
+      setKycDmFeedback({
+        text: err.message || 'Failed to dispatch KYC DM',
+        type: 'error',
+      });
+    } finally {
+      setSendingDmId(null);
+    }
+  };
+
   const loadUsers = useCallback(async (page: number = 1) => {
     setLoading(true);
     setError(null);
@@ -106,8 +139,8 @@ export const UserManagementWorkspace: React.FC<Props> = ({
   };
 
   const allowedRoles = allowPrivilegedRoles
-    ? ['owner', 'admin', 'manager', 'staff', 'booster', 'pilot', 'advertiser', 'exchanger']
-    : ['staff', 'booster', 'pilot', 'advertiser', 'exchanger'];
+    ? ['owner', 'manager', 'admin', 'staff', 'booster', 'pilot', 'advertiser', 'exchanger']
+    : ['admin', 'staff', 'booster', 'pilot', 'advertiser', 'exchanger'];
 
   return (
     <div className="card-surface" style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -164,41 +197,67 @@ export const UserManagementWorkspace: React.FC<Props> = ({
         </div>
       )}
 
+      {kycDmFeedback && (
+        <div
+          style={{
+            padding: '0.75rem 1rem',
+            backgroundColor: kycDmFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+            color: kycDmFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+            border: `1px solid ${kycDmFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+            borderRadius: 'var(--radius-sm)',
+            fontSize: '0.85rem',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <span>{kycDmFeedback.text}</span>
+          <button
+            type="button"
+            onClick={() => setKycDmFeedback(null)}
+            style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', fontSize: '0.9rem' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <LoadingState message="Loading registered users..." />
       ) : users.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-          No accounts matched the query criteria.
+        <div className="empty-state-box" style={{ padding: '3rem' }}>
+          <span className="empty-state-icon">👥</span>
+          <p>No accounts matched the query criteria.</p>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <div className="table-scroll">
+          <table className="data-table">
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '0.75rem 0.5rem' }}>User Profile</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Discord ID</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Account Status</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Assigned Roles</th>
-                <th style={{ padding: '0.75rem 0.5rem' }}>Adv. Rank</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>Actions</th>
+              <tr>
+                <th>User Profile</th>
+                <th>Discord ID</th>
+                <th>Account Status</th>
+                <th>Assigned Roles</th>
+                <th>Adv. Rank</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.discordId} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <div style={{ fontWeight: 600 }}>{u.displayName || u.username}</div>
+                <tr key={u.discordId}>
+                  <td>
+                    <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{u.displayName || u.username}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>@{u.username}</div>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
+                  <td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>
                     {u.discordId}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <span className={`badge ${u.isActive ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.75rem' }}>
+                  <td>
+                    <span className={`badge ${u.isActive ? 'badge-green' : 'badge-danger'}`} style={{ fontSize: '0.75rem' }}>
                       {u.isActive ? 'Active' : 'Suspended'}
                     </span>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                  <td>
                     <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                       {u.roles && u.roles.length > 0 ? (
                         u.roles.map((r) => (
@@ -211,25 +270,40 @@ export const UserManagementWorkspace: React.FC<Props> = ({
                       )}
                     </div>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', color: 'var(--accent-lime)' }}>
+                  <td style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>
                     {u.advertiserRank || '—'}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
+                  <td style={{ textAlign: 'right' }}>
                     <div style={{ display: 'flex', gap: '0.45rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                       <button
                         type="button"
-                        className="btn btn-secondary btn-sm"
-                        style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
+                        className="btn btn-secondary btn-xs"
                         onClick={() => handleOpenHistory(u)}
                         title="View account ban and unban history"
                       >
                         📜 History
                       </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-xs"
+                        disabled={sendingDmId === u.discordId}
+                        onClick={() => handleSendKycDm(u)}
+                        title="Send Discord DM with direct KYC link"
+                      >
+                        {sendingDmId === u.discordId ? '...' : '🪪 KYC DM'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-purple btn-xs"
+                        onClick={() => setAssistedUser(u)}
+                        title="Inspect, complete or verify KYC for user"
+                      >
+                        ✏️ Assist KYC
+                      </button>
                       {canManageRoles && (
                         <button
                           type="button"
-                          className="btn btn-secondary btn-sm"
-                          style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem' }}
+                          className="btn btn-secondary btn-xs"
                           onClick={() => {
                             setSelectedUser(u);
                             setModModalType('role');
@@ -243,14 +317,7 @@ export const UserManagementWorkspace: React.FC<Props> = ({
                       {canBan && (
                         <button
                           type="button"
-                          className="btn btn-sm"
-                          style={{
-                            fontSize: '0.75rem',
-                            padding: '0.25rem 0.55rem',
-                            backgroundColor: u.isActive ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
-                            color: u.isActive ? 'var(--status-danger)' : 'var(--status-success)',
-                            border: `1px solid ${u.isActive ? 'rgba(239, 68, 68, 0.4)' : 'rgba(16, 185, 129, 0.4)'}`,
-                          }}
+                          className={u.isActive ? 'btn btn-danger btn-xs' : 'btn btn-cta btn-xs'}
                           onClick={() => {
                             setSelectedUser(u);
                             setModModalType('status');
@@ -269,7 +336,7 @@ export const UserManagementWorkspace: React.FC<Props> = ({
           </table>
 
           {/* Pagination */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
               Page {pagination.page} of {pagination.totalPages || 1} ({pagination.total} total users)
             </span>
@@ -297,97 +364,99 @@ export const UserManagementWorkspace: React.FC<Props> = ({
 
       {/* Account Status / Role Management Modal */}
       {selectedUser && modModalType && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '1rem',
-          }}
-        >
-          <div className="card-surface" style={{ maxWidth: '500px', width: '100%', padding: '1.75rem' }}>
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: '0 0 0.5rem' }}>
-              {modModalType === 'status'
-                ? `${selectedUser.isActive ? 'Suspend' : 'Activate'} User Account`
-                : 'Manage Assigned User Roles'}
-            </h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-              Target: <strong>{selectedUser.displayName || selectedUser.username}</strong> ({selectedUser.discordId})
-            </p>
-
-            {modModalType === 'role' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
-                <div>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                    Action
-                  </label>
-                  <select
-                    className="input"
-                    value={roleAction}
-                    onChange={(e) => setRoleAction(e.target.value as any)}
-                    style={{ width: '100%', padding: '0.5rem' }}
-                  >
-                    <option value="grant">Grant Role</option>
-                    <option value="revoke">Revoke Role</option>
-                  </select>
-                </div>
-                <div>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                    Role Key
-                  </label>
-                  <select
-                    className="input"
-                    value={roleToModify}
-                    onChange={(e) => setRoleToModify(e.target.value)}
-                    style={{ width: '100%', padding: '0.5rem' }}
-                  >
-                    {allowedRoles.map((r) => (
-                      <option key={r} value={r}>
-                        {r.toUpperCase()}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                Administrative Reason / Notes <span style={{ color: 'var(--status-danger)' }}>* (Min 5 chars required)</span>
-              </label>
-              <textarea
-                className="input"
-                rows={3}
-                placeholder="Document the operational or compliance reason for this modification..."
-                value={modReason}
-                onChange={(e) => setModReason(e.target.value)}
-                style={{ width: '100%', padding: '0.6rem', fontSize: '0.85rem' }}
-              />
-            </div>
-
-            {modFeedback && (
-              <div
-                style={{
-                  padding: '0.65rem 0.85rem',
-                  borderRadius: 'var(--radius-sm)',
-                  fontSize: '0.82rem',
-                  marginBottom: '1rem',
-                  backgroundColor: modFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                  color: modFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+        <div className="studio-modal-backdrop" onClick={() => { setSelectedUser(null); setModModalType(null); setModReason(''); }}>
+          <div className="studio-modal-card" style={{ maxWidth: '500px' }} onClick={(e) => e.stopPropagation()}>
+            <div className="studio-modal-header">
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
+                {modModalType === 'status'
+                  ? `${selectedUser.isActive ? 'Suspend' : 'Activate'} User Account`
+                  : 'Manage Assigned User Roles'}
+              </h3>
+              <button
+                type="button"
+                className="studio-modal-close"
+                onClick={() => {
+                  setSelectedUser(null);
+                  setModModalType(null);
+                  setModReason('');
                 }}
               >
-                {modFeedback.text}
-              </div>
-            )}
+                ✕
+              </button>
+            </div>
 
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+            <div className="studio-modal-body">
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+                Target: <strong>{selectedUser.displayName || selectedUser.username}</strong> ({selectedUser.discordId})
+              </p>
+
+              {modModalType === 'role' && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
+                  <div>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                      Action
+                    </label>
+                    <select
+                      className="input"
+                      value={roleAction}
+                      onChange={(e) => setRoleAction(e.target.value as any)}
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    >
+                      <option value="grant">Grant Role</option>
+                      <option value="revoke">Revoke Role</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                      Role Key
+                    </label>
+                    <select
+                      className="input"
+                      value={roleToModify}
+                      onChange={(e) => setRoleToModify(e.target.value)}
+                      style={{ width: '100%', padding: '0.5rem' }}
+                    >
+                      {allowedRoles.map((r) => (
+                        <option key={r} value={r}>
+                          {r.toUpperCase()}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                  Administrative Reason / Notes <span style={{ color: 'var(--status-danger)' }}>* (Min 5 chars required)</span>
+                </label>
+                <textarea
+                  className="input"
+                  rows={3}
+                  placeholder="Document the operational or compliance reason for this modification..."
+                  value={modReason}
+                  onChange={(e) => setModReason(e.target.value)}
+                  style={{ width: '100%', padding: '0.6rem', fontSize: '0.85rem' }}
+                />
+              </div>
+
+              {modFeedback && (
+                <div
+                  style={{
+                    padding: '0.65rem 0.85rem',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.82rem',
+                    marginBottom: '1rem',
+                    backgroundColor: modFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                    color: modFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                  }}
+                >
+                  {modFeedback.text}
+                </div>
+              )}
+            </div>
+
+            <div className="studio-modal-footer">
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
@@ -436,82 +505,93 @@ export const UserManagementWorkspace: React.FC<Props> = ({
 
       {/* Immutable Ban History Modal */}
       {historyUser && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '1rem',
-          }}
-        >
-          <div className="card-surface" style={{ maxWidth: '650px', width: '100%', maxHeight: '85vh', overflowY: 'auto', padding: '1.75rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem', marginBottom: '1rem' }}>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>
+        <div className="studio-modal-backdrop" onClick={() => setHistoryUser(null)}>
+          <div className="studio-modal-card studio-modal-card-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="studio-modal-header">
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
                 Account Ban &amp; Moderation History
               </h3>
+              <button
+                type="button"
+                className="studio-modal-close"
+                onClick={() => setHistoryUser(null)}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="studio-modal-body">
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                User: <strong>{historyUser.displayName || historyUser.username}</strong> ({historyUser.discordId})
+              </p>
+
+              {loadingHistory ? (
+                <LoadingState message="Loading immutable moderation history..." />
+              ) : historyError ? (
+                <div style={{ padding: '1rem', color: 'var(--status-danger)' }}>{historyError}</div>
+              ) : banHistory.length === 0 ? (
+                <div className="empty-state-box" style={{ padding: '2rem' }}>
+                  <span className="empty-state-icon">🛡️</span>
+                  <p>No recorded ban or suspension events for this user account.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                  {banHistory.map((h) => (
+                    <div
+                      key={h.id}
+                      style={{
+                        padding: '0.85rem',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: 'var(--bg-main)',
+                        border: '1px solid var(--border-subtle)',
+                        fontSize: '0.84rem',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+                        <span className={`badge ${h.resultingStatus ? 'badge-green' : 'badge-danger'}`} style={{ fontSize: '0.75rem' }}>
+                          {h.action}
+                        </span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                          {new Date(h.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      <div style={{ marginBottom: '0.35rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Moderator: </span>
+                        <strong>{h.actor?.displayName || h.actor?.username || 'Authoritative System'}</strong>{' '}
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>({h.actor?.id})</span>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Reason: </span>
+                        <span style={{ color: 'var(--text-primary)' }}>{h.reason || 'No recorded notes'}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="studio-modal-footer">
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
                 onClick={() => setHistoryUser(null)}
               >
-                ✕ Close
+                Close
               </button>
             </div>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
-              User: <strong>{historyUser.displayName || historyUser.username}</strong> ({historyUser.discordId})
-            </p>
-
-            {loadingHistory ? (
-              <LoadingState message="Loading immutable moderation history..." />
-            ) : historyError ? (
-              <div style={{ padding: '1rem', color: 'var(--status-danger)' }}>{historyError}</div>
-            ) : banHistory.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                No recorded ban or suspension events for this user account.
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {banHistory.map((h) => (
-                  <div
-                    key={h.id}
-                    style={{
-                      padding: '0.85rem',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-main)',
-                      border: '1px solid var(--border-subtle)',
-                      fontSize: '0.84rem',
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
-                      <span className={`badge ${h.resultingStatus ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.75rem' }}>
-                        {h.action}
-                      </span>
-                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
-                        {new Date(h.createdAt).toLocaleString()}
-                      </span>
-                    </div>
-                    <div style={{ marginBottom: '0.35rem' }}>
-                      <span style={{ color: 'var(--text-muted)' }}>Moderator: </span>
-                      <strong>{h.actor?.displayName || h.actor?.username || 'Authoritative System'}</strong>{' '}
-                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>({h.actor?.id})</span>
-                    </div>
-                    <div>
-                      <span style={{ color: 'var(--text-muted)' }}>Reason: </span>
-                      <span style={{ color: 'var(--text-primary)' }}>{h.reason || 'No recorded notes'}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
+      )}
+
+      {/* Staff Assisted KYC Modal */}
+      {assistedUser && (
+        <AssistedKycModal
+          userId={assistedUser.discordId}
+          userDisplayName={assistedUser.displayName || assistedUser.username}
+          isOpen={Boolean(assistedUser)}
+          onClose={() => setAssistedUser(null)}
+          onSuccess={() => loadUsers(pagination.page)}
+        />
       )}
     </div>
   );

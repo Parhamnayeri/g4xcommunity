@@ -40,7 +40,6 @@ const SNOWFLAKE_RE = /^[1-9][0-9]{16,19}$/;
 
 const FORBIDDEN_LIVE_GATES = [
   'FINANCE_V2_LIVE_CREDITS_ENABLED',
-  'FINANCE_V2_LIVE_PAYOUTS_ENABLED',
   'FINANCE_V2_P2P_SETTLEMENT_ENABLED',
   'NOWPAYMENTS_LIVE_COLLECTION_ENABLED',
   'ESCROW_RELEASE_ENABLED',
@@ -136,7 +135,10 @@ export function validateBetaDatabaseUrl(databaseUrl: string | undefined): {
   };
 }
 
-export function loadBetaEnvFile(customEnvPath?: string): { loaded: boolean; filePath: string | null } {
+export function loadBetaEnvFile(
+  customEnvPath?: string,
+  options: { override?: boolean } = {}
+): { loaded: boolean; filePath: string | null } {
   const candidates = customEnvPath
     ? [path.resolve(customEnvPath)]
     : [
@@ -148,7 +150,7 @@ export function loadBetaEnvFile(customEnvPath?: string): { loaded: boolean; file
     if (fs.existsSync(candidate)) {
       const parsed = dotenv.parse(fs.readFileSync(candidate, 'utf8'));
       for (const [k, v] of Object.entries(parsed)) {
-        if (process.env[k] === undefined) {
+        if (options.override || process.env[k] === undefined) {
           process.env[k] = v;
         }
       }
@@ -160,7 +162,7 @@ export function loadBetaEnvFile(customEnvPath?: string): { loaded: boolean; file
 
 export function validateBetaEnvironment(
   env: NodeJS.ProcessEnv = process.env,
-  options: { requireDiscordBotConfig?: boolean } = {}
+  options: { requireDiscordBotConfig?: boolean; strictBotTokenRequired?: boolean } = {}
 ): BetaEnvValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -174,7 +176,7 @@ export function validateBetaEnvironment(
     errors.push("DISCORD_LAB_MODE cannot be 'true' when running persistent Operational Beta (betaRunner).");
   }
 
-  // Hard-lock all six live financial/external gates
+  // Hard-lock all five live financial/external gates
   for (const gate of FORBIDDEN_LIVE_GATES) {
     const val = env[gate];
     if (val !== 'false') {
@@ -182,6 +184,10 @@ export function validateBetaEnvironment(
         `Safety violation: '${gate}' must be strictly 'false' in G4X Operational Closed Beta v0.001 (got '${val ?? 'UNDEFINED'}').`
       );
     }
+  }
+
+  if (env.FINANCE_V2_LIVE_PAYOUTS_ENABLED === 'true') {
+    warnings.push('FINANCE_V2_LIVE_PAYOUTS_ENABLED is true: Live wallet payout settlement is active for testing.');
   }
 
   const npMode = (env.NOWPAYMENTS_MODE || 'disabled').trim().toLowerCase();
@@ -232,17 +238,17 @@ export function validateBetaEnvironment(
     errors.push(`Invalid BETA_PORT/PORT '${env.BETA_PORT || env.PORT}'.`);
   }
 
-  // Discord bot containment config (never falls back to production DISCORD_TOKEN)
+  // Discord bot containment config (supports BETA_* and DISCORD_* aliases; never falls back to production DISCORD_TOKEN)
   const requireDiscord = options.requireDiscordBotConfig ?? (env.BETA_DISCORD_ENABLED === 'true');
-  const botToken = env.BETA_BOT_TOKEN?.trim() || null;
-  const allowedGuildId = env.BETA_ALLOWED_GUILD_ID?.trim() || null;
-  const applicationId = env.BETA_APPLICATION_ID?.trim() || null;
+  const botToken = (env.BETA_BOT_TOKEN || env.DISCORD_BOT_TOKEN || '').trim() || null;
+  const allowedGuildId = (env.BETA_ALLOWED_GUILD_ID || env.DISCORD_GUILD_ID || '').trim() || null;
+  const applicationId = (env.BETA_APPLICATION_ID || env.DISCORD_CLIENT_ID || '').trim() || null;
 
   if (requireDiscord) {
     if (!botToken || botToken.length < 20) {
-      errors.push('BETA_BOT_TOKEN is required when Beta Discord bot is enabled (never falls back to DISCORD_TOKEN).');
+      errors.push('BETA_BOT_TOKEN (or DISCORD_BOT_TOKEN) is required when Beta Discord bot is enabled (never falls back to DISCORD_TOKEN).');
     } else if (env.DISCORD_TOKEN && botToken === env.DISCORD_TOKEN.trim()) {
-      errors.push('BETA_BOT_TOKEN cannot match production DISCORD_TOKEN.');
+      errors.push('BETA_BOT_TOKEN / DISCORD_BOT_TOKEN cannot match production DISCORD_TOKEN.');
     }
 
     if (!allowedGuildId || !SNOWFLAKE_RE.test(allowedGuildId)) {

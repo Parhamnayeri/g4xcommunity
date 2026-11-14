@@ -176,58 +176,29 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 
   return (
     <div
-      className="modal-backdrop"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.75)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '1rem',
-      }}
+      className="studio-modal-backdrop"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget && !submitting) onClose();
       }}
     >
       <div
-        className="modal-dialog"
-        style={{
-          backgroundColor: 'var(--bg-surface, #181524)',
-          border: '1px solid rgba(124, 58, 237, 0.4)',
-          borderRadius: '16px',
-          width: '100%',
-          maxWidth: '580px',
-          maxHeight: '90vh',
-          overflowY: 'auto',
-          padding: '1.75rem',
-          boxShadow: '0 20px 40px rgba(0, 0, 0, 0.6)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '1.25rem',
-        }}
+        className="studio-modal-card studio-modal-card-lg"
+        style={{ maxWidth: '620px' }}
       >
         {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div className="studio-modal-header">
           <div>
-            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary, #f4f4f6)' }}>
+            <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: 'var(--text-primary)' }}>
               {title}
             </h3>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted, #9490a6)' }}>
-              Commercial Rank Tier: <strong style={{ color: 'var(--accent-lime, #ccff00)' }}>{rankData.rankLabel}</strong> ({rankData.commissionPercent})
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Commercial Rank Tier: <strong style={{ color: 'var(--accent-yellow)' }}>{rankData.rankLabel}</strong> ({rankData.commissionPercent})
             </span>
           </div>
           <button
+            type="button"
+            className="studio-modal-close"
             onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--text-muted, #9490a6)',
-              fontSize: '1.25rem',
-              cursor: 'pointer',
-              padding: '0.25rem',
-            }}
           >
             ✕
           </button>
@@ -745,20 +716,12 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
             )}
 
             {/* Actions */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+            <div className="studio-modal-footer" style={{ marginTop: '0.75rem' }}>
               <button
                 type="button"
                 onClick={onClose}
                 disabled={submitting}
-                style={{
-                  backgroundColor: 'transparent',
-                  border: '1px solid rgba(148, 144, 166, 0.3)',
-                  borderRadius: '8px',
-                  padding: '0.6rem 1.2rem',
-                  color: 'var(--text-muted, #9490a6)',
-                  cursor: 'pointer',
-                  fontSize: '0.9rem',
-                }}
+                className="btn btn-secondary"
               >
                 Cancel
               </button>
@@ -766,17 +729,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               <button
                 type="submit"
                 disabled={submitting}
-                style={{
-                  backgroundColor: 'var(--primary-purple, #7c3aed)',
-                  border: 'none',
-                  borderRadius: '8px',
-                  padding: '0.6rem 1.5rem',
-                  color: '#ffffff',
-                  fontWeight: 700,
-                  cursor: submitting ? 'not-allowed' : 'pointer',
-                  fontSize: '0.9rem',
-                  boxShadow: '0 4px 14px rgba(124, 58, 237, 0.4)',
-                }}
+                className="btn btn-cta"
               >
                 {submitting ? 'Placing Order...' : hasSufficientBalance ? 'Place & Fund Boost Order' : 'Place Order (Payment Pending)'}
               </button>

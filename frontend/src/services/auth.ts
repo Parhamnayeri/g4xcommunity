@@ -79,7 +79,7 @@ export async function fetchPublicData(): Promise<{ games: Game[]; config: Public
         },
       ],
       config: {
-        bookingDestination: '/legacy',
+        bookingDestination: '/dashboard',
       },
     };
   }

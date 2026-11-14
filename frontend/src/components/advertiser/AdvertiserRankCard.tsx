@@ -59,37 +59,15 @@ export const AdvertiserRankCard: React.FC<AdvertiserRankCardProps> = ({ rankData
       </div>
 
       {/* Rank Hierarchy Table */}
-      <div
-        style={{
-          overflowX: 'auto',
-          borderRadius: '10px',
-          border: '1px solid rgba(124, 58, 237, 0.15)',
-        }}
-      >
-        <table
-          style={{
-            width: '100%',
-            borderCollapse: 'collapse',
-            fontSize: '0.85rem',
-            textAlign: 'left',
-          }}
-        >
+      <div className="table-scroll">
+        <table className="data-table">
           <thead>
-            <tr
-              style={{
-                backgroundColor: 'rgba(13, 11, 18, 0.6)',
-                borderBottom: '1px solid rgba(124, 58, 237, 0.2)',
-                color: 'var(--text-muted, #9490a6)',
-                fontSize: '0.75rem',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-              }}
-            >
-              <th style={{ padding: '0.75rem 1rem' }}>Rank Tier</th>
-              <th style={{ padding: '0.75rem 1rem' }}>Platform Fee</th>
-              <th style={{ padding: '0.75rem 1rem' }}>Basis Points</th>
-              <th style={{ padding: '0.75rem 1rem' }}>Description</th>
-              <th style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>Status</th>
+            <tr>
+              <th>Rank Tier</th>
+              <th>Platform Fee</th>
+              <th>Basis Points</th>
+              <th>Description</th>
+              <th style={{ textAlign: 'center' }}>Status</th>
             </tr>
           </thead>
           <tbody>
@@ -99,57 +77,43 @@ export const AdvertiserRankCard: React.FC<AdvertiserRankCardProps> = ({ rankData
                 <tr
                   key={item.rank}
                   style={{
-                    backgroundColor: isCurrent ? 'rgba(124, 58, 237, 0.15)' : 'transparent',
-                    borderBottom: '1px solid rgba(124, 58, 237, 0.1)',
-                    transition: 'background-color 0.2s ease',
+                    backgroundColor: isCurrent ? 'rgba(139, 92, 246, 0.12)' : undefined,
                   }}
                 >
-                  <td style={{ padding: '0.75rem 1rem', fontWeight: isCurrent ? 800 : 600 }}>
+                  <td style={{ fontWeight: isCurrent ? 800 : 600 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       {isCurrent ? (
-                        <span style={{ color: 'var(--accent-lime, #ccff00)' }}>⭐</span>
+                        <span style={{ color: 'var(--accent-yellow)' }}>⭐</span>
                       ) : (
-                        <span style={{ color: 'var(--text-muted, #9490a6)' }}>•</span>
+                        <span style={{ color: 'var(--text-muted)' }}>•</span>
                       )}
-                      <span style={{ color: isCurrent ? '#ffffff' : 'var(--text-primary, #f4f4f6)' }}>
+                      <span style={{ color: isCurrent ? '#ffffff' : 'var(--text-primary)' }}>
                         {item.label}
                       </span>
                     </div>
                   </td>
                   <td
                     style={{
-                      padding: '0.75rem 1rem',
                       fontFamily: 'monospace',
                       fontWeight: 700,
-                      color: isCurrent ? 'var(--accent-lime, #ccff00)' : '#ddd6fe',
+                      color: isCurrent ? 'var(--accent-yellow)' : 'var(--primary-purple)',
                     }}
                   >
                     {item.percentage}
                   </td>
-                  <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace', color: 'var(--text-muted, #9490a6)' }}>
+                  <td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>
                     {item.basisPoints} bps
                   </td>
-                  <td style={{ padding: '0.75rem 1rem', color: 'var(--text-muted, #9490a6)', fontSize: '0.8rem' }}>
+                  <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                     {item.description}
                   </td>
-                  <td style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>
+                  <td style={{ textAlign: 'center' }}>
                     {isCurrent ? (
-                      <span
-                        style={{
-                          backgroundColor: 'rgba(204, 255, 0, 0.15)',
-                          color: 'var(--accent-lime, #ccff00)',
-                          border: '1px solid rgba(204, 255, 0, 0.4)',
-                          borderRadius: '12px',
-                          padding: '0.2rem 0.5rem',
-                          fontSize: '0.7rem',
-                          fontWeight: 700,
-                          textTransform: 'uppercase',
-                        }}
-                      >
+                      <span className="badge badge-yellow">
                         Active Tier
                       </span>
                     ) : (
-                      <span style={{ color: 'var(--text-muted, #9490a6)', fontSize: '0.75rem' }}>—</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>—</span>
                     )}
                   </td>
                 </tr>

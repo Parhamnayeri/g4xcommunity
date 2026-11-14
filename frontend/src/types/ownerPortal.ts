@@ -164,3 +164,48 @@ export interface SecurityHealthResponse {
     rateLimiterWindowMinutes: number;
   };
 }
+
+export interface RcloneHealthStatus {
+  rcloneInstalled: boolean;
+  rcloneVersion?: string;
+  remoteConfigured: boolean;
+  remoteReachable: boolean;
+  remoteName: string;
+  baseFolder: string;
+  remoteDatabasePath: string;
+  remoteStoragePath: string;
+  configuredRemotes: string[];
+  totalSpaceBytes?: number;
+  usedSpaceBytes?: number;
+  freeSpaceBytes?: number;
+  error?: string;
+  setupInstructions?: string[];
+}
+
+export interface BackupSchedulerStatus {
+  enabled: boolean;
+  intervalHours: number;
+  isRunning: boolean;
+  lastRunAt?: string;
+  nextRunAt?: string;
+  lastError?: string;
+}
+
+export interface BackupSnapshotItem {
+  filename: string;
+  sizeBytes: number;
+  sizeFormatted: string;
+  modifiedAt: string;
+  sha256?: string;
+  isRemote: boolean;
+  isLocal: boolean;
+  manifest?: any;
+}
+
+export interface OwnerBackupsResponse {
+  success: boolean;
+  rcloneStatus: RcloneHealthStatus;
+  schedulerStatus: BackupSchedulerStatus;
+  snapshots: BackupSnapshotItem[];
+}
+

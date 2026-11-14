@@ -74,7 +74,10 @@ export class BetaLifecycleManager {
     }
 
     const requireDiscordBotConfig = !options.skipDiscordLogin;
-    const validation = validateBetaEnvironment(process.env, { requireDiscordBotConfig });
+    const validation = validateBetaEnvironment(process.env, {
+      requireDiscordBotConfig,
+      strictBotTokenRequired: !options.skipDiscordLogin,
+    });
 
     if (options.hostOverride) {
       const h = options.hostOverride.trim().toLowerCase();
@@ -104,6 +107,7 @@ export class BetaLifecycleManager {
     try {
       this.dbHandle = await initializeBetaDatabase(validation.resolvedDatabaseUrl, {
         silent: options.silentDb,
+        seed: true,
       });
       setGlobalPrismaClient(this.dbHandle.prismaClient);
 
@@ -132,6 +136,7 @@ export class BetaLifecycleManager {
       if (!options.skipDiscordLogin) {
         const firewall = new DiscordLabFirewall(validation.allowedGuildId!, {
           expectedApplicationId: validation.applicationId!,
+          allowMemberDms: true,
           onRejectedEvent: (details) => {
             console.warn(
               `[BetaDiscordFirewall] REJECTED ${details.eventType} (${details.reason}) guild=${details.receivedGuildId ?? 'DM'}`
@@ -144,6 +149,7 @@ export class BetaLifecycleManager {
           intents: [
             GatewayIntentBits.Guilds,
             GatewayIntentBits.GuildMessages,
+            GatewayIntentBits.DirectMessages,
             GatewayIntentBits.MessageContent,
             GatewayIntentBits.GuildMessageReactions,
           ],
@@ -199,14 +205,81 @@ export class BetaLifecycleManager {
             reject(new DiscordLabSecurityError(`Beta Discord login timed out after ${timeoutMs}ms.`));
           }, timeoutMs);
 
-          client.once('ready', () => {
+          client.once('ready', async () => {
             clearTimeout(timeout);
             const check = firewall.verifyBotAndGuildContainment(client);
             if (!check.valid) {
               reject(new DiscordLabSecurityError(check.reason || 'Guild containment verification failed.'));
               return;
             }
+
+            // ۱. ثبت اولیه‌ی کانال‌های موجود در دیتابیس در فایروال جهت مجاز بودن عملیات‌های دیسکورد
+            try {
+              const prismaClient = this.dbHandle?.prismaClient;
+              if (prismaClient) {
+                const mappings = await prismaClient.discordChannelMapping.findMany({
+                  where: { guildId: validation.allowedGuildId!, isActive: true },
+                  select: { discordChannelId: true },
+                });
+                for (const m of mappings) {
+                  if (m.discordChannelId) {
+                    firewall.registerPermittedChannel(m.discordChannelId);
+                  }
+                }
+              }
+            } catch (err: any) {
+              console.warn('[BetaRunner] Could not preload channel mappings into firewall:', err?.message || err);
+            }
+
+            // ۲. راه‌اندازی و همگام‌سازی خودکار کانال‌ها، قوانین و پنل‌های ثبت‌نام در سرور دیسکورد
+            try {
+              const guild = client.guilds.cache.get(validation.allowedGuildId!) ||
+                await client.guilds.fetch(validation.allowedGuildId!).catch(() => null);
+
+              if (guild) {
+                // کش و ثبت تمامی کانال‌های موجود در گیلد داخل فایروال پیش از ساخت کانال جدید
+                await guild.channels.fetch().catch(() => null);
+                if (guild.channels?.cache) {
+                  for (const [chId] of guild.channels.cache) {
+                    firewall.registerPermittedChannel(chId);
+                  }
+                }
+
+                console.log(`[BetaRunner] Guild connected: ${guild.name} (${guild.id}). Running auto-provisioning & panel deployment...`);
+                const { provisionAllChannels } = await import('../services/discordProvisioningService');
+                const provActorId = process.env.OWNER_DISCORD_ID || '387583875066626069';
+                const provResult = await provisionAllChannels({
+                  guild,
+                  actorId: provActorId,
+                  client,
+                });
+                console.log(
+                  `[BetaRunner] Auto-provisioning completed: ${provResult.synced} mapped, ${provResult.created} created, ${provResult.reused} reused.`
+                );
+
+                // ثبت کانال‌های نگاشت‌شده جدید در فایروال
+                for (const m of provResult.mappings) {
+                  if (m.discordChannelId) {
+                    firewall.registerPermittedChannel(m.discordChannelId);
+                  }
+                }
+              }
+            } catch (provErr: any) {
+              console.warn('[BetaRunner] Auto-provisioning notice:', provErr?.message || provErr);
+            }
+
             setGlobalDiscordClient(client);
+            (global as any).discordClient = client;
+
+            // ۳. راه‌اندازی ورکر پس‌زمینه صف اعلانات (Outbox Worker) جهت تحویل پیام‌های KYC و ثبت‌نام در دیسکورد
+            try {
+              const { startNotificationWorker } = await import('../services/notificationWorker');
+              startNotificationWorker(client);
+              console.log('[BetaRunner] Background notification worker successfully started.');
+            } catch (nwErr: any) {
+              console.warn('[BetaRunner] Could not start notification worker:', nwErr?.message || nwErr);
+            }
+
             resolve();
           });
 
@@ -215,6 +288,14 @@ export class BetaLifecycleManager {
             reject(err);
           });
         });
+      }
+
+      // Initialize Google Drive backup scheduler if configured
+      try {
+        const { startBackupScheduler } = await import('../services/backupScheduler');
+        startBackupScheduler();
+      } catch (err: any) {
+        console.warn('[BetaRunner] Backup scheduler notice:', err?.message || err);
       }
 
       return {
@@ -242,6 +323,11 @@ export class BetaLifecycleManager {
         this.firewall.terminate(reason);
       } catch {}
     }
+
+    try {
+      const { stopBackupScheduler } = await import('../services/backupScheduler');
+      stopBackupScheduler();
+    } catch {}
 
     if (this.discordClient) {
       try {

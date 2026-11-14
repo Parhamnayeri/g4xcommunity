@@ -328,11 +328,11 @@ async function runAcceptanceSuite() {
       }
     });
 
-    await test('2.3 Legacy portal HTML endpoint (/legacy) is served cleanly', async () => {
+    await test('2.3 Legacy portal endpoint (/legacy) redirects cleanly to root', async () => {
       const res = await httpRequest('/legacy', { headers: { Accept: 'text/html' } });
-      if (res.status !== 200) throw new Error(`Expected 200, got ${res.status}`);
-      if (!res.bodyText.includes('G4X') && !res.bodyText.includes('html')) {
-        throw new Error('Legacy HTML portal missing expected structure');
+      if (res.status !== 302) throw new Error(`Expected 302 redirect, got ${res.status}`);
+      if (res.headers.location !== '/') {
+        throw new Error(`Expected redirect to '/', got ${res.headers.location}`);
       }
     });
 

@@ -209,12 +209,12 @@ export const RulesPage: React.FC = () => {
                             try {
                               const tbl = JSON.parse(sub.tableDataJson);
                               return (
-                                <div className="table-responsive-container" style={{ margin: '1rem 0' }}>
-                                  <table className="data-table" style={{ width: '100%', textAlign: 'left', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+                                <div className="table-scroll" style={{ margin: '1rem 0' }}>
+                                  <table className="data-table">
                                     <thead>
-                                      <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+                                      <tr>
                                         {tbl.headers.map((h: string, idx: number) => (
-                                          <th key={idx} style={{ padding: '0.65rem 0.75rem', fontWeight: 700 }}>
+                                          <th key={idx}>
                                             {h}
                                           </th>
                                         ))}
@@ -222,9 +222,9 @@ export const RulesPage: React.FC = () => {
                                     </thead>
                                     <tbody>
                                       {tbl.rows.map((row: string[], rIdx: number) => (
-                                        <tr key={rIdx} style={{ borderBottom: '1px solid rgba(45, 38, 69, 0.4)' }}>
+                                        <tr key={rIdx}>
                                           {row.map((cell: string, cIdx: number) => (
-                                            <td key={cIdx} style={{ padding: '0.65rem 0.75rem', fontWeight: cIdx === 0 ? 600 : 400, color: cIdx === 1 ? 'var(--accent-lime)' : 'inherit' }}>
+                                            <td key={cIdx} style={{ fontWeight: cIdx === 0 ? 600 : 400, color: cIdx === 1 ? 'var(--accent-yellow)' : 'inherit' }}>
                                               {cell}
                                             </td>
                                           ))}

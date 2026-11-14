@@ -477,67 +477,55 @@ export const StaffPage: React.FC = () => {
                 <LoadingState message="Fetching proof queue..." />
               </div>
             ) : proofs.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                No run proofs found matching current filters.
+              <div className="empty-state-box">
+                <div className="empty-state-icon">🛡️</div>
+                <p style={{ margin: 0, fontWeight: 600 }}>No run proofs found matching current filters.</p>
               </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+              <div className="table-scroll">
+                <table className="data-table">
                   <thead>
-                    <tr style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>ID</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Order / Run</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Service</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Booster</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Type</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Evidence</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Status</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600, textAlign: 'right' }}>Action</th>
+                    <tr>
+                      <th>ID</th>
+                      <th>Order / Run</th>
+                      <th>Service</th>
+                      <th>Booster</th>
+                      <th>Type</th>
+                      <th>Evidence</th>
+                      <th>Status</th>
+                      <th style={{ textAlign: 'right' }}>Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {proofs.map((proof) => {
                       const isSubmitter = user?.discordId === proof.submittedBy.id;
                       return (
-                        <tr
-                          key={proof.id}
-                          style={{
-                            borderBottom: '1px solid var(--border-subtle)',
-                            transition: 'var(--transition-fast)',
-                          }}
-                        >
-                          <td style={{ padding: '0.9rem 1.25rem', fontWeight: 700 }}>#{proof.id}</td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
+                        <tr key={proof.id}>
+                          <td style={{ fontWeight: 700 }}>#{proof.id}</td>
+                          <td>
                             <div>Order #{proof.orderId ?? 'N/A'}</div>
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Run #{proof.runId}</div>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
+                          <td>
                             <div>{proof.game || 'WoW'}</div>
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{proof.service || 'Mythic+'}</div>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
+                          <td>
                             <div style={{ fontWeight: 600 }}>{proof.submittedBy.displayName || proof.submittedBy.username}</div>
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{proof.submittedBy.id}</div>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <span
-                              style={{
-                                backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                                padding: '0.2rem 0.5rem',
-                                borderRadius: 'var(--radius-xs)',
-                                fontSize: '0.75rem',
-                              }}
-                            >
+                          <td>
+                            <span className="badge badge-purple">
                               {proof.proofType}
                             </span>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
+                          <td>
                             <a
                               href={proof.evidenceUrl}
                               target="_blank"
                               rel="noopener noreferrer"
                               style={{
-                                color: 'var(--accent-lime)',
+                                color: 'var(--accent-yellow)',
                                 textDecoration: 'none',
                                 fontWeight: 600,
                                 display: 'inline-flex',
@@ -548,32 +536,20 @@ export const StaffPage: React.FC = () => {
                               View Evidence &nearr;
                             </a>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
+                          <td>
                             <span
-                              style={{
-                                padding: '0.2rem 0.6rem',
-                                borderRadius: 'var(--radius-xs)',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                textTransform: 'capitalize',
-                                backgroundColor:
-                                  proof.status === 'approved'
-                                    ? 'rgba(16, 185, 129, 0.15)'
-                                    : proof.status === 'rejected'
-                                    ? 'rgba(239, 68, 68, 0.15)'
-                                    : 'rgba(245, 158, 11, 0.15)',
-                                color:
-                                  proof.status === 'approved'
-                                    ? 'var(--status-success)'
-                                    : proof.status === 'rejected'
-                                    ? 'var(--status-danger)'
-                                    : 'var(--status-warning)',
-                              }}
+                              className={
+                                proof.status === 'approved'
+                                  ? 'badge badge-green'
+                                  : proof.status === 'rejected'
+                                  ? 'badge badge-danger'
+                                  : 'badge badge-amber'
+                              }
                             >
                               {proof.status}
                             </span>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem', textAlign: 'right' }}>
+                          <td style={{ textAlign: 'right' }}>
                             {proof.status === 'pending' ? (
                               isSubmitter ? (
                                 <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
@@ -582,14 +558,7 @@ export const StaffPage: React.FC = () => {
                               ) : (
                                 <button
                                   onClick={() => handleOpenProofModal(proof)}
-                                  className="btn btn-sm"
-                                  style={{
-                                    backgroundColor: 'var(--primary-purple)',
-                                    color: '#ffffff',
-                                    fontWeight: 600,
-                                    fontSize: '0.75rem',
-                                    padding: '0.35rem 0.75rem',
-                                  }}
+                                  className="btn-primary btn-xs"
                                 >
                                   Review Proof
                                 </button>
@@ -672,75 +641,57 @@ export const StaffPage: React.FC = () => {
                 <LoadingState message="Fetching open disputes..." />
               </div>
             ) : disputes.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                No active disputes requiring review at this time.
+              <div className="empty-state-box">
+                <div className="empty-state-icon">⚖️</div>
+                <p style={{ margin: 0, fontWeight: 600 }}>No active disputes requiring review at this time.</p>
               </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+              <div className="table-scroll">
+                <table className="data-table">
                   <thead>
-                    <tr style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Dispute ID</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Order #</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Claimant</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Type</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Description</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Status</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Date</th>
+                    <tr>
+                      <th>Dispute ID</th>
+                      <th>Order #</th>
+                      <th>Claimant</th>
+                      <th>Type</th>
+                      <th>Description</th>
+                      <th>Status</th>
+                      <th>Date</th>
                     </tr>
                   </thead>
                   <tbody>
                     {disputes.map((dispute) => (
-                      <tr key={dispute.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                        <td style={{ padding: '0.9rem 1.25rem', fontWeight: 700 }}>#{dispute.id}</td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>Order #{dispute.orderId}</td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
+                      <tr key={dispute.id}>
+                        <td style={{ fontWeight: 700 }}>#{dispute.id}</td>
+                        <td>Order #{dispute.orderId}</td>
+                        <td>
                           <div style={{ fontWeight: 600 }}>{dispute.openedBy.displayName || dispute.openedBy.username}</div>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{dispute.openedBy.id}</div>
                         </td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
-                          <span
-                            style={{
-                              backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                              padding: '0.2rem 0.5rem',
-                              borderRadius: 'var(--radius-xs)',
-                              fontSize: '0.75rem',
-                            }}
-                          >
+                        <td>
+                          <span className="badge badge-purple">
                             {dispute.disputeType}
                           </span>
                         </td>
-                        <td style={{ padding: '0.9rem 1.25rem', maxWidth: '300px' }}>
+                        <td style={{ maxWidth: '300px' }}>
                           <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {dispute.description}
                           </div>
                         </td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
+                        <td>
                           <span
-                            style={{
-                              padding: '0.2rem 0.6rem',
-                              borderRadius: 'var(--radius-xs)',
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              textTransform: 'capitalize',
-                              backgroundColor:
-                                dispute.status === 'resolved'
-                                  ? 'rgba(16, 185, 129, 0.15)'
-                                  : dispute.status === 'open'
-                                  ? 'rgba(239, 68, 68, 0.15)'
-                                  : 'rgba(245, 158, 11, 0.15)',
-                              color:
-                                dispute.status === 'resolved'
-                                  ? 'var(--status-success)'
-                                  : dispute.status === 'open'
-                                  ? 'var(--status-danger)'
-                                  : 'var(--status-warning)',
-                            }}
+                            className={
+                              dispute.status === 'resolved'
+                                ? 'badge badge-green'
+                                : dispute.status === 'open'
+                                ? 'badge badge-danger'
+                                : 'badge badge-amber'
+                            }
                           >
                             {dispute.status}
                           </span>
                         </td>
-                        <td style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                        <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                           {new Date(dispute.createdAt).toLocaleDateString()}
                         </td>
                       </tr>
@@ -795,190 +746,151 @@ export const StaffPage: React.FC = () => {
 
       {/* Proof Review Modal */}
       {selectedProof && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '1rem',
-          }}
-        >
+        <div className="studio-modal-backdrop" onClick={() => setSelectedProof(null)}>
           <div
-            className="card-surface"
-            style={{
-              maxWidth: '560px',
-              width: '100%',
-              padding: '2rem',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-subtle)',
-            }}
+            className="studio-modal-card"
+            style={{ maxWidth: '560px' }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>Review Run Proof #{selectedProof.id}</h3>
+            <div className="studio-modal-header">
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 800 }}>Review Run Proof #{selectedProof.id}</h3>
               <button
+                type="button"
+                className="studio-modal-close"
                 onClick={() => setSelectedProof(null)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-muted)',
-                  fontSize: '1.2rem',
-                  cursor: 'pointer',
-                }}
               >
                 &times;
               </button>
             </div>
 
-            <div
-              style={{
-                backgroundColor: 'var(--bg-main)',
-                padding: '1rem',
-                borderRadius: 'var(--radius-xs)',
-                fontSize: '0.85rem',
-                marginBottom: '1.5rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.5rem',
-              }}
-            >
-              <div>
-                <strong style={{ color: 'var(--text-muted)' }}>Order:</strong> #{selectedProof.orderId ?? 'N/A'} (Run #{selectedProof.runId})
+            <div className="studio-modal-body">
+              <div
+                style={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                  padding: '1rem',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  fontSize: '0.85rem',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '0.5rem',
+                }}
+              >
+                <div>
+                  <strong style={{ color: 'var(--text-muted)' }}>Order:</strong> #{selectedProof.orderId ?? 'N/A'} (Run #{selectedProof.runId})
+                </div>
+                <div>
+                  <strong style={{ color: 'var(--text-muted)' }}>Booster:</strong> {selectedProof.submittedBy.displayName || selectedProof.submittedBy.username} ({selectedProof.submittedBy.id})
+                </div>
+                <div>
+                  <strong style={{ color: 'var(--text-muted)' }}>Description:</strong> {selectedProof.description || 'No description provided'}
+                </div>
+                <div>
+                  <strong style={{ color: 'var(--text-muted)' }}>Evidence URL:</strong>{' '}
+                  <a
+                    href={selectedProof.evidenceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: 'var(--accent-yellow)', textDecoration: 'underline' }}
+                  >
+                    {selectedProof.evidenceUrl}
+                  </a>
+                </div>
               </div>
-              <div>
-                <strong style={{ color: 'var(--text-muted)' }}>Booster:</strong> {selectedProof.submittedBy.displayName || selectedProof.submittedBy.username} ({selectedProof.submittedBy.id})
-              </div>
-              <div>
-                <strong style={{ color: 'var(--text-muted)' }}>Description:</strong> {selectedProof.description || 'No description provided'}
-              </div>
-              <div>
-                <strong style={{ color: 'var(--text-muted)' }}>Evidence URL:</strong>{' '}
-                <a
-                  href={selectedProof.evidenceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: 'var(--accent-lime)', textDecoration: 'underline' }}
-                >
-                  {selectedProof.evidenceUrl}
-                </a>
-              </div>
+
+              <form onSubmit={handleSubmitProofReview} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Decision
+                  </label>
+                  <div style={{ display: 'flex', gap: '1rem' }}>
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="decision"
+                        value="approved"
+                        checked={reviewAction === 'approved'}
+                        onChange={() => setReviewAction('approved')}
+                      />
+                      <span className="badge badge-green" style={{ cursor: 'pointer' }}>Approve Proof</span>
+                    </label>
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        cursor: 'pointer',
+                        fontSize: '0.85rem',
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="decision"
+                        value="rejected"
+                        checked={reviewAction === 'rejected'}
+                        onChange={() => setReviewAction('rejected')}
+                      />
+                      <span className="badge badge-danger" style={{ cursor: 'pointer' }}>Reject Proof</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Review Notes / Audit Reason
+                  </label>
+                  <textarea
+                    value={reviewNotes}
+                    onChange={(e) => setReviewNotes(e.target.value)}
+                    placeholder="Enter audit notes (required if rejecting)..."
+                    rows={3}
+                    className="input"
+                    style={{ resize: 'vertical' }}
+                  />
+                </div>
+
+                {reviewMessage && (
+                  <div
+                    style={{
+                      padding: '0.75rem',
+                      borderRadius: '8px',
+                      fontSize: '0.85rem',
+                      backgroundColor: reviewMessage.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                      color: reviewMessage.type === 'success' ? '#10b981' : '#ef4444',
+                      border: `1px solid ${reviewMessage.type === 'success' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                    }}
+                  >
+                    {reviewMessage.text}
+                  </div>
+                )}
+
+                <div className="studio-modal-footer" style={{ borderTop: 'none', padding: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProof(null)}
+                    disabled={submittingReview}
+                    className="btn btn-secondary btn-sm"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingReview}
+                    className={`btn btn-sm ${reviewAction === 'approved' ? 'btn-cta' : 'btn-danger'}`}
+                  >
+                    {submittingReview ? 'Recording...' : `Confirm ${reviewAction === 'approved' ? 'Approval' : 'Rejection'}`}
+                  </button>
+                </div>
+              </form>
             </div>
-
-            <form onSubmit={handleSubmitProofReview} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-                  Decision
-                </label>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  <label
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                      cursor: 'pointer',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="decision"
-                      value="approved"
-                      checked={reviewAction === 'approved'}
-                      onChange={() => setReviewAction('approved')}
-                    />
-                    <span style={{ color: 'var(--status-success)', fontWeight: 600 }}>Approve Proof</span>
-                  </label>
-                  <label
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                      cursor: 'pointer',
-                      fontSize: '0.85rem',
-                    }}
-                  >
-                    <input
-                      type="radio"
-                      name="decision"
-                      value="rejected"
-                      checked={reviewAction === 'rejected'}
-                      onChange={() => setReviewAction('rejected')}
-                    />
-                    <span style={{ color: 'var(--status-danger)', fontWeight: 600 }}>Reject Proof</span>
-                  </label>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-                  Review Notes / Audit Reason
-                </label>
-                <textarea
-                  value={reviewNotes}
-                  onChange={(e) => setReviewNotes(e.target.value)}
-                  placeholder="Enter audit notes (required if rejecting)..."
-                  rows={3}
-                  style={{
-                    width: '100%',
-                    backgroundColor: 'var(--bg-main)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-xs)',
-                    color: 'var(--text-primary)',
-                    padding: '0.75rem',
-                    fontSize: '0.85rem',
-                    resize: 'vertical',
-                  }}
-                />
-              </div>
-
-              {reviewMessage && (
-                <div
-                  style={{
-                    padding: '0.75rem',
-                    borderRadius: 'var(--radius-xs)',
-                    fontSize: '0.85rem',
-                    backgroundColor: reviewMessage.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                    color: reviewMessage.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
-                  }}
-                >
-                  {reviewMessage.text}
-                </div>
-              )}
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedProof(null)}
-                  disabled={submittingReview}
-                  className="btn btn-sm"
-                  style={{
-                    backgroundColor: 'var(--bg-surface-hover)',
-                    color: 'var(--text-primary)',
-                    border: '1px solid var(--border-subtle)',
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submittingReview}
-                  className="btn btn-sm"
-                  style={{
-                    backgroundColor: reviewAction === 'approved' ? 'var(--status-success)' : 'var(--status-danger)',
-                    color: '#ffffff',
-                    fontWeight: 700,
-                  }}
-                >
-                  {submittingReview ? 'Recording...' : `Confirm ${reviewAction === 'approved' ? 'Approval' : 'Rejection'}`}
-                </button>
-              </div>
-            </form>
           </div>
         </div>
       )}

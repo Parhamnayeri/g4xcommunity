@@ -13,7 +13,7 @@ import prisma from '../database/db';
 import { authorize } from './authorizationService';
 import { Permission } from './permissionTypes';
 
-export type PlatformType = 'g2g' | 'skycoach' | 'eldorado' | 'website' | 'advertiser';
+export type PlatformType = 'g2g' | 'skycoach' | 'eldorado' | 'kingboost' | 'overgear' | 'website' | 'advertiser';
 export type ListingCategoryType = 'currency' | 'top_ups' | 'items' | 'accounts' | 'boosting';
 
 export interface FeePolicyLookupOptions {
@@ -46,6 +46,8 @@ export const PLATFORM_WITHDRAWAL_THRESHOLDS_MINOR: Record<string, number> = {
   g2g: 1000,       // $10.00
   skycoach: 5000,  // $50.00
   eldorado: 20000, // $200.00 (مسیر پیش‌فرض جاری مالک)
+  kingboost: 5000, // $50.00
+  overgear: 5000,  // $50.00
 };
 
 /**
@@ -235,28 +237,78 @@ export async function seedStandardFeePolicies(): Promise<void> {
     },
   });
 
-  // ۴.ب. خط‌مشی جدید کارمزد سفارش SkyCoach (۱۰٪ به ازای هر سفارش - بدون ۵ دلار ثابت)
+  // ۴.ب. خط‌مشی کارمزد سفارش SkyCoach (۱۳٪ به ازای هر سفارش)
   await prisma.platformFeePolicy.upsert({
     where: { id: 40 },
     update: {
-      percentageRate: 0.10,
+      percentageRate: 0.13,
       fixedMinor: null,
       isApproved: true,
-      changeReason: 'NEW OWNER POLICY: 10% per order replacing legacy 5% + $5',
+      changeReason: 'NEW OWNER POLICY: 13% per order platform fee deduction',
     },
     create: {
       id: 40,
       platform: 'skycoach',
       feeType: 'sale_commission',
       chargingEvent: 'sale',
-      percentageRate: 0.10,
+      percentageRate: 0.13,
       fixedMinor: null,
       feeBasis: 'gross_sale',
       currency: 'USD',
       minThresholdMinor: 5000,
-      version: 2,
+      version: 3,
       isApproved: true,
-      changeReason: 'NEW OWNER POLICY: 10% per order replacing legacy 5% + $5',
+      changeReason: 'NEW OWNER POLICY: 13% per order platform fee deduction',
+    },
+  });
+
+  // ۴.ج. خط‌مشی کارمزد سفارش Kingboost (۱۳٪ به ازای هر سفارش)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 41 },
+    update: {
+      percentageRate: 0.13,
+      fixedMinor: null,
+      isApproved: true,
+      changeReason: 'NEW OWNER POLICY: 13% per order platform fee deduction',
+    },
+    create: {
+      id: 41,
+      platform: 'kingboost',
+      feeType: 'sale_commission',
+      chargingEvent: 'sale',
+      percentageRate: 0.13,
+      fixedMinor: null,
+      feeBasis: 'gross_sale',
+      currency: 'USD',
+      minThresholdMinor: 5000,
+      version: 1,
+      isApproved: true,
+      changeReason: 'NEW OWNER POLICY: 13% per order platform fee deduction',
+    },
+  });
+
+  // ۴.د. خط‌مشی کارمزد سفارش Overgear (۱۳٪ به ازای هر سفارش)
+  await prisma.platformFeePolicy.upsert({
+    where: { id: 42 },
+    update: {
+      percentageRate: 0.13,
+      fixedMinor: null,
+      isApproved: true,
+      changeReason: 'NEW OWNER POLICY: 13% per order platform fee deduction',
+    },
+    create: {
+      id: 42,
+      platform: 'overgear',
+      feeType: 'sale_commission',
+      chargingEvent: 'sale',
+      percentageRate: 0.13,
+      fixedMinor: null,
+      feeBasis: 'gross_sale',
+      currency: 'USD',
+      minThresholdMinor: 5000,
+      version: 1,
+      isApproved: true,
+      changeReason: 'NEW OWNER POLICY: 13% per order platform fee deduction',
     },
   });
 

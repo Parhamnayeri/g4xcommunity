@@ -51,6 +51,7 @@ export interface LatestApplicationInfo {
   id: number;
   category: string;
   status: string;
+  identityStatus?: string;
   submittedAt: string;
   reviewedAt: string | null;
 }

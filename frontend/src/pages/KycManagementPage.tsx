@@ -11,6 +11,8 @@ import {
   fetchKycDetail,
   submitKycDecision,
 } from '../services/operations';
+import { sendUserKycDm } from '../services/adminPortal';
+import { AssistedKycModal } from '../components/admin/AssistedKycModal';
 import { LoadingState } from '../components/ui/LoadingState';
 
 export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded = false }) => {
@@ -38,6 +40,32 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
   // Secure Document Viewer State
   const [activeDocRef, setActiveDocRef] = useState<string | null>(null);
   const [activeDocType, setActiveDocType] = useState<'identityDoc' | 'passportDoc' | 'selfieDoc' | null>(null);
+
+  // Assisted KYC & DM States
+  const [showAssistModal, setShowAssistModal] = useState(false);
+  const [sendingDm, setSendingDm] = useState(false);
+  const [dmFeedback, setDmFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  const handleSendKycDm = async () => {
+    if (!detail?.application?.userId) return;
+    setSendingDm(true);
+    setDmFeedback(null);
+    try {
+      const res = await sendUserKycDm(
+        detail.application.userId,
+        `For application #${detail.application.id} (${detail.application.category})`
+      );
+      if (res.dmSent) {
+        setDmFeedback({ text: '✓ KYC verification portal link sent to applicant Discord DM!', type: 'success' });
+      } else {
+        setDmFeedback({ text: `⚠️ User's DMs are closed (${res.error || 'Blocked'}). Direct link: ${res.kycUrl}`, type: 'error' });
+      }
+    } catch (err: any) {
+      setDmFeedback({ text: err.message || 'Failed to dispatch KYC DM', type: 'error' });
+    } finally {
+      setSendingDm(false);
+    }
+  };
 
   // Load Queue
   const loadQueue = useCallback(async (page: number = 1) => {
@@ -199,16 +227,10 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
           >
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
               <select
+                className="input"
                 value={categoryFilter}
                 onChange={(e) => setCategoryFilter(e.target.value)}
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  padding: '0.4rem 0.8rem',
-                  borderRadius: 'var(--radius-xs)',
-                  fontSize: '0.85rem',
-                }}
+                style={{ width: 'auto', padding: '0.45rem 0.85rem', fontSize: '0.85rem' }}
               >
                 <option value="">All Verification Categories</option>
                 <option value="pilot">Account Pilots (High-Risk)</option>
@@ -218,16 +240,10 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
               </select>
 
               <select
+                className="input"
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                  padding: '0.4rem 0.8rem',
-                  borderRadius: 'var(--radius-xs)',
-                  fontSize: '0.85rem',
-                }}
+                style={{ width: 'auto', padding: '0.45rem 0.85rem', fontSize: '0.85rem' }}
               >
                 <option value="pending">Pending Queue</option>
                 <option value="info_requested">Info Requested</option>
@@ -238,161 +254,101 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
             </div>
 
             <button
+              type="button"
               onClick={() => loadQueue(pagination?.page ?? 1)}
-              className="btn btn-sm"
-              style={{
-                backgroundColor: 'var(--bg-surface-hover)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border-subtle)',
-              }}
+              className="btn btn-secondary btn-sm"
             >
-              Refresh Verification Queue
+              ↻ Refresh Queue
             </button>
           </div>
 
           {/* Applications Table */}
-          <div className="card-surface" style={{ padding: 0, overflow: 'hidden', border: '1px solid var(--border-subtle)' }}>
+          <div className="card-surface" style={{ padding: '1.25rem', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)' }}>
             {loading ? (
               <div style={{ padding: '3rem' }}>
                 <LoadingState message="Fetching identity verification records..." />
               </div>
             ) : applications.length === 0 ? (
-              <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                No KYC verification applications pending review under current filters.
+              <div className="empty-state-box">
+                <div className="empty-state-icon">🪪</div>
+                <p style={{ color: 'var(--text-muted)', margin: 0 }}>No KYC verification applications pending review under current filters.</p>
               </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+              <div className="table-scroll">
+                <table className="data-table">
                   <thead>
-                    <tr style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>App #</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Applicant</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Category</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Documents</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>App Status</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Identity Status</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600, textAlign: 'right' }}>Review</th>
+                    <tr>
+                      <th>App #</th>
+                      <th>Applicant</th>
+                      <th>Category</th>
+                      <th>Documents</th>
+                      <th>App Status</th>
+                      <th>Identity Status</th>
+                      <th style={{ textAlign: 'right' }}>Review</th>
                     </tr>
                   </thead>
                   <tbody>
                     {applications.map((app) => {
                       const isSelf = user?.discordId === app.userId;
                       return (
-                        <tr key={app.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                          <td style={{ padding: '0.9rem 1.25rem', fontWeight: 700 }}>#{app.id}</td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
+                        <tr key={app.id}>
+                          <td style={{ fontWeight: 700, fontFamily: 'monospace' }}>#{app.id}</td>
+                          <td>
                             <div style={{ fontWeight: 600 }}>{app.displayName || app.username}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{app.userId}</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>{app.userId}</div>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
-                            <span
-                              style={{
-                                padding: '0.2rem 0.5rem',
-                                borderRadius: 'var(--radius-xs)',
-                                fontSize: '0.75rem',
-                                fontWeight: 700,
-                                textTransform: 'uppercase',
-                                backgroundColor: app.category === 'pilot' ? 'rgba(204, 255, 0, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                                color: app.category === 'pilot' ? 'var(--accent-lime)' : 'var(--text-primary)',
-                              }}
-                            >
-                              {app.category}
-                            </span>
+                          <td>
+                            <span className="badge badge-purple">{app.category}</span>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
+                          <td>
                             <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                              <span
-                                style={{
-                                  fontSize: '0.7rem',
-                                  padding: '0.15rem 0.4rem',
-                                  borderRadius: 'var(--radius-xs)',
-                                  backgroundColor: app.hasIdentityDoc ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                                  color: app.hasIdentityDoc ? 'var(--status-success)' : 'var(--text-muted)',
-                                }}
-                              >
+                              <span className={app.hasIdentityDoc ? 'badge badge-green' : 'badge badge-muted'}>
                                 ID {app.hasIdentityDoc ? '✓' : '—'}
                               </span>
-                              <span
-                                style={{
-                                  fontSize: '0.7rem',
-                                  padding: '0.15rem 0.4rem',
-                                  borderRadius: 'var(--radius-xs)',
-                                  backgroundColor: app.hasPassportDoc ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                                  color: app.hasPassportDoc ? 'var(--status-success)' : 'var(--text-muted)',
-                                }}
-                              >
+                              <span className={app.hasPassportDoc ? 'badge badge-green' : 'badge badge-muted'}>
                                 Passport {app.hasPassportDoc ? '✓' : '—'}
                               </span>
-                              <span
-                                style={{
-                                  fontSize: '0.7rem',
-                                  padding: '0.15rem 0.4rem',
-                                  borderRadius: 'var(--radius-xs)',
-                                  backgroundColor: app.hasSelfieDoc ? 'rgba(16, 185, 129, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                                  color: app.hasSelfieDoc ? 'var(--status-success)' : 'var(--text-muted)',
-                                }}
-                              >
+                              <span className={app.hasSelfieDoc ? 'badge badge-green' : 'badge badge-muted'}>
                                 Selfie {app.hasSelfieDoc ? '✓' : '—'}
                               </span>
                             </div>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
+                          <td>
                             <span
-                              style={{
-                                padding: '0.2rem 0.6rem',
-                                borderRadius: 'var(--radius-xs)',
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                textTransform: 'capitalize',
-                                backgroundColor:
-                                  app.status === 'approved'
-                                    ? 'rgba(16, 185, 129, 0.15)'
-                                    : app.status === 'rejected'
-                                    ? 'rgba(239, 68, 68, 0.15)'
-                                    : 'rgba(245, 158, 11, 0.15)',
-                                color:
-                                  app.status === 'approved'
-                                    ? 'var(--status-success)'
-                                    : app.status === 'rejected'
-                                    ? 'var(--status-danger)'
-                                    : 'var(--status-warning)',
-                              }}
+                              className={`badge ${
+                                app.status === 'approved'
+                                  ? 'badge-green'
+                                  : app.status === 'rejected'
+                                  ? 'badge-danger'
+                                  : 'badge-amber'
+                              }`}
                             >
                               {app.status}
                             </span>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem' }}>
+                          <td>
                             <span
-                              style={{
-                                fontSize: '0.75rem',
-                                fontWeight: 600,
-                                color:
-                                  app.identityStatus === 'verified'
-                                    ? 'var(--status-success)'
-                                    : app.identityStatus === 'rejected'
-                                    ? 'var(--status-danger)'
-                                    : 'var(--status-warning)',
-                              }}
+                              className={`badge ${
+                                app.identityStatus === 'verified'
+                                  ? 'badge-green'
+                                  : app.identityStatus === 'rejected'
+                                  ? 'badge-danger'
+                                  : 'badge-amber'
+                              }`}
                             >
                               {app.identityStatus}
                             </span>
                           </td>
-                          <td style={{ padding: '0.9rem 1.25rem', textAlign: 'right' }}>
+                          <td style={{ textAlign: 'right' }}>
                             {isSelf ? (
                               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
                                 Self-review blocked
                               </span>
                             ) : (
                               <button
+                                type="button"
                                 onClick={() => loadDetail(app.id)}
-                                className="btn btn-sm"
-                                style={{
-                                  backgroundColor: 'var(--accent-lime)',
-                                  color: '#0d0b12',
-                                  fontSize: '0.75rem',
-                                  fontWeight: 800,
-                                  padding: '0.35rem 0.75rem',
-                                }}
+                                className="btn btn-cta btn-xs"
                               >
                                 Inspect &amp; Decide
                               </button>
@@ -413,7 +369,8 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
-                  padding: '1rem 1.5rem',
+                  paddingTop: '1rem',
+                  marginTop: '1rem',
                   borderTop: '1px solid var(--border-subtle)',
                   fontSize: '0.85rem',
                   color: 'var(--text-muted)',
@@ -424,18 +381,18 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                   <button
+                    type="button"
                     disabled={(pagination?.page ?? 1) <= 1}
                     onClick={() => loadQueue((pagination?.page ?? 1) - 1)}
-                    className="btn btn-sm"
-                    style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
+                    className="btn btn-secondary btn-sm"
                   >
                     &larr; Prev
                   </button>
                   <button
+                    type="button"
                     disabled={(pagination?.page ?? 1) >= (pagination?.totalPages || 1)}
                     onClick={() => loadQueue((pagination?.page ?? 1) + 1)}
-                    className="btn btn-sm"
-                    style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
+                    className="btn btn-secondary btn-sm"
                   >
                     Next &rarr;
                   </button>
@@ -448,36 +405,11 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
 
       {/* KYC Application Inspection & Decision Drawer / Modal */}
       {selectedAppId && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.85)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '1rem',
-          }}
-        >
-          <div
-            className="card-surface"
-            style={{
-              maxWidth: '720px',
-              width: '100%',
-              maxHeight: '90vh',
-              overflowY: 'auto',
-              padding: '2rem',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-subtle)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+        <div className="studio-modal-backdrop" onClick={() => { setSelectedAppId(null); setDetail(null); }}>
+          <div className="studio-modal-card studio-modal-card-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="studio-modal-header">
               <div>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0 }}>
                   KYC Verification File #{selectedAppId}
                 </h3>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
@@ -485,11 +417,12 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
                 </span>
               </div>
               <button
+                type="button"
+                className="studio-modal-close"
                 onClick={() => {
                   setSelectedAppId(null);
                   setDetail(null);
                 }}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '1.4rem', cursor: 'pointer' }}
               >
                 &times;
               </button>
@@ -533,6 +466,59 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
                     <div>{detail.application.qualifications || 'No qualifications stated'}</div>
                   </div>
                 </div>
+
+                {/* Assisted KYC & Direct DM Toolbar */}
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '0.75rem',
+                    flexWrap: 'wrap',
+                    padding: '0.85rem 1rem',
+                    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    borderRadius: 'var(--radius-xs)',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      disabled={sendingDm}
+                      onClick={handleSendKycDm}
+                      className="btn btn-secondary btn-xs"
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                    >
+                      <span>✉️</span> {sendingDm ? 'Sending DM...' : 'Send KYC Request DM'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAssistModal(true)}
+                      className="btn btn-purple btn-xs"
+                      style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                    >
+                      <span>✏️</span> Complete / Edit KYC for User
+                    </button>
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Single-Verification: Approving verifies user universally across all games.
+                  </span>
+                </div>
+
+                {dmFeedback && (
+                  <div
+                    style={{
+                      padding: '0.65rem 0.85rem',
+                      borderRadius: 'var(--radius-xs)',
+                      fontSize: '0.8rem',
+                      backgroundColor: dmFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                      color: dmFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                      border: `1px solid ${dmFeedback.type === 'success' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                    }}
+                  >
+                    {dmFeedback.text}
+                  </div>
+                )}
 
                 {/* Submitted Documents Inspection */}
                 <div>
@@ -780,7 +766,7 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
                     </div>
                   )}
 
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+                  <div className="studio-modal-footer">
                     <button
                       type="button"
                       onClick={() => {
@@ -788,20 +774,14 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
                         setDetail(null);
                       }}
                       disabled={submitting}
-                      className="btn btn-sm"
-                      style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
+                      className="btn btn-secondary btn-sm"
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
                       disabled={submitting}
-                      className="btn btn-sm"
-                      style={{
-                        backgroundColor: decision === 'verify_identity' ? 'var(--status-success)' : decision === 'reject' ? 'var(--status-danger)' : 'var(--primary-purple)',
-                        color: decision === 'verify_identity' ? '#0d0b12' : '#ffffff',
-                        fontWeight: 800,
-                      }}
+                      className={`btn ${decision === 'reject' ? 'btn-danger' : 'btn-cta'} btn-sm`}
                     >
                       {submitting ? 'Applying Decision...' : 'Apply KYC Decision'}
                     </button>
@@ -811,6 +791,20 @@ export const KycManagementPage: React.FC<{ embedded?: boolean }> = ({ embedded =
             )}
           </div>
         </div>
+      )}
+
+      {/* Staff Assisted KYC Modal */}
+      {showAssistModal && detail && (
+        <AssistedKycModal
+          userId={detail.application.userId}
+          userDisplayName={detail.application.displayName || detail.application.username}
+          isOpen={showAssistModal}
+          onClose={() => setShowAssistModal(false)}
+          onSuccess={() => {
+            loadDetail(detail.application.id);
+            loadQueue(pagination.page);
+          }}
+        />
       )}
     </div>
   );

@@ -37,6 +37,7 @@ export interface DiscordLabFirewallOptions {
     state: DiscordLabState;
   }) => void;
   expectedApplicationId?: string;
+  allowMemberDms?: boolean;
 }
 
 export class DiscordLabSecurityError extends Error {
@@ -121,6 +122,7 @@ export class DiscordLabFirewall {
   }
 
   public readonly permittedChannelIds: Set<string> = new Set();
+  public readonly permittedDmChannelIds: Set<string> = new Set();
   public readonly permittedInteractionIds: Set<string> = new Set();
   public readonly permittedInteractionTokens: Map<string, number> = new Map();
   private readonly permittedInteractionTokenById: Map<string, string> = new Map();
@@ -128,6 +130,12 @@ export class DiscordLabFirewall {
   public registerPermittedChannel(channelId: string | null | undefined): void {
     if (channelId && /^[1-9][0-9]{16,19}$/.test(channelId)) {
       this.permittedChannelIds.add(channelId);
+    }
+  }
+
+  public registerPermittedDmChannel(channelId: string | null | undefined): void {
+    if (channelId && /^[1-9][0-9]{16,19}$/.test(channelId)) {
+      this.permittedDmChannelIds.add(channelId);
     }
   }
 
@@ -327,12 +335,27 @@ export class DiscordLabFirewall {
             (!cachedChannel.guildId && !cachedChannel.guild);
 
           if (isDm) {
+            if (cachedChannel.type === 3) {
+              this.totalEventsRejected++;
+              throw new DiscordLabSecurityError(
+                `Outgoing REST operation '${method} ${pathOnly}' strictly blocked: DM and group-DM operations are denied in Discord Lab mode regardless of recipient membership. Permitted operations must target verified guild channels only.`
+              );
+            }
+
+            if (this.options.allowMemberDms && (this.permittedDmChannelIds.has(targetChannelId) || cachedChannel.type === 1 || cachedChannel.isDMBased?.())) {
+              return;
+            }
+
             this.totalEventsRejected++;
             throw new DiscordLabSecurityError(
               `Outgoing REST operation '${method} ${pathOnly}' strictly blocked: DM and group-DM operations are denied in Discord Lab mode regardless of recipient membership. Permitted operations must target verified guild channels only.`
             );
           }
         }
+      }
+
+      if (this.options.allowMemberDms && this.permittedDmChannelIds.has(targetChannelId)) {
+        return;
       }
 
       // Verify target guild ownership for channel
@@ -464,7 +487,26 @@ export class DiscordLabFirewall {
       return;
     }
 
-    // 7. Strict Default Fail-Closed: Any unclassified route is immediately rejected
+    // 7. Safe User Metadata Read: GET /users/:userId
+    const userMatch = pathOnly.match(/^\/users\/([a-zA-Z0-9_\-]+)$/);
+    if (userMatch) {
+      if (method === 'GET') {
+        return;
+      }
+    }
+
+    // 8. Direct Message Channel Creation: POST /users/@me/channels
+    if (pathOnly === '/users/@me/channels') {
+      if (this.options.allowMemberDms && method === 'POST') {
+        return;
+      }
+      this.totalEventsRejected++;
+      throw new DiscordLabSecurityError(
+        `Outgoing REST operation '${method} ${pathOnly}' strictly blocked: DM channel creation is denied in Discord Lab mode.`
+      );
+    }
+
+    // 9. Strict Default Fail-Closed: Any unclassified route is immediately rejected
     this.totalEventsRejected++;
     throw new DiscordLabSecurityError(
       `Outgoing REST route '${method} ${pathOnly}' is unclassified or unauthorized. Fail-closed containment strictly rejects unknown routes by default.`
@@ -482,7 +524,28 @@ export class DiscordLabFirewall {
     const originalRequest = client.rest.request.bind(client.rest);
     client.rest.request = async (options: any) => {
       this.assertOutgoingRestPermitted(options, client);
-      return originalRequest(options);
+      const res = await originalRequest(options);
+      try {
+        const pathOnly = String(options?.fullRoute || options?.path || '').split('?')[0].trim();
+        if (
+          pathOnly.startsWith(`/guilds/${this.allowedGuildId}/channels`) &&
+          String(options?.method || '').toUpperCase() === 'POST' &&
+          res &&
+          typeof res === 'object' &&
+          (res as any).id
+        ) {
+          this.registerPermittedChannel((res as any).id);
+        } else if (
+          pathOnly === '/users/@me/channels' &&
+          String(options?.method || '').toUpperCase() === 'POST' &&
+          res &&
+          typeof res === 'object' &&
+          (res as any).id
+        ) {
+          this.registerPermittedDmChannel((res as any).id);
+        }
+      } catch {}
+      return res;
     };
   }
 

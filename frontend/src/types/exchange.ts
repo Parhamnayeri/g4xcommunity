@@ -21,6 +21,13 @@ export interface ExchangerOffer {
   createdAt: string;
   updatedAt: string;
   exchanger?: ExchangerUserSummary;
+  // Compatibility aliases
+  targetCurrency?: string;
+  direction?: 'BUY' | 'SELL' | string;
+  commissionRateBps?: number;
+  minAmountUsdCents?: number;
+  maxAmountUsdCents?: number;
+  isActive?: boolean;
 }
 
 export interface GoldTrade {
@@ -68,6 +75,11 @@ export interface GoldTrade {
     colorClass: string;
     rawStatus: string;
   };
+  // Compatibility aliases
+  status?: string;
+  goldAmountK?: number;
+  totalUsdCents?: number;
+  settlementAmount?: number;
 }
 
 export interface GoldTradeQuote {

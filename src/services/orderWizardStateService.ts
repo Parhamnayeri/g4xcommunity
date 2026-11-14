@@ -21,7 +21,7 @@ export interface OrderWizardSession {
   userId: string;
   guildId: string | null;
   origin: WizardOrigin;
-  platform?: 'g2g' | 'skycoach' | 'eldorado';
+  platform?: 'g2g' | 'skycoach' | 'eldorado' | 'kingboost' | 'overgear';
   platformAccountId?: number;
   platformAccountRef?: string;
   gameSlug?: string;

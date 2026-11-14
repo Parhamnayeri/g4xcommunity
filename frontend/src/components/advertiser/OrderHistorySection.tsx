@@ -59,9 +59,9 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
   return (
     <div
       style={{
-        backgroundColor: 'var(--bg-surface, #181524)',
+        backgroundColor: 'var(--bg-surface)',
         borderRadius: '16px',
-        border: '1px solid rgba(124, 58, 237, 0.25)',
+        border: '1px solid var(--border-subtle)',
         padding: '1.75rem',
         boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
         display: 'flex',
@@ -84,7 +84,7 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
             style={{
               fontSize: '1.25rem',
               fontWeight: 800,
-              color: 'var(--text-primary, #f4f4f6)',
+              color: 'var(--text-primary)',
               margin: '0 0 0.25rem 0',
               display: 'flex',
               alignItems: 'center',
@@ -93,7 +93,7 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
           >
             <span>📜</span> Order History &amp; Completed Boosts ({totalCount})
           </h2>
-          <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted, #9490a6)' }}>
+          <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
             Immutable historical records of completed settlements and cancellations.
           </p>
         </div>
@@ -102,20 +102,13 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
           {/* Game filter */}
           <select
+            className="input"
             value={selectedGame}
             onChange={(e) => {
               setSelectedGame(e.target.value);
               setPage(1);
             }}
-            style={{
-              backgroundColor: 'rgba(13, 11, 18, 0.8)',
-              border: '1px solid rgba(124, 58, 237, 0.3)',
-              borderRadius: '8px',
-              padding: '0.45rem 0.7rem',
-              color: 'var(--text-primary, #f4f4f6)',
-              fontSize: '0.8rem',
-              outline: 'none',
-            }}
+            style={{ minWidth: '130px' }}
           >
             <option value="all">All Games</option>
             {games.map((g) => (
@@ -127,20 +120,13 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
 
           {/* Status filter */}
           <select
+            className="input"
             value={selectedStatus}
             onChange={(e) => {
               setSelectedStatus(e.target.value);
               setPage(1);
             }}
-            style={{
-              backgroundColor: 'rgba(13, 11, 18, 0.8)',
-              border: '1px solid rgba(124, 58, 237, 0.3)',
-              borderRadius: '8px',
-              padding: '0.45rem 0.7rem',
-              color: 'var(--text-primary, #f4f4f6)',
-              fontSize: '0.8rem',
-              outline: 'none',
-            }}
+            style={{ minWidth: '140px' }}
           >
             <option value="history">All History</option>
             <option value="completed">Completed Only</option>
@@ -150,61 +136,39 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
           {/* Date range inputs */}
           <input
             type="date"
+            className="input"
             value={startDate}
             onChange={(e) => {
               setStartDate(e.target.value);
               setPage(1);
             }}
             title="Start Date"
-            style={{
-              backgroundColor: 'rgba(13, 11, 18, 0.8)',
-              border: '1px solid rgba(124, 58, 237, 0.3)',
-              borderRadius: '8px',
-              padding: '0.45rem 0.6rem',
-              color: 'var(--text-primary, #f4f4f6)',
-              fontSize: '0.8rem',
-              outline: 'none',
-            }}
+            style={{ width: '135px' }}
           />
 
           <input
             type="date"
+            className="input"
             value={endDate}
             onChange={(e) => {
               setEndDate(e.target.value);
               setPage(1);
             }}
             title="End Date"
-            style={{
-              backgroundColor: 'rgba(13, 11, 18, 0.8)',
-              border: '1px solid rgba(124, 58, 237, 0.3)',
-              borderRadius: '8px',
-              padding: '0.45rem 0.6rem',
-              color: 'var(--text-primary, #f4f4f6)',
-              fontSize: '0.8rem',
-              outline: 'none',
-            }}
+            style={{ width: '135px' }}
           />
 
           {/* Search box */}
           <input
             type="text"
+            className="input"
             placeholder="Search ref..."
             value={search}
             onChange={(e) => {
               setSearch(e.target.value);
               setPage(1);
             }}
-            style={{
-              backgroundColor: 'rgba(13, 11, 18, 0.8)',
-              border: '1px solid rgba(124, 58, 237, 0.3)',
-              borderRadius: '8px',
-              padding: '0.45rem 0.7rem',
-              color: 'var(--text-primary, #f4f4f6)',
-              fontSize: '0.8rem',
-              outline: 'none',
-              width: '140px',
-            }}
+            style={{ width: '140px' }}
           />
         </div>
       </div>
@@ -213,7 +177,7 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
         <div
           style={{
             backgroundColor: 'rgba(239, 68, 68, 0.12)',
-            border: '1px solid rgba(239, 68, 68, 0.3)',
+            border: '1px solid var(--status-danger)',
             borderRadius: '8px',
             padding: '0.75rem',
             color: '#f87171',
@@ -226,52 +190,26 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
 
       {/* History Table */}
       {loading ? (
-        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted, #9490a6)' }}>
+        <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
           Loading order history...
         </div>
       ) : orders.length === 0 ? (
-        <div
-          style={{
-            textAlign: 'center',
-            padding: '3rem 1rem',
-            backgroundColor: 'rgba(13, 11, 18, 0.4)',
-            borderRadius: '12px',
-            border: '1px dashed rgba(124, 58, 237, 0.25)',
-          }}
-        >
-          <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🗃️</div>
-          <p style={{ margin: 0, fontSize: '0.95rem', color: 'var(--text-primary, #f4f4f6)', fontWeight: 600 }}>
-            No past orders found matching your criteria.
-          </p>
+        <div className="empty-state-box">
+          <div className="empty-state-icon">🗃️</div>
+          <p style={{ margin: 0, fontWeight: 600 }}>No past orders found matching your criteria.</p>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto', borderRadius: '10px', border: '1px solid rgba(124, 58, 237, 0.15)' }}>
-          <table
-            style={{
-              width: '100%',
-              borderCollapse: 'collapse',
-              fontSize: '0.85rem',
-              textAlign: 'left',
-            }}
-          >
+        <div className="table-scroll">
+          <table className="data-table">
             <thead>
-              <tr
-                style={{
-                  backgroundColor: 'rgba(13, 11, 18, 0.7)',
-                  borderBottom: '1px solid rgba(124, 58, 237, 0.2)',
-                  color: 'var(--text-muted, #9490a6)',
-                  fontSize: '0.75rem',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.05em',
-                }}
-              >
-                <th style={{ padding: '0.85rem 1rem' }}>Order Ref / Title</th>
-                <th style={{ padding: '0.85rem 1rem' }}>Game &amp; Service</th>
-                <th style={{ padding: '0.85rem 1rem' }}>Historical Gross</th>
-                <th style={{ padding: '0.85rem 1rem' }}>Fee Snapshot</th>
-                <th style={{ padding: '0.85rem 1rem' }}>Status</th>
-                <th style={{ padding: '0.85rem 1rem' }}>Booster Settlement</th>
-                <th style={{ padding: '0.85rem 1rem' }}>Created Date</th>
+              <tr>
+                <th>Order Ref / Title</th>
+                <th>Game &amp; Service</th>
+                <th>Historical Gross</th>
+                <th>Fee Snapshot</th>
+                <th>Status</th>
+                <th>Booster Settlement</th>
+                <th>Created Date</th>
               </tr>
             </thead>
             <tbody>
@@ -280,25 +218,17 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
                 const isCancelled = o.status === 'cancelled';
 
                 return (
-                  <tr
-                    key={o.id}
-                    style={{
-                      borderBottom: '1px solid rgba(124, 58, 237, 0.1)',
-                      transition: 'background-color 0.15s ease',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(124, 58, 237, 0.06)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                  >
+                  <tr key={o.id}>
                     {/* Order Ref & Name */}
-                    <td style={{ padding: '0.85rem 1rem' }}>
+                    <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                        <span style={{ fontWeight: 700, color: 'var(--text-primary, #f4f4f6)', fontFamily: 'monospace' }}>
+                        <span style={{ fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
                           #{o.id} — {o.orderRef}
                         </span>
                         {o.orderName ? (
-                          <span style={{ fontSize: '0.8rem', color: '#c4b5fd' }}>{o.orderName}</span>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--primary-purple)' }}>{o.orderName}</span>
                         ) : (
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted, #9490a6)' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                             Direct Boost Order
                           </span>
                         )}
@@ -306,7 +236,7 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
                           <span
                             style={{
                               fontSize: '0.75rem',
-                              color: 'var(--text-muted, #9490a6)',
+                              color: 'var(--text-muted)',
                               fontStyle: 'italic',
                               maxWidth: '220px',
                               overflow: 'hidden',
@@ -322,89 +252,58 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
                     </td>
 
                     {/* Game & Service */}
-                    <td style={{ padding: '0.85rem 1rem' }}>
-                      <div style={{ fontWeight: 600, color: 'var(--text-primary, #f4f4f6)' }}>{o.gameName}</div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #9490a6)' }}>{o.serviceName}</div>
+                    <td>
+                      <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{o.gameName}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{o.serviceName}</div>
                     </td>
 
                     {/* Historical Gross USD */}
-                    <td style={{ padding: '0.85rem 1rem' }}>
-                      <div style={{ fontFamily: 'monospace', fontWeight: 800, color: '#f4f4f6' }}>
+                    <td>
+                      <div style={{ fontFamily: 'monospace', fontWeight: 800, color: 'var(--text-primary)' }}>
                         ${o.grossAmountUsd}
                       </div>
                     </td>
 
                     {/* Immutable Fee Snapshot */}
-                    <td style={{ padding: '0.85rem 1rem' }}>
-                      <div style={{ fontFamily: 'monospace', color: '#c4b5fd', fontWeight: 600 }}>
+                    <td>
+                      <div style={{ fontFamily: 'monospace', color: 'var(--primary-purple)', fontWeight: 600 }}>
                         ${o.feeInfo.advertiserFeeUsd || '0.00'}
                       </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #9490a6)' }}>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                         Tier: {o.advertiser.commissionPercent}
                       </div>
                     </td>
 
                     {/* Status */}
-                    <td style={{ padding: '0.85rem 1rem' }}>
+                    <td>
                       {isCompleted ? (
-                        <span
-                          style={{
-                            backgroundColor: 'rgba(52, 211, 153, 0.15)',
-                            color: '#34d399',
-                            border: '1px solid rgba(52, 211, 153, 0.35)',
-                            borderRadius: '8px',
-                            padding: '0.2rem 0.55rem',
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                          }}
-                        >
+                        <span className="badge badge-green">
                           Completed
                         </span>
                       ) : isCancelled ? (
-                        <span
-                          style={{
-                            backgroundColor: 'rgba(239, 68, 68, 0.15)',
-                            color: '#f87171',
-                            border: '1px solid rgba(239, 68, 68, 0.35)',
-                            borderRadius: '8px',
-                            padding: '0.2rem 0.55rem',
-                            fontSize: '0.75rem',
-                            fontWeight: 700,
-                            textTransform: 'uppercase',
-                          }}
-                        >
+                        <span className="badge badge-danger">
                           Cancelled
                         </span>
                       ) : (
-                        <span
-                          style={{
-                            backgroundColor: 'rgba(148, 144, 166, 0.15)',
-                            color: 'var(--text-muted, #9490a6)',
-                            border: '1px solid rgba(148, 144, 166, 0.3)',
-                            borderRadius: '8px',
-                            padding: '0.2rem 0.55rem',
-                            fontSize: '0.75rem',
-                          }}
-                        >
+                        <span className="badge badge-muted">
                           {o.simplifiedStatus.label}
                         </span>
                       )}
                     </td>
 
                     {/* Booster Settlement */}
-                    <td style={{ padding: '0.85rem 1rem' }}>
+                    <td>
                       {o.assignedBooster ? (
-                        <span style={{ color: 'var(--text-primary, #f4f4f6)', fontWeight: 600 }}>
+                        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>
                           {o.assignedBooster}
                         </span>
                       ) : (
-                        <span style={{ color: 'var(--text-muted, #9490a6)', fontSize: '0.8rem' }}>None</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>None</span>
                       )}
                     </td>
 
                     {/* Created Date */}
-                    <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted, #9490a6)', fontSize: '0.75rem' }}>
+                    <td style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
                       {new Date(o.createdAt).toLocaleDateString()}
                     </td>
                   </tr>
@@ -418,7 +317,7 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
       {/* Pagination Bar */}
       {totalPages > 1 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
-          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted, #9490a6)' }}>
+          <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
             Page {page} of {totalPages} ({totalCount} total history records)
           </span>
 
@@ -426,30 +325,14 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page <= 1}
-              style={{
-                backgroundColor: 'rgba(13, 11, 18, 0.8)',
-                border: '1px solid rgba(124, 58, 237, 0.3)',
-                borderRadius: '6px',
-                padding: '0.4rem 0.8rem',
-                color: page <= 1 ? 'var(--text-muted, #9490a6)' : 'var(--text-primary, #f4f4f6)',
-                cursor: page <= 1 ? 'not-allowed' : 'pointer',
-                fontSize: '0.8rem',
-              }}
+              className="btn-secondary btn-xs"
             >
               Previous
             </button>
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
-              style={{
-                backgroundColor: 'rgba(13, 11, 18, 0.8)',
-                border: '1px solid rgba(124, 58, 237, 0.3)',
-                borderRadius: '6px',
-                padding: '0.4rem 0.8rem',
-                color: page >= totalPages ? 'var(--text-muted, #9490a6)' : 'var(--text-primary, #f4f4f6)',
-                cursor: page >= totalPages ? 'not-allowed' : 'pointer',
-                fontSize: '0.8rem',
-              }}
+              className="btn-secondary btn-xs"
             >
               Next
             </button>

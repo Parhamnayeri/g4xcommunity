@@ -59,7 +59,7 @@ export const AdvertiserPage: React.FC = () => {
     }, 6000);
   };
 
-  const handleNoteSuccess = (updatedNotes: string) => {
+  const handleNoteSuccess = (_updatedNotes: string) => {
     setEditingNoteOrder(null);
     showNotification('Order notes updated successfully.');
     setRefreshTrigger((prev) => prev + 1);

@@ -372,55 +372,46 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'ov
                 No active disputes requiring management resolution.
               </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+              <div className="table-scroll">
+                <table className="data-table">
                   <thead>
-                    <tr style={{ backgroundColor: 'rgba(0, 0, 0, 0.2)', borderBottom: '1px solid var(--border-subtle)' }}>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Dispute ID</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Order #</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Claimant</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Type</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Description</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600 }}>Status</th>
-                      <th style={{ padding: '0.9rem 1.25rem', color: 'var(--text-muted)', fontWeight: 600, textAlign: 'right' }}>Resolution</th>
+                    <tr>
+                      <th>Dispute ID</th>
+                      <th>Order #</th>
+                      <th>Claimant</th>
+                      <th>Type</th>
+                      <th>Description</th>
+                      <th>Status</th>
+                      <th style={{ textAlign: 'right' }}>Resolution</th>
                     </tr>
                   </thead>
                   <tbody>
                     {disputes.map((dispute) => (
-                      <tr key={dispute.id} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                        <td style={{ padding: '0.9rem 1.25rem', fontWeight: 700 }}>#{dispute.id}</td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>Order #{dispute.orderId}</td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
+                      <tr key={dispute.id}>
+                        <td style={{ fontWeight: 700 }}>#{dispute.id}</td>
+                        <td>Order #{dispute.orderId}</td>
+                        <td>
                           <div style={{ fontWeight: 600 }}>{dispute.openedBy.displayName || dispute.openedBy.username}</div>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{dispute.openedBy.id}</div>
                         </td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>{dispute.disputeType}</td>
-                        <td style={{ padding: '0.9rem 1.25rem', maxWidth: '300px' }}>
+                        <td>{dispute.disputeType}</td>
+                        <td style={{ maxWidth: '300px' }}>
                           <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {dispute.description}
                           </div>
                         </td>
-                        <td style={{ padding: '0.9rem 1.25rem' }}>
+                        <td>
                           <span
-                            style={{
-                              padding: '0.2rem 0.6rem',
-                              borderRadius: 'var(--radius-xs)',
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              backgroundColor:
-                                dispute.status === 'resolved'
-                                  ? 'rgba(16, 185, 129, 0.15)'
-                                  : 'rgba(239, 68, 68, 0.15)',
-                              color:
-                                dispute.status === 'resolved'
-                                  ? 'var(--status-success)'
-                                  : 'var(--status-danger)',
-                            }}
+                            className={
+                              dispute.status === 'resolved'
+                                ? 'badge badge-green'
+                                : 'badge badge-danger'
+                            }
                           >
                             {dispute.status}
                           </span>
                         </td>
-                        <td style={{ padding: '0.9rem 1.25rem', textAlign: 'right' }}>
+                        <td style={{ textAlign: 'right' }}>
                           {dispute.status !== 'resolved' && dispute.status !== 'cancelled' ? (
                             user?.discordId === dispute.openedBy.id ? (
                               <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
@@ -434,14 +425,7 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'ov
                                   setDisputeNotes('');
                                   setDisputeMessage(null);
                                 }}
-                                className="btn btn-sm"
-                                style={{
-                                  backgroundColor: 'var(--status-warning)',
-                                  color: '#0d0b12',
-                                  fontSize: '0.75rem',
-                                  fontWeight: 700,
-                                  padding: '0.3rem 0.65rem',
-                                }}
+                                className="btn-primary btn-xs"
                               >
                                 Resolve Dispute
                               </button>
@@ -500,163 +484,143 @@ export const ManagementPage: React.FC<ManagementPageProps> = ({ defaultTab = 'ov
 
       {/* Dispute Resolution Modal */}
       {selectedDispute && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.75)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            padding: '1rem',
-          }}
-        >
-          <div
-            className="card-surface"
-            style={{
-              maxWidth: '560px',
-              width: '100%',
-              padding: '2rem',
-              borderRadius: 'var(--radius-md)',
-              border: '1px solid var(--border-subtle)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>Resolve Dispute #{selectedDispute.id}</h3>
+        <div className="studio-modal-backdrop">
+          <div className="studio-modal-card">
+            <div className="studio-modal-header">
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                  Resolve Dispute #{selectedDispute.id}
+                </h3>
+                <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                  Administrative escalation and payout resolution
+                </p>
+              </div>
               <button
+                type="button"
+                className="studio-modal-close"
                 onClick={() => setSelectedDispute(null)}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '1.2rem', cursor: 'pointer' }}
               >
-                &times;
+                ✕
               </button>
             </div>
 
-            <div
-              style={{
-                backgroundColor: 'var(--bg-main)',
-                padding: '1rem',
-                borderRadius: 'var(--radius-xs)',
-                fontSize: '0.85rem',
-                marginBottom: '1.5rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.5rem',
-              }}
-            >
-              <div><strong>Order:</strong> #{selectedDispute.orderId}</div>
-              <div><strong>Claimant:</strong> {selectedDispute.openedBy.displayName || selectedDispute.openedBy.username} ({selectedDispute.openedBy.id})</div>
-              <div><strong>Dispute Type:</strong> {selectedDispute.disputeType}</div>
-              <div><strong>Description:</strong> {selectedDispute.description}</div>
-            </div>
-
-            <form onSubmit={handleSubmitDisputeResolution} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-                  Resolution Decision
-                </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
-                    <input
-                      type="radio"
-                      name="disputeDecision"
-                      value="release_booster"
-                      checked={disputeDecision === 'release_booster'}
-                      onChange={() => setDisputeDecision('release_booster')}
-                    />
-                    <span>Release Funds to Booster (Proof Validated)</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
-                    <input
-                      type="radio"
-                      name="disputeDecision"
-                      value="refund_customer"
-                      checked={disputeDecision === 'refund_customer'}
-                      onChange={() => setDisputeDecision('refund_customer')}
-                    />
-                    <span>Refund Customer (Service Failed / Unfulfilled)</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
-                    <input
-                      type="radio"
-                      name="disputeDecision"
-                      value="split"
-                      checked={disputeDecision === 'split'}
-                      onChange={() => setDisputeDecision('split')}
-                    />
-                    <span>Split Settlement (Partial Completion)</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
-                    <input
-                      type="radio"
-                      name="disputeDecision"
-                      value="dismiss"
-                      checked={disputeDecision === 'dismiss'}
-                      onChange={() => setDisputeDecision('dismiss')}
-                    />
-                    <span>Dismiss Dispute (Unsubstantiated Claim)</span>
-                  </label>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
-                  Resolution Notes &amp; Rationale <span style={{ color: 'var(--status-danger)' }}>*</span>
-                </label>
-                <textarea
-                  value={disputeNotes}
-                  onChange={(e) => setDisputeNotes(e.target.value)}
-                  placeholder="Detailed rationale for audit trail..."
-                  rows={3}
-                  required
-                  style={{
-                    width: '100%',
-                    backgroundColor: 'var(--bg-main)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-xs)',
-                    color: 'var(--text-primary)',
-                    padding: '0.75rem',
-                    fontSize: '0.85rem',
-                  }}
-                />
-              </div>
-
-              {disputeMessage && (
+            <form id="resolve-dispute-form" onSubmit={handleSubmitDisputeResolution}>
+              <div className="studio-modal-body">
                 <div
                   style={{
-                    padding: '0.75rem',
-                    borderRadius: 'var(--radius-xs)',
+                    backgroundColor: 'var(--bg-main)',
+                    padding: '1rem',
+                    borderRadius: '8px',
+                    border: '1px solid var(--border-subtle)',
                     fontSize: '0.85rem',
-                    backgroundColor: disputeMessage.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                    color: disputeMessage.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                    marginBottom: '1rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.5rem',
                   }}
                 >
-                  {disputeMessage.text}
+                  <div><strong>Order:</strong> #{selectedDispute.orderId}</div>
+                  <div><strong>Claimant:</strong> {selectedDispute.openedBy.displayName || selectedDispute.openedBy.username} ({selectedDispute.openedBy.id})</div>
+                  <div><strong>Dispute Type:</strong> {selectedDispute.disputeType}</div>
+                  <div><strong>Description:</strong> {selectedDispute.description}</div>
                 </div>
-              )}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.5rem' }}>
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Resolution Decision
+                  </label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                      <input
+                        type="radio"
+                        name="disputeDecision"
+                        value="release_booster"
+                        checked={disputeDecision === 'release_booster'}
+                        onChange={() => setDisputeDecision('release_booster')}
+                      />
+                      <span>Release Funds to Booster (Proof Validated)</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                      <input
+                        type="radio"
+                        name="disputeDecision"
+                        value="refund_customer"
+                        checked={disputeDecision === 'refund_customer'}
+                        onChange={() => setDisputeDecision('refund_customer')}
+                      />
+                      <span>Refund Customer (Service Failed / Unfulfilled)</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                      <input
+                        type="radio"
+                        name="disputeDecision"
+                        value="split"
+                        checked={disputeDecision === 'split'}
+                        onChange={() => setDisputeDecision('split')}
+                      />
+                      <span>Split Settlement (Partial Completion)</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.85rem' }}>
+                      <input
+                        type="radio"
+                        name="disputeDecision"
+                        value="dismiss"
+                        checked={disputeDecision === 'dismiss'}
+                        onChange={() => setDisputeDecision('dismiss')}
+                      />
+                      <span>Dismiss Dispute (Unsubstantiated Claim)</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+                    Resolution Notes &amp; Rationale <span style={{ color: 'var(--status-danger)' }}>*</span>
+                  </label>
+                  <textarea
+                    value={disputeNotes}
+                    onChange={(e) => setDisputeNotes(e.target.value)}
+                    placeholder="Detailed rationale for audit trail..."
+                    rows={3}
+                    required
+                    className="input"
+                    style={{
+                      width: '100%',
+                      minHeight: '80px',
+                      resize: 'vertical',
+                    }}
+                  />
+                </div>
+
+                {disputeMessage && (
+                  <div
+                    style={{
+                      padding: '0.75rem',
+                      borderRadius: '8px',
+                      fontSize: '0.85rem',
+                      marginTop: '1rem',
+                      backgroundColor: disputeMessage.type === 'success' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                      color: disputeMessage.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)',
+                    }}
+                  >
+                    {disputeMessage.text}
+                  </div>
+                )}
+              </div>
+
+              <div className="studio-modal-footer">
                 <button
                   type="button"
                   onClick={() => setSelectedDispute(null)}
                   disabled={submittingDispute}
-                  className="btn btn-sm"
-                  style={{ backgroundColor: 'var(--bg-surface-hover)', color: 'var(--text-primary)' }}
+                  className="btn-secondary"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={submittingDispute}
-                  className="btn btn-sm"
-                  style={{
-                    backgroundColor: 'var(--primary-purple)',
-                    color: '#ffffff',
-                    fontWeight: 700,
-                  }}
+                  className="btn-cta"
                 >
                   {submittingDispute ? 'Resolving...' : 'Confirm Resolution'}
                 </button>

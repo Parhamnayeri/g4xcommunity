@@ -25,8 +25,11 @@ import { orderWorkspaceActions } from '../services/orderWorkspacePolicy';
 import { reviewApplication } from '../services/registrationService';
 import { publishOrRefreshOrderCard, getGlobalDiscordClient } from '../services/orderDiscordService';
 import { KYC_DOCS_DIR, validateKycDocumentReference } from '../services/kycDocumentSecurity';
+import { createExternalOrder } from '../services/platformOrderService';
+import { validateGameAndService } from '../services/orderValidationService';
+import { extractExternalOrderIdAndCleanNotes } from '../services/orderParsingUtils';
 
-import { configureChannelMapping, inspectMappingConnectivity, reconcileChannelMapping } from '../services/channelMappingConfigurationService';
+import { configureChannelMapping, inspectMappingConnectivity } from '../services/channelMappingConfigurationService';
 import { listChannelMappings } from '../services/discordProvisioningService';
 
 export const operationsRouter = Router();
@@ -492,7 +495,7 @@ operationsRouter.get('/management/overview', requireAuth, requireManagementAcces
 /**
  * GET /management/orders — Separated order pipeline (G4X vs Advertiser) with pagination & filters
  */
-operationsRouter.get('/management/orders', requireAuth, requireLiveManagementAccess, async (req: Request, res: Response): Promise<void> => {
+operationsRouter.get('/management/orders', requireAuth, requireLivePermission([Permission.ORDER_VIEW_PRIVATE, Permission.ORDER_VIEW_PERMITTED]), async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
     const tab = req.query.tab === 'advertiser' ? 'advertiser' : 'g4x';
@@ -523,7 +526,7 @@ operationsRouter.get('/management/orders', requireAuth, requireLiveManagementAcc
 });
 
 /** A single authorized details contract shared by Management, Admin and Owner. */
-operationsRouter.get('/management/orders/:id', requireAuth, requireLiveManagementAccess, async (req: Request, res: Response): Promise<void> => {
+operationsRouter.get('/management/orders/:id', requireAuth, requireLivePermission([Permission.ORDER_VIEW_PRIVATE, Permission.ORDER_VIEW_PERMITTED]), async (req: Request, res: Response): Promise<void> => {
   const orderId = Number(req.params.id);
   if (!Number.isSafeInteger(orderId) || orderId <= 0) {
     res.status(400).json({ error: 'INVALID_ORDER_ID' }); return;
@@ -569,87 +572,6 @@ operationsRouter.get('/management/orders/:id', requireAuth, requireLiveManagemen
 });
 
 /**
- * GET /staff/orders — Read-only permitted order workspace list for staff
- */
-operationsRouter.get('/staff/orders', requireAuth, requireLivePermission(Permission.ORDER_VIEW_PERMITTED), async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { user } = req as AuthenticatedRequest;
-    const tab = req.query.tab === 'advertiser' ? 'advertiser' : 'g4x';
-
-    const result = await getSeparatedOrdersList({
-      tab,
-      origin: tab as any,
-      page: req.query.page ? Number(req.query.page) : 1,
-      limit: req.query.limit ? Number(req.query.limit) : 15,
-      search: req.query.search ? String(req.query.search) : undefined,
-      status: req.query.status ? String(req.query.status) : undefined,
-      paymentStatus: req.query.paymentStatus ? String(req.query.paymentStatus) : undefined,
-      gameSlug: req.query.gameSlug ? String(req.query.gameSlug) : undefined,
-      source: req.query.source ? String(req.query.source) : undefined,
-      startDate: req.query.startDate ? String(req.query.startDate) : undefined,
-      endDate: req.query.endDate ? String(req.query.endDate) : undefined,
-      user: {
-        discordId: user.discordId,
-        userRoles: user.userRoles || [],
-      },
-    });
-
-    res.json(result);
-  } catch (err: any) {
-    console.error('[Operations] Staff orders error:', err);
-    res.status(500).json({ error: err.message || 'Failed to fetch staff orders' });
-  }
-});
-
-/**
- * GET /staff/orders/:id — Read-only permitted order details for staff
- */
-operationsRouter.get('/staff/orders/:id', requireAuth, requireLivePermission(Permission.ORDER_VIEW_PERMITTED), async (req: Request, res: Response): Promise<void> => {
-  const orderId = Number(req.params.id);
-  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
-    res.status(400).json({ error: 'INVALID_ORDER_ID' }); return;
-  }
-  try {
-    const order = await prisma.order.findUnique({
-      where: { id: orderId },
-      include: {
-        requiredRoles: true,
-        assignments: { include: { user: { select: { username: true, displayName: true } } }, orderBy: { assignedAt: 'desc' } },
-        presigns: { where: { status: 'registered' }, include: { user: { select: { username: true, displayName: true } } } },
-        runs: { include: { proofs: { include: {
-          submittedBy: { select: { username: true } }, reviewedBy: { select: { username: true } },
-        } } }, orderBy: { runNumber: 'asc' } },
-        disputes: { orderBy: { createdAt: 'desc' } }, escrowHolds: true, boostReleaseTracker: true,
-      },
-    });
-    if (!order) { res.status(404).json({ error: 'ORDER_NOT_FOUND' }); return; }
-    const actorId = (req as AuthenticatedRequest).user.discordId;
-    const permissions = new Set<Permission>();
-    for (const permission of [Permission.PROOF_REVIEW, Permission.DISPUTE_REVIEW]) {
-      if ((await authorize(actorId, permission)).allowed) permissions.add(permission);
-    }
-    const diagnostics = await getOrderDiagnostics(orderId);
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ success: true, order: {
-      ...diagnostics,
-      orderMode: order.orderMode,
-      platformFeeUsd: (order.platformFeeMinor / 100).toFixed(2),
-      advertiserFeeUsd: (order.advertiserFeeMinor / 100).toFixed(2),
-      customerId: order.customerId, advertiserId: order.advertiserId,
-      notes: order.notes, externalOrderId: order.externalOrderId,
-      discordChannelId: order.discordChannelId, executionChannelId: order.executionChannelId, reviewChannelId: order.reviewChannelId,
-      requiredRoles: order.requiredRoles, assignments: order.assignments, presigns: order.presigns,
-      runs: order.runs, disputes: order.disputes, escrowHolds: order.escrowHolds,
-      boostReleaseTracker: order.boostReleaseTracker,
-      authorizedActions: orderWorkspaceActions(order, permissions, false),
-      auditAvailable: false, auditLogs: [],
-    } });
-  } catch (err: any) {
-    res.status(500).json({ error: 'ORDER_DETAILS_FAILED', message: err.message });
-  }
-});
-
-/**
  * PATCH & POST /management/orders/:id/operational — Edit permitted operational order fields with immutable audit history
  */
 const handleOperationalOrderEdit = async (req: Request, res: Response): Promise<void> => {
@@ -674,7 +596,240 @@ const handleOperationalOrderEdit = async (req: Request, res: Response): Promise<
 operationsRouter.patch('/management/orders/:id/operational', requireAuth, requireLivePermission(Permission.ORDER_EDIT_OPERATIONAL), requireCsrf, handleOperationalOrderEdit);
 operationsRouter.post('/management/orders/:id/operational', requireAuth, requireLivePermission(Permission.ORDER_EDIT_OPERATIONAL), requireCsrf, handleOperationalOrderEdit);
 
-/** Select registered applicants; existing assignment engine owns approvals, reservations and Discord updates. */
+/**
+ * POST /management/orders/create — Internal / Management G4X Order Creation (Web + Bot Sync)
+ */
+operationsRouter.post(
+  '/management/orders/create',
+  requireAuth,
+  requireLivePermission(Permission.ORDER_CREATE_INTERNAL),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const {
+        gameSlug,
+        serviceId,
+        amountUsd,
+        boosterPoolUsd,
+        orderType = 'group',
+        orderMode,
+        runsCount = 1,
+        notes,
+        externalOrderId,
+        mythicKeyLevel,
+        dungeonName,
+        vpnLocation,
+        sourcePlatform = 'direct',
+        platformAccountId,
+        platformAccountRef,
+        sourceAmountType = 'gross_sale',
+        currency = 'USD',
+      } = req.body;
+
+      if (!gameSlug || !serviceId || typeof amountUsd !== 'number' || amountUsd <= 0) {
+        res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Valid gameSlug, serviceId, and positive amountUsd are required.' });
+        return;
+      }
+
+      const grossCents = Math.round(amountUsd * 100);
+
+      // Parse externalOrderId from notes (<#ORDERID>) or explicit field
+      const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+        notes,
+        externalOrderId
+      );
+
+      // Handle External Platform Order (G2G, SkyCoach, Eldorado, Kingboost, Overgear)
+      if (sourcePlatform && sourcePlatform !== 'direct') {
+        const externalOrder = await createExternalOrder({
+          gameSlug,
+          serviceId: Number(serviceId),
+          amountMinor: grossCents,
+          sourcePlatform,
+          platformAccountId: platformAccountId ? Number(platformAccountId) : undefined,
+          platformAccountRef: platformAccountRef || undefined,
+          sourceAmountType: sourceAmountType === 'platform_net' ? 'platform_net' : 'gross_sale',
+          orderType,
+          notes: cleanNotes || undefined,
+          externalOrderId: parsedOrderId || undefined,
+          actorId,
+          currency,
+        });
+
+        res.json({ success: true, order: externalOrder, message: `External order created on ${sourcePlatform}.` });
+        return;
+      }
+
+      // Handle Direct G4X Order
+      const { game, service } = await validateGameAndService(gameSlug, Number(serviceId), orderMode);
+      const boosterPoolMinor = typeof boosterPoolUsd === 'number' && boosterPoolUsd > 0
+        ? Math.round(boosterPoolUsd * 100)
+        : grossCents;
+      const platformFeeMinor = Math.max(0, grossCents - boosterPoolMinor);
+
+      const orderRef = `ORD_DIR_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      const effectiveOrderMode = orderMode || (service.serviceMode === 'pilot' ? 'pilot' : 'non_pilot');
+
+      const ord = await prisma.$transaction(async (tx) => {
+        const created = await tx.order.create({
+          data: {
+            orderRef,
+            externalOrderId: parsedOrderId || null,
+            gameSlug,
+            serviceId: Number(serviceId),
+            creatorId: actorId,
+            creatorType: 'g4x',
+            sourceType: 'direct',
+            orderType,
+            orderMode: effectiveOrderMode,
+            currency: currency.toUpperCase(),
+            grossAmountMinor: grossCents,
+            platformFeeMinor,
+            advertiserFeeMinor: 0,
+            boosterPoolMinor,
+            paymentStatus: 'verified',
+            status: 'open_presign',
+            paymentVerifiedBy: actorId,
+            paymentVerifiedAt: new Date(),
+            notes: [
+              cleanNotes || null,
+              mythicKeyLevel ? `[Mythic+ Key: +${mythicKeyLevel}]` : null,
+              dungeonName ? `[Dungeon: ${dungeonName}]` : null,
+              vpnLocation ? `[VPN: ${vpnLocation}]` : null,
+            ].filter(Boolean).join(' ') || null,
+            ...(mythicKeyLevel
+              ? {
+                  keyRequirements: {
+                    create: [
+                      {
+                        keyLevel: Number(mythicKeyLevel),
+                        dungeonName: dungeonName || null,
+                        isMandatory: true,
+                      },
+                    ],
+                  },
+                }
+              : {}),
+            runs: {
+              create: Array.from({ length: Math.max(1, Number(runsCount) || 1) }, (_, i) => ({
+                runNumber: i + 1,
+                status: 'pending',
+              })),
+            },
+            ...(service.gameSlug === 'wow_midnight' && orderType === 'group'
+              ? {
+                  requiredRoles: {
+                    create: [
+                      { roleName: 'tank', quantity: 1 },
+                      { roleName: 'healer', quantity: 1 },
+                      { roleName: 'dps', quantity: 3 },
+                    ],
+                  },
+                }
+              : effectiveOrderMode === 'pilot'
+              ? {
+                  requiredRoles: {
+                    create: [{ roleName: 'pilot', quantity: 1 }],
+                  },
+                }
+              : {}),
+          },
+          include: {
+            game: true,
+            service: true,
+            requiredRoles: true,
+            runs: true,
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            actorId,
+            action: 'ORDER_CREATED_INTERNAL',
+            entityType: 'Order',
+            entityId: String(created.id),
+            reason: 'Internal G4X order created via operations workspace',
+            newValues: JSON.stringify({ orderRef, grossCents, boosterPoolMinor, gameSlug }),
+            isSuccess: true,
+          },
+        });
+
+        return created;
+      });
+
+      // Synchronize with Discord board
+      try {
+        await publishOrRefreshOrderCard(getGlobalDiscordClient(), ord.id);
+      } catch (err: any) {
+        console.warn(`[Operations] Discord card sync notice for order #${ord.id}:`, err?.message || err);
+      }
+
+      res.json({
+        success: true,
+        order: ord,
+        message: `Order #${ord.id} (${ord.orderRef}) created and verified successfully.`,
+      });
+    } catch (err: any) {
+      console.error('[Operations] Order creation failed:', err);
+      res.status(400).json({ error: 'ORDER_CREATION_FAILED', message: err?.message || 'Order creation failed' });
+    }
+  }
+);
+
+/**
+ * GET /management/approved-boosters — List approved boosters/pilots for direct assignment
+ */
+operationsRouter.get(
+  '/management/approved-boosters',
+  requireAuth,
+  requireLivePermission(Permission.ORDER_ASSIGN),
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const gameSlug = typeof req.query.gameSlug === 'string' ? req.query.gameSlug : undefined;
+      const users = await prisma.user.findMany({
+        where: {
+          isActive: true,
+          OR: [
+            { userRoles: { some: { roleKey: { in: ['booster', 'pilot'] } } } },
+            { gameApprovals: { some: { status: 'approved' } } },
+          ],
+        },
+        select: {
+          discordId: true,
+          username: true,
+          displayName: true,
+          userRoles: { select: { roleKey: true } },
+          gameApprovals: {
+            where: gameSlug ? { gameSlug, status: 'approved' } : { status: 'approved' },
+            select: { gameSlug: true, approvalType: true, status: true },
+          },
+          reservations: {
+            where: { status: 'active' },
+            select: { orderId: true },
+          },
+        },
+        orderBy: { username: 'asc' },
+      });
+
+      const boosters = users.map((u) => ({
+        userId: u.discordId,
+        username: u.username,
+        displayName: u.displayName || u.username,
+        roles: u.userRoles.map((r) => r.roleKey),
+        hasActiveReservation: u.reservations.length > 0,
+        activeOrderId: u.reservations[0]?.orderId || null,
+        approvals: u.gameApprovals,
+      }));
+
+      res.json({ boosters });
+    } catch (err: any) {
+      res.status(500).json({ error: 'FAILED_TO_FETCH_BOOSTERS', message: err.message });
+    }
+  }
+);
+
+/** Select registered applicants or assign approved boosters directly; existing assignment engine owns approvals, reservations and Discord updates. */
 operationsRouter.post('/management/orders/:id/assign', requireAuth, requireLivePermission(Permission.ORDER_ASSIGN), requireCsrf, async (req: Request, res: Response): Promise<void> => {
   const orderId = Number(req.params.id);
   if (!Number.isSafeInteger(orderId) || orderId <= 0 || !Array.isArray(req.body.candidates) || !req.body.candidates.length || req.body.candidates.length > 40) {
@@ -690,13 +845,25 @@ operationsRouter.post('/management/orders/:id/assign', requireAuth, requireLiveP
     }
     const candidates = [];
     for (const candidate of req.body.candidates) {
-      if (!Number.isSafeInteger(candidate?.claimId) || typeof candidate?.assignedRole !== 'string') throw new Error('INVALID_CANDIDATE');
-      const claim = await prisma.orderPresign.findFirst({ where: { id: candidate.claimId, orderId, status: 'registered' } });
-      if (!claim || !parsePresignRoles(claim.registeredRole).includes(candidate.assignedRole)) throw new Error('INVALID_REGISTERED_ROLE');
-      candidates.push({ claimId: claim.id, userId: claim.userId, assignedRole: candidate.assignedRole });
+      if (candidate.claimId) {
+        if (!Number.isSafeInteger(candidate.claimId) || typeof candidate?.assignedRole !== 'string') throw new Error('INVALID_CANDIDATE');
+        const claim = await prisma.orderPresign.findFirst({ where: { id: candidate.claimId, orderId, status: 'registered' } });
+        if (!claim || !parsePresignRoles(claim.registeredRole).includes(candidate.assignedRole)) throw new Error('INVALID_REGISTERED_ROLE');
+        candidates.push({ claimId: claim.id, userId: claim.userId, assignedRole: candidate.assignedRole });
+      } else {
+        if (typeof candidate?.userId !== 'string' || !candidate.userId || typeof candidate?.assignedRole !== 'string') throw new Error('INVALID_CANDIDATE');
+        candidates.push({ userId: candidate.userId, assignedRole: candidate.assignedRole });
+      }
     }
     if (new Set(candidates.map(c => c.userId)).size !== candidates.length) throw new Error('DUPLICATE_BOOSTER');
-    const result = await assignOrderBoosters({ orderId, actorId: (req as AuthenticatedRequest).user.discordId, candidates, requireCompleteRegisteredRoster: true, discordClient: getGlobalDiscordClient() });
+    const requireCompleteRegisteredRoster = req.body.requireCompleteRegisteredRoster === true;
+    const result = await assignOrderBoosters({
+      orderId,
+      actorId: (req as AuthenticatedRequest).user.discordId,
+      candidates,
+      requireCompleteRegisteredRoster,
+      discordClient: getGlobalDiscordClient(),
+    });
     res.json({ ...result, message: 'Roster assigned. Check Discord channel and board state for synchronization.' });
   } catch (err: any) {
     res.status(400).json({ error: 'ASSIGNMENT_FAILED', message: err.message });
@@ -1066,7 +1233,7 @@ operationsRouter.get('/management/kyc/applications', requireAuth, requireKycRevi
 
     const where: any = {
       OR: [
-        { category: { in: ['pilot', 'exchanger'] } },
+        { category: { in: ['pilot', 'exchanger', 'advertiser'] } },
         { identityStatus: { not: 'none' } },
       ],
     };
@@ -1507,12 +1674,4 @@ for (const method of ['post', 'put', 'delete'] as const) {
 }
 operationsRouter.post('/management/channel-mappings/:key/verify', requireAuth, requireLivePermission(Permission.SERVICE_CONFIG_MANAGE), requireCsrf, async (req: Request, res: Response) => {
   try { res.json(await inspectMappingConnectivity(req.params.key)); } catch (error: any) { res.status(400).json({ error: error.message }); }
-});
-operationsRouter.post('/management/channel-mappings/:key/reconcile', requireAuth, requireLivePermission(Permission.SERVICE_CONFIG_MANAGE), requireCsrf, async (req: Request, res: Response) => {
-  try {
-    const actorId = (req as AuthenticatedRequest).user.discordId;
-    res.json(await reconcileChannelMapping(actorId, req.params.key));
-  } catch (error: any) {
-    res.status(400).json({ error: error.message });
-  }
 });

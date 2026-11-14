@@ -29,7 +29,7 @@ export const LandingPage: React.FC = () => {
     };
   }, []);
 
-  const bookingUrl = config.bookingDestination || '/legacy';
+  const bookingUrl = config.bookingDestination || '/dashboard';
   const discordUrl = config.discordInviteUrl || '/auth/discord';
 
   return (
@@ -317,7 +317,7 @@ export const LandingPage: React.FC = () => {
                 <li>✓ USDT &amp; Banking withdrawal methods</li>
               </ul>
               <a
-                href={user ? '/legacy' : '/auth/discord'}
+                href={user ? '/profile' : '/auth/discord'}
                 style={{ textDecoration: 'none' }}
               >
                 <Button variant="cta" size="sm" style={{ width: '100%' }}>
@@ -354,7 +354,7 @@ export const LandingPage: React.FC = () => {
                 <li>✓ Automated balance accounting</li>
               </ul>
               <a
-                href={user ? '/legacy' : '/auth/discord'}
+                href={user ? '/advertiser' : '/auth/discord'}
                 style={{ textDecoration: 'none' }}
               >
                 <Button variant="purple" size="sm" style={{ width: '100%' }}>
@@ -391,7 +391,7 @@ export const LandingPage: React.FC = () => {
                 <li>✓ Multi-realm trading opportunities</li>
               </ul>
               <a
-                href={user ? '/legacy' : '/auth/discord'}
+                href={user ? '/exchange' : '/auth/discord'}
                 style={{ textDecoration: 'none' }}
               >
                 <Button variant="outline" size="sm" style={{ width: '100%' }}>
@@ -433,7 +433,7 @@ export const LandingPage: React.FC = () => {
           <p style={{ fontSize: '0.95rem', color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: '2rem' }}>
             All operations are backed by immutable double-entry ledger bookkeeping, 24-hour escrow release holding periods, and timing-safe OwnerGate authentication.
           </p>
-          <a href="/legacy" className="btn btn-outline btn-sm">
+          <a href={user ? '/dashboard' : '/auth/discord'} className="btn btn-outline btn-sm">
             Explore Member Platform &rarr;
           </a>
         </div>

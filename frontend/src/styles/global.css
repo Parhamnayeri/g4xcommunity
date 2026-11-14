@@ -1,5 +1,5 @@
 /**
- * G4X Global Styles & Reset
+ * G4X Global Styles & Reset — Studio-Grade Theme
  */
 @import './tokens.css';
 
@@ -37,6 +37,23 @@ body {
   flex-direction: column;
 }
 
+/* Custom Sleek Dark Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #09090b;
+}
+::-webkit-scrollbar-thumb {
+  background: #232736;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #343b52;
+}
+
+/* Form Controls Reset & Base Styling */
 input,
 select,
 textarea,
@@ -48,21 +65,61 @@ button {
 input,
 select,
 textarea {
+  width: 100%;
   color: var(--text-primary);
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-subtle);
+  background-color: var(--bg-input);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  font-size: 0.88rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+}
+
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="password"],
+input[type="url"],
+input[type="date"],
+select {
+  height: 42px;
+  padding: 8px 14px;
+}
+
+textarea {
+  min-height: 88px;
+  padding: 10px 14px;
+  resize: vertical;
 }
 
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: var(--primary-purple);
-  outline: 2px solid rgba(204, 255, 0, 0.25);
-  outline-offset: 1px;
+  border-color: var(--accent-yellow);
+  box-shadow: 0 0 0 3px rgba(250, 204, 21, 0.15);
+  outline: none;
+  background-color: #10131c;
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background-color: rgba(13, 15, 21, 0.6);
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #d1d5db;
+  margin-bottom: 6px;
+  display: block;
 }
 
 button {
   cursor: pointer;
+  user-select: none;
 }
 
 #root {
@@ -77,22 +134,148 @@ button {
   min-width: 0;
 }
 
-.modal-backdrop {
+/* ─── Studio-Grade Modal Architecture ────────────────────────────────────── */
+.modal-backdrop,
+.modal-overlay,
+.studio-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  background: var(--bg-modal-backdrop);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
   pointer-events: auto;
+  animation: modalFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.modal-dialog {
+.modal-dialog,
+.modal-card,
+.studio-modal-card {
+  width: 100%;
+  max-width: 580px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--bg-modal);
+  border: 1px solid rgba(168, 85, 247, 0.28);
+  border-radius: 16px;
+  box-shadow: var(--shadow-modal);
   position: relative;
-  z-index: 100;
+  z-index: 1010;
   pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  animation: modalSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-card-lg,
+.studio-modal-card-lg {
+  max-width: 760px;
+}
+
+.modal-card-xl,
+.studio-modal-card-xl {
+  max-width: 980px;
+}
+
+.modal-header,
+.studio-modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #14161f;
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 18px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.modal-header h2,
+.modal-header h3,
+.studio-modal-header h2,
+.studio-modal-header h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0;
+}
+
+.modal-header p,
+.studio-modal-header p {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin: 4px 0 0 0;
+}
+
+.modal-close-btn,
+.studio-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  transition: all var(--transition-fast);
+}
+
+.modal-close-btn:hover,
+.studio-modal-close:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.modal-body,
+.studio-modal-body {
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+  flex: 1;
+}
+
+.modal-footer,
+.studio-modal-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  background: #14161f;
+  border-top: 1px solid var(--border-subtle);
+  padding: 16px 24px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
+}
+
+@keyframes modalFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 /* Accessible focus styling */
 :focus-visible {
-  outline: 2px solid var(--accent-lime);
+  outline: 2px solid var(--accent-yellow);
   outline-offset: 3px;
 }
 
@@ -128,7 +311,7 @@ a {
 /* Layout container */
 .container {
   width: 100%;
-  max-width: 1200px;
+  max-width: 1240px;
   margin: 0 auto;
   padding: 0 1.5rem;
 }

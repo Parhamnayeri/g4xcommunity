@@ -296,8 +296,8 @@ export const DepositQueueWorkspace: React.FC<Props> = ({
       {loading ? (
         <LoadingState message="Loading Manual IRT deposit queue..." />
       ) : deposits.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
-          <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📥</div>
+        <div className="empty-state-box" style={{ padding: '3.5rem 1rem' }}>
+          <span className="empty-state-icon">📥</span>
           <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--text-primary)' }}>
             No deposit requests match your filter criteria.
           </div>
@@ -306,30 +306,24 @@ export const DepositQueueWorkspace: React.FC<Props> = ({
           </div>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <div className="table-scroll">
+          <table className="data-table">
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Ref / Date</th>
-                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Depositor / Advertiser</th>
-                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Method &amp; Toman Amount</th>
-                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Expected USD</th>
-                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Payer Details &amp; Tracking</th>
-                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Receipt</th>
-                <th style={{ padding: '0.75rem 0.5rem', fontWeight: 700 }}>Status</th>
-                <th style={{ padding: '0.75rem 0.5rem', textAlign: 'right', fontWeight: 700 }}>Action</th>
+              <tr>
+                <th>Ref / Date</th>
+                <th>Depositor / Advertiser</th>
+                <th>Method &amp; Toman Amount</th>
+                <th>Expected USD</th>
+                <th>Payer Details &amp; Tracking</th>
+                <th>Receipt</th>
+                <th>Status</th>
+                <th style={{ textAlign: 'right' }}>Action</th>
               </tr>
             </thead>
             <tbody>
               {deposits.map((d) => (
-                <tr
-                  key={d.id}
-                  style={{
-                    borderBottom: '1px solid rgba(45, 38, 69, 0.4)',
-                    transition: 'background-color 0.15s ease',
-                  }}
-                >
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                <tr key={d.id}>
+                  <td>
                     <div style={{ fontWeight: 700, fontFamily: 'monospace', color: 'var(--text-primary)' }}>
                       #{d.id} • {d.fundingRef}
                     </div>
@@ -337,28 +331,28 @@ export const DepositQueueWorkspace: React.FC<Props> = ({
                       {new Date(d.createdAt).toLocaleDateString()} {new Date(d.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </div>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                  <td>
                     <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{d.advertiserName}</div>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
                       {d.advertiserId}
                     </div>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
-                    <div style={{ fontWeight: 700, color: 'var(--accent-lime)' }}>
+                  <td>
+                    <div style={{ fontWeight: 700, color: 'var(--accent-yellow)' }}>
                       {Number(d.externalAmountUnits).toLocaleString()} Toman
                     </div>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                       Rate: {d.exchangeRate ? `${d.exchangeRate.toLocaleString()} IRT` : '—'}
                     </div>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                  <td style={{ fontWeight: 800, color: 'var(--text-primary)' }}>
                     {d.targetUsdFormatted}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                  <td>
                     <div style={{ fontSize: '0.8rem', color: 'var(--text-primary)' }}>
                       {d.payerIdentifier || '—'}
                       {d.senderCardLast4 && (
-                        <span style={{ color: 'var(--accent-lime)', marginLeft: '0.35rem' }}>
+                        <span style={{ color: 'var(--accent-yellow)', marginLeft: '0.35rem' }}>
                           (•••• {d.senderCardLast4})
                         </span>
                       )}
@@ -369,25 +363,25 @@ export const DepositQueueWorkspace: React.FC<Props> = ({
                       </div>
                     )}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                  <td>
                     {d.receiptUrl ? (
-                      <span className="badge badge-lime" style={{ fontSize: '0.68rem' }}>
+                      <span className="badge badge-green" style={{ fontSize: '0.68rem' }}>
                         ✓ Slip Attached
                       </span>
                     ) : (
-                      <span className="badge badge-gray" style={{ fontSize: '0.68rem' }}>
+                      <span className="badge badge-muted" style={{ fontSize: '0.68rem' }}>
                         No Image
                       </span>
                     )}
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem' }}>
+                  <td>
                     <span
                       className={`badge ${
                         d.status === 'CONFIRMED_CREDITED'
-                          ? 'badge-lime'
+                          ? 'badge-green'
                           : d.status === 'REJECTED'
-                          ? 'badge-red'
-                          : 'badge-yellow'
+                          ? 'badge-danger'
+                          : 'badge-amber'
                       }`}
                       style={{ fontSize: '0.72rem' }}
                     >
@@ -398,11 +392,10 @@ export const DepositQueueWorkspace: React.FC<Props> = ({
                         : 'Pending Review'}
                     </span>
                   </td>
-                  <td style={{ padding: '0.75rem 0.5rem', textAlign: 'right' }}>
+                  <td style={{ textAlign: 'right' }}>
                     <button
                       type="button"
-                      className={d.status === 'PENDING_ADMIN_VERIFICATION' ? 'btn btn-cta btn-sm' : 'btn btn-outline btn-sm'}
-                      style={{ fontSize: '0.78rem', padding: '0.3rem 0.65rem' }}
+                      className={d.status === 'PENDING_ADMIN_VERIFICATION' ? 'btn btn-cta btn-xs' : 'btn btn-secondary btn-xs'}
                       onClick={() => handleOpenDetails(d)}
                     >
                       {d.status === 'PENDING_ADMIN_VERIFICATION' ? 'Review Slip' : 'Inspect'}
@@ -437,14 +430,14 @@ export const DepositQueueWorkspace: React.FC<Props> = ({
             <button
               onClick={() => loadDeposits(Math.max(1, pagination.page - 1))}
               disabled={pagination.page <= 1 || loading}
-              className="btn btn-outline btn-sm"
+              className="btn btn-secondary btn-sm"
             >
               &larr; Previous
             </button>
             <button
               onClick={() => loadDeposits(Math.min(pagination.totalPages, pagination.page + 1))}
               disabled={pagination.page >= pagination.totalPages || loading}
-              className="btn btn-outline btn-sm"
+              className="btn btn-secondary btn-sm"
             >
               Next &rarr;
             </button>
@@ -456,45 +449,10 @@ export const DepositQueueWorkspace: React.FC<Props> = ({
       {/* REVIEW & INSPECTION MODAL                                                    */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {selectedDeposit && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '1.5rem',
-          }}
-        >
-          <div
-            className="card-surface"
-            style={{
-              maxWidth: '680px',
-              width: '100%',
-              maxHeight: '92vh',
-              overflowY: 'auto',
-              padding: '1.75rem',
-              backgroundColor: 'var(--bg-surface)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: '10px',
-            }}
-          >
+        <div className="studio-modal-backdrop" onClick={() => setSelectedDeposit(null)}>
+          <div className="studio-modal-card studio-modal-card-lg" onClick={(e) => e.stopPropagation()}>
             {/* Modal Header */}
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                borderBottom: '1px solid var(--border-subtle)',
-                paddingBottom: '0.85rem',
-                marginBottom: '1.25rem',
-              }}
-            >
+            <div className="studio-modal-header">
               <div>
                 <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
                   Deposit Request #{selectedDeposit.id}
@@ -505,17 +463,10 @@ export const DepositQueueWorkspace: React.FC<Props> = ({
               </div>
               <button
                 type="button"
+                className="studio-modal-close"
                 onClick={() => setSelectedDeposit(null)}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: 'var(--text-muted)',
-                  fontSize: '1.4rem',
-                  cursor: 'pointer',
-                  padding: '0.2rem 0.5rem',
-                }}
               >
-                ×
+                ✕
               </button>
             </div>
 

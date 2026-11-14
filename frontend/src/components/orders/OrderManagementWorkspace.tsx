@@ -4,15 +4,10 @@ import { Card } from '../ui/Card';
 import { LoadingState } from '../ui/LoadingState';
 import { useAuth } from '../../hooks/useAuth';
 import { OrderItem, OrderDiagnosticsData, PaginationMeta } from '../../types/operations';
-import { AdvertiserRankData, AdvertiserWallet, DiscordIntegrationInfo } from '../../types/advertiser';
 import { apiRequest } from '../../services/api';
-import { createOperationalOrder } from '../../services/operations';
-import { CreateOrderModal } from '../advertiser/CreateOrderModal';
 import {
   fetchManagementOrders,
-  fetchStaffOrders,
   fetchOrderDiagnostics,
-  fetchStaffOrderDetails,
   publishOrderCard,
   reviewOrderStaff,
   approveOrderAdmin,
@@ -22,7 +17,13 @@ import {
   assignOrderRoster,
   refreshOrderDiscord,
   updateOrderOperational,
+  createManagementOrder,
+  fetchApprovedBoosters,
 } from '../../services/operations';
+import { fetchAdminFinanceOverview } from '../../services/adminPortal';
+import { AdminFinanceOverviewResponse } from '../../types/adminPortal';
+import { PlatformBalancesStrip } from '../admin/PlatformBalancesStrip';
+import { extractExternalOrderIdAndCleanNotes, has13PercentFee, calculate13PercentSplit } from '../../utils/orderParsers';
 
 interface Props {
   initialTab?: 'g4x' | 'advertiser';
@@ -38,30 +39,6 @@ const initialFilters = {
   sourceWebsite: '',
   startDate: '',
   endDate: '',
-};
-const managementRank: AdvertiserRankData = {
-  currentRank: null,
-  rankLabel: 'G4X Operations',
-  basisPoints: 1499,
-  commissionPercent: '14.99%',
-  rankHierarchy: [],
-};
-const managementWallet: AdvertiserWallet = {
-  availableCents: 0,
-  availableUsd: '0.00',
-  reservedCents: 0,
-  reservedUsd: '0.00',
-  pendingEarningsCents: 0,
-  pendingEarningsUsd: '0.00',
-  paidCents: 0,
-  paidUsd: '0.00',
-  canPlaceOrders: true,
-};
-const noDiscordIntegration: DiscordIntegrationInfo = {
-  guildId: null,
-  ordersChannelId: null,
-  becomeAdvChannelId: null,
-  orderEntryUrl: null,
 };
 type Action =
   | 'publish'
@@ -81,11 +58,6 @@ const actionLabels: Record<Action, string> = {
   cancel: 'Cancel order',
 };
 const panelStyle: React.CSSProperties = { padding: '1rem', display: 'grid', gap: '1rem' };
-const gridStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-  gap: '0.75rem',
-};
 const time = (value: string | null) => (value ? new Date(value).toLocaleString() : '—');
 // Never render untrusted evidence references as executable URLs.
 function Evidence({ value }: { value: string }) {
@@ -110,10 +82,8 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   readOnly = false,
 }) => {
   const { hasRole } = useAuth();
-  const allowed = readOnly
-    ? hasRole('staff', 'manager', 'admin', 'owner')
-    : hasRole('manager', 'admin', 'owner');
-  const isReadOnly = Boolean(readOnly || !hasRole('manager', 'admin', 'owner'));
+  const allowed = hasRole('staff', 'manager', 'admin', 'owner');
+  const isReadOnly = Boolean(readOnly || !hasRole('staff', 'manager', 'admin', 'owner'));
   const [tab, setTab] = useState(initialTab);
   const [filters, setFilters] = useState(initialFilters);
   const [appliedFilters, setAppliedFilters] = useState(initialFilters);
@@ -128,7 +98,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
     totalPages: 1,
   });
   const [counts, setCounts] = useState({ g4x: 0, advertiser: 0, needsReview: 0 });
-  const [games, setGames] = useState<Array<{ slug: string; displayName: string }>>([]);
+  const [games, setGames] = useState<Array<{ slug: string; displayName: string; services?: Array<{ id: number; serviceKey: string; displayName: string; serviceMode?: string }> }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -147,7 +117,43 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   const [opReason, setOpReason] = useState('');
   const [opFeedback, setOpFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [savingOp, setSavingOp] = useState(false);
-  const [createModalOpen, setCreateModalOpen] = useState(false);
+
+  // Financial Overview & Real-Time Platform Balances
+  const [financeOverview, setFinanceOverview] = useState<AdminFinanceOverviewResponse | null>(null);
+  const [loadingFinance, setLoadingFinance] = useState(false);
+
+  // Create Order Modal State
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createGame, setCreateGame] = useState('wow_midnight');
+  const [createServiceId, setCreateServiceId] = useState<number | ''>('');
+  const [createAmountUsd, setCreateAmountUsd] = useState('');
+  const [createBoosterPoolUsd, setCreateBoosterPoolUsd] = useState('');
+  const [createOrderType, setCreateOrderType] = useState('group');
+  const [createOrderMode, setCreateOrderMode] = useState('non_pilot');
+  const [createRunsCount, setCreateRunsCount] = useState(1);
+  const [createNotes, setCreateNotes] = useState('');
+  const [createMythicKeyLevel, setCreateMythicKeyLevel] = useState('');
+  const [createDungeonName, setCreateDungeonName] = useState('');
+  const [createVpnLocation, setCreateVpnLocation] = useState('');
+  const [createSourcePlatform, setCreateSourcePlatform] = useState('direct');
+  const [createExternalOrderId, setCreateExternalOrderId] = useState('');
+  const [submittingCreate, setSubmittingCreate] = useState(false);
+  const [createFeedback, setCreateFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Direct Booster Assignment State
+  const [approvedBoosters, setApprovedBoosters] = useState<Array<{
+    userId: string;
+    username: string;
+    displayName: string;
+    roles: string[];
+    hasActiveReservation: boolean;
+    activeOrderId: number | null;
+  }>>([]);
+  const [directBoosterUserId, setDirectBoosterUserId] = useState('');
+  const [directBoosterRole, setDirectBoosterRole] = useState('dps');
+  const [submittingDirectAssign, setSubmittingDirectAssign] = useState(false);
+  const [directAssignFeedback, setDirectAssignFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
   const mutationLock = useRef(false);
   const closeButton = useRef<HTMLButtonElement>(null);
   const detailsDialog = useRef<HTMLDivElement>(null);
@@ -171,8 +177,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
     let current = true;
     setLoading(true);
     setError('');
-    const fetchOrdersMethod = isReadOnly ? fetchStaffOrders : fetchManagementOrders;
-    fetchOrdersMethod({
+    fetchManagementOrders({
       ...appliedFilters,
       tab,
       sourceWebsite: tab === 'g4x' ? appliedFilters.sourceWebsite : undefined,
@@ -204,18 +209,45 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   }, [allowed, appliedFilters, tab, page, limit, revision]);
 
   useEffect(() => {
+    if (!allowed) return;
+    let current = true;
+    setLoadingFinance(true);
+    fetchAdminFinanceOverview()
+      .then((res) => {
+        if (current && res?.success) {
+          setFinanceOverview(res);
+        }
+      })
+      .catch((err) => console.error('Failed to load finance overview in orders workspace:', err))
+      .finally(() => {
+        if (current) setLoadingFinance(false);
+      });
+    return () => {
+      current = false;
+    };
+  }, [allowed, revision]);
+
+  useEffect(() => {
     if (selectedId === null) return;
     let current = true;
     setDetailsLoading(true);
     setDetailsError('');
     setDetails(null);
-    const fetchDetailsMethod = isReadOnly ? fetchStaffOrderDetails : fetchOrderDiagnostics;
-    fetchDetailsMethod(selectedId)
+    fetchOrderDiagnostics(selectedId)
       .then((res) => {
         if (current) {
           setDetails(res.order);
           setOpNotes(res.order.notes || '');
           setOpExternalId(res.order.externalOrderId || '');
+          setDirectAssignFeedback(null);
+          setDirectBoosterUserId('');
+          fetchApprovedBoosters(res.order.gameSlug)
+            .then((bRes) => {
+              if (current) setApprovedBoosters(bRes.boosters || []);
+            })
+            .catch(() => {
+              if (current) setApprovedBoosters([]);
+            });
         }
       })
       .catch((err) => {
@@ -228,6 +260,92 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
       current = false;
     };
   }, [selectedId, revision]);
+
+  const handleDirectBoosterAssign = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!details || !directBoosterUserId) return;
+    setSubmittingDirectAssign(true);
+    setDirectAssignFeedback(null);
+    try {
+      const res = await assignOrderRoster(
+        details.orderId,
+        [{ userId: directBoosterUserId, assignedRole: directBoosterRole }],
+        false
+      );
+      setDirectAssignFeedback({ text: res.message || 'Booster assigned directly!', type: 'success' });
+      setDirectBoosterUserId('');
+      setRevision((n) => n + 1);
+    } catch (err: any) {
+      setDirectAssignFeedback({ text: err.message || 'Direct assignment failed', type: 'error' });
+    } finally {
+      setSubmittingDirectAssign(false);
+    }
+  };
+
+  const handleCreateOrderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = parseFloat(createAmountUsd);
+    if (isNaN(amount) || amount <= 0) {
+      setCreateFeedback({ text: 'Please enter a valid positive order amount in USD.', type: 'error' });
+      return;
+    }
+    const pool = createBoosterPoolUsd ? parseFloat(createBoosterPoolUsd) : amount;
+    if (isNaN(pool) || pool <= 0) {
+      setCreateFeedback({ text: 'Please enter a valid booster pool amount in USD.', type: 'error' });
+      return;
+    }
+    if (!createServiceId) {
+      setCreateFeedback({ text: 'Please select a game service.', type: 'error' });
+      return;
+    }
+
+    if (has13PercentFee(createSourcePlatform)) {
+      const split = calculate13PercentSplit(amount);
+      if (pool > split.netAvailable) {
+        setCreateFeedback({
+          text: `Booster pool ($${pool.toFixed(2)}) exceeds defensible net available after 13% platform fee ($${split.netAvailable.toFixed(2)}).`,
+          type: 'error',
+        });
+        return;
+      }
+    }
+
+    const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+      createNotes,
+      createExternalOrderId
+    );
+
+    setSubmittingCreate(true);
+    setCreateFeedback(null);
+    try {
+      const res = await createManagementOrder({
+        gameSlug: createGame,
+        serviceId: Number(createServiceId),
+        amountUsd: amount,
+        boosterPoolUsd: pool,
+        orderType: createOrderType,
+        orderMode: createOrderMode,
+        runsCount: createRunsCount,
+        notes: cleanNotes || undefined,
+        externalOrderId: parsedOrderId || undefined,
+        mythicKeyLevel: createMythicKeyLevel ? Number(createMythicKeyLevel) : undefined,
+        dungeonName: createDungeonName.trim() || undefined,
+        vpnLocation: createVpnLocation.trim() || undefined,
+        sourcePlatform: createSourcePlatform,
+      });
+      setCreateFeedback({ text: res.message || 'Order created successfully!', type: 'success' });
+      setTimeout(() => {
+        setShowCreateModal(false);
+        setCreateExternalOrderId('');
+        setCreateNotes('');
+        setRevision((n) => n + 1);
+      }, 1200);
+    } catch (err: any) {
+      setCreateFeedback({ text: err.message || 'Failed to create order', type: 'error' });
+    } finally {
+      setSubmittingCreate(false);
+    }
+  };
 
   const closeDetails = useCallback(() => {
     if (mutationLock.current) return;
@@ -326,70 +444,234 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
     );
   return (
     <div style={{ display: 'grid', gap: '1rem' }}>
-      <Card style={panelStyle}>
-        <h2>{title}</h2>
-        <p>{subtitle}</p>
-        <nav aria-label="Order portals" style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          {hasRole('manager', 'admin', 'owner') && <Link to="/management/orders">Management orders</Link>}
-          {hasRole('admin', 'manager', 'owner') && <Link to="/admin/orders">Admin orders</Link>}
-          {hasRole('owner') && <Link to="/owner/orders">Owner orders</Link>}
-        </nav>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className="btn btn-cta"
-            onClick={() => setCreateModalOpen(true)}
-          >
-            Create New Order
-          </button>
-          {(['g4x', 'advertiser'] as const).map((value) => (
+      <Card style={{ padding: '1.5rem', display: 'grid', gap: '1rem', backgroundColor: 'var(--bg-surface)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '14px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem' }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 800, color: '#fff' }}>{title}</h1>
+            <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>{subtitle}</p>
+          </div>
+          <nav aria-label="Order portals" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            {hasRole('manager', 'admin', 'owner') && (
+              <Link to="/management/orders" className="btn btn-secondary btn-xs" style={{ textDecoration: 'none' }}>
+                Management Portal
+              </Link>
+            )}
+            {hasRole('admin', 'manager', 'owner') && (
+              <Link to="/admin/orders" className="btn btn-secondary btn-xs" style={{ textDecoration: 'none' }}>
+                Admin Portal
+              </Link>
+            )}
+            {hasRole('owner') && (
+              <Link to="/owner/orders" className="btn btn-secondary btn-xs" style={{ textDecoration: 'none' }}>
+                Owner Portal
+              </Link>
+            )}
+          </nav>
+        </div>
+
+        {/* Toolbar */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(255, 255, 255, 0.05)' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            {(['g4x', 'advertiser'] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                className={`btn btn-sm ${tab === value ? 'btn-cta' : 'btn-secondary'}`}
+                aria-pressed={tab === value}
+                onClick={() => {
+                  setTab(value);
+                  setPage(1);
+                }}
+              >
+                {value === 'g4x' ? 'G4X / Platform' : 'Advertiser'} ({counts[value]})
+              </button>
+            ))}
             <button
-              key={value}
               type="button"
-              className={`btn ${tab === value ? 'btn-primary' : 'btn-secondary'}`}
-              aria-pressed={tab === value}
+              className="btn btn-secondary btn-sm"
+              disabled={loading}
+              onClick={() => setRevision((n) => n + 1)}
+            >
+              ↻ Refresh
+            </button>
+          </div>
+          {!isReadOnly && (
+            <button
+              type="button"
+              className="btn btn-cta btn-sm"
               onClick={() => {
-                setTab(value);
-                setPage(1);
+                setShowCreateModal(true);
+                setCreateFeedback(null);
+                if (!createServiceId && games.length > 0) {
+                  const firstGame = games[0];
+                  setCreateGame(firstGame.slug);
+                  if (firstGame.services && firstGame.services.length > 0) {
+                    setCreateServiceId(firstGame.services[0].id);
+                  }
+                }
               }}
             >
-              {value === 'g4x' ? 'G4X / Platform' : 'Advertiser'} ({counts[value]})
+              + Create G4X Order
             </button>
-          ))}
-          <button
-            type="button"
-            className="btn btn-secondary"
-            disabled={loading}
-            onClick={() => setRevision((n) => n + 1)}
-          >
-            Refresh
-          </button>
+          )}
         </div>
-        {counts.needsReview > 0 && (
-          <p>
-            {counts.needsReview} historical order(s) need origin review. Use the Needs review source filter;
-            no historical records are changed.
-          </p>
+
+        {/* 4-Card Authoritative Financial Summary Grid */}
+        {financeOverview?.totals && (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
+              gap: '0.85rem',
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '12px',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                padding: '14px 16px',
+              }}
+            >
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
+                Total Gross Volume
+              </div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 800, fontFamily: 'monospace', color: '#fff', margin: '4px 0 2px' }}>
+                {financeOverview.totals.grossVolumeUsd}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                All ecosystem orders
+              </div>
+            </div>
+
+            <div
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '12px',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                padding: '14px 16px',
+              }}
+            >
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
+                Net Platform Revenue
+              </div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 800, fontFamily: 'monospace', color: '#34D399', margin: '4px 0 2px' }}>
+                {financeOverview.totals.netPlatformProfitUsd}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                Earned G4X margins &amp; fees
+              </div>
+            </div>
+
+            <div
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '12px',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                padding: '14px 16px',
+              }}
+            >
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
+                Booster Pool Allocation
+              </div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 800, fontFamily: 'monospace', color: 'var(--accent-yellow)', margin: '4px 0 2px' }}>
+                {financeOverview.totals.boosterPoolUsd}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                Payable to roster boosters
+              </div>
+            </div>
+
+            <div
+              style={{
+                backgroundColor: 'rgba(0, 0, 0, 0.3)',
+                borderRadius: '12px',
+                border: '1px solid rgba(255, 255, 255, 0.08)',
+                padding: '14px 16px',
+              }}
+            >
+              <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
+                Active Escrow vs Completed
+              </div>
+              <div style={{ fontSize: '1.4rem', fontWeight: 800, fontFamily: 'monospace', color: '#FBBF24', margin: '4px 0 2px' }}>
+                {financeOverview.totals.activeEscrowUsd}
+              </div>
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                Settled: <strong style={{ color: '#fff' }}>{financeOverview.totals.completedVolumeUsd}</strong>
+              </div>
+            </div>
+          </div>
         )}
+
+        {/* Dynamic Per-Site Platform Balances Strip */}
+        {tab === 'g4x' && financeOverview && (
+          <PlatformBalancesStrip
+            breakdown={financeOverview.byPlatform || []}
+            selectedPlatform={filters.sourceWebsite}
+            onSelectPlatform={(src) => {
+              setFilters((f) => ({ ...f, sourceWebsite: src }));
+              setAppliedFilters((f) => ({ ...f, sourceWebsite: src }));
+              setPage(1);
+            }}
+            loading={loadingFinance}
+          />
+        )}
+
+        {/* Origin Review Callout Banner */}
+        {counts.needsReview > 0 && (
+          <div
+            style={{
+              padding: '0.75rem 1rem',
+              borderRadius: '10px',
+              backgroundColor: 'rgba(245, 158, 11, 0.12)',
+              border: '1px solid rgba(245, 158, 11, 0.28)',
+              color: '#FBBF24',
+              fontSize: '0.84rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.65rem',
+            }}
+          >
+            <span style={{ fontSize: '1.1rem' }}>⚠️</span>
+            <span>
+              <strong>{counts.needsReview}</strong> historical order(s) need origin review. Use the <em>Needs review</em> source filter; no historical records are changed.
+            </span>
+          </div>
+        )}
+
+        {/* Filter Form */}
         <form
           onSubmit={(e) => {
             e.preventDefault();
             setAppliedFilters({ ...filters });
             setPage(1);
           }}
-          style={gridStyle}
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))',
+            gap: '0.85rem',
+            alignItems: 'end',
+            backgroundColor: 'rgba(0, 0, 0, 0.25)',
+            padding: '1.25rem',
+            borderRadius: '12px',
+            border: '1px solid rgba(255, 255, 255, 0.05)',
+          }}
         >
-          <label>
-            Search
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            <span style={{ fontSize: '0.72rem', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>
+              Search Keywords
+            </span>
             <input
               className="input"
               value={filters.search}
-              placeholder="Reference, ID, customer, name or notes"
+              placeholder="Ref, ID, customer, notes..."
               onChange={(e) => setFilters({ ...filters, search: e.target.value })}
             />
           </label>
-          <label>
-            Order status
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            <span style={{ fontSize: '0.72rem', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>
+              Order Status
+            </span>
             <select
               className="input"
               value={filters.status}
@@ -416,8 +698,10 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
               ))}
             </select>
           </label>
-          <label>
-            Payment
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            <span style={{ fontSize: '0.72rem', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>
+              Payment State
+            </span>
             <select
               className="input"
               value={filters.paymentStatus}
@@ -425,12 +709,14 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
             >
               <option value="">All payment states</option>
               {['pending', 'verified', 'unneeded', 'refunded'].map((s) => (
-                <option key={s}>{s}</option>
+                <option key={s} value={s}>{s}</option>
               ))}
             </select>
           </label>
-          <label>
-            Game
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            <span style={{ fontSize: '0.72rem', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>
+              Game Service
+            </span>
             <select
               className="input"
               value={filters.gameSlug}
@@ -445,15 +731,17 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
             </select>
           </label>
           {tab === 'g4x' && (
-            <label>
-              Source
+            <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+              <span style={{ fontSize: '0.72rem', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>
+                Platform Source
+              </span>
               <select
                 className="input"
                 value={filters.sourceWebsite}
                 onChange={(e) => setFilters({ ...filters, sourceWebsite: e.target.value })}
               >
                 <option value="">All sources</option>
-                {['direct', 'g2g', 'skycoach', 'eldorado', 'needs_review'].map((s) => (
+                {['direct', 'g2g', 'skycoach', 'eldorado', 'kingboost', 'overgear', 'needs_review'].map((s) => (
                   <option key={s} value={s}>
                     {s.replace(/_/g, ' ')}
                   </option>
@@ -461,8 +749,10 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
               </select>
             </label>
           )}
-          <label>
-            From (UTC)
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            <span style={{ fontSize: '0.72rem', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>
+              From Date (UTC)
+            </span>
             <input
               type="date"
               className="input"
@@ -470,8 +760,10 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
               onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
             />
           </label>
-          <label>
-            Through (UTC)
+          <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+            <span style={{ fontSize: '0.72rem', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-muted)', fontWeight: 700 }}>
+              Through Date (UTC)
+            </span>
             <input
               type="date"
               className="input"
@@ -480,12 +772,9 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
               onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
             />
           </label>
-          <div>
-            <button className="btn btn-primary" type="submit">
-              Apply filters
-            </button>{' '}
+          <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', gridColumn: '1 / -1', paddingTop: '0.5rem' }}>
             <button
-              className="btn btn-secondary"
+              className="btn btn-secondary btn-sm"
               type="button"
               onClick={() => {
                 setFilters(initialFilters);
@@ -493,7 +782,10 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                 setPage(1);
               }}
             >
-              Reset
+              Reset Filters
+            </button>
+            <button className="btn btn-cta btn-sm" type="submit">
+              Apply Filters
             </button>
           </div>
         </form>
@@ -509,73 +801,107 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
       ) : (
         <Card style={panelStyle}>
           {!orders.length ? (
-            <p>No orders match these filters.</p>
+            <div className="empty-state-box">
+              <div className="empty-state-icon">📦</div>
+              <div>No orders match these filters.</div>
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-subtle)' }}>Try adjusting your search criteria or resetting filters.</div>
+            </div>
           ) : (
             <div className="table-scroll">
-              <table style={{ width: '100%', textAlign: 'left', borderSpacing: '0 1rem' }}>
+              <table className="data-table">
                 <thead>
                   <tr>
-                    {[
-                      'Order / Created',
-                      'Game / Service',
-                      'Source / Customer',
-                      'Amount / Pool',
-                      'Order / Payment',
-                      'Roster / Runs',
-                      'Actions',
-                    ].map((h) => (
-                      <th key={h}>{h}</th>
-                    ))}
+                    <th>Order ID / Date</th>
+                    <th>Platform</th>
+                    <th>Game / Service</th>
+                    <th>Price &amp; Net Pool</th>
+                    <th>Status</th>
+                    <th>Assigned Booster</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {orders.map((o) => (
-                    <tr key={o.id}>
-                      <td>
-                        {o.orderRef}
-                        <br />
-                        <small>{time(o.createdAt)}</small>
-                      </td>
-                      <td>
-                        {o.gameName}
-                        <br />
-                        {o.serviceName}
-                      </td>
-                      <td>
-                        {o.sourceLabel}
-                        <br />
-                        {o.originType === 'advertiser'
-                          ? o.advertiser?.displayName
-                          : o.externalOrderId || o.customerDiscordId || 'Direct'}
-                        <br />
-                        <small>{o.platformAccount?.displayName}</small>
-                      </td>
-                      <td>
-                        {o.grossAmountUsd} {o.currency}
-                        <br />
-                        <small>Pool: {o.feeInfo?.boosterPoolUsd || '—'}</small>
-                      </td>
-                      <td>
-                        {typeof o.simplifiedStatus === 'object'
-                          ? o.simplifiedStatus.label
-                          : o.simplifiedStatus || o.status}
-                        <br />
-                        <small>Payment: {o.paymentStatus}</small>
-                        <br />
-                        <small>{o.releaseStage}</small>
-                      </td>
-                      <td>
-                        {o.assignedCount || 0} assigned / {o.runsCount || 0} runs
-                        <br />
-                        {o.assignedBooster || 'Unassigned'}
-                      </td>
-                      <td>
-                        <button className="btn btn-secondary" onClick={() => openDetails(o.id)}>
-                          Details &amp; actions
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {orders.map((o) => {
+                    const statusText = typeof o.simplifiedStatus === 'object'
+                      ? o.simplifiedStatus.label
+                      : o.simplifiedStatus || o.status;
+                    const statusLower = (o.status || '').toLowerCase();
+                    const statusClass = ['completed', 'approved', 'active'].includes(statusLower)
+                      ? 'badge-green'
+                      : ['cancelled', 'disputed', 'rejected'].includes(statusLower)
+                      ? 'badge-danger'
+                      : ['assigned', 'in_progress'].includes(statusLower)
+                      ? 'badge-blue'
+                      : 'badge-amber';
+
+                    return (
+                      <tr key={o.id}>
+                        <td>
+                          <div style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent-yellow)', fontSize: '0.9rem' }}>
+                            {o.orderRef}
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                            {time(o.createdAt)}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', alignItems: 'flex-start' }}>
+                            <span className="badge badge-purple" style={{ fontSize: '0.68rem' }}>
+                              {o.sourceLabel}
+                            </span>
+                            {(o.externalOrderId || o.platformAccount?.displayName) && (
+                              <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                                {o.externalOrderId ? `#${o.externalOrderId}` : o.platformAccount?.displayName}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ fontWeight: 600, color: '#ffffff' }}>{o.gameName}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{o.serviceName}</div>
+                        </td>
+                        <td>
+                          <div style={{ fontFamily: 'monospace', fontWeight: 700, color: '#ffffff' }}>
+                            ${o.grossAmountUsd} {o.currency}
+                          </div>
+                          <div style={{ fontSize: '0.72rem', color: 'var(--accent-yellow)', fontFamily: 'monospace' }}>
+                            Pool: ${o.feeInfo?.boosterPoolUsd || '—'}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
+                            <span className={`badge ${statusClass}`}>
+                              {statusText}
+                            </span>
+                            {o.paymentStatus && (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                Pay: {o.paymentStatus}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontWeight: o.assignedBooster ? 600 : 400, color: o.assignedBooster ? '#ffffff' : 'var(--text-subtle)' }}>
+                              {o.assignedBooster || 'Unassigned'}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                            {o.assignedCount || 0} assigned · {o.runsCount || 0} runs
+                          </div>
+                        </td>
+                        <td style={{ textAlign: 'right' }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => openDetails(o.id)}
+                          >
+                            Details &amp; Actions
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -616,30 +942,34 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
         </Card>
       )}
       {selectedId !== null && (
-        <div
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(0,0,0,.8)',
-            zIndex: 1000,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '1rem',
-          }}
-        >
+        <div className="studio-modal-backdrop" onClick={closeDetails}>
           <div
             ref={detailsDialog}
             role="dialog"
             aria-modal="true"
             aria-labelledby="order-details-title"
-            className="card-surface"
-            style={{ ...panelStyle, width: 'min(1050px, 100%)', maxHeight: '90vh', overflowY: 'auto' }}
+            className="studio-modal-card studio-modal-card-xl"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: 'min(1050px, 100%)', maxHeight: '90vh' }}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
-              <h2 id="order-details-title">Order {details?.orderRef || `#${selectedId}`}</h2>
-              <button ref={closeButton} disabled={busy} onClick={closeDetails} className="btn btn-secondary">
-                Close
+            <div className="studio-modal-header">
+              <div>
+                <h2 id="order-details-title" style={{ margin: 0, fontSize: '1.25rem' }}>
+                  Order {details?.orderRef || `#${selectedId}`}
+                </h2>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  Lifecycle tracking, financial calculations, booster assignment roster, and proof review.
+                </p>
+              </div>
+              <button
+                ref={closeButton}
+                type="button"
+                disabled={busy}
+                onClick={closeDetails}
+                className="studio-modal-close"
+                aria-label="Close"
+              >
+                ✕
               </button>
             </div>
             {detailsLoading && <LoadingState message="Loading lifecycle, evidence and history…" />}
@@ -651,380 +981,893 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
             )}
             {!detailsLoading && details && (
               <>
-                <div style={gridStyle}>
-                  <div>
-                    <strong>
-                      {details.gameName} · {details.serviceName}
-                    </strong>
-                    <p>
-                      {details.orderMode === 'non_pilot' ? 'selfplay' : details.orderMode} · {details.status}
-                    </p>
-                    <p>Customer: {details.customerId || '—'}</p>
-                    <p>Creator: {details.creatorId || '—'}</p>
-                    <p>External reference: {details.externalOrderId || '—'}</p>
-                  </div>
-                  <div>
-                    <strong>Payment: {details.paymentStatus}</strong>
-                    <p>
-                      Gross: {details.grossAmountUsd} {details.currency}
-                    </p>
-                    <p>Booster pool: {details.boosterPoolUsd}</p>
-                    <p>
-                      Platform / advertiser fee: {details.platformFeeUsd} / {details.advertiserFeeUsd}
-                    </p>
-                  </div>
-                  <div>
-                    <strong>Release: {details.boostReleaseTracker?.stage || 'Not applicable'}</strong>
-                    <p>Staff review: {time(details.boostReleaseTracker?.staffReviewedAt || null)}</p>
-                    <p>Final approval: {time(details.boostReleaseTracker?.adminFinalApprovedAt || null)}</p>
-                    <p>Hold expires: {time(details.boostReleaseTracker?.holdExpiresAt || null)}</p>
-                  </div>
-                </div>
-                {details.notes && <p>Notes: {details.notes}</p>}
-                <section>
-                  <h3>Lifecycle &amp; next step</h3>
-                  <p>{details.explanationEnglish}</p>
-                  <p>{details.requiredNextActionEnglish}</p>
-                  {details.publicationBlockReasons.map((r, i) => (
-                    <p key={i}>{r}</p>
-                  ))}
-                </section>
-                <section>
-                  <h3>Discord synchronization</h3>
-                  <p>Board message: {details.discordMessageId || 'Not published'}</p>
-                  <p>Board channel: {details.discordChannelId || 'Not provisioned'}</p>
-                  <p>Execution channel: {details.executionChannelId || 'Not provisioned'}</p>
-                  <p>Review channel: {details.reviewChannelId || 'Not provisioned'}</p>
-                  <p>Stored channel/message references do not confirm live Discord connectivity.</p>
-                </section>
-                {!isReadOnly && !['completed', 'cancelled'].includes(details.status) && (
-                  <section style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-subtle)' }}>
-                    <h3 style={{ margin: '0 0 0.35rem' }}>Operational Fields</h3>
-                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0 0 0.75rem' }}>
-                      Update operational notes or external reference. Historical payments and assignments remain unchanged.
-                    </p>
-                    <form
-                      onSubmit={async (e) => {
-                        e.preventDefault();
-                        if (opReason.trim().length < 5) return;
-                        setSavingOp(true);
-                        setOpFeedback(null);
-                        try {
-                          await updateOrderOperational(details.orderId, {
-                            notes: opNotes.trim() || undefined,
-                            externalOrderId: opExternalId.trim() || undefined,
-                            reason: opReason.trim(),
-                          });
-                          setOpFeedback({ text: 'Operational fields saved successfully.', type: 'success' });
-                          setRevision((n) => n + 1);
-                        } catch (err: any) {
-                          setOpFeedback({ text: err.message || 'Operational update failed', type: 'error' });
-                        } finally {
-                          setSavingOp(false);
-                        }
-                      }}
-                      style={{ display: 'grid', gap: '0.65rem' }}
-                    >
-                      <label style={{ fontSize: '0.85rem' }}>
-                        Operational Notes
-                        <textarea
-                          className="input"
-                          rows={2}
-                          value={opNotes}
-                          onChange={(e) => setOpNotes(e.target.value)}
-                          style={{ width: '100%', marginTop: '0.25rem' }}
-                        />
-                      </label>
-                      <label style={{ fontSize: '0.85rem' }}>
-                        External Order ID
-                        <input
-                          className="input"
-                          value={opExternalId}
-                          onChange={(e) => setOpExternalId(e.target.value)}
-                          style={{ width: '100%', marginTop: '0.25rem' }}
-                        />
-                      </label>
-                      <label style={{ fontSize: '0.85rem' }}>
-                        Audit Reason * (Min 5 chars)
-                        <input
-                          className="input"
-                          required
-                          minLength={5}
-                          placeholder="Reason for operational changes..."
-                          value={opReason}
-                          onChange={(e) => setOpReason(e.target.value)}
-                          style={{ width: '100%', marginTop: '0.25rem' }}
-                        />
-                      </label>
-                      {opFeedback && (
-                        <p style={{ color: opFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)', fontSize: '0.85rem', margin: 0 }}>
-                          {opFeedback.text}
-                        </p>
-                      )}
-                      <div>
-                        <button
-                          type="submit"
-                          disabled={busy || savingOp || opReason.trim().length < 5}
-                          className="btn btn-secondary btn-sm"
-                        >
-                          {savingOp ? 'Saving…' : 'Save Operational Changes'}
-                        </button>
+                <div className="studio-modal-body" style={{ display: 'grid', gap: '1.25rem' }}>
+                  {/* Top 3 Summary Cards */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+                    {/* Card 1: Game & Service */}
+                    <div style={{ background: '#0E1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+                        <span style={{ fontSize: '1rem', fontWeight: 800, color: '#fff' }}>
+                          {details.gameName}
+                        </span>
+                        <span className="badge badge-purple">{details.serviceName}</span>
                       </div>
-                    </form>
-                  </section>
-                )}
-                <section>
-                  <h3>Authorized actions</h3>
-                  {isReadOnly ? (
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                      Staff read-only view: inspecting permitted orders. Creation, operational modification, cancellation, payment, and roster assignment actions are disabled.
-                    </p>
-                  ) : (
-                    <>
-                      <p>Operational approval does not release funds or enable real-money payouts.</p>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '.5rem' }}>
-                        {(Object.keys(actionLabels) as Action[])
-                          .filter((a) => details.authorizedActions.includes(a))
-                          .map((a) => (
-                            <button
-                              key={a}
-                              className="btn btn-secondary"
-                              disabled={busy}
-                              onClick={() => {
-                                setAction(a);
-                                setReason('');
-                                setReceipt(details.activeReceiptRef || '');
-                              }}
-                            >
-                              {actionLabels[a]}
-                            </button>
+                      <div style={{ display: 'grid', gap: '0.45rem', fontSize: '0.84rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Mode &amp; Status:</span>
+                          <span style={{ display: 'flex', gap: '6px' }}>
+                            <span className="badge badge-blue">{details.orderMode === 'non_pilot' ? 'selfpay' : details.orderMode}</span>
+                            <span className={`badge ${['completed', 'approved', 'active'].includes((details.status || '').toLowerCase()) ? 'badge-green' : ['cancelled', 'disputed'].includes((details.status || '').toLowerCase()) ? 'badge-danger' : 'badge-yellow'}`}>
+                              {details.status}
+                            </span>
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Customer:</span>
+                          <span style={{ fontFamily: 'monospace' }}>{details.customerId || '—'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Creator:</span>
+                          <span style={{ fontFamily: 'monospace' }}>{details.creatorId || '—'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>External Ref:</span>
+                          <span style={{ fontFamily: 'monospace', color: 'var(--accent-yellow)', fontWeight: 600 }}>{details.externalOrderId || '—'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card 2: Payment & Fees */}
+                    <div style={{ background: '#0E1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                        <span style={{ fontSize: '1rem', fontWeight: 800, color: '#fff' }}>Financial Ledger</span>
+                        <span className={`badge ${details.paymentStatus === 'verified' ? 'badge-green' : details.paymentStatus === 'pending' ? 'badge-yellow' : 'badge-muted'}`}>
+                          {details.paymentStatus}
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gap: '0.45rem', fontSize: '0.84rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Gross Amount:</span>
+                          <span style={{ fontWeight: 700, color: '#fff' }}>{details.grossAmountUsd} {details.currency}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Booster Pool:</span>
+                          <span style={{ fontWeight: 700, color: 'var(--accent-yellow)' }}>{details.boosterPoolUsd}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Platform Fee:</span>
+                          <span>{details.platformFeeUsd}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Advertiser Fee:</span>
+                          <span>{details.advertiserFeeUsd}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Card 3: Release Status */}
+                    <div style={{ background: '#0E1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                        <span style={{ fontSize: '1rem', fontWeight: 800, color: '#fff' }}>Release &amp; Escrow</span>
+                        <span className="badge badge-purple">{details.boostReleaseTracker?.stage || 'Not applicable'}</span>
+                      </div>
+                      <div style={{ display: 'grid', gap: '0.45rem', fontSize: '0.84rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Staff Review:</span>
+                          <span>{time(details.boostReleaseTracker?.staffReviewedAt || null)}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Final Approval:</span>
+                          <span>{time(details.boostReleaseTracker?.adminFinalApprovedAt || null)}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Hold Expires:</span>
+                          <span style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>{time(details.boostReleaseTracker?.holdExpiresAt || null)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Notes Callout */}
+                  {details.notes && (
+                    <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '10px', padding: '12px 16px', fontSize: '0.85rem' }}>
+                      <strong style={{ color: 'var(--accent-yellow)', display: 'block', marginBottom: '4px' }}>Customer / Order Instructions:</strong>
+                      <div style={{ color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{details.notes}</div>
+                    </div>
+                  )}
+
+                  {/* Detailed Dashboard Sub-Cards (2-Column Grid on Desktop) */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.25rem' }}>
+                    {/* Sub-Card 1: Lifecycle & Next Step */}
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>🧭</span> Lifecycle &amp; Required Actions
+                      </h3>
+                      <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                        {details.explanationEnglish}
+                      </div>
+                      <div style={{ padding: '8px 12px', borderRadius: '8px', background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.25)', fontSize: '0.82rem', color: '#C4B5FD' }}>
+                        <strong style={{ color: '#fff' }}>Next Action:</strong> {details.requiredNextActionEnglish}
+                      </div>
+                      {details.publicationBlockReasons.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#EF4444', textTransform: 'uppercase' }}>Publication Blockers:</span>
+                          {details.publicationBlockReasons.map((r, i) => (
+                            <div key={i} style={{ fontSize: '0.8rem', color: '#FCA5A5', paddingLeft: '8px', borderLeft: '2px solid #EF4444' }}>
+                              {r}
+                            </div>
                           ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Sub-Card 2: Discord Synchronization */}
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>💬</span> Discord Synchronization
+                      </h3>
+                      <div style={{ display: 'grid', gap: '0.4rem', fontSize: '0.82rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Board Message:</span>
+                          <span style={{ fontFamily: 'monospace' }}>{details.discordMessageId || 'Not published'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Board Channel:</span>
+                          <span style={{ fontFamily: 'monospace' }}>{details.discordChannelId || 'Not provisioned'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Execution Channel:</span>
+                          <span style={{ fontFamily: 'monospace' }}>{details.executionChannelId || 'Not provisioned'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Review Channel:</span>
+                          <span style={{ fontFamily: 'monospace' }}>{details.reviewChannelId || 'Not provisioned'}</span>
+                        </div>
                       </div>
-                      {action && details.authorizedActions.includes(action) && (
+                      <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        Stored channel/message references do not confirm live Discord connectivity.
+                      </p>
+                    </div>
+
+                    {/* Sub-Card 3: Operational Fields */}
+                    {!isReadOnly && !['completed', 'cancelled'].includes(details.status) && (
+                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>⚙️</span> Operational Fields
+                        </h3>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+                          Update operational notes or external reference. Historical payments remain unchanged.
+                        </p>
                         <form
-                          onSubmit={submitAction}
-                          style={{ display: 'grid', gap: '.5rem', marginTop: '1rem' }}
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            if (opReason.trim().length < 5) return;
+                            setSavingOp(true);
+                            setOpFeedback(null);
+                            try {
+                              await updateOrderOperational(details.orderId, {
+                                notes: opNotes.trim() || undefined,
+                                externalOrderId: opExternalId.trim() || undefined,
+                                reason: opReason.trim(),
+                              });
+                              setOpFeedback({ text: 'Operational fields saved successfully.', type: 'success' });
+                              setRevision((n) => n + 1);
+                            } catch (err: any) {
+                              setOpFeedback({ text: err.message || 'Operational update failed', type: 'error' });
+                            } finally {
+                              setSavingOp(false);
+                            }
+                          }}
+                          style={{ display: 'grid', gap: '0.65rem' }}
                         >
-                          <h4>{actionLabels[action]}</h4>
-                          {action === 'pay_wallet' && (
-                            <p>
-                              Reserve {details.grossAmountUsd} from the order creator's backed wallet, not the
-                              reviewing operator's wallet. Available:{' '}
-                              {(details.creatorWalletAvailableCents / 100).toFixed(2)} USD. No payout is
-                              performed.
+                          <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Operational Notes</span>
+                            <textarea
+                              className="input"
+                              rows={2}
+                              value={opNotes}
+                              onChange={(e) => setOpNotes(e.target.value)}
+                              placeholder="Operational notes or customer requirements..."
+                            />
+                          </label>
+                          <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>External Order ID</span>
+                            <input
+                              className="input"
+                              value={opExternalId}
+                              onChange={(e) => setOpExternalId(e.target.value)}
+                              placeholder="e.g. SKY-123456"
+                            />
+                          </label>
+                          <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                            <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Audit Reason * (Min 5 chars)</span>
+                            <input
+                              className="input"
+                              required
+                              minLength={5}
+                              placeholder="Reason for audit trail..."
+                              value={opReason}
+                              onChange={(e) => setOpReason(e.target.value)}
+                            />
+                          </label>
+                          {opFeedback && (
+                            <p style={{ color: opFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)', fontSize: '0.82rem', margin: 0 }}>
+                              {opFeedback.text}
                             </p>
                           )}
-                          {action === 'verify_payment' ? (
-                            <label>
-                              Verified order receipt reference
-                              <input
-                                className="input"
-                                required
-                                value={receipt}
-                                onChange={(e) => setReceipt(e.target.value)}
-                              />
-                            </label>
-                          ) : (
-                            ['cancel', 'staff_review', 'final_approve'].includes(action) && (
-                              <label>
-                                Reason / review notes
-                                <textarea
-                                  className="input"
-                                  required
-                                  minLength={5}
-                                  value={reason}
-                                  onChange={(e) => setReason(e.target.value)}
-                                />
-                              </label>
-                            )
-                          )}
-                          <p>
-                            Confirm this action on {details.orderRef}. The server will recheck current
-                            permissions, evidence and lifecycle state.
-                          </p>
-                          <div>
-                            <button type="submit" disabled={busy} className="btn btn-primary">
-                              {busy ? 'Working…' : 'Confirm action'}
-                            </button>{' '}
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '0.25rem' }}>
                             <button
-                              type="button"
-                              disabled={busy}
-                              className="btn btn-secondary"
-                              onClick={() => setAction(null)}
+                              type="submit"
+                              disabled={busy || savingOp || opReason.trim().length < 5}
+                              className="btn btn-secondary btn-sm"
                             >
-                              Go back
+                              {savingOp ? 'Saving…' : 'Save Operational Changes'}
                             </button>
                           </div>
                         </form>
+                      </div>
+                    )}
+
+                    {/* Sub-Card 4: Authorized Actions */}
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>⚡</span> Authorized Actions
+                      </h3>
+                      {isReadOnly ? (
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem', margin: 0 }}>
+                          Staff read-only view: inspecting permitted orders. Creation, operational modification, cancellation, payment, and roster assignment actions are disabled.
+                        </p>
+                      ) : (
+                        <>
+                          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+                            Operational approval transitions order lifecycle. Real-money payouts remain guarded under double-entry escrow policy.
+                          </p>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
+                            {(Object.keys(actionLabels) as Action[])
+                              .filter((a) => details.authorizedActions.includes(a))
+                              .map((a) => (
+                                <button
+                                  key={a}
+                                  className="btn btn-secondary btn-xs"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    setAction(a);
+                                    setReason('');
+                                    setReceipt(details.activeReceiptRef || '');
+                                  }}
+                                >
+                                  {actionLabels[a]}
+                                </button>
+                              ))}
+                          </div>
+                          {action && details.authorizedActions.includes(action) && (
+                            <form
+                              onSubmit={submitAction}
+                              style={{ display: 'grid', gap: '0.65rem', padding: '12px', borderRadius: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}
+                            >
+                              <h4 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--accent-yellow)' }}>{actionLabels[action]}</h4>
+                              {action === 'pay_wallet' && (
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>
+                                  Reserve {details.grossAmountUsd} from the creator's backed wallet. Available: {(details.creatorWalletAvailableCents / 100).toFixed(2)} USD.
+                                </p>
+                              )}
+                              {action === 'verify_payment' ? (
+                                <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                  <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Verified Order Receipt Ref</span>
+                                  <input
+                                    className="input"
+                                    required
+                                    value={receipt}
+                                    onChange={(e) => setReceipt(e.target.value)}
+                                  />
+                                </label>
+                              ) : (
+                                ['cancel', 'staff_review', 'final_approve'].includes(action) && (
+                                  <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                    <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Reason / Review Notes</span>
+                                    <textarea
+                                      className="input"
+                                      required
+                                      minLength={5}
+                                      value={reason}
+                                      onChange={(e) => setReason(e.target.value)}
+                                    />
+                                  </label>
+                                )
+                              )}
+                              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  className="btn btn-secondary btn-xs"
+                                  onClick={() => setAction(null)}
+                                >
+                                  Go back
+                                </button>
+                                <button type="submit" disabled={busy} className="btn btn-cta btn-xs">
+                                  {busy ? 'Working…' : 'Confirm Action'}
+                                </button>
+                              </div>
+                            </form>
+                          )}
+                        </>
                       )}
-                    </>
-                  )}
-                </section>
-                <section>
-                  <h3>Roster &amp; assignment history</h3>
-                  <p>
-                    Required:{' '}
-                    {details.requiredRoles.map((r) => `${r.quantity} ${r.roleName}`).join(', ') ||
-                      'Service default'}
-                  </p>
-                  {!details.assignments.length && <p>No assignments.</p>}
-                  {details.assignments.map((a) => (
-                    <p key={a.id}>
-                      {a.user.displayName || a.user.username} ({a.userId}) · {a.assignedRole} · {a.status} ·{' '}
-                      {time(a.assignedAt)} {a.replacementReason && `· ${a.replacementReason}`}
-                    </p>
-                  ))}
-                  {!isReadOnly && details.authorizedActions.includes('assign') && (
-                    <form
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        void mutate(
-                          () =>
-                            assignOrderRoster(
-                              details.orderId,
-                              Object.entries(selectedClaims).map(([id, assignedRole]) => ({
-                                claimId: Number(id),
-                                assignedRole,
-                              })),
-                            ),
-                          'Roster assigned. Verify Discord synchronization status.',
-                        );
-                      }}
-                    >
-                      <h4>Assign registered applicants</h4>
-                      <p>
-                        Select a complete roster. Eligibility, approved game/service roles, slot capacity and
-                        double-booking are checked by the server.
-                      </p>
-                      {!details.presigns.length && <p>No registered applicants.</p>}
-                      {details.presigns.map((p) => (
-                        <label key={p.id} style={{ display: 'block', margin: '.5rem 0' }}>
-                          {p.user.displayName || p.user.username} ({p.userId})
-                          {p.squadId ? ` · Team ${p.squadId}` : ''}{' '}
-                          <select
-                            disabled={busy}
-                            value={selectedClaims[p.id] || ''}
-                            onChange={(e) => {
-                              const next = { ...selectedClaims };
-                              if (e.target.value) next[p.id] = e.target.value;
-                              else delete next[p.id];
-                              setSelectedClaims(next);
-                            }}
+                    </div>
+
+                    {/* Sub-Card 5: Roster & Direct Booster Assignment */}
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>👥</span> Roster &amp; Assignment
+                      </h3>
+                      <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                        Required Roles: <strong style={{ color: '#fff' }}>{details.requiredRoles.map((r) => `${r.quantity} ${r.roleName}`).join(', ') || 'Service default'}</strong>
+                      </div>
+
+                      {/* Current assignments */}
+                      <div style={{ display: 'grid', gap: '0.4rem' }}>
+                        {!details.assignments.length ? (
+                          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No boosters assigned yet.</div>
+                        ) : (
+                          details.assignments.map((a) => (
+                            <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', fontSize: '0.82rem' }}>
+                              <div>
+                                <span style={{ fontWeight: 600, color: '#fff' }}>{a.user.displayName || a.user.username}</span>
+                                <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: '6px' }}>({a.assignedRole})</span>
+                              </div>
+                              <span className={`badge ${a.status === 'assigned' ? 'badge-green' : 'badge-muted'}`} style={{ fontSize: '0.68rem' }}>
+                                {a.status}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Presign Applicants Form */}
+                      {!isReadOnly && details.authorizedActions.includes('assign') && (
+                        <form
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            void mutate(
+                              () =>
+                                assignOrderRoster(
+                                  details.orderId,
+                                  Object.entries(selectedClaims).map(([id, assignedRole]) => ({
+                                    claimId: Number(id),
+                                    assignedRole,
+                                  })),
+                                ),
+                              'Roster assigned. Verify Discord synchronization status.',
+                            );
+                          }}
+                          style={{ padding: '10px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)' }}
+                        >
+                          <h4 style={{ margin: '0 0 0.4rem', fontSize: '0.84rem' }}>Assign Registered Applicants</h4>
+                          {!details.presigns.length ? (
+                            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>No applicants presigned.</p>
+                          ) : (
+                            details.presigns.map((p) => (
+                              <label key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', margin: '4px 0' }}>
+                                <span>{p.user.displayName || p.user.username} {p.squadId ? `(Team ${p.squadId})` : ''}</span>
+                                <select
+                                  disabled={busy}
+                                  className="input"
+                                  style={{ padding: '2px 8px', fontSize: '0.78rem' }}
+                                  value={selectedClaims[p.id] || ''}
+                                  onChange={(e) => {
+                                    const next = { ...selectedClaims };
+                                    if (e.target.value) next[p.id] = e.target.value;
+                                    else delete next[p.id];
+                                    setSelectedClaims(next);
+                                  }}
+                                >
+                                  <option value="">Not selected</option>
+                                  {p.registeredRole
+                                    .split(',')
+                                    .filter((r) => ['tank', 'healer', 'dps', 'booster', 'pilot'].includes(r.trim()))
+                                    .map((r) => (
+                                      <option key={r} value={r.trim()}>
+                                        {r.trim()}
+                                      </option>
+                                    ))}
+                                </select>
+                              </label>
+                            ))
+                          )}
+                          <button
+                            className="btn btn-cta btn-xs"
+                            type="submit"
+                            style={{ marginTop: '0.5rem' }}
+                            disabled={busy || !Object.keys(selectedClaims).length}
                           >
-                            <option value="">Not selected</option>
-                            {p.registeredRole
-                              .split(',')
-                              .filter((r) => ['tank', 'healer', 'dps', 'booster', 'pilot'].includes(r.trim()))
-                              .map((r) => (
-                                <option key={r} value={r.trim()}>
-                                  {r.trim()}
+                            Confirm Roster
+                          </button>
+                        </form>
+                      )}
+
+                      {/* Direct Booster Assignment */}
+                      {!isReadOnly && !['completed', 'cancelled'].includes(details.status) && (
+                        <div style={{ padding: '10px', backgroundColor: 'rgba(250, 204, 21, 0.04)', borderRadius: '10px', border: '1px solid rgba(250, 204, 21, 0.2)' }}>
+                          <h4 style={{ margin: '0 0 0.35rem', fontSize: '0.84rem', color: 'var(--accent-yellow)' }}>⚡ Direct Booster Assignment</h4>
+                          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0 0 0.5rem' }}>
+                            Assign an approved booster directly without requiring a presign.
+                          </p>
+                          <form onSubmit={handleDirectBoosterAssign} style={{ display: 'grid', gap: '0.5rem' }}>
+                            <select
+                              className="input"
+                              value={directBoosterUserId}
+                              onChange={(e) => setDirectBoosterUserId(e.target.value)}
+                              required
+                              style={{ fontSize: '0.8rem' }}
+                            >
+                              <option value="">— Choose Approved Booster —</option>
+                              {approvedBoosters.map((b) => (
+                                <option key={b.userId} value={b.userId} disabled={b.hasActiveReservation}>
+                                  {b.displayName || b.username} ({b.roles.join(', ')}){b.hasActiveReservation ? ` [Busy: Order #${b.activeOrderId}]` : ''}
                                 </option>
                               ))}
-                          </select>
-                        </label>
-                      ))}
-                      <button
-                        className="btn btn-primary"
-                        type="submit"
-                        disabled={busy || !Object.keys(selectedClaims).length}
-                      >
-                        Confirm roster assignment
-                      </button>
-                    </form>
-                  )}
-                </section>
-                <section>
-                  <h3>Runs &amp; proof</h3>
-                  {!details.runs.length && <p>No runs.</p>}
-                  {details.runs.map((run) => (
-                    <div key={run.id}>
-                      <h4>
-                        Run {run.runNumber} · {run.status} · {time(run.completedAt)}
-                      </h4>
-                      {!run.proofs.length && <p>No proof submitted.</p>}
-                      {run.proofs.map((proof) => (
-                        <div key={proof.id}>
-                          <p>
-                            Proof #{proof.id}: {proof.proofType} · {proof.status} ·{' '}
-                            {proof.submittedBy.username} · {time(proof.submittedAt)}
-                          </p>
-                          <Evidence value={proof.evidenceUrl} />
-                          <p>{proof.description}</p>
-                          <p>
-                            Reviewer: {proof.reviewedBy?.username || '—'} · {time(proof.reviewedAt)} ·{' '}
-                            {proof.reviewNotes || 'No review notes'}
-                          </p>
+                            </select>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <select
+                                className="input"
+                                value={directBoosterRole}
+                                onChange={(e) => setDirectBoosterRole(e.target.value)}
+                                style={{ fontSize: '0.8rem', flex: 1 }}
+                              >
+                                <option value="tank">Tank</option>
+                                <option value="healer">Healer</option>
+                                <option value="dps">DPS</option>
+                                <option value="booster">Booster</option>
+                                <option value="pilot">Pilot</option>
+                              </select>
+                              <button
+                                type="submit"
+                                className="btn btn-cta btn-xs"
+                                disabled={submittingDirectAssign || !directBoosterUserId}
+                              >
+                                {submittingDirectAssign ? 'Assigning...' : 'Assign'}
+                              </button>
+                            </div>
+                          </form>
+                          {directAssignFeedback && (
+                            <p style={{ color: directAssignFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)', fontSize: '0.8rem', marginTop: '0.4rem', marginBottom: 0 }}>
+                              {directAssignFeedback.text}
+                            </p>
+                          )}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  ))}
-                </section>
-                <section>
-                  <h3>Disputes &amp; holds</h3>
-                  {!details.disputes.length && <p>No disputes.</p>}
-                  {details.disputes.map((d) => (
-                    <div key={d.id}>
-                      <h4>
-                        Dispute #{d.id} · {d.status} · {d.disputeType}
-                      </h4>
-                      <p>{d.description}</p>
-                      <p>
-                        Opened by {d.openedById} · {time(d.createdAt)}
-                      </p>
-                      <p>
-                        Resolution: {d.resolutionNotes || 'Pending'} · {d.resolvedById || '—'}
-                      </p>
+
+                    {/* Sub-Card 6: Runs & Proof */}
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>🏆</span> Runs &amp; Proof Submission
+                      </h3>
+                      {!details.runs.length ? (
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>No carry runs recorded.</p>
+                      ) : (
+                        details.runs.map((run) => (
+                          <div key={run.id} style={{ padding: '10px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                              <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#fff' }}>Run #{run.runNumber}</span>
+                              <span className={`badge ${run.status === 'completed' ? 'badge-green' : 'badge-yellow'}`} style={{ fontSize: '0.68rem' }}>
+                                {run.status}
+                              </span>
+                            </div>
+                            {!run.proofs.length ? (
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No proof submitted yet.</div>
+                            ) : (
+                              run.proofs.map((proof) => (
+                                <div key={proof.id} style={{ marginTop: '6px', fontSize: '0.8rem', padding: '6px 8px', borderRadius: '6px', background: 'rgba(0,0,0,0.25)' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--accent-yellow)' }}>
+                                    <span>Proof #{proof.id} ({proof.proofType})</span>
+                                    <span>{proof.status}</span>
+                                  </div>
+                                  <div style={{ margin: '4px 0' }}>
+                                    <Evidence value={proof.evidenceUrl} />
+                                  </div>
+                                  {proof.description && <div style={{ color: 'var(--text-secondary)' }}>{proof.description}</div>}
+                                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                    Reviewer: {proof.reviewedBy?.username || '—'} · {proof.reviewNotes || 'No notes'}
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        ))
+                      )}
                     </div>
-                  ))}
-                  {details.escrowHolds.map((h) => (
-                    <p key={h.id}>
-                      Hold #{h.id}: {h.status} · {h.reason}
-                    </p>
-                  ))}
-                  <Link to="/management?tab=disputes">Open dispute management</Link>
-                </section>
-                <section>
-                  <h3>Audit history</h3>
-                  {!details.auditAvailable ? (
-                    <p>Audit access is not granted.</p>
-                  ) : !details.auditLogs.length ? (
-                    <p>No order audit events recorded.</p>
-                  ) : (
-                    details.auditLogs.map((log) => (
-                      <details key={log.id}>
-                        <summary>
-                          {time(log.createdAt)} · {log.actor?.username || log.actorId || 'System'} ·{' '}
-                          {log.action} · {log.isSuccess ? 'Success' : 'Failed'}
-                        </summary>
-                        <p>{log.reason || 'No reason recorded'}</p>
-                        <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                          {log.previousValues || '—'}
-                          {'\n→\n'}
-                          {log.newValues || '—'}
-                        </pre>
-                      </details>
-                    ))
-                  )}
-                </section>
+
+                    {/* Sub-Card 7: Disputes & Holds */}
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>⚖️</span> Disputes &amp; Escrow Holds
+                      </h3>
+                      {!details.disputes.length && !details.escrowHolds.length ? (
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>No active disputes or escrow holds on this order.</p>
+                      ) : (
+                        <div style={{ display: 'grid', gap: '0.5rem' }}>
+                          {details.disputes.map((d) => (
+                            <div key={d.id} style={{ padding: '8px 10px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '0.82rem' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#F87171', fontWeight: 700 }}>
+                                <span>Dispute #{d.id} ({d.disputeType})</span>
+                                <span>{d.status}</span>
+                              </div>
+                              <div style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>{d.description}</div>
+                            </div>
+                          ))}
+                          {details.escrowHolds.map((h) => (
+                            <div key={h.id} style={{ padding: '6px 10px', borderRadius: '8px', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', fontSize: '0.8rem', color: '#FBBF24' }}>
+                              Hold #{h.id}: {h.status} · {h.reason}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div style={{ paddingTop: '0.25rem' }}>
+                        <Link to="/management?tab=disputes" className="btn btn-secondary btn-xs" style={{ textDecoration: 'none' }}>
+                          Open Dispute Workspace &rarr;
+                        </Link>
+                      </div>
+                    </div>
+
+                    {/* Sub-Card 8: Audit History */}
+                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem', gridColumn: '1 / -1' }}>
+                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span>📜</span> Audit History Trail
+                      </h3>
+                      {!details.auditAvailable ? (
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>Audit access is not granted.</p>
+                      ) : !details.auditLogs.length ? (
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>No order audit events recorded.</p>
+                      ) : (
+                        <div style={{ display: 'grid', gap: '0.5rem' }}>
+                          {details.auditLogs.map((log) => (
+                            <details key={log.id} style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '8px 12px', fontSize: '0.82rem' }}>
+                              <summary style={{ cursor: 'pointer', fontWeight: 600, color: log.isSuccess ? '#10B981' : '#EF4444' }}>
+                                {time(log.createdAt)} · {log.actor?.username || log.actorId || 'System'} · {log.action}
+                              </summary>
+                              {log.reason && <p style={{ margin: '6px 0 4px', color: 'var(--text-muted)' }}>{log.reason}</p>}
+                              <pre style={{ background: '#090A0F', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '10px', fontSize: '0.76rem', color: '#A5B4FC', margin: '6px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                                {log.previousValues || '—'}
+                                {'\n→\n'}
+                                {log.newValues || '—'}
+                              </pre>
+                            </details>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="studio-modal-footer">
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={closeDetails}
+                  >
+                    Close Details
+                  </button>
+                </div>
               </>
             )}
           </div>
         </div>
       )}
-      {createModalOpen && (
-        <CreateOrderModal
-          rankData={managementRank}
-          wallet={managementWallet}
-          discordInfo={noDiscordIntegration}
-          createOrder={createOperationalOrder}
-          title="Create New G4X Order"
-          onClose={() => setCreateModalOpen(false)}
-          onSuccess={(orderRef) => {
-            setCreateModalOpen(false);
-            setFeedback(`Order ${orderRef} created successfully.`);
-            setRevision((n) => n + 1);
-          }}
-        />
+      {/* Create Order Modal */}
+      {showCreateModal && (
+        <div className="studio-modal-backdrop" onClick={() => setShowCreateModal(false)}>
+          <div
+            className="studio-modal-card studio-modal-card-lg"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="studio-modal-header">
+              <div>
+                <h2 style={{ margin: 0, fontSize: '1.25rem' }}>Create G4X Order (Direct / External)</h2>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '4px 0 0 0' }}>
+                  Create and fund an internal G4X or external partner order (G2G, SkyCoach, Eldorado, Kingboost, Overgear) with Discord sync.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="studio-modal-close"
+                onClick={() => setShowCreateModal(false)}
+                disabled={submittingCreate}
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateOrderSubmit}>
+              <div className="studio-modal-body">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <label style={{ fontSize: '0.82rem' }}>
+                  Game *
+                  <select
+                    className="input"
+                    value={createGame}
+                    onChange={(e) => {
+                      const newGameSlug = e.target.value;
+                      setCreateGame(newGameSlug);
+                      const g = games.find((item) => item.slug === newGameSlug);
+                      if (g?.services && g.services.length > 0) {
+                        setCreateServiceId(g.services[0].id);
+                      } else {
+                        setCreateServiceId('');
+                      }
+                    }}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                  >
+                    {games.map((g) => (
+                      <option key={g.slug} value={g.slug}>
+                        {g.displayName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label style={{ fontSize: '0.82rem' }}>
+                  Service *
+                  <select
+                    className="input"
+                    value={createServiceId}
+                    onChange={(e) => setCreateServiceId(Number(e.target.value))}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                    required
+                  >
+                    <option value="">— Select Service —</option>
+                    {(games.find((g) => g.slug === createGame)?.services || []).map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.displayName} ({s.serviceKey})
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                <label style={{ fontSize: '0.82rem' }}>
+                  Gross Sale Amount (USD) *
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    className="input"
+                    placeholder="e.g. 50.00"
+                    value={createAmountUsd}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCreateAmountUsd(val);
+                      const num = parseFloat(val);
+                      if (!isNaN(num) && num > 0) {
+                        if (has13PercentFee(createSourcePlatform)) {
+                          const split = calculate13PercentSplit(num);
+                          setCreateBoosterPoolUsd(split.netAvailable.toFixed(2));
+                        } else if (!createBoosterPoolUsd) {
+                          setCreateBoosterPoolUsd(val);
+                        }
+                      }
+                    }}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                    required
+                  />
+                </label>
+
+                <label style={{ fontSize: '0.82rem' }}>
+                  Booster Pool Amount (USD) *
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="1"
+                    className="input"
+                    placeholder="e.g. 40.00"
+                    value={createBoosterPoolUsd}
+                    onChange={(e) => setCreateBoosterPoolUsd(e.target.value)}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                    required
+                  />
+                </label>
+              </div>
+
+              {has13PercentFee(createSourcePlatform) && (parseFloat(createAmountUsd) || 0) > 0 && (
+                <div
+                  style={{
+                    background: 'rgba(124, 58, 237, 0.15)',
+                    border: '1px solid rgba(124, 58, 237, 0.4)',
+                    borderRadius: '8px',
+                    padding: '0.5rem 0.75rem',
+                    fontSize: '0.82rem',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
+                  <span>
+                    13% Platform Deduction: <strong>-${calculate13PercentSplit(parseFloat(createAmountUsd) || 0).platformFee.toFixed(2)}</strong>
+                  </span>
+                  <span style={{ color: 'var(--accent-lime)', fontWeight: 600 }}>
+                    Net Available Base (87%): ${calculate13PercentSplit(parseFloat(createAmountUsd) || 0).netAvailable.toFixed(2)}
+                  </span>
+                </div>
+              )}
+
+              {has13PercentFee(createSourcePlatform) &&
+                (parseFloat(createAmountUsd) || 0) > 0 &&
+                (parseFloat(createBoosterPoolUsd) || 0) > calculate13PercentSplit(parseFloat(createAmountUsd) || 0).netAvailable && (
+                  <p style={{ color: 'var(--status-danger, #ef4444)', fontSize: '0.8rem', margin: 0 }}>
+                    ⚠️ Warning: Booster Pool ($${(parseFloat(createBoosterPoolUsd) || 0).toFixed(2)}) exceeds defensible net available after 13% platform fee ($${calculate13PercentSplit(parseFloat(createAmountUsd) || 0).netAvailable.toFixed(2)}).
+                  </p>
+                )}
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
+                <label style={{ fontSize: '0.82rem' }}>
+                  Order Source
+                  <select
+                    className="input"
+                    value={createSourcePlatform}
+                    onChange={(e) => {
+                      const newPlat = e.target.value;
+                      setCreateSourcePlatform(newPlat);
+                      const num = parseFloat(createAmountUsd);
+                      if (!isNaN(num) && num > 0) {
+                        if (has13PercentFee(newPlat)) {
+                          const split = calculate13PercentSplit(num);
+                          setCreateBoosterPoolUsd(split.netAvailable.toFixed(2));
+                        } else {
+                          setCreateBoosterPoolUsd(createAmountUsd);
+                        }
+                      }
+                    }}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                  >
+                    <option value="direct">Direct G4X</option>
+                    <option value="g2g">G2G Marketplace</option>
+                    <option value="skycoach">SkyCoach (13% Fee)</option>
+                    <option value="eldorado">Eldorado</option>
+                    <option value="kingboost">Kingboost (13% Fee)</option>
+                    <option value="overgear">Overgear (13% Fee)</option>
+                  </select>
+                </label>
+
+                <label style={{ fontSize: '0.82rem' }}>
+                  External Order ID
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g. JC100 (or use <#ID> in notes)"
+                    value={createExternalOrderId}
+                    onChange={(e) => setCreateExternalOrderId(e.target.value)}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                  />
+                </label>
+
+                <label style={{ fontSize: '0.82rem' }}>
+                  Order Type
+                  <select
+                    className="input"
+                    value={createOrderType}
+                    onChange={(e) => setCreateOrderType(e.target.value)}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                  >
+                    <option value="group">Group</option>
+                    <option value="solo">Solo</option>
+                  </select>
+                </label>
+
+                <label style={{ fontSize: '0.82rem' }}>
+                  Order Mode
+                  <select
+                    className="input"
+                    value={createOrderMode}
+                    onChange={(e) => setCreateOrderMode(e.target.value)}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                  >
+                    <option value="non_pilot">Selfplay (Non-Pilot)</option>
+                    <option value="pilot">Piloted (Account Access)</option>
+                  </select>
+                </label>
+
+                <label style={{ fontSize: '0.82rem' }}>
+                  Runs Count
+                  <input
+                    type="number"
+                    min="1"
+                    max="50"
+                    className="input"
+                    value={createRunsCount}
+                    onChange={(e) => setCreateRunsCount(parseInt(e.target.value, 10) || 1)}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
+                <label style={{ fontSize: '0.82rem' }}>
+                  Mythic Key Level
+                  <input
+                    type="number"
+                    min="2"
+                    max="35"
+                    className="input"
+                    placeholder="e.g. 10"
+                    value={createMythicKeyLevel}
+                    onChange={(e) => setCreateMythicKeyLevel(e.target.value)}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                  />
+                </label>
+
+                <label style={{ fontSize: '0.82rem' }}>
+                  Dungeon Name
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g. Ara-Kara"
+                    value={createDungeonName}
+                    onChange={(e) => setCreateDungeonName(e.target.value)}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                  />
+                </label>
+
+                <label style={{ fontSize: '0.82rem' }}>
+                  VPN Location
+                  <input
+                    type="text"
+                    className="input"
+                    placeholder="e.g. Germany / Frankfurt"
+                    value={createVpnLocation}
+                    onChange={(e) => setCreateVpnLocation(e.target.value)}
+                    style={{ width: '100%', marginTop: '0.25rem' }}
+                  />
+                </label>
+              </div>
+
+              <label style={{ fontSize: '0.82rem' }}>
+                Order Notes / Special Instructions
+                <textarea
+                  className="input"
+                  rows={2}
+                  placeholder="Buyer notes, contact handle, schedule requirements... (e.g. <#JC100> fast)"
+                  value={createNotes}
+                  onChange={(e) => setCreateNotes(e.target.value)}
+                  style={{ width: '100%', marginTop: '0.25rem' }}
+                />
+                {createNotes.match(/<#([^>]+)>/) && (
+                  <p style={{ color: 'var(--accent-lime)', fontSize: '0.78rem', marginTop: '0.35rem', marginBottom: 0 }}>
+                    💡 Auto-detected External Order ID: <strong>{createNotes.match(/<#([^>]+)>/)?.[1]}</strong> (will be automatically extracted and stripped from notes).
+                  </p>
+                )}
+              </label>
+
+              {createFeedback && (
+                <p style={{ color: createFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)', fontSize: '0.85rem', margin: 0 }}>
+                  {createFeedback.text}
+                </p>
+              )}
+
+              </div>
+
+              <div className="studio-modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setShowCreateModal(false)}
+                  disabled={submittingCreate}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-cta"
+                  disabled={submittingCreate || !createServiceId || !createAmountUsd}
+                >
+                  {submittingCreate ? 'Creating Order...' : 'Create & Fund Order'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

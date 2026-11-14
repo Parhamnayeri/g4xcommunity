@@ -149,6 +149,16 @@ export async function setupOrderPanels(
             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
             deny: [PermissionFlagsBits.SendMessages],
           },
+          ...(me ? [{
+            id: me.id,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.EmbedLinks,
+              PermissionFlagsBits.AttachFiles,
+              PermissionFlagsBits.ReadMessageHistory,
+            ],
+          }] : []),
         ],
       });
     } catch (err: any) {
@@ -186,6 +196,16 @@ export async function setupOrderPanels(
             allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
             deny: [PermissionFlagsBits.SendMessages],
           },
+          ...(me ? [{
+            id: me.id,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.EmbedLinks,
+              PermissionFlagsBits.AttachFiles,
+              PermissionFlagsBits.ReadMessageHistory,
+            ],
+          }] : []),
         ],
       });
     } catch (err: any) {
@@ -218,6 +238,7 @@ export async function setupOrderPanels(
       }
 
       // ب. ایجاد کانال در صورت نبود
+      const botId = me?.id || guild.client?.user?.id;
       if (
         !targetChannel &&
         guild.channels?.create &&
@@ -234,6 +255,16 @@ export async function setupOrderPanels(
                 allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory],
                 deny: [PermissionFlagsBits.SendMessages],
               },
+              ...(botId ? [{
+                id: botId,
+                allow: [
+                  PermissionFlagsBits.ViewChannel,
+                  PermissionFlagsBits.SendMessages,
+                  PermissionFlagsBits.EmbedLinks,
+                  PermissionFlagsBits.AttachFiles,
+                  PermissionFlagsBits.ReadMessageHistory,
+                ],
+              }] : []),
             ],
           });
         } catch (err: any) {
@@ -242,6 +273,17 @@ export async function setupOrderPanels(
       }
 
       if (targetChannel) {
+        // اطمینان از دسترسی ارسال پیام توسط بات در کانال‌های از قبل ایجاد شده
+        if (botId && typeof targetChannel.permissionOverwrites?.edit === 'function') {
+          await targetChannel.permissionOverwrites.edit(botId, {
+            ViewChannel: true,
+            SendMessages: true,
+            EmbedLinks: true,
+            AttachFiles: true,
+            ReadMessageHistory: true,
+          }).catch(() => {});
+        }
+
         let panelDeployed = false;
         let panelMessageId: string | undefined;
 

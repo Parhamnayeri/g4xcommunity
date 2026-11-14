@@ -35,13 +35,7 @@ import {
   setMainCharacter,
   syncCharacterProfile,
   removeCharacter,
-  reactivateCharacter,
-  getCharacterDetails,
 } from '../services/characterService';
-import {
-  previewRaiderIOProfile,
-  RAIDERIO_ATTRIBUTION,
-} from '../services/raiderio';
 import {
   createTeam,
   listTeams,
@@ -76,8 +70,8 @@ import {
   createWithdrawalRequestFromQuote,
   confirmAndSubmitWithdrawalRequest,
   boosterCancelWithdrawal,
-  adminExecuteManualPayout,
   adminApproveWithdrawalForProcessing,
+  adminExecuteManualPayout,
   adminRejectWithdrawal,
   updateWithdrawalMetadata,
   getWithdrawalAuditHistory,
@@ -94,11 +88,13 @@ import {
 } from '../services/financeV2/g4xBoostReleaseService';
 import {
   registerBooster,
+  registerPilot,
   registerAdvertiser,
   registerExchanger,
   getUserActiveApplications,
   reviewApplication,
 } from '../services/registrationService';
+import { notifyStaffReview } from '../interactions/registrationInteractions';
 import { createOrderClaim } from '../services/claimService';
 import { completeOrderRun } from '../services/runValidationService';
 import {
@@ -202,8 +198,7 @@ import { ownerGateRouter } from './ownerGate';
 import { adminPortalRouter } from './adminPortalRoutes';
 import { ownerPortalRouter } from './ownerPortalRoutes';
 import { profileSettingsRouter } from './profileSettingsRoutes';
-import { policyRouter } from './policyRoutes';
-import { discordCommandsRouter } from './discordCommandsRoutes';
+import { extractExternalOrderIdAndCleanNotes } from '../services/orderParsingUtils';
 
 export const router = Router();
 
@@ -214,8 +209,6 @@ router.use('/ownergate', ownerGateRouter);
 // ─── روت‌های پورتال ادمین و مالک (Website Phase 8) ──────────────────────────
 router.use('/', adminPortalRouter);
 router.use('/', ownerPortalRouter);
-router.use('/', policyRouter);
-router.use('/', discordCommandsRouter);
 
 // ─── روت‌های پروفایل کاربر، تنظیمات و پورتال بوستر (Website Phase 9) ─────────
 router.use('/', profileSettingsRouter);
@@ -247,7 +240,7 @@ router.get('/public/games', async (_req: Request, res: Response): Promise<void> 
       process.env.BOOKING_URL ||
       (process.env.DISCORD_GUILD_ID && process.env.CHANNEL_ORDERS
         ? `https://discord.com/channels/${process.env.DISCORD_GUILD_ID}/${process.env.CHANNEL_ORDERS}`
-        : '/legacy');
+        : '/dashboard');
 
     const discordInviteUrl =
       process.env.DISCORD_INVITE_URL ||
@@ -289,7 +282,6 @@ function getDiscordOAuthURL(state: string): string {
   });
   return `https://discord.com/api/oauth2/authorize?${params.toString()}`;
 }
-
 
 // ─── شروع جریان امن OAuth2 با State رمزنگاری‌شده ─────────────────────────────
 router.get('/auth/discord', (req: Request, res: Response) => {
@@ -832,6 +824,20 @@ router.get('/dashboard/transactions', requireAuth, async (req: Request, res: Res
   }
 });
 
+// ─── کاراکترهای WoW کاربر جاری ───────────────────────────────────────────────
+router.get('/characters', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  const { user } = req as AuthenticatedRequest;
+
+  const characters = await prisma.wowCharacter.findMany({
+    where: { userId: user.discordId },
+    orderBy: [
+      { isMain: 'desc' },
+      { mythicScore: 'desc' },
+    ],
+  });
+
+  res.json(characters.map(serializeCharacter));
+});
 
 // ─── تاریخچه بوست‌های کاربر جاری ─────────────────────────────────────────────
 router.get('/boosts/history', requireAuth, async (req: Request, res: Response): Promise<void> => {
@@ -897,57 +903,12 @@ router.get(
 router.get('/characters', requireAuth, async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
-    const includeInactive = req.query.includeInactive === 'true';
-    const characters = await listUserCharacters(user.discordId, { includeInactive });
+    const characters = await listUserCharacters(user.discordId);
     res.json(characters.map(serializeCharacter));
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Failed to list characters' });
   }
 });
-
-router.get('/characters/:id', requireAuth, async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { user } = req as AuthenticatedRequest;
-    const characterId = req.params.id;
-    if (!characterId) {
-      res.status(400).json({ error: 'Valid characterId required.' });
-      return;
-    }
-
-    const details = await getCharacterDetails(characterId, user.discordId, user.discordId);
-    res.json({
-      success: true,
-      character: serializeCharacter(details),
-      cooldownRemainingSeconds: details.refreshCooldown.remainingSeconds,
-      canRefresh: details.refreshCooldown.allowed,
-      recentRuns: details.recentRuns,
-      attribution: RAIDERIO_ATTRIBUTION,
-    });
-  } catch (err: any) {
-    const status = err instanceof DomainError ? 400 : 500;
-    res.status(status).json({ error: err.message || 'Failed to get character details' });
-  }
-});
-
-router.post(
-  '/characters/preview',
-  requireAuth,
-  requireCsrf,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { url, region, realm, characterName } = req.body;
-      const preview = await previewRaiderIOProfile({ url, region, realm, characterName });
-      res.json({
-        success: true,
-        preview,
-        attribution: RAIDERIO_ATTRIBUTION,
-      });
-    } catch (err: any) {
-      const status = err instanceof DomainError ? 400 : 500;
-      res.status(status).json({ error: err.message || 'Failed to preview Raider.IO profile' });
-    }
-  }
-);
 
 router.post(
   '/characters/add',
@@ -956,19 +917,18 @@ router.post(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const { user } = req as AuthenticatedRequest;
-      const { characterName, realm, region, raiderioUrl } = req.body;
+      const { characterName, realm, region } = req.body;
 
-      if (!raiderioUrl && (!characterName || !realm)) {
-        res.status(400).json({ error: 'Either raiderioUrl or both characterName and realm are required.' });
+      if (!characterName || !realm) {
+        res.status(400).json({ error: 'characterName and realm are required.' });
         return;
       }
 
       const character = await addCharacter({
         userId: user.discordId,
-        characterName: characterName || '',
-        realm: realm || '',
+        characterName,
+        realm,
         region,
-        raiderioUrl,
         actorId: user.discordId,
       });
 
@@ -1022,29 +982,6 @@ router.post(
     } catch (err: any) {
       const status = err instanceof DomainError ? 400 : 500;
       res.status(status).json({ error: err.message || 'Failed to sync character' });
-    }
-  }
-);
-
-router.post(
-  '/characters/reactivate',
-  requireAuth,
-  requireCsrf,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { user } = req as AuthenticatedRequest;
-      const { characterId } = req.body;
-
-      if (!characterId) {
-        res.status(400).json({ error: 'Valid characterId required.' });
-        return;
-      }
-
-      const reactivated = await reactivateCharacter(characterId, user.discordId, user.discordId);
-      res.json({ success: true, character: serializeCharacter(reactivated) });
-    } catch (err: any) {
-      const status = err instanceof DomainError ? 400 : 500;
-      res.status(status).json({ error: err.message || 'Failed to reactivate character' });
     }
   }
 );
@@ -1690,23 +1627,10 @@ router.get(
   '/admin/withdrawals',
   requireAuth,
   requireRole('owner', 'manager', 'admin'),
-  async (req: Request, res: Response): Promise<void> => {
+  async (_req: Request, res: Response): Promise<void> => {
     try {
-      const statusParam = req.query.status ? String(req.query.status).trim().toUpperCase() : '';
-      let whereClause: any = {
-        status: { in: ['RESERVED', 'UNDER_ADMIN_REVIEW', 'PROCESSING', 'QUOTED'] },
-      };
-      if (statusParam === 'ALL') {
-        whereClause = {};
-      } else if (statusParam) {
-        const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
-        if (statuses.length > 0) {
-          whereClause = { status: { in: statuses } };
-        }
-      }
-
       const requests = await prisma.boosterWithdrawalRequest.findMany({
-        where: whereClause,
+        where: { status: { in: ['RESERVED', 'PROCESSING', 'QUOTED', 'UNDER_ADMIN_REVIEW'] } },
         include: {
           booster: {
             select: { discordId: true, username: true, displayName: true },
@@ -1740,19 +1664,9 @@ router.post(
       }
 
       const id = Number(req.params.id);
-      const { decision, txHash, bankReceiptRef, reason, secondReviewerId } = req.body;
+      const { decision, txHash, bankReceiptRef, reason, secondReviewerId, notes } = req.body;
 
-      if (decision === 'approve_processing') {
-        const { request: processingReq } = await adminApproveWithdrawalForProcessing(
-          id,
-          user.discordId,
-          req.body.notes || reason
-        );
-        res.json({
-          success: true,
-          request: serializeAdminWithdrawal(processingReq),
-        });
-      } else if (decision === 'approve_paid') {
+      if (decision === 'approve_paid') {
         const tx = txHash ? String(txHash).trim() : '';
         const receipt = bankReceiptRef ? String(bankReceiptRef).trim() : tx;
         if (!tx && !receipt) {
@@ -1767,8 +1681,18 @@ router.post(
           externalTxHash: tx || undefined,
           bankReceiptRef: receipt || undefined,
           secondReviewerId: secondReviewerId ? String(secondReviewerId).trim() : undefined,
-          notes: req.body.notes || 'Executed via Admin Hub with verified disbursement evidence',
+          notes: notes || 'Executed via Admin Hub with verified disbursement evidence',
         });
+        res.json({
+          success: true,
+          request: serializeAdminWithdrawal(updatedReq),
+        });
+      } else if (decision === 'approve_processing') {
+        const { request: updatedReq } = await adminApproveWithdrawalForProcessing(
+          id,
+          user.discordId,
+          notes
+        );
         res.json({
           success: true,
           request: serializeAdminWithdrawal(updatedReq),
@@ -1781,12 +1705,11 @@ router.post(
           request: serializeAdminWithdrawal(request),
         });
       } else {
-        res.status(400).json({ error: "Invalid decision. Must be 'approve_processing', 'approve_paid', or 'reject'." });
+        res.status(400).json({ error: "Invalid decision. Must be 'approve_paid', 'approve_processing', or 'reject'." });
       }
     } catch (err: any) {
-      const msg = err.message || 'Withdrawal review failed';
-      const status = msg.includes('LIVE_PAYOUTS_DISABLED') || msg.includes('UNAUTHORIZED') ? 403 : 400;
-      res.status(status).json({ error: msg });
+      const status = err.message?.includes('LIVE_PAYOUTS_DISABLED') ? 403 : 400;
+      res.status(status).json({ error: err.message || 'Withdrawal review failed' });
     }
   }
 );
@@ -1844,30 +1767,11 @@ router.get(
     try {
       const id = Number(req.params.id);
       const logs = await getWithdrawalAuditHistory(id);
-      const history = logs.map((l) => {
-        let parsedDetails: any = null;
-        if (l.newValues) {
-          try {
-            parsedDetails = JSON.parse(l.newValues);
-          } catch {
-            parsedDetails = l.newValues;
-          }
-        }
-        return {
-          id: l.id,
-          action: l.action,
-          reason: l.reason,
-          createdAt: l.createdAt,
-          details: parsedDetails,
-          actor: l.actor
-            ? {
-                id: l.actor.discordId,
-                username: l.actor.username,
-                displayName: l.actor.displayName,
-              }
-            : null,
-        };
-      });
+      const history = logs.map((l: any) => ({
+        ...l,
+        details: l.details ?? {},
+        actor: l.actor ? { ...l.actor, id: l.actor.discordId } : (l.actorId ? { id: l.actorId } : null),
+      }));
       res.json({ success: true, logs, history });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to fetch withdrawal audit history' });
@@ -1971,6 +1875,7 @@ router.post(
         grossAmountUsd,
         orderType,
         notes,
+        externalOrderId,
         sourcePlatform,
         platformAccountRef,
         platformAccountId,
@@ -1989,6 +1894,11 @@ router.post(
         return;
       }
 
+      const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+        notes,
+        externalOrderId
+      );
+
       // If an external platform source is specified, route to platformOrderService
       if (sourcePlatform) {
         const extResult = await createExternalOrder({
@@ -2001,7 +1911,8 @@ router.post(
           sourceAmountType: sourceAmountType === 'platform_net' ? 'platform_net' : 'gross_sale',
           orderType,
           listingCategory,
-          notes,
+          notes: cleanNotes || undefined,
+          externalOrderId: parsedOrderId || undefined,
           actorId: user.discordId,
         });
 
@@ -2034,10 +1945,18 @@ router.post(
         requiredRoles: req.body.requiredRoles,
         vpnLocation: req.body.vpnLocation,
         customerInfo: req.body.customerInfo,
-        notes: req.body.notes,
+        notes: cleanNotes || undefined,
         idempotencyKey: req.body.idempotencyKey,
         actionSource: 'web_portal',
       });
+
+      // Update externalOrderId on direct boost order if extracted
+      if (parsedOrderId && createResult?.order?.id) {
+        await prisma.order.update({
+          where: { id: createResult.order.id },
+          data: { externalOrderId: parsedOrderId },
+        }).catch(() => {});
+      }
 
       res.json({
         success: true,
@@ -2176,12 +2095,44 @@ router.post(
   '/orders/:id/claim',
   requireAuth,
   requireCsrf,
-  async (_req: Request, res: Response): Promise<void> => {
-    // RULE A: Boost claims and pre-signing are strictly Discord-only. Web self-claim bypass is permanently closed.
-    res.status(403).json({
-      error: 'DISCORD_CLAIM_ONLY',
-      message: 'Order claims and pre-signing must be performed exclusively through authorized Discord bot interactions.',
-    });
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { user } = req as AuthenticatedRequest;
+      const orderId = Number(req.params.id);
+      const { registeredRole = 'dps' } = req.body;
+
+      const claim = await createOrderClaim({
+        orderId,
+        userId: user.discordId,
+        claimType: 'individual',
+        registeredRole,
+      });
+
+      // برای سادگی در MVP، در صورت کلیم موفق، تخصیص را به صورت خودکار ایجاد و ران را فعال می‌کنیم
+      await prisma.orderAssignment.create({
+        data: {
+          orderId,
+          userId: user.discordId,
+          assignedById: user.discordId,
+          assignedRole: registeredRole,
+          status: 'assigned',
+          claimId: claim.id,
+        },
+      });
+
+      const updatedOrder = await prisma.order.update({
+        where: { id: orderId },
+        data: { status: 'in_progress' },
+      });
+
+      res.json({
+        success: true,
+        claim,
+        simplifiedStatus: mapOrderStatus(updatedOrder.status),
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to claim order' });
+    }
   }
 );
 
@@ -2332,33 +2283,18 @@ router.post(
     try {
       const { user } = req as AuthenticatedRequest;
       const orderId = Number(req.params.id);
-      if (isNaN(orderId) || orderId <= 0) {
+      if (isNaN(orderId)) {
         res.status(400).json({ error: 'Invalid order ID' });
         return;
       }
-
-      const releaseRes = await executeG4XBoostRelease(orderId, user.discordId);
-      if (releaseRes.blockedByConfig || !('tracker' in releaseRes)) {
-        res.status(403).json({
-          success: false,
-          blockedByConfig: true,
-          gate: 'ESCROW_RELEASE_ENABLED',
-          stage: releaseRes.stage,
-          error: 'ESCROW_RELEASE_DISABLED',
-          message: 'message' in releaseRes ? releaseRes.message : 'ESCROW_RELEASE_ENABLED is disabled.',
-        });
+      const result = await executeG4XBoostRelease(orderId, user.discordId);
+      if (result.blockedByConfig) {
+        res.status(403).json(result);
         return;
       }
-
-      res.json({
-        success: true,
-        stage: releaseRes.stage,
-        tracker: releaseRes.tracker,
-      });
+      res.json(result);
     } catch (err: any) {
-      const msg = err.message || 'Release execution failed';
-      const status = msg.startsWith('UNAUTHORIZED') ? 403 : 400;
-      res.status(status).json({ error: msg });
+      res.status(400).json({ error: err.message || 'Failed to release order earnings' });
     }
   }
 );
@@ -2558,13 +2494,27 @@ router.post(
     try {
       const { user } = req as AuthenticatedRequest;
       const { category, gameSlug, experience, introduction, priorExperience, contactInfo, gameCurrencies, settlementCurrencies } = req.body;
+      const cleanGameSlug = (gameSlug && String(gameSlug).trim() !== 'all') ? String(gameSlug).trim() : undefined;
+      const discordClient = getGlobalDiscordClient();
 
       let app;
       if (category === 'booster') {
         app = await registerBooster({
           userId: user.discordId,
-          gameSlug: gameSlug || 'wow_midnight',
+          gameSlug: cleanGameSlug,
           experience: experience || 'Elite player with mythic raiding background',
+        });
+      } else if (category === 'pilot') {
+        app = await registerPilot({
+          userId: user.discordId,
+          gameSlug: cleanGameSlug,
+          experience: experience || 'Certified pilot carry player',
+          raiderioUrl: req.body.raiderioUrl,
+          notes: [
+            req.body.notes || introduction,
+            req.body.vpnAvailability ? '[VPN: Available]' : null,
+          ].filter(Boolean).join(' ') || undefined,
+          discordClient,
         });
       } else if (category === 'advertiser') {
         app = await registerAdvertiser({
@@ -2572,6 +2522,7 @@ router.post(
           introduction: introduction || 'Experienced game services coordinator',
           priorExperience: priorExperience || 'Managed multiple gaming communities',
           contactInfo: contactInfo || `discord:${user.username}`,
+          discordClient,
         });
       } else if (category === 'exchanger') {
         app = await registerExchanger({
@@ -2581,10 +2532,23 @@ router.post(
           gameCurrencies: gameCurrencies || ['wow_gold'],
           settlementCurrencies: settlementCurrencies || ['IRT', 'USDT'],
           contactInfo: contactInfo || `discord:${user.username}`,
+          discordClient,
         });
       } else {
-        res.status(400).json({ error: "Invalid category. Must be 'booster', 'advertiser', or 'exchanger'." });
+        res.status(400).json({ error: "Invalid category. Must be 'booster', 'pilot', 'advertiser', or 'exchanger'." });
         return;
+      }
+
+      // اعلان خودکار کارت بازبینی در کانال دیسکورد اختصاصی استاف
+      try {
+        const discordClient = getGlobalDiscordClient();
+        if (discordClient && app?.id) {
+          notifyStaffReview(discordClient, app.id).catch((notifErr: any) => {
+            console.warn('[WebRoutes] notifyStaffReview error:', notifErr?.message || notifErr);
+          });
+        }
+      } catch (err: any) {
+        console.warn('[WebRoutes] Could not dispatch Discord staff review notification:', err?.message || err);
       }
 
       res.json({
@@ -3958,8 +3922,8 @@ router.post(
       const user = (req as AuthenticatedRequest).user;
       const { platform, accountRef, currency = 'USD', orderContributions, notes } = req.body;
 
-      if (!platform || !['g2g', 'skycoach', 'eldorado'].includes(String(platform).toLowerCase())) {
-        res.status(400).json({ error: 'Valid platform (g2g, skycoach, eldorado) is required' });
+      if (!platform || !['g2g', 'skycoach', 'eldorado', 'kingboost', 'overgear'].includes(String(platform).toLowerCase())) {
+        res.status(400).json({ error: 'Valid platform (g2g, skycoach, eldorado, kingboost, overgear) is required' });
         return;
       }
 
@@ -4672,7 +4636,7 @@ router.post(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const actorId = (req as AuthenticatedRequest).user.discordId;
-      const { client } = await import('../index');
+      const client = getGlobalDiscordClient() || (await import('../index')).client;
       const guild = resolveExecutionGuild(client, req.body.guildId);
 
       if (!guild) {
@@ -4705,7 +4669,7 @@ router.post(
   async (req: Request, res: Response): Promise<void> => {
     try {
       const actorId = (req as AuthenticatedRequest).user.discordId;
-      const { client } = await import('../index');
+      const client = getGlobalDiscordClient() || (await import('../index')).client;
       const guild = resolveExecutionGuild(client, req.body.guildId);
 
       if (!guild) {
@@ -4742,7 +4706,7 @@ router.post(
         return;
       }
 
-      const { client } = await import('../index');
+      const client = getGlobalDiscordClient() || (await import('../index')).client;
       const guild = resolveExecutionGuild(client, guildId);
 
       if (!guild) {
@@ -4780,7 +4744,7 @@ router.put(
 
       let guild: any = null;
       if (validateGuild !== false) {
-        const { client } = await import('../index');
+        const client = getGlobalDiscordClient() || (await import('../index')).client;
         guild = resolveExecutionGuild(client, guildId);
       }
 
@@ -4810,7 +4774,7 @@ router.post(
       const actorId = (req as AuthenticatedRequest).user.discordId;
       const channelKey = req.params.key;
 
-      const { client } = await import('../index');
+      const client = getGlobalDiscordClient() || (await import('../index')).client;
       const guild = resolveExecutionGuild(client, req.body.guildId);
 
       if (!guild) {
@@ -4995,11 +4959,13 @@ router.post(
         return;
       }
 
-      let discordClient: any = null;
-      try {
-        const { client } = await import('../index');
-        discordClient = client;
-      } catch (_) {}
+      let discordClient: any = getGlobalDiscordClient();
+      if (!discordClient) {
+        try {
+          const { client } = await import('../index');
+          discordClient = client;
+        } catch (_) {}
+      }
 
       const result = await assignOrRevokeUserRole({
         targetUserId,
@@ -5039,11 +5005,13 @@ router.post(
         return;
       }
 
-      let discordClient: any = null;
-      try {
-        const { client } = await import('../index');
-        discordClient = client;
-      } catch (_) {}
+      let discordClient: any = getGlobalDiscordClient();
+      if (!discordClient) {
+        try {
+          const { client } = await import('../index');
+          discordClient = client;
+        } catch (_) {}
+      }
 
       const application = await reviewApplication({
         reviewerId: actorId,

@@ -21,6 +21,7 @@ import { requireAuth, requireCsrf, AuthenticatedRequest } from './middleware/aut
 import { serializeUser, serializeCharacter } from './serializers';
 import { maskIban, maskCryptoAddress } from '../services/financeV2/iranianIbanValidator';
 import { deriveOrderChannelModeSlug } from '../services/orderExecutionChannelService';
+import { getUserKycStatus, assistUserKyc } from '../services/kycDocumentSecurity';
 
 export const profileSettingsRouter = Router();
 
@@ -1106,3 +1107,87 @@ export async function handleGetBoosterPortalData(req: Request, res: Response): P
 
 profileSettingsRouter.get('/booster/portal-data', requireAuth, handleGetBoosterPortalData);
 profileSettingsRouter.get('/api/booster/portal-data', requireAuth, handleGetBoosterPortalData);
+
+// ─── User Self-Service KYC Endpoints ─────────────────────────────────────────
+
+async function handleGetUserKyc(req: Request, res: Response): Promise<void> {
+  try {
+    const user = (req as AuthenticatedRequest).user;
+    if (!user || !user.discordId) {
+      res.status(401).json({ error: 'UNAUTHORIZED' });
+      return;
+    }
+    const kycStatus = await getUserKycStatus(user.discordId);
+    res.json({
+      success: true,
+      ...kycStatus,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'KYC_FETCH_FAILED', message: err.message });
+  }
+}
+
+async function handleSubmitUserKyc(req: Request, res: Response): Promise<void> {
+  try {
+    const user = (req as AuthenticatedRequest).user;
+    if (!user || !user.discordId) {
+      res.status(401).json({ error: 'UNAUTHORIZED' });
+      return;
+    }
+
+    // Check if user is already verified (Single-verification reuse)
+    const existing = await getUserKycStatus(user.discordId);
+    if (existing.isVerified) {
+      res.json({
+        success: true,
+        isVerified: true,
+        message: 'Identity is already verified. No redundant submission required.',
+      });
+      return;
+    }
+
+    const {
+      legalName,
+      country,
+      idType,
+      idNumber,
+      phoneNumber,
+      vpnConfirmed,
+      notes,
+      identityDocData,
+      identityDocName,
+      selfieDocData,
+      selfieDocName,
+    } = req.body;
+
+    const result = await assistUserKyc({
+      targetUserId: user.discordId,
+      actorId: user.discordId,
+      legalName,
+      country,
+      idType,
+      idNumber,
+      phoneNumber,
+      vpnConfirmed: Boolean(vpnConfirmed),
+      adminNotes: notes,
+      identityDocData,
+      identityDocName,
+      selfieDocData,
+      selfieDocName,
+      markAsVerified: false,
+    });
+
+    res.json({
+      success: true,
+      result,
+      message: 'KYC documents submitted successfully and are now under review.',
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'KYC_SUBMISSION_FAILED', message: err.message });
+  }
+}
+
+profileSettingsRouter.get('/profile/kyc', requireAuth, handleGetUserKyc);
+profileSettingsRouter.get('/api/profile/kyc', requireAuth, handleGetUserKyc);
+profileSettingsRouter.post('/profile/kyc', requireAuth, requireCsrf, handleSubmitUserKyc);
+profileSettingsRouter.post('/api/profile/kyc', requireAuth, requireCsrf, handleSubmitUserKyc);

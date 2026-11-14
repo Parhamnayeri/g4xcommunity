@@ -21,9 +21,10 @@ import { authorize } from './authorizationService';
 import { Permission } from './permissionTypes';
 import { validateGameAndService } from './orderValidationService';
 import { calculateOrderFinancialSnapshot } from './financialCalculationEngine';
-import { creditOrderSalesProceeds } from './platformBalanceService';
+import { creditOrderSalesProceeds, getOrCreatePlatformAccount, ExternalPlatform } from './platformBalanceService';
+import { extractExternalOrderIdAndCleanNotes } from './orderParsingUtils';
 
-export const SUPPORTED_SOURCE_PLATFORMS = ['g2g', 'skycoach', 'eldorado'] as const;
+export const SUPPORTED_SOURCE_PLATFORMS = ['g2g', 'skycoach', 'eldorado', 'kingboost', 'overgear'] as const;
 export type SupportedSourcePlatform = typeof SUPPORTED_SOURCE_PLATFORMS[number];
 
 export function isSupportedSourcePlatform(platform: string): platform is SupportedSourcePlatform {
@@ -38,7 +39,8 @@ export interface ValidateExternalSourceInput {
 
 /**
  * Validates that the requested source platform is supported and that
- * an explicit, active, matching PlatformAccount exists.
+ * an explicit, active, matching PlatformAccount exists. If no account is provided,
+ * automatically finds or creates the default active platform account.
  */
 export async function validateExternalOrderSource(input: ValidateExternalSourceInput) {
   const { sourcePlatform, platformAccountId, platformAccountRef } = input;
@@ -47,12 +49,6 @@ export async function validateExternalOrderSource(input: ValidateExternalSourceI
   if (!normalizedPlatform || !isSupportedSourcePlatform(normalizedPlatform)) {
     throw new Error(
       `UNSUPPORTED_SOURCE_PLATFORM: Source platform '${sourcePlatform}' is not supported. Supported platforms: ${SUPPORTED_SOURCE_PLATFORMS.join(', ')}`
-    );
-  }
-
-  if (!platformAccountId && !platformAccountRef) {
-    throw new Error(
-      `MISSING_PLATFORM_ACCOUNT: An explicit active platform account reference or ID is required for externally sourced orders on '${sourcePlatform}'.`
     );
   }
 
@@ -69,7 +65,24 @@ export async function validateExternalOrderSource(input: ValidateExternalSourceI
       where: { accountRef: platformAccountRef.toLowerCase() },
     });
     if (!account) {
-      throw new Error(`PLATFORM_ACCOUNT_NOT_FOUND: Platform account '${platformAccountRef}' does not exist.`);
+      account = await getOrCreatePlatformAccount(
+        platformAccountRef.toLowerCase(),
+        normalizedPlatform as ExternalPlatform,
+        `${normalizedPlatform.toUpperCase()} (${platformAccountRef})`
+      );
+    }
+  } else {
+    // Deliverable 1: Auto-select or ensure default active account for the platform
+    account = await prisma.platformAccount.findFirst({
+      where: { platform: normalizedPlatform, isActive: true },
+      orderBy: { id: 'asc' },
+    });
+    if (!account) {
+      account = await getOrCreatePlatformAccount(
+        `${normalizedPlatform}_main`,
+        normalizedPlatform as ExternalPlatform,
+        `${normalizedPlatform.toUpperCase()} Main Account`
+      );
     }
   }
 
@@ -101,6 +114,7 @@ export interface CreateExternalOrderInput {
   orderType?: string;
   listingCategory?: string;
   notes?: string;
+  externalOrderId?: string | null;
   actorId: string;
   currency?: string;
 }
@@ -120,6 +134,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
     orderType = 'group',
     listingCategory,
     notes,
+    externalOrderId,
     actorId,
     currency = 'USD',
   } = input;
@@ -155,6 +170,12 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
     );
   }
 
+  // Deliverable 2: Parse notes for <#ORDERID> and clean notes
+  const { externalOrderId: parsedOrderId, cleanNotes } = extractExternalOrderIdAndCleanNotes(
+    notes,
+    externalOrderId
+  );
+
   const orderRef = `ORD_EXT_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
   // 5. Create Order atomically, generate snapshot, credit platform pending balance, and record audit log
@@ -163,6 +184,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
     const ord = await tx.order.create({
       data: {
         orderRef,
+        externalOrderId: parsedOrderId || null,
         gameSlug,
         serviceId,
         creatorId: actorId,
@@ -181,7 +203,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
         status: 'open_presign',
         paymentVerifiedBy: actorId,
         paymentVerifiedAt: new Date(),
-        notes: notes || null,
+        notes: cleanNotes || null,
         runs: {
           create: [{ runNumber: 1, status: 'pending' }],
         },
@@ -215,7 +237,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
         currency: currency.toUpperCase(),
         gameSlug,
         listingCategory,
-        notes,
+        notes: cleanNotes || undefined,
         actorId,
         allowProvisional: true,
       },

@@ -133,19 +133,13 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
         {/* Filter Controls */}
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           <select
+            className="input"
             value={methodFilter}
             onChange={(e) => {
               setMethodFilter(e.target.value);
               setPage(1);
             }}
-            style={{
-              backgroundColor: 'rgba(15, 12, 28, 0.7)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-xs)',
-              padding: '0.4rem 0.65rem',
-              color: 'var(--text-primary)',
-              fontSize: '0.78rem',
-            }}
+            style={{ width: 'auto', padding: '0.45rem 0.75rem', fontSize: '0.8rem' }}
           >
             <option value="ALL">All Methods</option>
             <option value="USDT_BEP20">USDT (BEP-20)</option>
@@ -153,19 +147,13 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
           </select>
 
           <select
+            className="input"
             value={statusFilter}
             onChange={(e) => {
               setStatusFilter(e.target.value);
               setPage(1);
             }}
-            style={{
-              backgroundColor: 'rgba(15, 12, 28, 0.7)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-xs)',
-              padding: '0.4rem 0.65rem',
-              color: 'var(--text-primary)',
-              fontSize: '0.78rem',
-            }}
+            style={{ width: 'auto', padding: '0.45rem 0.75rem', fontSize: '0.8rem' }}
           >
             <option value="ALL">All Statuses</option>
             <option value="PAID">Paid</option>
@@ -195,33 +183,24 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
           Loading withdrawal records...
         </div>
       ) : withdrawals.length === 0 ? (
-        <div
-          style={{
-            padding: '2.5rem',
-            textAlign: 'center',
-            backgroundColor: 'rgba(15, 12, 28, 0.4)',
-            border: '1px dashed var(--border-subtle)',
-            borderRadius: 'var(--radius-sm)',
-            color: 'var(--text-muted)',
-            fontSize: '0.88rem',
-          }}
-        >
-          No withdrawal requests found matching your filter criteria.
+        <div className="empty-state-box">
+          <div className="empty-state-icon">💸</div>
+          <p style={{ color: 'var(--text-muted)', margin: 0 }}>No withdrawal requests found matching your filter criteria.</p>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem', textAlign: 'left' }}>
+        <div className="table-scroll">
+          <table className="data-table">
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700 }}>Reference</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700 }}>Date</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700 }}>Method &amp; Destination</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'right' }}>Requested</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'right' }}>Fee</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'right' }}>Net Payout</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'center' }}>Status</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700 }}>Payment Receipt</th>
-                <th style={{ padding: '0.65rem 0.75rem', fontWeight: 700, textAlign: 'center' }}>Action</th>
+              <tr>
+                <th>Reference</th>
+                <th>Date</th>
+                <th>Method &amp; Destination</th>
+                <th style={{ textAlign: 'right' }}>Requested</th>
+                <th style={{ textAlign: 'right' }}>Fee</th>
+                <th style={{ textAlign: 'right' }}>Net Payout</th>
+                <th style={{ textAlign: 'center' }}>Status</th>
+                <th>Payment Receipt</th>
+                <th style={{ textAlign: 'center' }}>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -303,8 +282,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
                         type="button"
                         onClick={() => handleCancelRequest(item)}
                         disabled={cancellingId === item.id}
-                        className="btn btn-outline btn-sm"
-                        style={{ fontSize: '0.7rem', padding: '0.2rem 0.5rem', color: 'var(--status-danger)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+                        className="btn btn-danger btn-xs"
                         title="Cancel this withdrawal request and release locked funds"
                       >
                         {cancellingId === item.id ? 'Cancelling...' : 'Cancel'}
@@ -343,8 +321,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
               type="button"
               onClick={() => loadData(page - 1)}
               disabled={page <= 1 || loading}
-              className="btn btn-outline btn-sm"
-              style={{ padding: '0.25rem 0.6rem' }}
+              className="btn btn-secondary btn-sm"
             >
               &larr; Previous
             </button>
@@ -352,8 +329,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
               type="button"
               onClick={() => loadData(page + 1)}
               disabled={page >= totalPages || loading}
-              className="btn btn-outline btn-sm"
-              style={{ padding: '0.25rem 0.6rem' }}
+              className="btn btn-secondary btn-sm"
             >
               Next &rarr;
             </button>

@@ -20,9 +20,9 @@ import prisma from '../../database/db';
 import { findPrismaSchemaDir } from '../../database/canonicalDbPath';
 import path from 'path';
 import fs from 'fs';
-import { ALLOWED_SYNTHETIC_IDS, SYNTHETIC_ROLE_MAP } from './syntheticUsers';
+import { ALLOWED_SYNTHETIC_IDS, SYNTHETIC_ROLE_MAP, SYNTHETIC_USERS } from './syntheticUsers';
 
-export { ALLOWED_SYNTHETIC_IDS, SYNTHETIC_ROLE_MAP };
+export { ALLOWED_SYNTHETIC_IDS, SYNTHETIC_ROLE_MAP, SYNTHETIC_USERS };
 
 export const stagingAuthRouter = Router();
 
@@ -193,5 +193,53 @@ stagingAuthRouter.post('/staging-login', async (req: Request, res: Response): Pr
   } catch (err: any) {
     console.error('[StagingLogin] Error during synthetic login:', err);
     res.status(500).json({ error: 'Internal server error during staging login' });
+  }
+});
+
+/**
+ * GET /staging-login?role=owner (or admin, advertiser, booster, etc.)
+ * Convenient browser direct entry for manual local testing without Discord OAuth.
+ */
+stagingAuthRouter.get('/staging-login', async (req: Request, res: Response): Promise<void> => {
+  if (process.env.STAGING_MODE !== 'true') {
+    res.status(404).send('Not Found');
+    return;
+  }
+
+  const role = (req.query.role as string)?.trim().toLowerCase() || 'owner';
+  const mappedId = SYNTHETIC_ROLE_MAP[role] || SYNTHETIC_USERS.OWNER;
+
+  try {
+    const targetUser = await prisma.user.findUnique({
+      where: { discordId: mappedId },
+      include: { userRoles: true },
+    });
+
+    if (!targetUser || !targetUser.isActive) {
+      res.status(404).send(`Synthetic user for role '${role}' not found in staging database.`);
+      return;
+    }
+
+    req.session.regenerate((err) => {
+      if (err) {
+        res.status(500).send('Session generation failed');
+        return;
+      }
+
+      req.session.userId = targetUser.discordId;
+      req.session.csrfToken = crypto.randomBytes(32).toString('hex');
+
+      req.session.save((saveErr) => {
+        if (saveErr) {
+          res.status(500).send('Session save failed');
+          return;
+        }
+
+        const redirectUrl = (req.query.redirect as string) || '/';
+        res.redirect(redirectUrl);
+      });
+    });
+  } catch (err: any) {
+    res.status(500).send(`Staging login error: ${err.message}`);
   }
 });

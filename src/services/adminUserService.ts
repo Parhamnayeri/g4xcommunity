@@ -647,8 +647,8 @@ export async function assignOrRevokeUserRole(params: {
     );
   }
 
-  // رول‌های دارای امتیاز بالا که فقط توسط مالک قابل انتساب یا سلب هستند
-  const privilegedRoles: SystemRoleKey[] = ['owner', 'admin', 'manager'];
+  // رول‌های دارای امتیاز انحصاری که فقط توسط مالک قابل انتساب یا سلب هستند (owner و manager)
+  const privilegedRoles: SystemRoleKey[] = ['owner', 'manager'];
 
   if (!isActorOwner) {
     if (!isActorAdmin) {
@@ -658,7 +658,7 @@ export async function assignOrRevokeUserRole(params: {
       );
     }
 
-    // ادمین فقط مجاز به تخصیص رول‌های غیرحساس است (staff, advertiser, booster, pilot, exchanger)
+    // ادمین مجاز به تخصیص رول‌های عملیاتی شامل admin, staff, booster, pilot, advertiser, exchanger است
     if (privilegedRoles.includes(normalizedRole)) {
       throw new DomainError(
         DomainErrorCode.PERMISSION_DENIED,
@@ -735,6 +735,68 @@ export async function assignOrRevokeUserRole(params: {
           where: { discordId: targetUserId },
           data: { advertiserRank: 'BRONZE' },
         });
+      }
+
+      // در صورت اعطای نقش بوستر یا پایلوت، ثبت یا تایید خودکار صلاحیت بازی‌های فعال
+      if (normalizedRole === 'booster' || normalizedRole === 'pilot') {
+        const activeGames = await tx.game.findMany({ where: { isActive: true } });
+        for (const g of activeGames) {
+          const existingApp = await tx.userGameApproval.findFirst({
+            where: { userId: targetUserId, gameSlug: g.slug, approvalType: normalizedRole, serviceId: null },
+          });
+          if (!existingApp) {
+            await tx.userGameApproval.create({
+              data: {
+                userId: targetUserId,
+                gameSlug: g.slug,
+                approvalType: normalizedRole,
+                status: 'approved',
+                reviewedBy: actorId,
+                reviewNote: `Approved upon ${normalizedRole} role grant by ${actorId}`,
+                reviewedAt: new Date(),
+              },
+            });
+          } else if (existingApp.status !== 'approved') {
+            await tx.userGameApproval.update({
+              where: { id: existingApp.id },
+              data: {
+                status: 'approved',
+                reviewedBy: actorId,
+                reviewNote: `Updated to approved upon ${normalizedRole} role grant by ${actorId}`,
+                reviewedAt: new Date(),
+              },
+            });
+          }
+        }
+        if (normalizedRole === 'pilot') {
+          for (const g of activeGames) {
+            const existingPilot = await tx.pilotVerification.findFirst({
+              where: { userId: targetUserId, gameSlug: g.slug },
+            });
+            if (!existingPilot) {
+              await tx.pilotVerification.create({
+                data: {
+                  userId: targetUserId,
+                  gameSlug: g.slug,
+                  status: 'approved',
+                  reviewedBy: actorId,
+                  reviewedAt: new Date(),
+                  reviewNote: `Auto-verified on pilot role grant`,
+                },
+              });
+            } else if (existingPilot.status !== 'approved') {
+              await tx.pilotVerification.update({
+                where: { id: existingPilot.id },
+                data: {
+                  status: 'approved',
+                  reviewedBy: actorId,
+                  reviewedAt: new Date(),
+                  reviewNote: `Auto-verified on pilot role grant`,
+                },
+              });
+            }
+          }
+        }
       }
     } else {
       await tx.userRole.deleteMany({

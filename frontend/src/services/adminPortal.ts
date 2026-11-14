@@ -11,6 +11,7 @@ import {
   AdminOfferItem,
   AdminAuditLogItem,
   RolesMatrixResponse,
+  AdminFinanceOverviewResponse,
 } from '../types/adminPortal';
 
 export async function fetchAdminOverview(): Promise<AdminOverviewResponse> {
@@ -44,21 +45,12 @@ export async function fetchAdminDeposits(params?: {
   };
 }
 
-export async function fetchAdminDepositDetails(depositId: number): Promise<{
+export async function fetchAdminDepositDetails(id: number): Promise<{
   success: boolean;
   deposit: AdminDepositItem;
-  auditTrail: Array<{
-    id: number;
-    actor: string;
-    actorId?: string;
-    action: string;
-    reason: string | null;
-    previousValues?: string | null;
-    newValues: string | null;
-    createdAt: string;
-  }>;
+  auditTrail: any[];
 }> {
-  return apiRequest(`/api/admin/deposits/${depositId}`);
+  return apiRequest(`/api/admin/deposits/${id}`);
 }
 
 export async function reviewAdminDeposit(
@@ -198,23 +190,39 @@ export async function fetchAdminWithdrawals(params?: {
   if (params?.page) query.set('page', String(params.page));
   if (params?.limit) query.set('limit', String(params.limit));
   if (params?.status) query.set('status', params.status);
-  const q = query.toString();
-  return apiRequest(`/api/admin/withdrawals${q ? `?${q}` : ''}`);
+  const qs = query.toString();
+  return apiRequest(`/api/admin/withdrawals${qs ? `?${qs}` : ''}`);
 }
 
 export async function reviewAdminWithdrawal(
   id: number,
-  decision: 'approve_processing' | 'approve_paid' | 'reject',
-  data: {
-    txHash?: string;
-    bankReceiptRef?: string;
-    reason?: string;
-    notes?: string;
-  }
+  decision: 'approve_paid' | 'approve_processing' | 'reject',
+  dataOrTxHash?:
+    | string
+    | {
+        txHash?: string;
+        bankReceiptRef?: string;
+        reason?: string;
+        notes?: string;
+      },
+  notesOrReason?: string
 ): Promise<{ success: boolean; request: any }> {
+  let bodyPayload: Record<string, any> = { decision };
+  if (typeof dataOrTxHash === 'string') {
+    if (decision === 'approve_paid') {
+      bodyPayload.txHash = dataOrTxHash;
+      bodyPayload.bankReceiptRef = dataOrTxHash;
+      bodyPayload.notes = notesOrReason || '';
+    } else {
+      bodyPayload.reason = notesOrReason || dataOrTxHash;
+      bodyPayload.notes = notesOrReason || dataOrTxHash;
+    }
+  } else if (dataOrTxHash && typeof dataOrTxHash === 'object') {
+    bodyPayload = { ...bodyPayload, ...dataOrTxHash };
+  }
   return apiRequest(`/api/admin/withdrawals/${id}/review`, {
     method: 'POST',
-    body: JSON.stringify({ decision, ...data }),
+    body: JSON.stringify(bodyPayload),
   });
 }
 
@@ -258,3 +266,44 @@ export async function fetchWithdrawalAuditHistory(id: number): Promise<{
 }> {
   return apiRequest(`/api/admin/withdrawals/${id}/audit-history`);
 }
+
+export async function fetchAdminFinanceOverview(): Promise<AdminFinanceOverviewResponse> {
+  return apiRequest<AdminFinanceOverviewResponse>('/api/admin/finance/overview');
+}
+
+export async function fetchUserKyc(discordId: string): Promise<any> {
+  return apiRequest(`/api/admin/kyc/users/${discordId}`);
+}
+
+export async function assistUserKyc(discordId: string, data: {
+  legalName?: string;
+  country?: string;
+  idType?: string;
+  idNumber?: string;
+  phoneNumber?: string;
+  vpnConfirmed?: boolean;
+  adminNotes?: string;
+  identityDocData?: string;
+  identityDocName?: string;
+  selfieDocData?: string;
+  selfieDocName?: string;
+  markAsVerified?: boolean;
+}): Promise<any> {
+  return apiRequest(`/api/admin/kyc/users/${discordId}/assist`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function sendUserKycDm(discordId: string, reason?: string): Promise<{
+  success: boolean;
+  dmSent: boolean;
+  kycUrl: string;
+  error?: string;
+}> {
+  return apiRequest(`/api/admin/users/${discordId}/send-kyc-dm`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
