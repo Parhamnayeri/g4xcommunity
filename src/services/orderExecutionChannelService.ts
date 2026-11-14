@@ -31,6 +31,7 @@ import {
 } from 'discord.js';
 import prisma from '../database/db';
 import { DomainError, DomainErrorCode } from './domainErrors';
+import { getGlobalDiscordClient } from './orderDiscordService';
 
 export interface OrderExecutionChannelResult {
   success: boolean;
@@ -131,6 +132,7 @@ export async function resolveOrCreateExecutionCategory(guild: any): Promise<any>
   if (!guild) return null;
 
   const envCategoryId =
+    process.env.DISCORD_ORDERS_CATEGORY_ID ||
     process.env.CATEGORY_ACTIVE_ORDERS ||
     process.env.CATEGORY_ORDERS ||
     process.env.CATEGORY_EXECUTION_ORDERS;
@@ -430,7 +432,7 @@ export async function getOrCreateOrderExecutionChannel(
     }
 
     // 1. Authoritative Payment Check (Client-supplied status is strictly ignored)
-    const isPaidOrUnneeded = order.paymentStatus === 'verified' || order.paymentStatus === 'unneeded';
+    const isPaidOrUnneeded = order.paymentStatus === 'verified' || order.paymentStatus === 'unneeded' || order.creatorType === 'g4x';
     if (!isPaidOrUnneeded) {
       throw new DomainError(
         DomainErrorCode.PAYMENT_NOT_VERIFIED,
@@ -726,7 +728,9 @@ export async function getOrCreateOrderExecutionChannel(
     try {
       const { embed, components } = buildExecutionChannelSummary(order, activeAssignments);
       if (typeof newChannel.send === 'function') {
-        await newChannel.send({ embeds: [embed], components });
+        const boosterPings = activeAssignments.map((a: any) => `<@${a.userId}>`).join(' ');
+        const content = boosterPings ? `🔔 **Assigned Team Notification:** ${boosterPings}` : undefined;
+        await newChannel.send({ content, embeds: [embed], components });
       }
     } catch (err) {
       console.warn('[OrderExecutionChannel] Failed to post initial summary embed:', err);
@@ -1164,3 +1168,74 @@ export async function getAuthorizedChannelAccess(
     channelName: buildOrderExecutionChannelName(order),
   };
 }
+
+export interface EnsureOrderTempChannelResult {
+  success: boolean;
+  channelId?: string;
+  channelUrl?: string;
+  guildId?: string;
+  isNew?: boolean;
+  warning?: string;
+  error?: string;
+}
+
+/**
+ * Single unified idempotent helper to ensure an active temporary Discord coordination channel exists.
+ * Resolves the active Discord client automatically (via options, getGlobalDiscordClient(), or index export),
+ * resolves the target category, grants correct permissions to boosters/staff/advertiser,
+ * persists executionChannelId and OrderChannel, posts welcome embed with booster pings,
+ * and generates the full jump URL.
+ */
+export async function ensureOrderTempChannel(
+  orderId: number,
+  options?: { actorId?: string; guildId?: string; client?: any }
+): Promise<EnsureOrderTempChannelResult> {
+  let client = options?.client;
+  if (!client) {
+    client = getGlobalDiscordClient();
+  }
+  if (!client && process.env.DISCORD_TOKEN && process.env.NODE_ENV !== 'test') {
+    try {
+      const idx = await import('../index');
+      client = idx.client;
+    } catch {
+      // client remains null
+    }
+  }
+
+  if (!client) {
+    console.warn(`[OrderExecutionChannel] Discord bot client is not connected; skipping auto-channel creation for order #${orderId}.`);
+    return {
+      success: false,
+      warning: 'Discord client is not available or not yet initialized.',
+    };
+  }
+
+  try {
+    const res = await getOrCreateOrderExecutionChannel(orderId, client, options);
+    if (!res || !res.channelId) {
+      return {
+        success: false,
+        warning: res?.error || 'Failed to create or resolve temporary Discord channel',
+      };
+    }
+
+    const guildId = res.guildId || process.env.DISCORD_GUILD_ID || '';
+    const channelUrl = guildId && res.channelId ? `https://discord.com/channels/${guildId}/${res.channelId}` : undefined;
+
+    return {
+      success: true,
+      channelId: res.channelId,
+      channelUrl,
+      guildId,
+      isNew: res.isNew,
+    };
+  } catch (err: any) {
+    console.warn(`[OrderExecutionChannel] Non-blocking warning: failed to ensure temp channel for order #${orderId}:`, err?.message || err);
+    return {
+      success: false,
+      warning: err?.message || 'Temporary Discord channel creation could not be completed.',
+    };
+  }
+}
+

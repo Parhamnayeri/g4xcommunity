@@ -28,8 +28,8 @@ import prisma from '../database/db';
 import { DomainError, DomainErrorCode } from './domainErrors';
 import { ensureOrderAcceptsOperations } from './orderValidationService';
 import { validatePremadeSquad } from './squadValidationService';
-import { publishOrRefreshOrderCard } from './orderDiscordService';
-import { getOrCreateOrderExecutionChannel } from './orderExecutionChannelService';
+import { publishOrRefreshOrderCard, getGlobalDiscordClient } from './orderDiscordService';
+import { getOrCreateOrderExecutionChannel, ensureOrderTempChannel } from './orderExecutionChannelService';
 import { Prisma } from '@prisma/client';
 
 // ─── HELPER: ROLE PARSING & FORMATTING ────────────────────────────────────────
@@ -1249,26 +1249,28 @@ export async function assignSelectedApplicants(
   });
 
   // Post-transaction Discord updates
-  if (input.discordClient) {
+  const discordClient = input.discordClient || getGlobalDiscordClient();
+  if (discordClient) {
     try {
-      await publishOrUpdateOrderReviewDashboard(input.discordClient, input.orderId);
+      await publishOrUpdateOrderReviewDashboard(discordClient, input.orderId);
     } catch (e) {
       console.warn('[PresignReview] Error updating review dashboard:', e);
     }
 
     try {
-      await publishOrRefreshOrderCard(input.discordClient, input.orderId);
+      await publishOrRefreshOrderCard(discordClient, input.orderId);
     } catch (e) {
       console.warn('[PresignReview] Error refreshing order publication card:', e);
     }
+  }
 
-    try {
-      await getOrCreateOrderExecutionChannel(input.orderId, input.discordClient, {
-        actorId: input.actorId,
-      });
-    } catch (e: any) {
-      console.warn('[PresignReview] Error initializing execution channel:', e?.code, e?.meta, e?.message);
-    }
+  try {
+    await ensureOrderTempChannel(input.orderId, {
+      actorId: input.actorId,
+      client: input.discordClient,
+    });
+  } catch (e: any) {
+    console.warn('[PresignReview] Error initializing execution channel:', e?.code, e?.meta, e?.message);
   }
 
   return result;

@@ -99,7 +99,7 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
       break;
     case 'assigned':
       statusColor = 0x3498db; // Blue
-      statusEmoji = '🔵';
+      statusEmoji = '🔒';
       statusText = 'Assigned (Squad Formed)';
       break;
     case 'in_progress':
@@ -206,20 +206,11 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
     });
   }
 
-  // Active roster / candidate information
-  if (activeAssignments.length > 0) {
-    const rosterLines = activeAssignments.map((a: any) => {
-      const uName = a.user?.displayName || a.user?.username || a.userId;
-      let rIcon = '👤';
-      const r = (a.assignedRole || '').toLowerCase();
-      if (r === 'tank') rIcon = '🛡️';
-      else if (r === 'healer') rIcon = '💚';
-      else if (r === 'dps') rIcon = '⚔️';
-      return `• ${rIcon} **${(a.assignedRole || 'Booster').toUpperCase()}:** ${uName} (<@${a.userId}>)`;
-    });
+  // Active roster / candidate information (Privacy-preserving: never leak booster usernames, display names, or mentions on public cards)
+  if (activeAssignments.length > 0 || ['assigned', 'in_progress', 'pending_review', 'completed'].includes(order.status)) {
     embed.addFields({
-      name: '✅ Assigned Squad Roster',
-      value: rosterLines.join('\n'),
+      name: '🔒 Squad Roster',
+      value: 'Squad formed & locked. Direct coordination takes place inside the private order channel.',
       inline: false,
     });
   } else if (activePresigns.length > 0 && order.status === 'open_presign') {

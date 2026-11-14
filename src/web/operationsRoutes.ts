@@ -20,6 +20,7 @@ import { reviewRunProof, resolveOrderDispute, getDisputesForUser } from '../serv
 import { recordStaffReview, recordAdminFinalApproval } from '../services/financeV2/g4xBoostReleaseService';
 import { getSeparatedOrdersList, getCategorizedOrders, publishOrder, getOrderDiagnostics, getOrderAuditHistory, updateOrderOperationalFields } from '../services/orderLifecycleService';
 import { assignOrderBoosters } from '../services/assignmentService';
+import { ensureOrderTempChannel } from '../services/orderExecutionChannelService';
 import { parsePresignRoles } from '../services/presignReviewService';
 import { orderWorkspaceActions } from '../services/orderWorkspacePolicy';
 import { reviewApplication } from '../services/registrationService';
@@ -541,17 +542,35 @@ operationsRouter.get(['/management/orders/:id', '/staff/orders/:id'], requireAut
         runs: { include: { proofs: { include: {
           submittedBy: { select: { username: true } }, reviewedBy: { select: { username: true } },
         } } }, orderBy: { runNumber: 'asc' } },
-        disputes: { orderBy: { createdAt: 'desc' } }, escrowHolds: true, boostReleaseTracker: true,
+        disputes: { orderBy: { createdAt: 'desc' } }, escrowHolds: true, boostReleaseTracker: true, orderChannels: true,
       },
     });
     if (!order) { res.status(404).json({ error: 'ORDER_NOT_FOUND' }); return; }
     const actorId = (req as AuthenticatedRequest).user.discordId;
     const permissions = new Set<Permission>();
-    for (const permission of [Permission.ORDER_PUBLISH, Permission.ORDER_CANCEL, Permission.ORDER_PAYMENT_VERIFY, Permission.ORDER_ASSIGN, Permission.PROOF_REVIEW, Permission.ORDER_FINAL_APPROVE, Permission.AUDIT_LOG_VIEW]) {
+    for (const permission of [Permission.ORDER_PUBLISH, Permission.ORDER_CANCEL, Permission.ORDER_PAYMENT_VERIFY, Permission.ORDER_ASSIGN, Permission.PROOF_REVIEW, Permission.ORDER_FINAL_APPROVE, Permission.AUDIT_LOG_VIEW, Permission.ORDER_EDIT_OPERATIONAL]) {
       if ((await authorize(actorId, permission)).allowed) permissions.add(permission);
     }
     const diagnostics = await getOrderDiagnostics(orderId);
     const auditLogs = permissions.has(Permission.AUDIT_LOG_VIEW) ? await getOrderAuditHistory(orderId) : [];
+
+    const effectiveExecutionChannelId =
+      order.executionChannelId ||
+      order.orderChannels?.find(
+        (oc: any) => oc.channelType === 'execution' && oc.status === 'active'
+      )?.discordChannelId ||
+      null;
+
+    const guildId =
+      process.env.DISCORD_GUILD_ID ||
+      order.orderChannels?.find((oc: any) => oc.discordGuildId)?.discordGuildId ||
+      '';
+
+    const discordChannelUrl =
+      effectiveExecutionChannelId && guildId
+        ? `https://discord.com/channels/${guildId}/${effectiveExecutionChannelId}`
+        : null;
+
     res.setHeader('Cache-Control', 'no-store');
     res.json({ success: true, order: {
       ...diagnostics,
@@ -563,7 +582,11 @@ operationsRouter.get(['/management/orders/:id', '/staff/orders/:id'], requireAut
       orderName: order.title || order.orderName || null,
       boostModel: order.boostModel || null,
       vpnRequirement: order.vpnRequirement || null,
-      discordChannelId: order.discordChannelId, executionChannelId: order.executionChannelId, reviewChannelId: order.reviewChannelId,
+      discordChannelId: order.discordChannelId,
+      executionChannelId: effectiveExecutionChannelId,
+      reviewChannelId: order.reviewChannelId,
+      executionChannelUrl: discordChannelUrl,
+      discordChannelUrl: discordChannelUrl,
       requiredRoles: order.requiredRoles, assignments: order.assignments, presigns: order.presigns,
       runs: order.runs, disputes: order.disputes, escrowHolds: order.escrowHolds,
       boostReleaseTracker: order.boostReleaseTracker,
@@ -599,6 +622,169 @@ const handleOperationalOrderEdit = async (req: Request, res: Response): Promise<
 
 operationsRouter.patch('/management/orders/:id/operational', requireAuth, requireLivePermission(Permission.ORDER_EDIT_OPERATIONAL), requireCsrf, handleOperationalOrderEdit);
 operationsRouter.post('/management/orders/:id/operational', requireAuth, requireLivePermission(Permission.ORDER_EDIT_OPERATIONAL), requireCsrf, handleOperationalOrderEdit);
+
+const ALLOWED_ORDER_STATUSES = [
+  'open_presign',
+  'assigned',
+  'in_progress',
+  'pending_review',
+  'completed',
+  'disputed',
+  'cancelled',
+];
+
+/**
+ * POST /management/orders/:id/status — Admin & Staff order lifecycle and status management
+ */
+operationsRouter.post(
+  '/management/orders/:id/status',
+  requireAuth,
+  requireLivePermission([Permission.ORDER_EDIT_OPERATIONAL, Permission.ORDER_FINAL_APPROVE]),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    const orderId = Number(req.params.id);
+    if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+      res.status(400).json({ error: 'INVALID_ORDER_ID' });
+      return;
+    }
+
+    const { status: targetStatus, notes } = req.body;
+    if (!targetStatus || !ALLOWED_ORDER_STATUSES.includes(targetStatus)) {
+      res.status(400).json({
+        error: 'INVALID_STATUS',
+        message: `Status must be one of: ${ALLOWED_ORDER_STATUSES.join(', ')}`,
+      });
+      return;
+    }
+
+    const actorId = (req as AuthenticatedRequest).user.discordId;
+
+    try {
+      const existing = await prisma.order.findUnique({
+        where: { id: orderId },
+        include: { assignments: { where: { status: 'assigned' } } },
+      });
+
+      if (!existing) {
+        res.status(404).json({ error: 'ORDER_NOT_FOUND' });
+        return;
+      }
+
+      const previousStatus = existing.status;
+
+      // Update order status atomically
+      await prisma.$transaction(async (tx) => {
+        const updateData: any = {
+          status: targetStatus,
+        };
+
+        if (targetStatus === 'completed' && !existing.completedAt) {
+          updateData.completedAt = new Date();
+        }
+
+        if (targetStatus === 'cancelled') {
+          await tx.boosterReservation.updateMany({
+            where: { orderId, status: 'active' },
+            data: {
+              status: 'cancelled',
+              releaseReason: notes || 'Cancelled via status transition',
+              releasedAt: new Date(),
+            },
+          });
+        }
+
+        await tx.order.update({
+          where: { id: orderId },
+          data: updateData,
+        });
+
+        await tx.auditLog.create({
+          data: {
+            actorId,
+            action: 'ORDER_STATUS_CHANGED',
+            entityType: 'Order',
+            entityId: String(orderId),
+            previousValues: JSON.stringify({ status: previousStatus }),
+            newValues: JSON.stringify({ status: targetStatus, notes: notes || null }),
+            reason: notes || `Order status updated to ${targetStatus}`,
+            isSuccess: true,
+          },
+        });
+      });
+
+      // If transitioning to assigned or in_progress, ensure temp channel exists automatically
+      let channelResult: any = null;
+      if (['assigned', 'in_progress'].includes(targetStatus)) {
+        try {
+          channelResult = await ensureOrderTempChannel(orderId, { actorId });
+        } catch (chanErr: any) {
+          console.warn(`[Operations] Error ensuring temp channel for order #${orderId}:`, chanErr);
+        }
+      }
+
+      // Refresh public Discord card
+      try {
+        await publishOrRefreshOrderCard(getGlobalDiscordClient(), orderId);
+      } catch (cardErr: any) {
+        console.warn(`[Operations] Error refreshing Discord card for order #${orderId}:`, cardErr);
+      }
+
+      res.json({
+        success: true,
+        orderId,
+        previousStatus,
+        status: targetStatus,
+        channelCreated: channelResult?.isNew || false,
+        channelId: channelResult?.channelId || null,
+        channelUrl: channelResult?.channelUrl || null,
+        message: `Order #${orderId} status changed from '${previousStatus}' to '${targetStatus}'.`,
+      });
+    } catch (err: any) {
+      console.error('[Operations] Failed to update order status:', err);
+      res.status(500).json({ error: 'STATUS_UPDATE_FAILED', message: err.message });
+    }
+  }
+);
+
+/**
+ * POST /management/orders/:id/ensure-channel — Manually ensure or synchronize temporary Discord coordination channel
+ */
+operationsRouter.post(
+  '/management/orders/:id/ensure-channel',
+  requireAuth,
+  requireLivePermission([Permission.ORDER_ASSIGN, Permission.ORDER_EDIT_OPERATIONAL, Permission.ORDER_VIEW_PERMITTED]),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    const orderId = Number(req.params.id);
+    if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+      res.status(400).json({ error: 'INVALID_ORDER_ID' });
+      return;
+    }
+
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const result = await ensureOrderTempChannel(orderId, { actorId });
+      if (!result.success) {
+        res.status(400).json({
+          error: 'CHANNEL_PROVISION_FAILED',
+          message: result.warning || result.error || 'Failed to create temporary Discord coordination channel.',
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        channelId: result.channelId,
+        channelUrl: result.channelUrl,
+        isNew: result.isNew,
+        message: result.isNew ? 'Discord coordination channel created.' : 'Discord coordination channel synchronized.',
+      });
+    } catch (err: any) {
+      console.error('[Operations] Failed to ensure order Discord channel:', err);
+      res.status(500).json({ error: 'CHANNEL_PROVISION_FAILED', message: err.message });
+    }
+  }
+);
 
 /**
  * POST /management/orders/create — Internal / Management G4X Order Creation (Web + Bot Sync)

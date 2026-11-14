@@ -6,8 +6,8 @@ import prisma from '../database/db';
 import { DomainError, DomainErrorCode } from './domainErrors';
 import { validateUserApproval, ensureOrderAcceptsOperations } from './orderValidationService';
 import { validatePremadeSquad } from './squadValidationService';
-import { getOrCreateOrderExecutionChannel } from './orderExecutionChannelService';
-import { publishOrRefreshOrderCard } from './orderDiscordService';
+import { getOrCreateOrderExecutionChannel, ensureOrderTempChannel } from './orderExecutionChannelService';
+import { publishOrRefreshOrderCard, getGlobalDiscordClient } from './orderDiscordService';
 import { Prisma } from '@prisma/client';
 
 export interface AssignCandidate {
@@ -263,18 +263,22 @@ export async function assignOrderBoosters(
     };
   });
 
-  if (input.discordClient) {
-    try {
-      await getOrCreateOrderExecutionChannel(input.orderId, input.discordClient, { actorId: input.actorId });
-    } catch (chanErr) {
-      console.warn(`[AssignmentService] Could not auto-create execution channel for order #${input.orderId}:`, chanErr);
-    }
+  try {
+    await ensureOrderTempChannel(input.orderId, {
+      actorId: input.actorId,
+      client: input.discordClient,
+    });
+  } catch (chanErr) {
+    console.warn(`[AssignmentService] Could not auto-create execution channel for order #${input.orderId}:`, chanErr);
+  }
 
-    try {
-      await publishOrRefreshOrderCard(input.discordClient, input.orderId);
-    } catch (cardErr) {
-      console.warn(`[AssignmentService] Could not refresh publication card for order #${input.orderId}:`, cardErr);
+  try {
+    const discordClient = input.discordClient || getGlobalDiscordClient();
+    if (discordClient) {
+      await publishOrRefreshOrderCard(discordClient, input.orderId);
     }
+  } catch (cardErr) {
+    console.warn(`[AssignmentService] Could not refresh publication card for order #${input.orderId}:`, cardErr);
   }
 
   return result;

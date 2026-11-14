@@ -403,3 +403,23 @@ export async function updateOrderOperational(
     body: JSON.stringify(data),
   });
 }
+
+export async function updateOrderStatus(
+  orderId: number,
+  status: string,
+  notes?: string
+): Promise<{ success: boolean; status: string; message: string }> {
+  return apiRequest(`/api/management/orders/${orderId}/status`, {
+    method: 'POST',
+    body: JSON.stringify({ status, notes }),
+  });
+}
+
+export async function ensureOrderDiscordChannel(
+  orderId: number
+): Promise<{ success: boolean; channelId?: string; channelUrl?: string; message: string }> {
+  return apiRequest(`/api/management/orders/${orderId}/ensure-channel`, {
+    method: 'POST',
+  });
+}
+

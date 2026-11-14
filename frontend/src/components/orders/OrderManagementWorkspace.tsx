@@ -17,6 +17,8 @@ import {
   assignOrderRoster,
   refreshOrderDiscord,
   updateOrderOperational,
+  updateOrderStatus,
+  ensureOrderDiscordChannel,
   createManagementOrder,
   fetchApprovedBoosters,
 } from '../../services/operations';
@@ -117,6 +119,16 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   const [opReason, setOpReason] = useState('');
   const [opFeedback, setOpFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [savingOp, setSavingOp] = useState(false);
+
+  // Lifecycle & Status Control State
+  const [targetStatus, setTargetStatus] = useState<string>('');
+  const [statusNote, setStatusNote] = useState('');
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [statusFeedback, setStatusFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Discord Channel Sync State
+  const [syncingChannel, setSyncingChannel] = useState(false);
+  const [syncChannelFeedback, setSyncChannelFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Financial Overview & Real-Time Platform Balances
   const [financeOverview, setFinanceOverview] = useState<AdminFinanceOverviewResponse | null>(null);
@@ -242,6 +254,10 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
           setDetails(res.order);
           setOpNotes(res.order.notes || '');
           setOpExternalId(res.order.externalOrderId || '');
+          setTargetStatus(res.order.status || '');
+          setStatusNote('');
+          setStatusFeedback(null);
+          setSyncChannelFeedback(null);
           setDirectAssignFeedback(null);
           setDirectBoosterUserId('');
           fetchApprovedBoosters(res.order.gameSlug)
@@ -400,6 +416,10 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
     setSelectedClaims({});
     setOpReason('');
     setOpFeedback(null);
+    setTargetStatus('');
+    setStatusNote('');
+    setStatusFeedback(null);
+    setSyncChannelFeedback(null);
   };
   const mutate = async (operation: () => Promise<unknown>, message: string) => {
     if (mutationLock.current) return;
@@ -1037,13 +1057,27 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                       <div style={{ display: 'grid', gap: '0.45rem', fontSize: '0.84rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Mode &amp; Status:</span>
-                          <span style={{ display: 'flex', gap: '6px' }}>
+                          <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                             <span className="badge badge-blue">{details.orderMode === 'non_pilot' ? 'selfpay' : details.orderMode}</span>
                             <span className={`badge ${['completed', 'approved', 'active'].includes((details.status || '').toLowerCase()) ? 'badge-green' : ['cancelled', 'disputed'].includes((details.status || '').toLowerCase()) ? 'badge-danger' : 'badge-yellow'}`}>
                               {details.status}
                             </span>
                           </span>
                         </div>
+                        {(details.executionChannelUrl || details.discordChannelUrl) && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '2px' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Discord Channel:</span>
+                            <a
+                              href={details.executionChannelUrl || details.discordChannelUrl || undefined}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="btn btn-xs"
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(88, 101, 242, 0.25)', border: '1px solid #5865F2', color: '#8ea1e1', fontWeight: 600, padding: '2px 8px', borderRadius: '4px', textDecoration: 'none' }}
+                            >
+                              <span>💬</span> Open Discord Channel ↗
+                            </a>
+                          </div>
+                        )}
                         {details.title && (
                           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                             <span style={{ color: 'var(--text-muted)' }}>Title:</span>
@@ -1163,9 +1197,43 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
 
                     {/* Sub-Card 2: Discord Synchronization */}
                     <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>💬</span> Discord Synchronization
-                      </h3>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span>💬</span> Discord Synchronization
+                        </h3>
+                        {details.executionChannelUrl || details.discordChannelUrl ? (
+                          <a
+                            href={details.executionChannelUrl || details.discordChannelUrl || undefined}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-primary btn-xs"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#5865F2', color: '#fff', fontWeight: 600, textDecoration: 'none', padding: '4px 10px', borderRadius: '6px' }}
+                          >
+                            <span>💬</span> Open Discord Order Channel ↗
+                          </a>
+                        ) : !isReadOnly && (
+                          <button
+                            type="button"
+                            disabled={syncingChannel}
+                            className="btn btn-secondary btn-xs"
+                            onClick={async () => {
+                              setSyncingChannel(true);
+                              setSyncChannelFeedback(null);
+                              try {
+                                const res = await ensureOrderDiscordChannel(details.orderId);
+                                setSyncChannelFeedback({ text: res.message || 'Discord coordination channel synchronized.', type: 'success' });
+                                setRevision((n) => n + 1);
+                              } catch (err: any) {
+                                setSyncChannelFeedback({ text: err.message || 'Failed to provision channel', type: 'error' });
+                              } finally {
+                                setSyncingChannel(false);
+                              }
+                            }}
+                          >
+                            {syncingChannel ? 'Provisioning…' : 'Create / Sync Discord Channel'}
+                          </button>
+                        )}
+                      </div>
                       <div style={{ display: 'grid', gap: '0.4rem', fontSize: '0.82rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Board Message:</span>
@@ -1177,15 +1245,32 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Execution Channel:</span>
-                          <span style={{ fontFamily: 'monospace' }}>{details.executionChannelId || 'Not provisioned'}</span>
+                          <span style={{ fontFamily: 'monospace' }}>
+                            {details.executionChannelId || 'Not provisioned'}
+                            {(details.executionChannelUrl || details.discordChannelUrl) && (
+                              <a
+                                href={details.executionChannelUrl || details.discordChannelUrl || undefined}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ marginLeft: '8px', color: '#5865F2', textDecoration: 'underline' }}
+                              >
+                                [Open ↗]
+                              </a>
+                            )}
+                          </span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Review Channel:</span>
                           <span style={{ fontFamily: 'monospace' }}>{details.reviewChannelId || 'Not provisioned'}</span>
                         </div>
                       </div>
+                      {syncChannelFeedback && (
+                        <p style={{ margin: 0, fontSize: '0.8rem', color: syncChannelFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)' }}>
+                          {syncChannelFeedback.text}
+                        </p>
+                      )}
                       <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        Stored channel/message references do not confirm live Discord connectivity.
+                        Temporary private Discord channel is automatically provisioned for assigned boosters.
                       </p>
                     </div>
 
@@ -1353,6 +1438,110 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                         </>
                       )}
                     </div>
+
+                    {/* Sub-Card: Order Lifecycle & Status Control */}
+                    {!isReadOnly && (
+                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>🔄</span> Lifecycle &amp; Status Control
+                          </h3>
+                          <span className={`badge ${['completed', 'approved', 'active'].includes((details.status || '').toLowerCase()) ? 'badge-green' : ['cancelled', 'disputed'].includes((details.status || '').toLowerCase()) ? 'badge-danger' : 'badge-yellow'}`}>
+                            Current: {details.status}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+                          Advance or transition the order lifecycle across operational states. Automatically creates private Discord coordination channels and updates the public order board.
+                        </p>
+                        <form
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            if (!targetStatus || targetStatus === details.status) return;
+                            setUpdatingStatus(true);
+                            setStatusFeedback(null);
+                            try {
+                              const res = await updateOrderStatus(details.orderId, targetStatus, statusNote.trim() || undefined);
+                              setStatusFeedback({ text: res.message || 'Status updated successfully.', type: 'success' });
+                              setStatusNote('');
+                              setRevision((n) => n + 1);
+                            } catch (err: any) {
+                              setStatusFeedback({ text: err.message || 'Failed to update order status', type: 'error' });
+                            } finally {
+                              setUpdatingStatus(false);
+                            }
+                          }}
+                          style={{ display: 'grid', gap: '0.65rem' }}
+                        >
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.65rem' }}>
+                            <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Target Lifecycle Status</span>
+                              <select
+                                className="input"
+                                value={targetStatus}
+                                onChange={(e) => setTargetStatus(e.target.value)}
+                                disabled={updatingStatus}
+                              >
+                                <option value="open_presign">Open Pre-sign (open_presign)</option>
+                                <option value="assigned">Assigned / Squad Formed (assigned)</option>
+                                <option value="in_progress">In Progress (in_progress)</option>
+                                <option value="pending_review">Pending Final Review (pending_review)</option>
+                                <option value="completed">Completed (completed)</option>
+                                <option value="disputed">Disputed (disputed)</option>
+                                <option value="cancelled">Cancelled (cancelled)</option>
+                              </select>
+                            </label>
+                            <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Transition Note / Reason</span>
+                              <input
+                                className="input"
+                                placeholder="Audit reason or operational note..."
+                                value={statusNote}
+                                onChange={(e) => setStatusNote(e.target.value)}
+                                disabled={updatingStatus}
+                              />
+                            </label>
+                          </div>
+                          {/* Quick Action Badges */}
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginRight: '4px' }}>Quick Select:</span>
+                            {[
+                              { id: 'open_presign', label: 'Open Pre-sign' },
+                              { id: 'assigned', label: 'Assigned' },
+                              { id: 'in_progress', label: 'In Progress' },
+                              { id: 'pending_review', label: 'Pending Review' },
+                              { id: 'completed', label: 'Completed' },
+                              { id: 'disputed', label: 'Disputed' },
+                              { id: 'cancelled', label: 'Cancelled' },
+                            ].map((s) => (
+                              <button
+                                key={s.id}
+                                type="button"
+                                className={`btn btn-xs ${targetStatus === s.id ? 'btn-cta' : 'btn-secondary'}`}
+                                onClick={() => setTargetStatus(s.id)}
+                                disabled={updatingStatus}
+                                style={{ fontSize: '0.72rem', padding: '2px 8px' }}
+                              >
+                                {s.label}
+                              </button>
+                            ))}
+                          </div>
+                          {statusFeedback && (
+                            <p style={{ margin: 0, fontSize: '0.82rem', color: statusFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)' }}>
+                              {statusFeedback.text}
+                            </p>
+                          )}
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '0.25rem' }}>
+                            <button
+                              type="submit"
+                              disabled={updatingStatus || !targetStatus || targetStatus === details.status}
+                              className="btn btn-cta btn-sm"
+                            >
+                              {updatingStatus ? 'Updating Status…' : `Transition Status to '${targetStatus}'`}
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    )}
 
                     {/* Sub-Card 5: Roster & Direct Booster Assignment */}
                     <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>

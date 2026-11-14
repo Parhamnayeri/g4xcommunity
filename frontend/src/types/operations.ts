@@ -244,6 +244,7 @@ export interface OrderDiagnosticsData {
   title?: string | null; orderName?: string | null; boostModel?: string | null; vpnRequirement?: string | null;
   discordMessageId: string | null; discordChannelId: string | null;
   executionChannelId: string | null; reviewChannelId: string | null;
+  executionChannelUrl?: string | null; discordChannelUrl?: string | null;
   isPublishable: boolean; publicationBlockReasons: string[];
   explanationEnglish: string; requiredNextActionEnglish: string;
   activeReceiptRef: string | null; creatorWalletAvailableCents: number;
