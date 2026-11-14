@@ -32,6 +32,8 @@
  * 28. Existing authorization policies remain enforced.
  */
 
+import fs from 'fs';
+import path from 'path';
 import prisma from '../database/db';
 import {
   registerBooster,
@@ -123,12 +125,12 @@ async function runRecoverySuite() {
       await ensureUserExists(uid);
     }
 
-    // انتساب نقش Manager به uAdmin جهت امکان بازبینی مدارک هویتی
-    await prisma.userRole.create({
-      data: {
-        userId: uAdmin,
-        roleKey: 'manager',
-      },
+    // انتساب نقش‌های Admin و Manager به uAdmin جهت امکان بازبینی کامل و مدارک هویتی
+    await prisma.userRole.createMany({
+      data: [
+        { userId: uAdmin, roleKey: 'admin' },
+        { userId: uAdmin, roleKey: 'manager' },
+      ],
     });
 
     // اطمینان از وجود بازی wow_midnight
@@ -470,6 +472,22 @@ async function runRecoverySuite() {
     );
 
     // تست ۱۲: تایید پایلوت پس از احراز هویت رسمی با موفقیت انجام می‌شود
+    // ایجاد فایل‌های تستی مدارک هویتی در دایرکتوری امن KYC
+    const kycUploadDir = path.join(process.cwd(), 'storage', 'kyc_documents');
+    if (!fs.existsSync(kycUploadDir)) fs.mkdirSync(kycUploadDir, { recursive: true });
+    const dummyIdFile = `test_recov_id_${Date.now()}.png`;
+    const dummySelfieFile = `test_recov_selfie_${Date.now()}.png`;
+    fs.writeFileSync(path.join(kycUploadDir, dummyIdFile), 'dummy-id-content');
+    fs.writeFileSync(path.join(kycUploadDir, dummySelfieFile), 'dummy-selfie-content');
+
+    await prisma.pilotVerification.updateMany({
+      where: { userId: uApplicantPilot },
+      data: {
+        identityDocumentRef: dummyIdFile,
+        selfieDocumentRef: dummySelfieFile,
+      },
+    });
+
     // تایید مدارک هویتی توسط ادمین دارای مجوز SENSITIVE_IDENTITY_REVIEW
     await reviewApplication({
       reviewerId: uAdmin,
@@ -520,6 +538,15 @@ async function runRecoverySuite() {
     );
 
     // احراز هویت صراف و تایید
+    const dummyExchFile = `test_recov_exch_${Date.now()}.png`;
+    fs.writeFileSync(path.join(kycUploadDir, dummyExchFile), 'dummy-exch-content');
+    const exchQual = JSON.parse(exchangerApp.qualifications || '{}');
+    exchQual.identityDocumentRef = dummyExchFile;
+    await prisma.registrationApplication.update({
+      where: { id: exchangerApp.id },
+      data: { qualifications: JSON.stringify(exchQual) },
+    });
+
     await reviewApplication({
       reviewerId: uAdmin,
       applicationId: exchangerApp.id,

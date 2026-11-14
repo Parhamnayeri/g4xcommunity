@@ -2598,6 +2598,7 @@ router.post(
         decision,
         reason,
         reviewNotes,
+        discordClient: getGlobalDiscordClient(),
       });
 
       res.json({

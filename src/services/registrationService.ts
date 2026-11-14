@@ -1303,11 +1303,20 @@ export async function syncDiscordRole(
   userId: string,
   roleKey: string,
   applicationId?: number,
-  tx?: Prisma.TransactionClient
+  tx?: Prisma.TransactionClient,
+  action: 'grant' | 'revoke' = 'grant'
 ): Promise<{ success: boolean; reason?: string }> {
   const db = tx || prisma;
 
-  if (!client) {
+  let activeClient = client;
+  if (!activeClient) {
+    try {
+      const { getGlobalDiscordClient } = require('./orderDiscordService');
+      activeClient = getGlobalDiscordClient();
+    } catch (_) {}
+  }
+
+  if (!activeClient) {
     if (applicationId) {
       await db.registrationApplication.update({
         where: { id: applicationId },
@@ -1325,9 +1334,13 @@ export async function syncDiscordRole(
     pilot: process.env.ROLE_PILOT,
     advertiser: process.env.ROLE_ADVERTISER,
     exchanger: process.env.ROLE_EXCHANGER,
+    staff: process.env.ROLE_STAFF,
+    admin: process.env.ROLE_ADMIN,
+    manager: process.env.ROLE_MANAGER,
+    owner: process.env.ROLE_OWNER,
   };
 
-  const targetRoleId = roleEnvMap[roleKey];
+  const targetRoleId = roleEnvMap[roleKey.toLowerCase()];
   const guildId = process.env.DISCORD_GUILD_ID;
 
   // اعتبارسنجی فرمت اسنوفلیک دیسکورد
@@ -1353,7 +1366,7 @@ export async function syncDiscordRole(
     return { success: false, reason: errorMsg };
   }
 
-  if (!isSnowflake(targetRoleId)) {
+  if (targetRoleId !== undefined && targetRoleId !== '' && !isSnowflake(targetRoleId)) {
     const errorMsg = `INVALID_ROLE_CONFIG: Role ID for '${roleKey}' is missing or not a valid snowflake ('${targetRoleId}')`;
     if (applicationId) {
       await db.registrationApplication.update({
@@ -1374,7 +1387,7 @@ export async function syncDiscordRole(
   }
 
   try {
-    const guild = await client.guilds.fetch(guildId!).catch(() => null);
+    const guild = await activeClient.guilds.fetch(guildId!).catch(() => null);
     if (!guild) {
       const errorMsg = `GUILD_NOT_FOUND: Bot cannot fetch guild ${guildId}`;
       if (applicationId) {
@@ -1387,7 +1400,7 @@ export async function syncDiscordRole(
     }
 
     // بررسی دسترسی ManageRoles ربات
-    const botMember = guild.members.me || (await guild.members.fetch(client.user.id).catch(() => null));
+    const botMember = guild.members.me || (await guild.members.fetch(activeClient.user.id).catch(() => null));
     if (!botMember || !botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
       const errorMsg = 'BOT_MISSING_MANAGE_ROLES: Bot lacks Manage Roles permission in the guild';
       if (applicationId) {
@@ -1408,16 +1421,35 @@ export async function syncDiscordRole(
       return { success: false, reason: errorMsg };
     }
 
-    // بررسی وجود رول و سلسله‌مراتب رول‌ها (Role Hierarchy)
-    const targetRole = guild.roles.cache.get(targetRoleId!) || (await guild.roles.fetch(targetRoleId!).catch(() => null));
+    // بررسی وجود رول بر اساس ID یا نام (fallback به تطبیق نام در صورت عدم وجود ID)
+    let targetRole: any = null;
+    if (isSnowflake(targetRoleId)) {
+      targetRole = guild.roles.cache.get(targetRoleId!) || (await guild.roles.fetch(targetRoleId!).catch(() => null));
+    }
+    if (!targetRole && guild.roles?.cache) {
+      const normalizedKey = roleKey.trim().toLowerCase();
+      targetRole = guild.roles.cache.find((r: any) => r.name.trim().toLowerCase() === normalizedKey);
+    }
+
     if (!targetRole) {
-      const errorMsg = `TARGET_ROLE_NOT_FOUND: Role ${targetRoleId} does not exist in guild`;
+      const errorMsg = isSnowflake(targetRoleId)
+        ? `TARGET_ROLE_NOT_FOUND: Role ${targetRoleId} does not exist in guild`
+        : `INVALID_ROLE_CONFIG: Role ID for '${roleKey}' is missing or not a valid snowflake ('${targetRoleId}')`;
       if (applicationId) {
         await db.registrationApplication.update({
           where: { id: applicationId },
           data: { roleSyncStatus: 'failed', roleSyncError: errorMsg },
         });
       }
+      await db.auditLog.create({
+        data: {
+          action: 'DISCORD_ROLE_SYNC_FAILED',
+          entityType: 'DiscordRole',
+          entityId: targetRoleId || 'missing',
+          reason: errorMsg,
+          isSuccess: false,
+        },
+      });
       return { success: false, reason: errorMsg };
     }
 
@@ -1433,7 +1465,7 @@ export async function syncDiscordRole(
         data: {
           action: 'DISCORD_ROLE_SYNC_FAILED',
           entityType: 'DiscordRoleHierarchy',
-          entityId: targetRoleId!,
+          entityId: targetRole.id || targetRoleId || roleKey,
           reason: errorMsg,
           isSuccess: false,
         },
@@ -1463,8 +1495,20 @@ export async function syncDiscordRole(
       return { success: false, reason: errorMsg };
     }
 
-    // تخصیص رول
-    await member.roles.add(targetRoleId!);
+    // تخصیص یا سلب رول (Grant or Revoke)
+    if (action === 'revoke') {
+      if (member.roles.cache ? member.roles.cache.has(targetRole.id) : true) {
+        await member.roles.remove(targetRole.id).catch(async () => {
+          await member.roles.remove(targetRole).catch(() => null);
+        });
+      }
+    } else {
+      if (member.roles.cache ? !member.roles.cache.has(targetRole.id) : true) {
+        await member.roles.add(targetRole.id).catch(async () => {
+          await member.roles.add(targetRole).catch(() => null);
+        });
+      }
+    }
 
     // به‌روزرسانی وضعیت موفقیت
     if (applicationId) {
@@ -1479,10 +1523,10 @@ export async function syncDiscordRole(
 
     await db.auditLog.create({
       data: {
-        action: 'DISCORD_ROLE_SYNC_SUCCESS',
+        action: action === 'revoke' ? 'DISCORD_ROLE_REVOKE_SUCCESS' : 'DISCORD_ROLE_SYNC_SUCCESS',
         entityType: 'DiscordRole',
-        entityId: targetRoleId!,
-        newValues: JSON.stringify({ userId, roleKey }),
+        entityId: targetRole.id,
+        newValues: JSON.stringify({ userId, roleKey, action }),
         isSuccess: true,
       },
     });

@@ -824,10 +824,11 @@ export async function assignOrRevokeUserRole(params: {
   // قانون ۸: همگام‌سازی نقش دیسکورد با مهار ایمن خطاهای API بدون سقط تراکنش
   let discordSync: { success: boolean; reason?: string } = { success: false, reason: 'NO_DISCORD_CLIENT' };
   try {
-    if (['booster', 'pilot', 'advertiser', 'exchanger'].includes(normalizedRole)) {
-      discordSync = await syncDiscordRole(discordClient, targetUserId, normalizedRole);
+    const syncableRoles = ['booster', 'pilot', 'advertiser', 'exchanger', 'staff', 'admin', 'manager', 'owner'];
+    if (syncableRoles.includes(normalizedRole)) {
+      discordSync = await syncDiscordRole(discordClient, targetUserId, normalizedRole, undefined, undefined, action);
     } else {
-      discordSync = { success: true, reason: 'DISCORD_SYNC_NOT_CONFIGURED_FOR_MANAGEMENT_ROLE' };
+      discordSync = { success: true, reason: 'DISCORD_SYNC_NOT_CONFIGURED_FOR_ROLE' };
     }
   } catch (err: any) {
     discordSync = { success: false, reason: `DISCORD_SYNC_EXCEPTION: ${err.message || 'Unknown error'}` };
