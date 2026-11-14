@@ -114,6 +114,13 @@ export async function resolveDatabaseOwner(client = prisma): Promise<{
   }
 
   if (validOwners.length > 1) {
+    const configuredOwnerId = process.env.OWNER_DISCORD_ID || process.env.DISCORD_OWNER_ID;
+    if (configuredOwnerId) {
+      const match = validOwners.find((r: any) => r.userId === configuredOwnerId);
+      if (match) {
+        return { owner: match.user };
+      }
+    }
     return { owner: null, reason: 'AMBIGUOUS_MULTIPLE_OWNERS' };
   }
 
