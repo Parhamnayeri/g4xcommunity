@@ -4,8 +4,8 @@
   "description": "G4X Community - Discord Bot & Web Portal",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc && vite build",
-    "build:server": "tsc",
+    "build": "prisma generate && tsc && vite build",
+    "build:server": "prisma generate && tsc",
     "build:frontend": "vite build",
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
