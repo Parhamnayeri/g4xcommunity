@@ -493,9 +493,9 @@ operationsRouter.get('/management/overview', requireAuth, requireManagementAcces
 });
 
 /**
- * GET /management/orders — Separated order pipeline (G4X vs Advertiser) with pagination & filters
+ * GET /management/orders and /staff/orders — Separated order pipeline (G4X vs Advertiser) with pagination & filters
  */
-operationsRouter.get('/management/orders', requireAuth, requireLivePermission([Permission.ORDER_VIEW_PRIVATE, Permission.ORDER_VIEW_PERMITTED]), async (req: Request, res: Response): Promise<void> => {
+operationsRouter.get(['/management/orders', '/staff/orders'], requireAuth, requireLivePermission([Permission.ORDER_VIEW_PRIVATE, Permission.ORDER_VIEW_PERMITTED]), async (req: Request, res: Response): Promise<void> => {
   try {
     const { user } = req as AuthenticatedRequest;
     const tab = req.query.tab === 'advertiser' ? 'advertiser' : 'g4x';
@@ -525,8 +525,8 @@ operationsRouter.get('/management/orders', requireAuth, requireLivePermission([P
   }
 });
 
-/** A single authorized details contract shared by Management, Admin and Owner. */
-operationsRouter.get('/management/orders/:id', requireAuth, requireLivePermission([Permission.ORDER_VIEW_PRIVATE, Permission.ORDER_VIEW_PERMITTED]), async (req: Request, res: Response): Promise<void> => {
+/** A single authorized details contract shared by Staff, Management, Admin and Owner. */
+operationsRouter.get(['/management/orders/:id', '/staff/orders/:id'], requireAuth, requireLivePermission([Permission.ORDER_VIEW_PRIVATE, Permission.ORDER_VIEW_PERMITTED]), async (req: Request, res: Response): Promise<void> => {
   const orderId = Number(req.params.id);
   if (!Number.isSafeInteger(orderId) || orderId <= 0) {
     res.status(400).json({ error: 'INVALID_ORDER_ID' }); return;

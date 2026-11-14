@@ -51,6 +51,7 @@ import { marketplaceRouter } from './marketplaceRoutes';
 import { paymentRouter } from './paymentRoutes';
 import { walletRouter } from './walletRoutes';
 import { operationsRouter } from './operationsRoutes';
+import { policyRouter } from './policyRoutes';
 import { getGlobalDiscordClient } from '../services/orderDiscordService';
 import {
   getOrderDiagnostics,
@@ -221,6 +222,7 @@ router.use('/', paymentRouter);
 router.use('/', walletRouter);
 router.use('/', operationsRouter);
 router.use('/operations', operationsRouter);
+router.use('/', policyRouter);
 
 // ─── کاتالوگ عمومی بازی‌ها و سرویس‌های فعال پلتفرم G4X ─────────────────────
 router.get('/public/games', async (_req: Request, res: Response): Promise<void> => {
@@ -2095,44 +2097,12 @@ router.post(
   '/orders/:id/claim',
   requireAuth,
   requireCsrf,
-  async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { user } = req as AuthenticatedRequest;
-      const orderId = Number(req.params.id);
-      const { registeredRole = 'dps' } = req.body;
-
-      const claim = await createOrderClaim({
-        orderId,
-        userId: user.discordId,
-        claimType: 'individual',
-        registeredRole,
-      });
-
-      // برای سادگی در MVP، در صورت کلیم موفق، تخصیص را به صورت خودکار ایجاد و ران را فعال می‌کنیم
-      await prisma.orderAssignment.create({
-        data: {
-          orderId,
-          userId: user.discordId,
-          assignedById: user.discordId,
-          assignedRole: registeredRole,
-          status: 'assigned',
-          claimId: claim.id,
-        },
-      });
-
-      const updatedOrder = await prisma.order.update({
-        where: { id: orderId },
-        data: { status: 'in_progress' },
-      });
-
-      res.json({
-        success: true,
-        claim,
-        simplifiedStatus: mapOrderStatus(updatedOrder.status),
-      });
-    } catch (err: any) {
-      res.status(400).json({ error: err.message || 'Failed to claim order' });
-    }
+  async (_req: Request, res: Response): Promise<void> => {
+    // RULE A: Boost claims and pre-signing are strictly Discord-only. Web self-claim bypass is permanently closed.
+    res.status(403).json({
+      error: 'DISCORD_CLAIM_ONLY',
+      message: 'Order claims and pre-signing must be performed exclusively through authorized Discord bot interactions.',
+    });
   }
 );
 
