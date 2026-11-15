@@ -27,6 +27,9 @@ import { FinancialReportsSection } from './FinancialReportsSection';
 import { FinancialLedgerSection } from './FinancialLedgerSection';
 import { BalanceReconciliationSection } from './BalanceReconciliationSection';
 import { FinancialAuditLogsSection } from './FinancialAuditLogsSection';
+import { HistoricalSnapshotsSection } from './HistoricalSnapshotsSection';
+import { AdvancedAnalyticsSection } from './AdvancedAnalyticsSection';
+import { AutomatedReportingSection } from './AutomatedReportingSection';
 import { UserFinancialRoleInfo } from '../../types/financialLedger';
 import { fetchUserFinancialRole } from '../../services/financialLedger';
 
@@ -37,7 +40,19 @@ interface Props {
 export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab }) => {
   // Navigation Sub-tab
   const [subTab, setSubTab] = useState<
-    'platform' | 'reports' | 'transfers' | 'withdrawals' | 'ledger' | 'reconciliation' | 'audit' | 'toman' | 'accounts' | 'adjustments'
+    | 'platform'
+    | 'snapshots'
+    | 'analytics'
+    | 'automated'
+    | 'reports'
+    | 'transfers'
+    | 'withdrawals'
+    | 'ledger'
+    | 'reconciliation'
+    | 'audit'
+    | 'toman'
+    | 'accounts'
+    | 'adjustments'
   >('platform');
   const [userRole, setUserRole] = useState<UserFinancialRoleInfo | null>(null);
 
@@ -512,7 +527,10 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab })
       >
         {[
           { key: 'platform', label: 'Platform Balances', icon: '🌐', count: platforms.length },
-          { key: 'reports', label: 'Financial Reports & Analytics', icon: '📊' },
+          { key: 'snapshots', label: 'Financial Snapshots', icon: '📸' },
+          { key: 'analytics', label: 'Advanced Analytics & P&L', icon: '📈' },
+          { key: 'automated', label: 'Automated Reporting', icon: '⏰' },
+          { key: 'reports', label: 'Financial Reports', icon: '📊' },
           { key: 'transfers', label: 'Transfers & Exchange', icon: '🔄' },
           { key: 'withdrawals', label: 'Withdrawal Operations', icon: '💸' },
           { key: 'ledger', label: 'Double-Entry Ledger', icon: '📖' },
@@ -790,6 +808,27 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab })
             </div>
           </div>
         </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB: HISTORICAL FINANCIAL SNAPSHOTS (PHASE 5)                             */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'snapshots' && (
+        <HistoricalSnapshotsSection />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB: ADVANCED ANALYTICS, P&L & CASH FLOW (PHASE 5)                        */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'analytics' && (
+        <AdvancedAnalyticsSection />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB: AUTOMATED FINANCIAL REPORTING (PHASE 5)                              */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'automated' && (
+        <AutomatedReportingSection />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}

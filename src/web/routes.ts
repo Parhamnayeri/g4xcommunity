@@ -209,6 +209,7 @@ import { profileSettingsRouter } from './profileSettingsRoutes';
 import { financialAccountRouter } from './financialAccountRoutes';
 import { financialReportingRouter } from './financialReportingRoutes';
 import { financialLedgerRouter } from './financialLedgerRoutes';
+import { financialAnalyticsRouter } from './financialAnalyticsRoutes';
 import { extractExternalOrderIdAndCleanNotes } from '../services/orderParsingUtils';
 
 export const router = Router();
@@ -223,6 +224,7 @@ router.use('/', ownerPortalRouter);
 router.use('/', financialAccountRouter);
 router.use('/', financialReportingRouter);
 router.use('/', financialLedgerRouter);
+router.use('/', financialAnalyticsRouter);
 
 // ─── روت‌های پروفایل کاربر، تنظیمات و پورتال بوستر (Website Phase 9) ─────────
 router.use('/', profileSettingsRouter);

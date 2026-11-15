@@ -95,6 +95,8 @@ model User {
   reversedFinancialTransactions FinancialTransaction[] @relation("ReversedByAdmin")
   financialAuditLogs            FinancialAuditLog[]    @relation("FinancialAuditAdmin")
   reconciliations               BalanceReconciliationRecord[] @relation("ReconciliationAdmin")
+  financialSnapshots            FinancialSnapshot[]    @relation("SnapshotAdmin")
+  generatedReports              GeneratedFinancialReport[] @relation("ReportGenerator")
 
   @@index([advertiserRank])
   @@map("users")
@@ -2002,6 +2004,99 @@ model BalanceReconciliationRecord {
   @@index([accountId, reconciliationDate])
   @@index([status])
   @@map("balance_reconciliations")
+}
+
+// ─── ۵۶. اسنپ‌شات‌های مالی دوره‌ای و تاریخی (Phase 5 Financial Snapshots) ──────
+model FinancialSnapshot {
+  id                          String    @id @default(uuid())
+  snapshotRef                 String    @unique @map("snapshot_ref")
+  snapshotType                String    @map("snapshot_type") // DAILY | WEEKLY | MONTHLY | QUARTERLY | YEARLY | MANUAL
+  snapshotDate                DateTime  @map("snapshot_date")
+  capturedAt                  DateTime  @default(now()) @map("captured_at")
+  adminId                     String?   @map("admin_id")
+  notes                       String?
+
+  // Platform Accounts Balances (integer cents)
+  g4xDirectBalance            BigInt    @default(0) @map("g4x_direct_balance")
+  eldoradoBalance             BigInt    @default(0) @map("eldorado_balance")
+  skycoachBalance             BigInt    @default(0) @map("skycoach_balance")
+  overgearBalance             BigInt    @default(0) @map("overgear_balance")
+  kingboostBalance            BigInt    @default(0) @map("kingboost_balance")
+
+  // Internal Accounts Balances
+  usdWalletBalance            BigInt    @default(0) @map("usd_wallet_balance") // integer cents
+  tomanAccountsBalance        BigInt    @default(0) @map("toman_accounts_balance") // integer Tomans
+
+  // Financial Summary
+  totalUsdAssets              BigInt    @default(0) @map("total_usd_assets")
+  totalTomanAssets            BigInt    @default(0) @map("total_toman_assets")
+  pendingWithdrawalsUsd       BigInt    @default(0) @map("pending_withdrawals_usd")
+  reservedBalancesUsd         BigInt    @default(0) @map("reserved_balances_usd")
+  completedOrderEarningsUsd   BigInt    @default(0) @map("completed_order_earnings_usd")
+  totalWithdrawalsUsd         BigInt    @default(0) @map("total_withdrawals_usd")
+  totalBusinessRevenueUsd     BigInt    @default(0) @map("total_business_revenue_usd")
+  netProfitUsd                BigInt    @default(0) @map("net_profit_usd")
+  totalBusinessExpensesUsd    BigInt    @default(0) @map("total_business_expenses_usd")
+
+  // Serialized detailed JSON payload (platforms breakdown, accounts, cash flows)
+  payload                     String?
+
+  admin                       User?     @relation("SnapshotAdmin", fields: [adminId], references: [discordId], onDelete: SetNull)
+
+  @@index([snapshotType, snapshotDate])
+  @@index([capturedAt])
+  @@map("financial_snapshots")
+}
+
+// ─── ۵۷. زمان‌بندی و تنظیمات گزارش‌های خودکار (Phase 5 Automated Reporting Schedules) ─
+model AutomatedReportSchedule {
+  id               String   @id @default(uuid())
+  scheduleRef      String   @unique @map("schedule_ref")
+  name             String
+  reportType       String   @map("report_type") // CONSOLIDATED | PLATFORM | ADVERTISER_BOOSTS | P_AND_L | CASH_FLOW | STATEMENTS
+  frequency        String   @map("frequency")   // DAILY | WEEKLY | MONTHLY
+  cronExpression   String   @default("0 0 * * *") @map("cron_expression")
+  format           String   @default("CSV") @map("format") // CSV | XLSX | PDF | JSON
+  targetPlatform   String?  @map("target_platform") // direct | eldorado | skycoach | overgear | kingboost | all
+  recipientEmails  String?  @map("recipient_emails")
+  isEnabled        Boolean  @default(true) @map("is_enabled")
+  lastRunAt        DateTime? @map("last_run_at")
+  nextRunAt        DateTime? @map("next_run_at")
+  lastStatus       String?  @map("last_status") // SUCCESS | FAILED
+  lastError        String?  @map("last_error")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  generatedReports GeneratedFinancialReport[]
+
+  @@index([frequency, isEnabled])
+  @@map("automated_report_schedules")
+}
+
+// ─── ۵۸. گزارش‌های مالی تولید و بایگانی شده (Phase 5 Generated Financial Reports) ─
+model GeneratedFinancialReport {
+  id               String   @id @default(uuid())
+  reportRef        String   @unique @map("report_ref")
+  title            String
+  reportType       String   @map("report_type") // DAILY | WEEKLY | MONTHLY | YEARLY | PLATFORM | ADVERTISER | P_AND_L | CASH_FLOW | STATEMENTS
+  periodType       String   @map("period_type")
+  startDate        DateTime @map("start_date")
+  endDate          DateTime @map("end_date")
+  format           String   // CSV | XLSX | PDF | JSON
+  fileUrl          String?  @map("file_url")
+  fileContent      String?  @map("file_content")
+  fileSizeBytes    Int      @default(0) @map("file_size_bytes")
+  scheduleId       String?  @map("schedule_id")
+  generatedById    String?  @map("generated_by_id")
+  metadata         String?  // JSON totals, record count
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  schedule         AutomatedReportSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+  generatedBy      User?                    @relation("ReportGenerator", fields: [generatedById], references: [discordId], onDelete: SetNull)
+
+  @@index([reportType, createdAt])
+  @@index([scheduleId])
+  @@map("generated_financial_reports")
 }
 
 
