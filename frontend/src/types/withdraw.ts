@@ -44,10 +44,46 @@ export interface UserPayoutPreferenceData {
   updatedAt?: string;
 }
 
+export interface SiteTreasuryData {
+  siteOrderRevenueUsd: string;
+  siteOrderRevenueCents: number;
+  siteGrossVolumeUsd: string;
+  siteGrossVolumeCents: number;
+  siteUsdtBalance: string;
+  siteIrtBalance: number;
+  settlementNeeded: {
+    totalUsd: string;
+    totalUsdCents: number;
+    usdtNeeded: string;
+    irtNeeded: number;
+    pendingCount: number;
+  };
+  isOwner?: boolean;
+}
+
+export interface TreasuryAdjustmentPayload {
+  currency: 'USDT' | 'IRT';
+  action: 'DEPOSIT' | 'WITHDRAW';
+  amount: number;
+  description: string;
+}
+
+export interface TreasuryAdjustmentResponse {
+  success: boolean;
+  currency: string;
+  action: string;
+  amount: number;
+  newBalance: string;
+  message?: string;
+  error?: string;
+}
+
 export interface WithdrawalOverviewResponse {
   success: boolean;
   wallet: WithdrawalWalletData;
   policy: WithdrawalPolicyData;
+  siteTreasury?: SiteTreasuryData;
+  isOwner?: boolean;
   payoutPreference: UserPayoutPreferenceData | null;
   error?: string;
 }

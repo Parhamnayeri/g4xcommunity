@@ -839,3 +839,182 @@ ownerPortalRouter.post(
   }
 );
 
+// ─── مدیریت موجودی خزانه و تسویه سایت (Owner Site Treasury Management) ────────
+ownerPortalRouter.get(
+  ['/owner/treasury', '/api/owner/treasury'],
+  requireAuth,
+  requireOwnerPortalAccess,
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const [treasuryUsdt, treasuryIrt, orderRevenueAgg, pendingWithdrawals, auditLogs] = await Promise.all([
+        prisma.systemFinancialConfig.findUnique({ where: { key: 'site_treasury_usdt' } }),
+        prisma.systemFinancialConfig.findUnique({ where: { key: 'site_treasury_irt' } }),
+        prisma.order.aggregate({
+          where: { status: { notIn: ['cancelled', 'draft'] } },
+          _sum: { platformFeeMinor: true, grossAmountMinor: true },
+        }),
+        prisma.boosterWithdrawalRequest.findMany({
+          where: {
+            status: {
+              in: [
+                'QUOTED',
+                'USER_CONFIRMED',
+                'REQUESTED',
+                'RESERVED',
+                'UNDER_ADMIN_REVIEW',
+                'PROCESSING',
+              ],
+            },
+          },
+          select: {
+            payoutMethod: true,
+            requestedUsdCents: true,
+            netUsdCents: true,
+            quotedNetPayoutAmount: true,
+          },
+        }),
+        prisma.auditLog.findMany({
+          where: { action: 'OWNER_TREASURY_ADJUSTMENT' },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+          include: { actor: { select: { discordId: true, username: true, displayName: true } } },
+        }),
+      ]);
+
+      const siteUsdtBalance = treasuryUsdt?.value ? parseFloat(treasuryUsdt.value) : 0;
+      const siteIrtBalance = treasuryIrt?.value ? parseFloat(treasuryIrt.value) : 0;
+      const siteOrderRevenueCents = orderRevenueAgg._sum.platformFeeMinor || 0;
+      const siteGrossVolumeCents = orderRevenueAgg._sum.grossAmountMinor || 0;
+
+      let pendingSettlementUsdCents = 0;
+      let pendingUsdt = 0;
+      let pendingIrt = 0;
+      for (const w of pendingWithdrawals) {
+        pendingSettlementUsdCents += w.requestedUsdCents || 0;
+        if (w.payoutMethod === 'USDT_BEP20') {
+          const val = parseFloat(w.quotedNetPayoutAmount || '0');
+          pendingUsdt += isNaN(val) ? w.netUsdCents / 100 : val;
+        } else if (w.payoutMethod === 'IRT_BANK') {
+          const val = parseFloat(w.quotedNetPayoutAmount || '0');
+          pendingIrt += isNaN(val) ? 0 : val;
+        }
+      }
+
+      res.json({
+        success: true,
+        treasury: {
+          siteOrderRevenueUsd: (siteOrderRevenueCents / 100).toFixed(2),
+          siteGrossVolumeUsd: (siteGrossVolumeCents / 100).toFixed(2),
+          siteUsdtBalance: siteUsdtBalance.toFixed(2),
+          siteIrtBalance: Math.round(siteIrtBalance),
+          settlementNeeded: {
+            totalUsd: (pendingSettlementUsdCents / 100).toFixed(2),
+            usdtNeeded: pendingUsdt.toFixed(2),
+            irtNeeded: Math.round(pendingIrt),
+            pendingCount: pendingWithdrawals.length,
+          },
+        },
+        transactions: auditLogs.map((log) => ({
+          id: log.id,
+          createdAt: log.createdAt,
+          actor: log.actor ? log.actor.displayName || log.actor.username : 'Owner',
+          details: log.newValues ? JSON.parse(log.newValues) : {},
+        })),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'TREASURY_FETCH_FAILED', message: err.message });
+    }
+  }
+);
+
+ownerPortalRouter.post(
+  ['/owner/treasury/adjust', '/api/owner/treasury/adjust'],
+  requireAuth,
+  requireOwnerPortalAccess,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const { currency, action, amount, description } = req.body;
+
+      if (!['USDT', 'IRT'].includes(currency)) {
+        res.status(400).json({ error: 'INVALID_CURRENCY', message: 'Currency must be USDT or IRT' });
+        return;
+      }
+      if (!['DEPOSIT', 'WITHDRAW'].includes(action)) {
+        res.status(400).json({ error: 'INVALID_ACTION', message: 'Action must be DEPOSIT or WITHDRAW' });
+        return;
+      }
+      const numAmount = parseFloat(amount);
+      if (isNaN(numAmount) || numAmount <= 0) {
+        res.status(400).json({ error: 'INVALID_AMOUNT', message: 'Amount must be greater than zero' });
+        return;
+      }
+      if (!description || typeof description !== 'string' || description.trim().length < 3) {
+        res.status(400).json({
+          error: 'DESCRIPTION_REQUIRED',
+          message: 'توضیحات و بابت تراکنش (حداقل ۳ کاراکتر) الزامی است.',
+        });
+        return;
+      }
+
+      const configKey = currency === 'USDT' ? 'site_treasury_usdt' : 'site_treasury_irt';
+      const existing = await prisma.systemFinancialConfig.findUnique({ where: { key: configKey } });
+      const currentBalance = existing?.value ? parseFloat(existing.value) : 0;
+
+      let newBalance = currentBalance;
+      if (action === 'DEPOSIT') {
+        newBalance = currentBalance + numAmount;
+      } else {
+        if (numAmount > currentBalance) {
+          res.status(400).json({
+            error: 'INSUFFICIENT_TREASURY_BALANCE',
+            message: `موجودی خزانه سایت (${currentBalance.toLocaleString()} ${currency}) کمتر از مبلغ درخواستی برای برداشت است.`,
+          });
+          return;
+        }
+        newBalance = currentBalance - numAmount;
+      }
+
+      const formattedNewBalance = currency === 'USDT' ? newBalance.toFixed(2) : Math.round(newBalance).toString();
+
+      await prisma.systemFinancialConfig.upsert({
+        where: { key: configKey },
+        create: { key: configKey, value: formattedNewBalance },
+        update: { value: formattedNewBalance },
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          actorId: user.discordId,
+          action: 'OWNER_TREASURY_ADJUSTMENT',
+          entityType: 'SystemFinancialConfig',
+          entityId: configKey,
+          previousValues: JSON.stringify({ balance: currentBalance }),
+          newValues: JSON.stringify({
+            currency,
+            action,
+            amount: numAmount,
+            previousBalance: currentBalance,
+            newBalance,
+            description: description.trim(),
+          }),
+          reason: description.trim(),
+        },
+      });
+
+      res.json({
+        success: true,
+        currency,
+        action,
+        amount: numAmount,
+        newBalance: formattedNewBalance,
+        message: action === 'DEPOSIT' ? 'موجودی خزانه با موفقیت افزایش یافت.' : 'برداشت از خزانه با موفقیت ثبت شد.',
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'TREASURY_ADJUST_FAILED', message: err.message });
+    }
+  }
+);
+
+

@@ -901,11 +901,11 @@ async function runWithdrawPhase3Suite() {
     const irtMissingReviewer = await reconcileIrtBankPayout(
       { id: 111, destinationAddress: 'IR020170000000109968843003', quotedNetPayoutAmount: '3500000' },
       'TRACK-12345678',
-      { actorId: uAdmin }
+      { actorId: uAdmin, requireDualAuthorization: true }
     );
     assert(
       irtMissingReviewer.verified === false && Boolean(irtMissingReviewer.reason?.includes('DUAL_AUTHORIZATION_REQUIRED')),
-      '82. IRT bank settlement strictly rejected without secondary finance reviewer'
+      '82. IRT bank settlement strictly rejected without secondary finance reviewer when dual auth enforced'
     );
 
     const irtSameReviewer = await reconcileIrtBankPayout(
@@ -941,11 +941,11 @@ async function runWithdrawPhase3Suite() {
     const irtMissingRecord = await reconcileIrtBankPayout(
       { id: 114, destinationAddress: 'IR020170000000109968843003', quotedNetPayoutAmount: '3500000' },
       'TRACK-12345678',
-      { actorId: uAdmin, secondReviewerId: uAdmin2 }
+      { actorId: uAdmin, secondReviewerId: uAdmin2, requireDualAuthorization: true }
     );
     assert(
       irtMissingRecord.verified === false && Boolean(irtMissingRecord.reason?.includes('UNAVAILABLE_BANK_SETTLEMENT_PROVIDER')),
-      '85. Typed bank receipt rejected without authoritative settlement record'
+      '85. Typed bank receipt rejected without authoritative settlement record when dual auth enforced'
     );
 
     const irtValid = await reconcileIrtBankPayout(
@@ -966,6 +966,17 @@ async function runWithdrawPhase3Suite() {
     assert(
       irtValid.verified === true && irtValid.normalizedEvidenceRef === 'TRACK-12345678',
       '86. IRT bank payout with verified settlement record and dual authorization verified'
+    );
+
+    // ۲۶-ب: تایید برداشت تومانی صرفاً با شماره تراکنش بانکی معتبر
+    const irtSingleReviewerValid = await reconcileIrtBankPayout(
+      { id: 116, destinationAddress: 'IR020170000000109968843003', quotedNetPayoutAmount: '3500000' },
+      'TRACK-12345678',
+      { actorId: uAdmin }
+    );
+    assert(
+      irtSingleReviewerValid.verified === true && irtSingleReviewerValid.normalizedEvidenceRef === 'TRACK-12345678',
+      '87. For IRT bank payout, valid transaction tracking reference is sufficient for confirmation'
     );
 
     // ─── ۲۷. امنیت امضای پیش‌فاکتور (WITHDRAWAL_QUOTE_SIGNING_SECRET) ─────────

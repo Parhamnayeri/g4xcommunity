@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { WithdrawalOverviewCards } from '../components/withdraw/WithdrawalOverviewCards';
+import { SiteTreasuryCards } from '../components/withdraw/SiteTreasuryCards';
 import { PayoutDestinationCard } from '../components/withdraw/PayoutDestinationCard';
 import { WithdrawalQuoteForm } from '../components/withdraw/WithdrawalQuoteForm';
 import { ManualScheduleNotice } from '../components/withdraw/ManualScheduleNotice';
@@ -8,6 +9,7 @@ import {
   WithdrawalWalletData,
   WithdrawalPolicyData,
   UserPayoutPreferenceData,
+  SiteTreasuryData,
 } from '../types/withdraw';
 import { fetchWithdrawalOverview } from '../services/withdraw';
 
@@ -15,6 +17,7 @@ export const WithdrawPage: React.FC = () => {
   const [wallet, setWallet] = useState<WithdrawalWalletData | null>(null);
   const [policy, setPolicy] = useState<WithdrawalPolicyData | null>(null);
   const [preference, setPreference] = useState<UserPayoutPreferenceData | null>(null);
+  const [treasury, setTreasury] = useState<SiteTreasuryData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +34,9 @@ export const WithdrawPage: React.FC = () => {
         setWallet(data.wallet);
         setPolicy(data.policy);
         setPreference(data.payoutPreference);
+        if (data.siteTreasury) {
+          setTreasury(data.siteTreasury);
+        }
       } else {
         setError(data.error || 'Failed to retrieve withdrawal overview.');
       }
@@ -143,6 +149,14 @@ export const WithdrawPage: React.FC = () => {
 
         {!loading && wallet && policy && (
           <>
+            {/* 0. Site Treasury & Balances from Orders & Pending Settlement */}
+            {treasury && (
+              <SiteTreasuryCards
+                treasury={treasury}
+                onRefresh={() => loadOverview(true)}
+              />
+            )}
+
             {/* 1. Authoritative Financial Balances */}
             <WithdrawalOverviewCards
               wallet={wallet}

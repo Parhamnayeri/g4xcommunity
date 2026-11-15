@@ -1183,7 +1183,17 @@ const handleWithdrawalsOverview = async (req: Request, res: Response): Promise<v
   try {
     const { user } = req as AuthenticatedRequest;
 
-    const [walletSummary, activeWithdrawalsRaw, adminRateConfig, cutoffConfig, pref] = await Promise.all([
+    const [
+      walletSummary,
+      activeWithdrawalsRaw,
+      adminRateConfig,
+      cutoffConfig,
+      pref,
+      orderRevenueAgg,
+      pendingSettlementsAll,
+      treasuryUsdtConfig,
+      treasuryIrtConfig,
+    ] = await Promise.all([
       getWalletV2Summary(user.discordId),
       prisma.boosterWithdrawalRequest.findMany({
         where: {
@@ -1204,6 +1214,38 @@ const handleWithdrawalsOverview = async (req: Request, res: Response): Promise<v
       prisma.systemFinancialConfig.findUnique({ where: { key: 'admin_usd_irt_rate' } }),
       prisma.systemFinancialConfig.findUnique({ where: { key: 'irt_payout_tuesday_cutoff_hour' } }),
       prisma.userPayoutPreference.findUnique({ where: { userId: user.discordId } }),
+      prisma.order.aggregate({
+        where: {
+          status: { notIn: ['cancelled', 'draft'] },
+        },
+        _sum: {
+          platformFeeMinor: true,
+          grossAmountMinor: true,
+        },
+      }),
+      prisma.boosterWithdrawalRequest.findMany({
+        where: {
+          status: {
+            in: [
+              BoosterWithdrawalStatus.QUOTED,
+              BoosterWithdrawalStatus.USER_CONFIRMED,
+              BoosterWithdrawalStatus.REQUESTED,
+              BoosterWithdrawalStatus.RESERVED,
+              BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
+              BoosterWithdrawalStatus.PROCESSING,
+            ],
+          },
+        },
+        select: {
+          payoutMethod: true,
+          requestedUsdCents: true,
+          netUsdCents: true,
+          quotedNetPayoutAmount: true,
+          status: true,
+        },
+      }),
+      prisma.systemFinancialConfig.findUnique({ where: { key: 'site_treasury_usdt' } }),
+      prisma.systemFinancialConfig.findUnique({ where: { key: 'site_treasury_irt' } }),
     ]);
 
     const pendingWithdrawalRequestsCents = activeWithdrawalsRaw.reduce(
@@ -1218,6 +1260,49 @@ const handleWithdrawalsOverview = async (req: Request, res: Response): Promise<v
       : null;
     const irtTuesdayCutoffHour = cutoffConfig?.value ? Number(cutoffConfig.value) : 10;
     const livePayoutsEnabled = process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED === 'true';
+
+    // Site Treasury & Settlement Requirements Calculation
+    const siteOrderRevenueCents = orderRevenueAgg._sum.platformFeeMinor || 0;
+    const siteOrderRevenueUsd = (siteOrderRevenueCents / 100).toFixed(2);
+    const siteGrossVolumeCents = orderRevenueAgg._sum.grossAmountMinor || 0;
+    const siteGrossVolumeUsd = (siteGrossVolumeCents / 100).toFixed(2);
+
+    const siteUsdtBalance = treasuryUsdtConfig?.value ? parseFloat(treasuryUsdtConfig.value) : 0;
+    const siteIrtBalance = treasuryIrtConfig?.value ? parseFloat(treasuryIrtConfig.value) : 0;
+
+    let pendingSettlementUsdCents = 0;
+    let pendingUsdtAmount = 0;
+    let pendingIrtAmount = 0;
+
+    for (const pw of pendingSettlementsAll) {
+      pendingSettlementUsdCents += pw.requestedUsdCents || 0;
+      if (pw.payoutMethod === 'USDT_BEP20') {
+        const netAmt = parseFloat(pw.quotedNetPayoutAmount || '0');
+        pendingUsdtAmount += isNaN(netAmt) ? (pw.netUsdCents / 100) : netAmt;
+      } else if (pw.payoutMethod === 'IRT_BANK') {
+        const netAmt = parseFloat(pw.quotedNetPayoutAmount || '0');
+        pendingIrtAmount += isNaN(netAmt) ? 0 : netAmt;
+      }
+    }
+
+    const isOwner = Boolean(user.userRoles?.some((r: any) => r.roleKey === 'owner'));
+
+    const siteTreasury = {
+      siteOrderRevenueUsd,
+      siteOrderRevenueCents,
+      siteGrossVolumeUsd,
+      siteGrossVolumeCents,
+      siteUsdtBalance: siteUsdtBalance.toFixed(2),
+      siteIrtBalance: Math.round(siteIrtBalance),
+      settlementNeeded: {
+        totalUsd: (pendingSettlementUsdCents / 100).toFixed(2),
+        totalUsdCents: pendingSettlementUsdCents,
+        usdtNeeded: pendingUsdtAmount.toFixed(2),
+        irtNeeded: Math.round(pendingIrtAmount),
+        pendingCount: pendingSettlementsAll.length,
+      },
+      isOwner,
+    };
 
     res.json({
       success: true,
@@ -1249,6 +1334,7 @@ const handleWithdrawalsOverview = async (req: Request, res: Response): Promise<v
         livePayoutsEnabled,
         scheduleSummary: 'Wednesday and Saturday manual batch disbursements. Tuesday morning cutoff applies for IRT.',
       },
+      siteTreasury,
       payoutPreference: pref
         ? {
             bankAccountHolder: pref.bankAccountHolder,
@@ -1701,15 +1787,15 @@ router.post(
           success: true,
           request: serializeAdminWithdrawal(updatedReq),
         });
-      } else if (decision === 'reject') {
-        const rejReason = reason || 'Rejected by administration';
+      } else if (decision === 'reject' || decision === 'cancel') {
+        const rejReason = reason || notes || 'Cancelled by owner';
         const { request } = await adminRejectWithdrawal(id, user.discordId, rejReason);
         res.json({
           success: true,
           request: serializeAdminWithdrawal(request),
         });
       } else {
-        res.status(400).json({ error: "Invalid decision. Must be 'approve_paid', 'approve_processing', or 'reject'." });
+        res.status(400).json({ error: "Invalid decision. Must be 'approve_paid', 'approve_processing', 'reject', or 'cancel'." });
       }
     } catch (err: any) {
       const status = err.message?.includes('LIVE_PAYOUTS_DISABLED') ? 403 : 400;

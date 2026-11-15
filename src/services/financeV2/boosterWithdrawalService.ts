@@ -1152,9 +1152,9 @@ export async function adminRejectWithdrawal(
     throw new Error(`UNAUTHORIZED_FINANCIAL_ACTION: ${auth.reason || 'Insufficient permissions to reject withdrawals'}`);
   }
 
-  if (!rejectionReason || rejectionReason.trim().length < 5) {
-    throw new Error('REASON_REQUIRED: A valid rejection reason is required');
-  }
+  const effectiveReason = (rejectionReason && rejectionReason.trim().length >= 3)
+    ? rejectionReason.trim()
+    : 'Cancelled by owner';
 
   return await prisma.$transaction(async (tx) => {
     const request = await tx.boosterWithdrawalRequest.findUnique({
@@ -1169,33 +1169,37 @@ export async function adminRejectWithdrawal(
       throw new Error('CANNOT_REJECT_PAID: Cannot reject a withdrawal that has already been paid out');
     }
 
-    if (request.status === BoosterWithdrawalStatus.REJECTED) {
+    if (request.status === BoosterWithdrawalStatus.REJECTED || request.status === BoosterWithdrawalStatus.CANCELLED) {
       return { request, alreadyRejected: true };
     }
 
-    // در صورتی که درخواست در وضعیت QUOTED باشد، هیچ وجهی در والت رزرو نشده است، لذا وضعیت مستقیماً رد می‌شود
+    // در صورتی که درخواست در وضعیت QUOTED باشد، هیچ وجهی در والت رزرو نشده است، لذا وضعیت مستقیماً لغو می‌شود
     if (request.status === BoosterWithdrawalStatus.QUOTED) {
       const updatedRequest = await tx.boosterWithdrawalRequest.update({
         where: { id: requestId },
         data: {
-          status: BoosterWithdrawalStatus.REJECTED,
-          rejectionReason,
+          status: BoosterWithdrawalStatus.CANCELLED,
+          rejectionReason: effectiveReason,
         },
       });
 
       await tx.auditLog.create({
         data: {
           actorId,
-          action: 'BOOSTER_WITHDRAWAL_REJECTED',
+          action: 'BOOSTER_WITHDRAWAL_CANCELLED',
           entityType: 'BoosterWithdrawalRequest',
           entityId: String(requestId),
-          reason: rejectionReason,
+          reason: effectiveReason,
           previousValues: JSON.stringify({ status: request.status }),
-          newValues: JSON.stringify({ status: BoosterWithdrawalStatus.REJECTED, rejectionReason }),
+          newValues: JSON.stringify({ status: BoosterWithdrawalStatus.CANCELLED, rejectionReason: effectiveReason }),
         },
       });
 
       return { request: updatedRequest, wallet: null, alreadyRejected: false };
+    }
+
+    if (!rejectionReason || rejectionReason.trim().length < 5) {
+      throw new Error('REASON_REQUIRED: A valid rejection reason is required for reserved withdrawals');
     }
 
     // قفل همروندی اتمیک (Atomic Compare-and-Swap)

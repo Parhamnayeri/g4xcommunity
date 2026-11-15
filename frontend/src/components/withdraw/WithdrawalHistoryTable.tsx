@@ -130,21 +130,45 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
           </p>
         </div>
 
-        {/* Filter Controls */}
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <select
-            className="input"
-            value={methodFilter}
-            onChange={(e) => {
-              setMethodFilter(e.target.value);
+        {/* Method Separation Tabs */}
+        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className={`btn btn-sm ${methodFilter === 'ALL' ? 'btn-primary' : 'btn-outline'}`}
+            style={{ fontSize: '0.78rem', padding: '0.35rem 0.75rem' }}
+            onClick={() => {
+              setMethodFilter('ALL');
               setPage(1);
             }}
-            style={{ width: 'auto', padding: '0.45rem 0.75rem', fontSize: '0.8rem' }}
           >
-            <option value="ALL">All Methods</option>
-            <option value="USDT_BEP20">USDT (BEP-20)</option>
-            <option value="IRT_BANK">Iranian Bank (IRT)</option>
-          </select>
+            همه روش‌ها
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${methodFilter === 'USDT_BEP20' ? 'btn-primary' : 'btn-outline'}`}
+            style={{ fontSize: '0.78rem', padding: '0.35rem 0.75rem' }}
+            onClick={() => {
+              setMethodFilter('USDT_BEP20');
+              setPage(1);
+            }}
+          >
+            💎 USDT (BEP-20)
+          </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${methodFilter === 'IRT_BANK' ? 'btn-primary' : 'btn-outline'}`}
+            style={{ fontSize: '0.78rem', padding: '0.35rem 0.75rem' }}
+            onClick={() => {
+              setMethodFilter('IRT_BANK');
+              setPage(1);
+            }}
+          >
+            🏦 تومان بانکی (IRT)
+          </button>
+        </div>
+
+        {/* Filter Controls */}
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
 
           <select
             className="input"
@@ -237,9 +261,9 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
                     -${item.fixedFeeUsd}
                   </td>
 
-                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right', fontWeight: 800, color: 'var(--accent-lime)' }}>
+                  <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right', fontWeight: 800, color: item.payoutMethod === 'IRT_BANK' ? 'var(--status-info)' : 'var(--accent-lime)' }}>
                     {item.payoutMethod === 'IRT_BANK'
-                      ? `${Number(item.quotedNetPayoutAmount).toLocaleString()} Toman`
+                      ? `~ ${Number(item.quotedNetPayoutAmount).toLocaleString()} تومان (حدودی)`
                       : `${item.quotedNetPayoutAmount} USDT`}
                   </td>
 

@@ -71,3 +71,33 @@ export async function fetchWithdrawalHistory(params: {
   return await apiRequest<WithdrawalHistoryResponse>(`/api/withdrawals/history?${query.toString()}`);
 }
 
+export async function fetchOwnerTreasury(): Promise<{
+  success: boolean;
+  treasury: any;
+  transactions: any[];
+  error?: string;
+}> {
+  return await apiRequest('/api/owner/treasury');
+}
+
+export async function adjustOwnerTreasury(data: {
+  currency: 'USDT' | 'IRT';
+  action: 'DEPOSIT' | 'WITHDRAW';
+  amount: number;
+  description: string;
+}): Promise<{
+  success: boolean;
+  currency: string;
+  action: string;
+  amount: number;
+  newBalance: string;
+  message?: string;
+  error?: string;
+}> {
+  return await apiRequest('/api/owner/treasury/adjust', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+

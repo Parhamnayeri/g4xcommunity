@@ -461,13 +461,34 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
             )}
 
             <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-subtle)', paddingTop: '0.5rem' }}>
-              <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>Expected Net Payout:</span>
-              <span style={{ fontWeight: 900, fontSize: '1.15rem', color: 'var(--accent-lime)' }}>
+              <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>
+                {activeQuote.payoutMethod === 'IRT_BANK' ? 'مبلغ پرداختی حدودی (تقریبی):' : 'Expected Net Payout:'}
+              </span>
+              <span style={{ fontWeight: 900, fontSize: '1.15rem', color: activeQuote.payoutMethod === 'IRT_BANK' ? 'var(--status-info)' : 'var(--accent-lime)' }}>
                 {activeQuote.payoutMethod === 'IRT_BANK'
-                  ? `${Number(activeQuote.quotedNetPayoutAmount).toLocaleString()} Toman`
+                  ? `~ ${Number(activeQuote.quotedNetPayoutAmount).toLocaleString()} تومان (حدودی)`
                   : `${activeQuote.quotedNetPayoutAmount} USDT`}
               </span>
             </div>
+
+            {activeQuote.payoutMethod === 'IRT_BANK' && (
+              <div
+                style={{
+                  backgroundColor: 'rgba(59, 130, 246, 0.12)',
+                  border: '1px solid rgba(59, 130, 246, 0.3)',
+                  borderRadius: 'var(--radius-xs)',
+                  padding: '0.6rem 0.75rem',
+                  fontSize: '0.78rem',
+                  color: '#93C5FD',
+                  lineHeight: 1.4,
+                  marginTop: '0.25rem',
+                  direction: 'rtl',
+                  textAlign: 'right',
+                }}
+              >
+                ⚠️ <strong>توجه:</strong> مبلغ تومانی نمایش‌داده‌شده <strong>حدودی و تقریبی</strong> می‌باشد و تسویه نهایی بر مبنای نرخ روز در تاریخ سیکل واریز بانکی محاسبه و واریز خواهد شد.
+              </div>
+            )}
 
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem' }}>
               <span style={{ color: 'var(--text-muted)' }}>Committed Destination:</span>

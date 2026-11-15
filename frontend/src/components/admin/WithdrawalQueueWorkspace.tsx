@@ -48,6 +48,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
   subtitle = 'Inspect reserved booster payout requests and authoritative disbursement proofs.',
 }) => {
   const [withdrawals, setWithdrawals] = useState<WithdrawalItem[]>([]);
+  const [methodFilter, setMethodFilter] = useState<'ALL' | 'USDT_BEP20' | 'IRT_BANK'>('ALL');
   const [financeOverview, setFinanceOverview] = useState<AdminFinanceOverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -224,6 +225,32 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
         </div>
       )}
 
+      {/* Payout Method Separation Tabs */}
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>روش تسویه:</span>
+        <button
+          type="button"
+          className={`btn btn-xs ${methodFilter === 'ALL' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => setMethodFilter('ALL')}
+        >
+          همه ({withdrawals.length})
+        </button>
+        <button
+          type="button"
+          className={`btn btn-xs ${methodFilter === 'USDT_BEP20' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => setMethodFilter('USDT_BEP20')}
+        >
+          💎 USDT BEP-20 ({withdrawals.filter((w) => w.payoutMethod === 'USDT_BEP20').length})
+        </button>
+        <button
+          type="button"
+          className={`btn btn-xs ${methodFilter === 'IRT_BANK' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => setMethodFilter('IRT_BANK')}
+        >
+          🏦 تومان بانکی IRT ({withdrawals.filter((w) => w.payoutMethod === 'IRT_BANK').length})
+        </button>
+      </div>
+
       {loading ? (
         <LoadingState message="Loading withdrawal requests..." />
       ) : withdrawals.length === 0 ? (
@@ -246,7 +273,9 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
               </tr>
             </thead>
             <tbody>
-              {withdrawals.map((w) => (
+              {withdrawals
+                .filter((w) => (methodFilter === 'ALL' ? true : w.payoutMethod === methodFilter))
+                .map((w) => (
                 <tr key={w.id}>
                   <td>
                     <div style={{ fontWeight: 600, fontFamily: 'monospace', color: 'var(--text-primary)' }}>{w.withdrawalRef}</div>
@@ -259,14 +288,19 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{w.boosterId}</div>
                   </td>
                   <td>
-                    <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
-                      {w.payoutMethod}
+                    <span className={`badge ${w.payoutMethod === 'IRT_BANK' ? 'badge-blue' : 'badge-purple'}`} style={{ fontSize: '0.72rem' }}>
+                      {w.payoutMethod === 'IRT_BANK' ? '🏦 IRT Bank' : '💎 USDT'}
                     </span>
                   </td>
                   <td>
                     <div style={{ fontWeight: 700, color: 'var(--accent-yellow)' }}>
                       ${(w.requestedUsdCents ? w.requestedUsdCents / 100 : w.requestedUsd || 0).toFixed(2)}
                     </div>
+                    {w.payoutMethod === 'IRT_BANK' && (
+                      <div style={{ fontSize: '0.72rem', color: 'var(--status-info)' }}>
+                        (تومان حدودی)
+                      </div>
+                    )}
                   </td>
                   <td style={{ fontFamily: 'monospace', fontSize: '0.78rem' }}>
                     {w.destinationAddress ? `${w.destinationAddress.slice(0, 10)}...${w.destinationAddress.slice(-6)}` : '—'}
@@ -280,6 +314,8 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                           ? 'badge-amber'
                           : w.status === 'REJECTED'
                           ? 'badge-danger'
+                          : w.status === 'CANCELLED'
+                          ? 'badge-muted'
                           : 'badge-purple'
                       }`}
                       style={{ fontSize: '0.75rem' }}
@@ -305,6 +341,26 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                           title="Edit administrative notes"
                         >
                           ✏️ Notes
+                        </button>
+                      )}
+                      {canReview && w.status === 'QUOTED' && (
+                        <button
+                          type="button"
+                          className="btn btn-outline btn-xs"
+                          style={{ color: 'var(--status-danger)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+                          onClick={async () => {
+                            if (window.confirm(`آیا از لغو پیش‌فاکتور #${w.id} (${w.withdrawalRef}) اطمینان دارید؟`)) {
+                              try {
+                                await reviewAdminWithdrawal(w.id, 'reject', { reason: 'Cancelled by owner' });
+                                loadWithdrawals();
+                              } catch (err: any) {
+                                alert(err.message || 'خطا در لغو پیش‌فاکتور');
+                              }
+                            }
+                          }}
+                          title="Cancel Quoted Request"
+                        >
+                          ✕ Cancel Quote
                         </button>
                       )}
                       {canReview && (
@@ -396,16 +452,27 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
               {decision === 'approve_paid' && (
                 <div style={{ marginBottom: '1rem' }}>
                   <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                    Transaction Hash / Payment Proof Reference
+                    {selectedWithdrawal.payoutMethod === 'IRT_BANK'
+                      ? 'شماره تراکنش / پیگیری بانکی (تنها وارد کردن شماره پیگیری کافی است)'
+                      : 'Transaction Hash / Payment Proof Reference'}
                   </label>
                   <input
                     type="text"
                     className="input"
-                    placeholder="e.g. 0xabc... or Bank Transfer Ref"
+                    placeholder={
+                      selectedWithdrawal.payoutMethod === 'IRT_BANK'
+                        ? 'مثلاً: TRACK-12345678 یا شماره پیگیری پایا/ساتنا'
+                        : 'e.g. 0xabc... or TxHash'
+                    }
                     value={txHash}
                     onChange={(e) => setTxHash(e.target.value)}
                     style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
                   />
+                  {selectedWithdrawal.payoutMethod === 'IRT_BANK' && (
+                    <span style={{ fontSize: '0.72rem', color: 'var(--status-info)', display: 'block', marginTop: '0.25rem' }}>
+                      ✓ برای تسویه تومانی، درج کد رهگیری/پیگیری معتبر بانکی برای ثبت وضعیت پرداخت کفایت می‌کند.
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -449,7 +516,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
               </button>
               <button
                 type="button"
-                disabled={submittingReview || (decision === 'reject' && !reviewNotes.trim())}
+                disabled={submittingReview || (decision === 'reject' && selectedWithdrawal.status !== 'QUOTED' && !reviewNotes.trim())}
                 className="btn btn-cta btn-sm"
                 onClick={async () => {
                   setSubmittingReview(true);
@@ -457,7 +524,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                   try {
                     await reviewAdminWithdrawal(selectedWithdrawal.id, decision, {
                       txHash: decision === 'approve_paid' && txHash.trim() ? txHash.trim() : undefined,
-                      reason: reviewNotes.trim() || undefined,
+                      reason: reviewNotes.trim() || (selectedWithdrawal.status === 'QUOTED' ? 'Cancelled by owner' : undefined),
                       notes: reviewNotes.trim() || undefined,
                     });
                     setReviewFeedback({ text: 'Payout decision recorded successfully.', type: 'success' });
