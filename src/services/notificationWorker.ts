@@ -11,6 +11,7 @@
 
 import prisma from '../database/db';
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { buildWithdrawalPaidPayload } from './financeV2/withdrawalNotificationService';
 
 let isWorkerRunning = false;
 let workerInterval: NodeJS.Timeout | null = null;
@@ -103,7 +104,7 @@ async function executeOutboxBatch(client: any): Promise<number> {
             continue;
           }
 
-          const embed = new EmbedBuilder()
+          let embed = new EmbedBuilder()
             .setColor(0x5865f2)
             .setTimestamp()
             .setFooter({ text: 'G4X Community • Notification' });
@@ -222,6 +223,14 @@ async function executeOutboxBatch(client: any): Promise<number> {
                   )
                 );
               }
+              break;
+            }
+
+            case 'WITHDRAWAL_PAID': {
+              const res = buildWithdrawalPaidPayload(payload as any, baseUrl);
+              embed = res.embed;
+              directMessageContent = res.directMessageContent;
+              components.push(...res.components);
               break;
             }
 

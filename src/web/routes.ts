@@ -78,6 +78,7 @@ import {
   updateWithdrawalMetadata,
   getWithdrawalAuditHistory,
 } from '../services/financeV2/boosterWithdrawalService';
+import { dispatchWithdrawalPaidDirectMessage } from '../services/financeV2/withdrawalNotificationService';
 import {
   serializeUserWithdrawal,
   serializeAdminWithdrawal,
@@ -1774,6 +1775,14 @@ router.post(
           finalPaidAmount: finalPaidAmount ? String(finalPaidAmount).trim() : undefined,
           notes: notes || 'Executed via Admin Hub with verified disbursement evidence',
         });
+
+        // ارسال رسید مستقیم Discord DM به بوستر
+        try {
+          await dispatchWithdrawalPaidDirectMessage(updatedReq);
+        } catch (dmErr: any) {
+          console.warn('[Withdrawal Payout DM] Direct message dispatch failed:', dmErr?.message || dmErr);
+        }
+
         res.json({
           success: true,
           request: serializeAdminWithdrawal(updatedReq),
