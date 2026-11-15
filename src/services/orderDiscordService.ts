@@ -117,6 +117,32 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
       statusEmoji = '🏁';
       statusText = 'Completed';
       break;
+    case 'waiting_for_confirm':
+      statusColor = 0xf39c12; // Orange/Yellow
+      statusEmoji = '⏳';
+      statusText = 'Waiting for Customer Confirmation';
+      break;
+    case 'warranty':
+      statusColor = 0x3498db; // Blue
+      statusEmoji = '🛡️';
+      statusText = 'Warranty Period';
+      break;
+    case 'done':
+      statusColor = 0x9b59b6; // Purple
+      statusEmoji = '🔒';
+      if (order.boostReleaseTracker?.holdExpiresAt) {
+        const diffMs = new Date(order.boostReleaseTracker.holdExpiresAt).getTime() - Date.now();
+        if (diffMs > 0) {
+          const h = Math.floor(diffMs / 3600000);
+          const m = Math.floor((diffMs % 3600000) / 60000);
+          statusText = `Done (24H Escrow: ${h}h ${m}m remaining)`;
+        } else {
+          statusText = 'Done (Escrow Expired — Releasing)';
+        }
+      } else {
+        statusText = 'Done (24H Escrow Hold)';
+      }
+      break;
     case 'cancelled':
       statusColor = 0xed4245; // Red
       statusEmoji = '🔴';
@@ -207,7 +233,7 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
   }
 
   // Active roster / candidate information (Privacy-preserving: never leak booster usernames, display names, or mentions on public cards)
-  if (activeAssignments.length > 0 || ['assigned', 'in_progress', 'pending_review', 'completed'].includes(order.status)) {
+  if (activeAssignments.length > 0 || ['assigned', 'in_progress', 'pending_review', 'completed', 'waiting_for_confirm', 'warranty', 'done'].includes(order.status)) {
     embed.addFields({
       name: '🔒 Squad Roster',
       value: 'Squad formed & locked. Direct coordination takes place inside the private order channel.',

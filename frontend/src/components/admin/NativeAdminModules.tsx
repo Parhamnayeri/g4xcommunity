@@ -57,10 +57,9 @@ function useResource<T>(url: string, initial: T) {
                       )
                     : collection === 'applications'
                       ? typeof r.id !== 'number' ||
-                        typeof r.username !== 'string' ||
-                        typeof r.submittedAt !== 'string' ||
-                        typeof r.category !== 'string' ||
-                        typeof r.status !== 'string'
+                        !r.userId ||
+                        !r.category ||
+                        !r.status
                       : typeof r.channelKey !== 'string' ||
                         typeof r.guildId !== 'string' ||
                         typeof r.purpose !== 'string' ||
@@ -73,12 +72,8 @@ function useResource<T>(url: string, initial: T) {
             /\/applications\/\d+$/.test(url) &&
             (!raw.application ||
               typeof raw.application.id !== 'number' ||
-              typeof raw.application.username !== 'string' ||
-              !Array.isArray(raw.application.actions) ||
-              !Array.isArray(raw.history) ||
-              raw.history.some(
-                (event: any) => !event || typeof event.id !== 'number' || typeof event.action !== 'string',
-              ))
+              !raw.application.userId ||
+              !Array.isArray(raw.history))
           )
             throw Error('Malformed application details');
           setData(value);
@@ -192,10 +187,12 @@ function Select({
   value,
   values,
   onChange,
+  labels,
 }: {
   label: string;
   value: string;
   values: string[];
+  labels?: Record<string, string>;
   onChange: (value: string) => void;
 }) {
   return (
@@ -204,7 +201,7 @@ function Select({
       <select className="input" value={value} onChange={(e) => onChange(e.target.value)} style={{ padding: '0.45rem 0.75rem', fontSize: '0.85rem' }}>
         {values.map((v) => (
           <option key={v} value={v}>
-            {v ? v.replace(/_/g, ' ') : 'All'}
+            {labels && labels[v] !== undefined ? labels[v] : v ? v.replace(/_/g, ' ') : 'All'}
           </option>
         ))}
       </select>
@@ -269,11 +266,11 @@ export function ApplicationsWorkspace({ embedded = false }: { embedded?: boolean
   const [filters, setFilters] = useState({
       search: '',
       category: '',
-      status: 'pending',
+      status: '',
       startDate: '',
       endDate: '',
     }),
-    [query, setQuery] = useState('status=pending'),
+    [query, setQuery] = useState(''),
     [page, setPage] = useState(1),
     [selected, setSelected] = useState<number | null>(null);
   const list = useResource<{ applications?: Application[] }>(
@@ -324,15 +321,27 @@ export function ApplicationsWorkspace({ embedded = false }: { embedded?: boolean
           label="Status"
           value={filters.status}
           values={[
+            '',
             'all',
             'pending',
             'under_review',
-            'info_requested',
             'awaiting_identity_verification',
+            'info_requested',
             'approved',
             'rejected',
             'cancelled',
           ]}
+          labels={{
+            '': 'All Actionable (Pending, Review, KYC)',
+            all: 'All Statuses (Including Resolved)',
+            pending: 'Pending Initial Review',
+            under_review: 'Under Review',
+            awaiting_identity_verification: 'Awaiting KYC Identity Verification',
+            info_requested: 'More Info Requested',
+            approved: 'Approved',
+            rejected: 'Rejected',
+            cancelled: 'Cancelled',
+          }}
           onChange={(status) => setFilters({ ...filters, status })}
         />
         <Field

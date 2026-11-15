@@ -48,6 +48,7 @@ export const UserManagementWorkspace: React.FC<Props> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState({ page: 1, limit: 15, total: 0, totalPages: 1 });
+  const [pageSize, setPageSize] = useState(15);
 
   // Filters
   const [search, setSearch] = useState('');
@@ -100,13 +101,14 @@ export const UserManagementWorkspace: React.FC<Props> = ({
     }
   };
 
-  const loadUsers = useCallback(async (page: number = 1) => {
+  const loadUsers = useCallback(async (pageToLoad: number = 1, limitToUse?: number) => {
     setLoading(true);
     setError(null);
+    const limit = limitToUse || pageSize;
     try {
       const data = await fetchAdminUsers({
-        page,
-        limit: 15,
+        page: pageToLoad,
+        limit,
         search: search.trim() || undefined,
         role: roleFilter || undefined,
         accountStatus: statusFilter !== 'all' ? statusFilter : undefined,
@@ -118,11 +120,11 @@ export const UserManagementWorkspace: React.FC<Props> = ({
     } finally {
       setLoading(false);
     }
-  }, [search, roleFilter, statusFilter]);
+  }, [search, roleFilter, statusFilter, pageSize]);
 
   useEffect(() => {
     loadUsers(1);
-  }, [loadUsers]);
+  }, [roleFilter, statusFilter, pageSize]);
 
   const handleOpenHistory = async (u: UserItem) => {
     setHistoryUser(u);
@@ -260,11 +262,14 @@ export const UserManagementWorkspace: React.FC<Props> = ({
                   <td>
                     <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                       {u.roles && u.roles.length > 0 ? (
-                        u.roles.map((r) => (
-                          <span key={r.roleKey} className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
-                            {r.roleKey}
-                          </span>
-                        ))
+                        u.roles.map((r: any, idx: number) => {
+                          const key = typeof r === 'string' ? r : r?.roleKey || String(r);
+                          return (
+                            <span key={`${key}-${idx}`} className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
+                              {key}
+                            </span>
+                          );
+                        })
                       ) : (
                         <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Regular User</span>
                       )}
@@ -335,20 +340,59 @@ export const UserManagementWorkspace: React.FC<Props> = ({
             </tbody>
           </table>
 
-          {/* Pagination */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)' }}>
-            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Page {pagination.page} of {pagination.totalPages || 1} ({pagination.total} total users)
-            </span>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
+          {/* Pagination Controls */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1.25rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border-subtle)', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Showing {pagination.total > 0 ? (pagination.page - 1) * pagination.limit + 1 : 0}–{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} registered users
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                <span>Per page:</span>
+                <select
+                  className="input"
+                  value={pageSize}
+                  onChange={(e) => {
+                    const newSize = Number(e.target.value) || 15;
+                    setPageSize(newSize);
+                    loadUsers(1, newSize);
+                  }}
+                  style={{ padding: '0.2rem 0.5rem', fontSize: '0.78rem' }}
+                >
+                  <option value={10}>10</option>
+                  <option value={15}>15</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value={100}>100</option>
+                </select>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <button
                 type="button"
                 disabled={pagination.page <= 1}
                 className="btn btn-secondary btn-sm"
-                onClick={() => loadUsers(pagination.page - 1)}
+                onClick={() => loadUsers(Math.max(1, pagination.page - 1))}
               >
                 &larr; Prev
               </button>
+              {Array.from({ length: Math.min(5, pagination.totalPages || 1) }, (_, i) => {
+                let p = i + 1;
+                if (pagination.totalPages > 5 && pagination.page > 3) {
+                  p = pagination.page - 3 + i;
+                  if (p > pagination.totalPages) p = pagination.totalPages - (4 - i);
+                }
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => loadUsers(p)}
+                    className={pagination.page === p ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'}
+                    style={{ minWidth: '32px', padding: '0.25rem 0.5rem' }}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
               <button
                 type="button"
                 disabled={pagination.page >= pagination.totalPages}

@@ -94,10 +94,15 @@ export function categorizeOrder(order: {
   if (order.status === 'cancelled') {
     return 'cancelled';
   }
-  if (order.status === 'completed') {
+  if (order.status === 'completed' || order.status === 'done') {
     return 'completed';
   }
-  if (order.status === 'pending_review' || (order.boostReleaseTracker && order.boostReleaseTracker.stage && order.boostReleaseTracker.stage !== 'completed')) {
+  if (
+    order.status === 'pending_review' ||
+    order.status === 'waiting_for_confirm' ||
+    order.status === 'warranty' ||
+    (order.boostReleaseTracker && order.boostReleaseTracker.stage && order.boostReleaseTracker.stage !== 'completed')
+  ) {
     return 'proof_review';
   }
   if (order.status === 'assigned' || order.status === 'in_progress' || order.status === 'presign_closed') {
@@ -1495,11 +1500,11 @@ export async function getSeparatedOrdersList(
   if (query.status && query.status !== 'all') {
     if (query.status === 'active') {
       andFilters.push({
-        status: { in: ['draft', 'payment_pending', 'open_presign', 'presign_closed', 'assigned', 'in_progress', 'disputed'] },
+        status: { in: ['draft', 'payment_pending', 'open_presign', 'presign_closed', 'assigned', 'in_progress', 'disputed', 'waiting_for_confirm', 'warranty'] },
       });
     } else if (query.status === 'history') {
       andFilters.push({
-        status: { in: ['completed', 'cancelled'] },
+        status: { in: ['completed', 'cancelled', 'done'] },
       });
     } else {
       andFilters.push({ status: query.status });

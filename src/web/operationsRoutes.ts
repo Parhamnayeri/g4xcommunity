@@ -1194,13 +1194,31 @@ const applicationPermissions: Record<string, Permission> = {
 };
 function applicationSummary(application: any) {
   // General application review does not expose identity document references or document bytes.
-  return { id: application.id, userId: application.userId, username: application.user.username,
-    displayName: application.user.displayName, category: application.category, status: application.status,
-    identityStatus: application.identityStatus, game: application.game, service: application.service,
-    submittedAt: application.submittedAt, createdAt: application.submittedAt,
-    reviewedAt: application.reviewedAt, reviewedBy: application.reviewedBy,
-    reviewerNotes: application.reviewNotes, rejectionReason: application.rejectionReason,
-    supplementalInfo: application.supplementalInfo, roleSyncStatus: application.roleSyncStatus };
+  const username = application.user?.username || application.userId || 'Unknown';
+  const displayName = application.user?.displayName || username;
+  const submittedAt = application.submittedAt instanceof Date
+    ? application.submittedAt.toISOString()
+    : String(application.submittedAt || new Date().toISOString());
+
+  return {
+    id: application.id,
+    userId: application.userId,
+    username,
+    displayName,
+    category: application.category,
+    status: application.status,
+    identityStatus: application.identityStatus,
+    game: application.game,
+    service: application.service,
+    submittedAt,
+    createdAt: submittedAt,
+    reviewedAt: application.reviewedAt,
+    reviewedBy: application.reviewedBy,
+    reviewerNotes: application.reviewNotes,
+    rejectionReason: application.rejectionReason,
+    supplementalInfo: application.supplementalInfo,
+    roleSyncStatus: application.roleSyncStatus,
+  };
 }
 
 /**

@@ -718,6 +718,9 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                 'assigned',
                 'in_progress',
                 'pending_review',
+                'waiting_for_confirm',
+                'warranty',
+                'done',
                 'disputed',
                 'completed',
                 'cancelled',
@@ -852,17 +855,31 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                 </thead>
                 <tbody>
                   {orders.map((o) => {
-                    const statusText = typeof o.simplifiedStatus === 'object'
+                    const statusLower = (o.status || '').toLowerCase();
+                    let statusText = typeof o.simplifiedStatus === 'object'
                       ? o.simplifiedStatus.label
                       : o.simplifiedStatus || o.status;
-                    const statusLower = (o.status || '').toLowerCase();
-                    const statusClass = ['completed', 'approved', 'active'].includes(statusLower)
-                      ? 'badge-green'
-                      : ['cancelled', 'disputed', 'rejected'].includes(statusLower)
-                      ? 'badge-danger'
-                      : ['assigned', 'in_progress'].includes(statusLower)
-                      ? 'badge-blue'
-                      : 'badge-amber';
+                    let statusClass = 'badge-amber';
+
+                    if (statusLower === 'waiting_for_confirm') {
+                      statusText = '⏳ Waiting Confirm';
+                      statusClass = 'badge-yellow';
+                    } else if (statusLower === 'warranty') {
+                      statusText = '🛡️ Warranty';
+                      statusClass = 'badge-blue';
+                    } else if (statusLower === 'done') {
+                      statusText = '🔒 Done (24H Escrow)';
+                      statusClass = 'badge-purple';
+                    } else if (statusLower === 'completed') {
+                      statusText = '✅ Completed';
+                      statusClass = 'badge-green';
+                    } else if (['approved', 'active'].includes(statusLower)) {
+                      statusClass = 'badge-green';
+                    } else if (['cancelled', 'disputed', 'rejected'].includes(statusLower)) {
+                      statusClass = 'badge-danger';
+                    } else if (['assigned', 'in_progress'].includes(statusLower)) {
+                      statusClass = 'badge-blue';
+                    }
 
                     return (
                       <tr key={o.id}>
@@ -914,6 +931,11 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                           <div style={{ fontSize: '0.72rem', color: 'var(--accent-yellow)', fontFamily: 'monospace' }}>
                             Pool: ${o.feeInfo?.boosterPoolUsd || '—'}
                           </div>
+                          {['completed', 'done', 'waiting_for_confirm', 'warranty'].includes(statusLower) && (
+                            <div style={{ fontSize: '0.68rem', color: statusLower === 'done' ? '#C084FC' : 'var(--accent-lime)', fontFamily: 'monospace', marginTop: '2px' }}>
+                              {statusLower === 'done' ? '⏳ 24h Escrow' : 'Pending Earnings'}: ${o.feeInfo?.boosterPoolUsd || '—'}
+                            </div>
+                          )}
                         </td>
                         <td>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-start' }}>
@@ -1044,6 +1066,168 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
             {!detailsLoading && details && (
               <>
                 <div className="studio-modal-body" style={{ display: 'grid', gap: '1.25rem' }}>
+                  {/* Visual G4X Post-Completion Lifecycle Stepper */}
+                  {(() => {
+                    const statusLower = (details.status || '').toLowerCase();
+                    const holdExpiresMs = details.boostReleaseTracker?.holdExpiresAt
+                      ? new Date(details.boostReleaseTracker.holdExpiresAt).getTime()
+                      : 0;
+                    const nowMs = Date.now();
+                    const msRemaining = Math.max(0, holdExpiresMs - nowMs);
+                    const hoursLeft = Math.floor(msRemaining / (1000 * 60 * 60));
+                    const minsLeft = Math.floor((msRemaining % (1000 * 60 * 60)) / (1000 * 60));
+                    const isHolding = holdExpiresMs > 0 && msRemaining > 0;
+                    const isHoldExpired = holdExpiresMs > 0 && msRemaining <= 0;
+
+                    // Determine active step (1 to 5)
+                    let activeStep = 1;
+                    if (statusLower === 'waiting_for_confirm') activeStep = 2;
+                    else if (statusLower === 'warranty') activeStep = 3;
+                    else if (statusLower === 'done') activeStep = isHoldExpired ? 5 : 4;
+                    else if (statusLower === 'completed') activeStep = (isHoldExpired || details.boostReleaseTracker?.stage === 'AVAILABLE') ? 5 : 4;
+                    else if (['assigned', 'in_progress'].includes(statusLower)) activeStep = 1;
+
+                    const isRelevantOrder = ['in_progress', 'completed', 'waiting_for_confirm', 'warranty', 'done', 'pending_review'].includes(statusLower) || details.boostReleaseTracker;
+
+                    if (!isRelevantOrder) return null;
+
+                    const steps = [
+                      { num: 1, title: 'Run Execution', subtitle: 'Completed & Proof', icon: '⚔️' },
+                      { num: 2, title: 'Customer Confirm', subtitle: 'Waiting Confirm', icon: '⏳' },
+                      { num: 3, title: 'Warranty Period', subtitle: 'Safety Window', icon: '🛡️' },
+                      { num: 4, title: 'Done (24H Escrow)', subtitle: isHolding ? `${hoursLeft}h ${minsLeft}m left` : 'Escrow Hold', icon: '🔒' },
+                      { num: 5, title: 'Released', subtitle: 'Booster Available', icon: '💰' },
+                    ];
+
+                    return (
+                      <div
+                        style={{
+                          background: 'linear-gradient(180deg, rgba(30, 27, 46, 0.7) 0%, rgba(15, 12, 28, 0.9) 100%)',
+                          border: '1px solid rgba(124, 58, 237, 0.3)',
+                          borderRadius: '14px',
+                          padding: '16px 20px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '14px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '1.1rem' }}>🔄</span>
+                            <span style={{ fontWeight: 800, fontSize: '0.95rem', color: '#fff', letterSpacing: '0.02em' }}>
+                              G4X Order Completion &amp; Escrow Pipeline
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Booster Pending Earnings:</span>
+                            <span style={{ fontWeight: 800, color: 'var(--accent-yellow)', fontSize: '0.95rem', fontFamily: 'monospace' }}>
+                              ${details.boosterPoolUsd} USD
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Stepper Progress Bar */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '8px', position: 'relative' }}>
+                          {steps.map((st) => {
+                            const isPast = activeStep > st.num;
+                            const isCurrent = activeStep === st.num;
+
+                            const stepBg = isCurrent
+                              ? 'linear-gradient(135deg, rgba(124, 58, 237, 0.4) 0%, rgba(168, 85, 247, 0.25) 100%)'
+                              : isPast
+                              ? 'rgba(16, 185, 129, 0.12)'
+                              : 'rgba(255, 255, 255, 0.03)';
+                            const stepBorder = isCurrent
+                              ? '1px solid #A855F7'
+                              : isPast
+                              ? '1px solid rgba(16, 185, 129, 0.4)'
+                              : '1px solid rgba(255, 255, 255, 0.08)';
+
+                            return (
+                              <div
+                                key={st.num}
+                                style={{
+                                  background: stepBg,
+                                  border: stepBorder,
+                                  borderRadius: '10px',
+                                  padding: '10px 12px',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '4px',
+                                  position: 'relative',
+                                  transition: 'all 0.2s ease',
+                                  boxShadow: isCurrent ? '0 0 16px rgba(168, 85, 247, 0.25)' : 'none',
+                                }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <span style={{ fontSize: '1rem' }}>{isPast ? '✅' : st.icon}</span>
+                                  <span
+                                    style={{
+                                      fontSize: '0.68rem',
+                                      fontWeight: 700,
+                                      padding: '1px 6px',
+                                      borderRadius: '10px',
+                                      background: isCurrent ? '#A855F7' : isPast ? '#10B981' : 'rgba(255,255,255,0.08)',
+                                      color: isCurrent || isPast ? '#fff' : 'var(--text-muted)',
+                                    }}
+                                  >
+                                    Step {st.num}
+                                  </span>
+                                </div>
+                                <div style={{ fontWeight: isCurrent ? 800 : 600, fontSize: '0.82rem', color: isCurrent ? '#fff' : isPast ? '#D1FAE5' : 'var(--text-muted)', marginTop: '2px' }}>
+                                  {st.title}
+                                </div>
+                                <div style={{ fontSize: '0.72rem', color: isCurrent ? '#E9D5FF' : isPast ? '#6EE7B7' : 'rgba(255,255,255,0.3)' }}>
+                                  {st.subtitle}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Live Countdown & Instructions Callout */}
+                        {(isHolding || statusLower === 'done') && (
+                          <div
+                            style={{
+                              background: isHolding ? 'rgba(168, 85, 247, 0.12)' : 'rgba(16, 185, 129, 0.12)',
+                              border: isHolding ? '1px solid rgba(168, 85, 247, 0.35)' : '1px solid rgba(16, 185, 129, 0.35)',
+                              borderRadius: '8px',
+                              padding: '10px 14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              flexWrap: 'wrap',
+                              gap: '8px',
+                              fontSize: '0.84rem',
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span>{isHolding ? '⏳' : '✅'}</span>
+                              <span style={{ color: '#fff', fontWeight: 600 }}>
+                                {isHolding
+                                  ? `24-Hour Escrow Hold Active: ${hoursLeft} hour(s) and ${minsLeft} minute(s) remaining`
+                                  : '24-Hour Escrow Hold Finished — Funds are unlocked & ready in Booster Available Balance!'}
+                              </span>
+                            </div>
+                            <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>
+                              {details.boostReleaseTracker?.holdExpiresAt && `Unlocks at: ${new Date(details.boostReleaseTracker.holdExpiresAt).toLocaleString()}`}
+                            </div>
+                          </div>
+                        )}
+                        {statusLower === 'waiting_for_confirm' && (
+                          <div style={{ background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.35)', borderRadius: '8px', padding: '10px 14px', fontSize: '0.84rem', color: '#FDE68A' }}>
+                            ⏳ <strong>Waiting for Customer Confirmation:</strong> The run has completed. The order is waiting for customer or support confirmation before transitioning to warranty and starting the 24h escrow period.
+                          </div>
+                        )}
+                        {statusLower === 'warranty' && (
+                          <div style={{ background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.35)', borderRadius: '8px', padding: '10px 14px', fontSize: '0.84rem', color: '#BFDBFE' }}>
+                            🛡️ <strong>Safety Warranty Period:</strong> Order has entered active warranty protection. Next step: Done (24-Hour Escrow hold for booster payout).
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* Top 3 Summary Cards */}
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
                     {/* Card 1: Game & Service */}
@@ -1126,7 +1310,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Booster Pool:</span>
-                          <span style={{ fontWeight: 700, color: 'var(--accent-yellow)' }}>{details.boosterPoolUsd}</span>
+                          <span style={{ fontWeight: 700, color: 'var(--accent-yellow)' }}>${details.boosterPoolUsd}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Platform Fee:</span>
@@ -1143,9 +1327,13 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                     <div style={{ background: '#0E1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '16px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
                         <span style={{ fontSize: '1rem', fontWeight: 800, color: '#fff' }}>Release &amp; Escrow</span>
-                        <span className="badge badge-purple">{details.boostReleaseTracker?.stage || 'Not applicable'}</span>
+                        <span className="badge badge-purple">{details.boostReleaseTracker?.stage || details.status}</span>
                       </div>
                       <div style={{ display: 'grid', gap: '0.45rem', fontSize: '0.84rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ color: 'var(--text-muted)' }}>Booster Pool:</span>
+                          <span style={{ color: 'var(--accent-yellow)', fontWeight: 700 }}>${details.boosterPoolUsd}</span>
+                        </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Staff Review:</span>
                           <span>{time(details.boostReleaseTracker?.staffReviewedAt || null)}</span>
@@ -1158,6 +1346,20 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                           <span style={{ color: 'var(--text-muted)' }}>Hold Expires:</span>
                           <span style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>{time(details.boostReleaseTracker?.holdExpiresAt || null)}</span>
                         </div>
+                        {details.boostReleaseTracker?.holdExpiresAt && (
+                          <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: '4px', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>Escrow Timer:</span>
+                            <span style={{ color: '#C084FC', fontWeight: 700 }}>
+                              {(() => {
+                                const diff = new Date(details.boostReleaseTracker.holdExpiresAt).getTime() - Date.now();
+                                if (diff <= 0) return '✅ Hold Expired';
+                                const h = Math.floor(diff / 3600000);
+                                const m = Math.floor((diff % 3600000) / 60000);
+                                return `⏳ ${h}h ${m}m left`;
+                              })()}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
