@@ -47,6 +47,11 @@ import {
 } from '../services/teamService';
 import { DomainError, DomainErrorCode } from '../services/domainErrors';
 import { getOrCreateWalletV2, getWalletV2Summary } from '../services/financeV2/financeV2WalletService';
+import {
+  getDashboardWalletMetrics,
+  getDashboardEarningsChart,
+  getDashboardOrderEarningsBreakdown,
+} from '../services/dashboardService';
 import { marketplaceRouter } from './marketplaceRoutes';
 import { paymentRouter } from './paymentRoutes';
 import { walletRouter } from './walletRoutes';
@@ -497,8 +502,13 @@ router.get('/dashboard/overview', requireAuth, async (req: Request, res: Respons
   try {
     const { user } = req as AuthenticatedRequest;
 
-    // ۱. خلاصه والت معتبر نسل دوم
+    // ۱. خلاصه والت معتبر نسل دوم و تحلیل‌های ۴ گانه
     const walletSummary = await getWalletV2Summary(user.discordId);
+    const [walletMetrics, earningsChart, orderEarningsBreakdown] = await Promise.all([
+      getDashboardWalletMetrics(user.discordId, walletSummary),
+      getDashboardEarningsChart(user.discordId, '30d'),
+      getDashboardOrderEarningsBreakdown(user.discordId),
+    ]);
 
     // ۲. اطلاعات پروفایل، نقش‌ها، درخواست عضویت و تاییدیه‌ها
     const [latestApp, approvals, userWithRoles] = await Promise.all([
@@ -647,28 +657,9 @@ router.get('/dashboard/overview', requireAuth, async (req: Request, res: Respons
         })),
         createdAt: user.createdAt,
       },
-      wallet: {
-        availableCents: walletSummary.availableCents,
-        availableUsd: (walletSummary.availableCents / 100).toFixed(2),
-        reservedCents: walletSummary.reservedCents,
-        reservedUsd: (walletSummary.reservedCents / 100).toFixed(2),
-        pendingEarningsCents: walletSummary.pendingEarningsCents,
-        pendingEarningsUsd: (walletSummary.pendingEarningsCents / 100).toFixed(2),
-        confirmedEarningsCents: walletSummary.confirmedEarningsCents,
-        confirmedEarningsUsd: (walletSummary.confirmedEarningsCents / 100).toFixed(2),
-        paidCents: walletSummary.paidCents,
-        paidUsd: (walletSummary.paidCents / 100).toFixed(2),
-        totalPaidCents: walletSummary.paidCents,
-        totalPaidUsd: (walletSummary.paidCents / 100).toFixed(2),
-        refundedCents: walletSummary.refundedCents,
-        refundedUsd: (walletSummary.refundedCents / 100).toFixed(2),
-        totalHeldCents: walletSummary.totalHeldCents,
-        totalHeldUsd: (walletSummary.totalHeldCents / 100).toFixed(2),
-        lifetimeEarnedCents: walletSummary.lifetimeEarnedCents,
-        lifetimeEarnedUsd: (walletSummary.lifetimeEarnedCents / 100).toFixed(2),
-        eligibleWithdrawalCents,
-        eligibleWithdrawalUsd: (eligibleWithdrawalCents / 100).toFixed(2),
-      },
+      wallet: walletMetrics,
+      earningsChart,
+      orderEarningsBreakdown,
       activeOrders,
       counts: {
         activeOrdersCount,
@@ -679,6 +670,20 @@ router.get('/dashboard/overview', requireAuth, async (req: Request, res: Respons
   } catch (err: any) {
     console.error('[Dashboard API] Failed to fetch overview:', err);
     res.status(500).json({ error: 'Failed to retrieve dashboard overview' });
+  }
+});
+
+// ─── روند درآمد کاربر (Earnings Overview Chart API) ──────────────────────────
+router.get('/dashboard/earnings-chart', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { user } = req as AuthenticatedRequest;
+    const range = (req.query.range as any) || '30d';
+    const validRange = ['7d', '30d', '90d', 'all'].includes(range) ? range : '30d';
+    const chartData = await getDashboardEarningsChart(user.discordId, validRange);
+    res.json({ success: true, ...chartData });
+  } catch (err: any) {
+    console.error('[Dashboard API] Failed to fetch earnings chart:', err);
+    res.status(500).json({ error: 'Failed to retrieve earnings chart data' });
   }
 });
 

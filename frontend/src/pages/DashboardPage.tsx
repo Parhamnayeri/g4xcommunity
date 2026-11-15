@@ -3,6 +3,8 @@ import { DashboardOverviewResponse } from '../types/dashboard';
 import { fetchDashboardOverview } from '../services/dashboard';
 import { UserProfileCard } from '../components/dashboard/UserProfileCard';
 import { FinancialSummary } from '../components/dashboard/FinancialSummary';
+import { EarningsOverviewChart } from '../components/dashboard/EarningsOverviewChart';
+import { OrderEarningsBreakdown } from '../components/dashboard/OrderEarningsBreakdown';
 import { ActiveOrdersList } from '../components/dashboard/ActiveOrdersList';
 import { OrderHistorySection } from '../components/dashboard/OrderHistorySection';
 import { FinancialActivitySection } from '../components/dashboard/FinancialActivitySection';
@@ -54,8 +56,8 @@ export const DashboardPage: React.FC = () => {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
-      {/* ─── Top Section: Profile (Left) & Financial Overview (Right) ────────── */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+      {/* ─── 1. Top Section: Profile (Left) & My Wallet Overview (Right) ───── */}
       <div
         className="dashboard-top-grid"
         style={{
@@ -70,7 +72,7 @@ export const DashboardPage: React.FC = () => {
           <UserProfileCard profile={data.profile} />
         </div>
 
-        {/* Right Column: Financial Overview Cards */}
+        {/* Right Column: Financial Overview Cards (My Wallet) */}
         <div>
           <FinancialSummary
             wallet={data.wallet}
@@ -80,17 +82,27 @@ export const DashboardPage: React.FC = () => {
         </div>
       </div>
 
-      {/* ─── Active Orders ─────────────────────────────────────────────────── */}
+      {/* ─── 2. Earnings Overview Chart (7D, 30D, 90D, ALL) ────────────────── */}
+      <section id="earnings-overview-chart">
+        <EarningsOverviewChart initialData={data.earningsChart} />
+      </section>
+
+      {/* ─── 3. Order Earnings Breakdown (Itemized Revenue) ─────────────────── */}
+      <section id="order-earnings-breakdown">
+        <OrderEarningsBreakdown items={data.orderEarningsBreakdown} />
+      </section>
+
+      {/* ─── 4. Active Orders ───────────────────────────────────────────────── */}
       <section id="active-orders">
         <ActiveOrdersList orders={data.activeOrders} />
       </section>
 
-      {/* ─── Order History ─────────────────────────────────────────────────── */}
+      {/* ─── 5. Order History ───────────────────────────────────────────────── */}
       <section id="order-history">
         <OrderHistorySection />
       </section>
 
-      {/* ─── Financial Activity ─────────────────────────────────────────────── */}
+      {/* ─── 6. Financial Activity (Ledger Transactions) ────────────────────── */}
       <section id="financial-activity">
         <FinancialActivitySection />
       </section>

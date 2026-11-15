@@ -36,3 +36,9 @@ export async function fetchWalletTransactions(params: {
   const endpoint = `/api/dashboard/transactions${query.toString() ? '?' + query.toString() : ''}`;
   return await apiRequest<DashboardTransactionsResponse>(endpoint);
 }
+
+export async function fetchEarningsChart(range: '7d' | '30d' | '90d' | 'all' = '30d') {
+  return await apiRequest<{ success: boolean } & import('../types/dashboard').EarningsOverviewChartData>(
+    `/api/dashboard/earnings-chart?range=${range}`
+  );
+}

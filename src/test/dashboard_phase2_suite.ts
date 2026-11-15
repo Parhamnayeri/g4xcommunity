@@ -2,6 +2,7 @@
  * dashboard_phase2_suite.ts — جامع‌ترین آزمون‌های اعتبارسنجی داشبورد کاربری فاز ۲
  */
 
+process.env.COOKIE_SECURE = 'false';
 import request from 'supertest';
 import prisma from '../database/db';
 import { app, sessionStore } from '../web/server';
@@ -18,9 +19,10 @@ async function createAuthenticatedAgent(userId: string) {
 
   await new Promise<void>((resolve, reject) => {
     sessionStore.get(sid, (err, sess) => {
-      if (err || !sess) return reject(err || new Error('No session'));
-      sess.userId = userId;
-      sessionStore.set(sid, sess, (setErr) => {
+      if (err) return reject(err);
+      const sessData: any = sess || { cookie: { originalMaxAge: 86400000, expires: new Date(Date.now() + 86400000) } };
+      sessData.userId = userId;
+      sessionStore.set(sid, sessData, (setErr) => {
         if (setErr) return reject(setErr);
         resolve();
       });

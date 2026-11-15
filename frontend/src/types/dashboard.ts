@@ -17,6 +17,14 @@ export interface UserProfileData {
 export interface WalletOverviewData {
   availableCents: number;
   availableUsd: string;
+  pendingWithdrawalsCents?: number;
+  pendingWithdrawalsUsd?: string;
+  pendingWithdrawalsCount?: number;
+  inActiveOrdersCents?: number;
+  inActiveOrdersUsd?: string;
+  inActiveOrdersCount?: number;
+  totalEarningsCents?: number;
+  totalEarningsUsd?: string;
   reservedCents: number;
   reservedUsd: string;
   pendingEarningsCents: number;
@@ -35,6 +43,41 @@ export interface WalletOverviewData {
   lifetimeEarnedUsd: string;
   eligibleWithdrawalCents: number;
   eligibleWithdrawalUsd: string;
+}
+
+export interface EarningsChartPoint {
+  date: string;
+  label: string;
+  amountCents: number;
+  amountUsd: string;
+  orderCount: number;
+}
+
+export interface EarningsOverviewChartData {
+  range: '7d' | '30d' | '90d' | 'all';
+  periodLabel: string;
+  currentPeriodTotalCents: number;
+  currentPeriodTotalUsd: string;
+  previousPeriodTotalCents: number;
+  previousPeriodTotalUsd: string;
+  growthPercentage: string;
+  growthDirection: 'up' | 'down' | 'neutral';
+  points: EarningsChartPoint[];
+}
+
+export interface OrderEarningsBreakdownItem {
+  orderId: number;
+  orderRef: string;
+  gameSlug: string;
+  gameDisplayName: string;
+  serviceDisplayName: string;
+  assignmentRole: string;
+  orderStatus: string;
+  amountCents: number;
+  amountUsd: string;
+  earningsStage: 'released' | 'pending_escrow' | 'in_progress' | 'cancelled';
+  stageLabel: string;
+  date: string;
 }
 
 export interface DashboardActiveOrder {
@@ -93,6 +136,8 @@ export interface DashboardOverviewResponse {
   profile: UserProfileData;
   wallet: WalletOverviewData;
   activeOrders: DashboardActiveOrder[];
+  earningsChart?: EarningsOverviewChartData;
+  orderEarningsBreakdown?: OrderEarningsBreakdownItem[];
   counts: {
     activeOrdersCount: number;
     completedOrdersCount: number;
