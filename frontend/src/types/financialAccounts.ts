@@ -175,3 +175,122 @@ export interface ManualAdjustmentPayload {
   attachmentUrl?: string;
   idempotencyKey?: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PHASE 2 TYPES: TRANSFERS, EXCHANGE & WITHDRAWALS
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type TransferType = 'SAME_CURRENCY' | 'CURRENCY_CONVERSION';
+
+export type WithdrawalStatus = 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'REJECTED' | 'CANCELLED';
+
+export interface InternalTransferItem {
+  id: string;
+  transferRef: string;
+  idempotencyKey: string;
+  sourceAccountId: string;
+  sourceAccountRef?: string;
+  sourceAccountName?: string;
+  destinationAccountId: string;
+  destinationAccountRef?: string;
+  destinationAccountName?: string;
+  transferType: TransferType | string;
+  sourceAmount: number;
+  sourceCurrency: FinancialCurrency | string;
+  formattedSourceAmount: string;
+  destinationAmount: number;
+  destinationCurrency: FinancialCurrency | string;
+  formattedDestinationAmount: string;
+  exchangeRate: number | null;
+  feeAmount: number;
+  formattedFee: string;
+  status: string;
+  description: string | null;
+  attachmentUrl: string | null;
+  adminId: string | null;
+  adminUsername?: string | null;
+  createdAt: string;
+}
+
+export interface PlatformWithdrawalItem {
+  id: string;
+  withdrawalRef: string;
+  idempotencyKey: string;
+  sourceAccountId: string;
+  sourceAccountRef?: string;
+  sourceAccountName?: string;
+  amount: number;
+  fee: number;
+  netAmount: number;
+  currency: FinancialCurrency | string;
+  formattedAmount: string;
+  formattedFee: string;
+  formattedNetAmount: string;
+  withdrawalType: string;
+  destinationType: string;
+  destinationAccountId: string | null;
+  destinationAccountName?: string | null;
+  destinationDetails: string | null;
+  status: WithdrawalStatus | string;
+  requestedAt: string;
+  processedAt: string | null;
+  adminId: string | null;
+  adminUsername?: string | null;
+  processedBy: string | null;
+  processorUsername?: string | null;
+  referenceNumber: string | null;
+  description: string | null;
+  attachmentUrl: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+}
+
+export interface ExchangeRateItem {
+  id: string;
+  rateRef: string;
+  fromCurrency: string;
+  toCurrency: string;
+  rate: number;
+  inverseRate: number;
+  spreadPercentage: number;
+  effectiveAt: string;
+  expiresAt: string | null;
+  isActive: boolean;
+  source: string;
+  notes: string | null;
+  adminId: string | null;
+  createdAt: string;
+}
+
+export interface CreateTransferPayload {
+  sourceAccountId: string;
+  destinationAccountId: string;
+  sourceAmount: number;
+  feeAmount?: number;
+  exchangeRate?: number;
+  description?: string;
+  attachmentUrl?: string;
+  idempotencyKey?: string;
+}
+
+export interface RequestWithdrawalPayload {
+  sourceAccountId: string;
+  amount: number;
+  fee?: number;
+  withdrawalType?: string;
+  destinationType?: string;
+  destinationAccountId?: string;
+  destinationDetails?: string;
+  description?: string;
+  attachmentUrl?: string;
+  idempotencyKey?: string;
+}
+
+export interface CreateExchangeRatePayload {
+  fromCurrency: string;
+  toCurrency: string;
+  rate: number;
+  effectiveAt?: string;
+  notes?: string;
+}
+

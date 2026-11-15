@@ -21,6 +21,8 @@ import {
   recordManualAdjustment,
   fetchAccountTransactions,
 } from '../../services/financialAccounts';
+import { TransfersExchangeSection } from './TransfersExchangeSection';
+import { PlatformWithdrawalsSection } from './PlatformWithdrawalsSection';
 
 interface Props {
   onNavigateTab?: (tab: string) => void;
@@ -28,7 +30,7 @@ interface Props {
 
 export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab }) => {
   // Navigation Sub-tab
-  const [subTab, setSubTab] = useState<'platform' | 'toman' | 'accounts' | 'adjustments'>('platform');
+  const [subTab, setSubTab] = useState<'platform' | 'transfers' | 'withdrawals' | 'toman' | 'accounts' | 'adjustments'>('platform');
 
   // Loading states
   const [loading, setLoading] = useState(true);
@@ -395,11 +397,11 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab })
                 fontWeight: 700,
               }}
             >
-              Phase 1 Core Ledger
+              Phase 1 &amp; 2 Core Treasury &amp; Transfers
             </span>
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', margin: 0 }}>
-            Platform balances across 5 partner sources, internal USD treasury, local Toman bank accounts, and immutable manual adjustments.
+            Platform balances across 5 partner sources, internal USD treasury, local Toman bank accounts, transfers &amp; exchange, and withdrawal operations.
           </p>
         </div>
 
@@ -489,6 +491,8 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab })
       >
         {[
           { key: 'platform', label: 'Platform Balances', icon: '🌐', count: platforms.length },
+          { key: 'transfers', label: 'Transfers & Exchange', icon: '🔄' },
+          { key: 'withdrawals', label: 'Withdrawal Operations', icon: '💸' },
           { key: 'toman', label: 'Local Currency (Toman)', icon: '🇮🇷', count: tomanBankAccounts.length + tomanCashAccounts.length },
           { key: 'accounts', label: 'All Accounts & Management', icon: '🏛️', count: allAccounts.length },
           { key: 'adjustments', label: 'Manual Adjustments', icon: '⚖️' },
@@ -761,6 +765,26 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab })
             </div>
           </div>
         </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB: TRANSFERS & CURRENCY CONVERSION (PHASE 2)                            */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'transfers' && (
+        <TransfersExchangeSection
+          accounts={allAccounts}
+          onRefreshWorkspace={loadWorkspace}
+        />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB: PLATFORM WITHDRAWAL OPERATIONS (PHASE 2)                            */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'withdrawals' && (
+        <PlatformWithdrawalsSection
+          accounts={allAccounts}
+          onRefreshWorkspace={loadWorkspace}
+        />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}

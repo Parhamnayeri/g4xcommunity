@@ -88,6 +88,10 @@ model User {
   reviewedPaymentAttempts  PaymentAttempt[]           @relation("ReviewedPaymentAttempts")
   payoutPreference         UserPayoutPreference?
   createdFinancialTransactions FinancialTransaction[] @relation("FinancialTxAdmin")
+  createdFinancialTransfers    InternalTransfer[]     @relation("TransferAdmin")
+  createdPlatformWithdrawals   PlatformWithdrawal[]   @relation("WithdrawalAdmin")
+  processedPlatformWithdrawals PlatformWithdrawal[]   @relation("WithdrawalProcessor")
+  createdExchangeRates         ExchangeRate[]         @relation("ExchangeRateAdmin")
 
   @@index([advertiserRank])
   @@map("users")
@@ -1713,6 +1717,10 @@ model FinancialAccount {
 
   transactions         FinancialTransaction[]
   ledgerEntries        FinancialLedgerEntry[]
+  transfersOut         InternalTransfer[]     @relation("TransfersOut")
+  transfersIn          InternalTransfer[]     @relation("TransfersIn")
+  withdrawalsSource    PlatformWithdrawal[]   @relation("PlatformWithdrawalsSource")
+  withdrawalsDest      PlatformWithdrawal[]   @relation("PlatformWithdrawalsDest")
 
   @@index([category, accountType])
   @@index([currency, status])
@@ -1771,4 +1779,104 @@ model FinancialLedgerEntry {
   @@index([transactionId])
   @@map("financial_ledger_entries")
 }
+
+// ─── ۴۸. نرخ‌های تبدیل ارز و تاریخچه قیمت (Phase 2 Exchange Rates) ───────────────
+model ExchangeRate {
+  id                   String    @id @default(uuid())
+  rateRef              String    @unique @map("rate_ref")
+  fromCurrency         String    @map("from_currency")
+  toCurrency           String    @map("to_currency")
+  rate                 Float
+  inverseRate          Float     @map("inverse_rate")
+  spreadPercentage     Float     @default(0) @map("spread_percentage")
+  effectiveAt          DateTime  @default(now()) @map("effective_at")
+  expiresAt            DateTime? @map("expires_at")
+  isActive             Boolean   @default(true) @map("is_active")
+  source               String    @default("MANUAL")
+  notes                String?
+  adminId              String?   @map("admin_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  admin                User?              @relation("ExchangeRateAdmin", fields: [adminId], references: [discordId], onDelete: SetNull)
+  transfers            InternalTransfer[]
+
+  @@index([fromCurrency, toCurrency, isActive])
+  @@index([effectiveAt])
+  @@map("exchange_rates")
+}
+
+// ─── ۴۹. انتقالات داخلی و تبدیل ارز (Phase 2 Internal Transfers & Conversions) ──
+model InternalTransfer {
+  id                   String   @id @default(uuid())
+  transferRef          String   @unique @map("transfer_ref")
+  idempotencyKey       String   @unique @map("idempotency_key")
+  sourceAccountId      String   @map("source_account_id")
+  destinationAccountId String   @map("destination_account_id")
+  transferType         String   @map("transfer_type") // SAME_CURRENCY | CURRENCY_CONVERSION
+  sourceAmount         BigInt   @map("source_amount")
+  sourceCurrency       String   @map("source_currency")
+  destinationAmount    BigInt   @map("destination_amount")
+  destinationCurrency  String   @map("destination_currency")
+  exchangeRate         Float?   @map("exchange_rate")
+  exchangeRateId       String?  @map("exchange_rate_id")
+  feeAmount            BigInt   @default(0) @map("fee_amount")
+  status               String   @default("COMPLETED") // PENDING | COMPLETED | FAILED | CANCELLED
+  description          String?
+  attachmentUrl        String?  @map("attachment_url")
+  adminId              String?  @map("admin_id")
+  metadata             String?
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  sourceAccount        FinancialAccount @relation("TransfersOut", fields: [sourceAccountId], references: [id], onDelete: Cascade)
+  destinationAccount   FinancialAccount @relation("TransfersIn", fields: [destinationAccountId], references: [id], onDelete: Cascade)
+  admin                User?            @relation("TransferAdmin", fields: [adminId], references: [discordId], onDelete: SetNull)
+  exchangeRateRecord   ExchangeRate?    @relation(fields: [exchangeRateId], references: [id], onDelete: SetNull)
+
+  @@index([sourceAccountId, createdAt])
+  @@index([destinationAccountId, createdAt])
+  @@index([transferType, status])
+  @@index([adminId])
+  @@map("internal_transfers")
+}
+
+// ─── ۵۰. مدیریت و تسویه برداشت‌های پلتفرم و والت‌ها (Phase 2 Platform Withdrawals) ──
+model PlatformWithdrawal {
+  id                   String    @id @default(uuid())
+  withdrawalRef        String    @unique @map("withdrawal_ref")
+  idempotencyKey       String    @unique @map("idempotency_key")
+  sourceAccountId      String    @map("source_account_id")
+  amount               BigInt
+  fee                  BigInt    @default(0)
+  netAmount            BigInt    @map("net_amount")
+  currency             String
+  withdrawalType       String    @map("withdrawal_type") // PLATFORM_PAYOUT | USD_WALLET_CASHOUT | TOMAN_BANK_TRANSFER | CASH_WITHDRAWAL
+  destinationType      String    @map("destination_type") // INTERNAL_ACCOUNT | EXTERNAL_BANK | CRYPTO_WALLET | CASH_HANDOVER
+  destinationAccountId String?   @map("destination_account_id")
+  destinationDetails   String?   @map("destination_details")
+  status               String    @default("PENDING") // PENDING | PROCESSING | COMPLETED | REJECTED | CANCELLED
+  requestedAt          DateTime  @default(now()) @map("requested_at")
+  processedAt          DateTime? @map("processed_at")
+  adminId              String?   @map("admin_id")
+  processedBy          String?   @map("processed_by")
+  referenceNumber      String?   @map("reference_number")
+  description          String?
+  attachmentUrl        String?   @map("attachment_url")
+  rejectionReason      String?   @map("rejection_reason")
+  metadata             String?
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  sourceAccount        FinancialAccount  @relation("PlatformWithdrawalsSource", fields: [sourceAccountId], references: [id], onDelete: Cascade)
+  destinationAccount   FinancialAccount? @relation("PlatformWithdrawalsDest", fields: [destinationAccountId], references: [id], onDelete: SetNull)
+  admin                User?             @relation("WithdrawalAdmin", fields: [adminId], references: [discordId], onDelete: SetNull)
+  processor            User?             @relation("WithdrawalProcessor", fields: [processedBy], references: [discordId], onDelete: SetNull)
+
+  @@index([sourceAccountId, status])
+  @@index([status, createdAt])
+  @@index([adminId])
+  @@map("platform_withdrawals")
+}
+
 
