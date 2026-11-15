@@ -71,6 +71,13 @@ if (fs.existsSync(frontendDist)) {
 // سرو فایل‌های استاتیک داشبورد
 app.use(express.static(path.join(process.cwd(), 'public')));
 
+// سرو فایل‌های ذخیره‌سازی، شواهد و آرشیوهای ZIP
+const storageDir = path.join(process.cwd(), 'storage');
+if (!fs.existsSync(storageDir)) {
+  fs.mkdirSync(storageDir, { recursive: true });
+}
+app.use('/storage', express.static(storageDir));
+
 // هدایت روت‌های قدیمی به صفحه اصلی
 app.get(['/legacy', '/legacy/*'], (_req, res) => {
   res.redirect('/');

@@ -34,6 +34,7 @@ import { extractExternalOrderIdAndCleanNotes } from '../services/orderParsingUti
 
 import { configureChannelMapping, inspectMappingConnectivity } from '../services/channelMappingConfigurationService';
 import { listChannelMappings } from '../services/discordProvisioningService';
+import { archiveAndCleanupExecutionChannel } from '../services/orderChannelArchiveService';
 
 export const operationsRouter = Router();
 
@@ -773,6 +774,17 @@ operationsRouter.post(
         }
       }
 
+      // If transitioning to waiting_for_confirm, warranty, done, or completed:
+      // Automatically archive all execution channel images to a ZIP and delete the coordination channel
+      let archiveResult: any = null;
+      if (['waiting_for_confirm', 'warranty', 'done', 'completed'].includes(targetStatus)) {
+        try {
+          archiveResult = await archiveAndCleanupExecutionChannel(orderId, getGlobalDiscordClient(), actorId);
+        } catch (archiveErr: any) {
+          console.warn(`[Operations] Error archiving channel for order #${orderId}:`, archiveErr);
+        }
+      }
+
       // Refresh public Discord card
       try {
         await publishOrRefreshOrderCard(getGlobalDiscordClient(), orderId);
@@ -788,6 +800,7 @@ operationsRouter.post(
         channelCreated: channelResult?.isNew || false,
         channelId: channelResult?.channelId || null,
         channelUrl: channelResult?.channelUrl || null,
+        archive: archiveResult || null,
         message: `Order #${orderId} status changed from '${previousStatus}' to '${targetStatus}'.`,
       });
     } catch (err: any) {

@@ -31,13 +31,28 @@ import {
 } from '../services/orderLifecycleService';
 import { verifyOrderWithReceipt } from '../services/payment/paymentReconciliationService';
 import { extractExternalOrderIdAndCleanNotes } from '../services/orderParsingUtils';
+import { isActorStaffOrHigher, archiveAndCleanupExecutionChannel } from '../services/orderChannelArchiveService';
 
 import { handleAssignCommand } from './assign';
 
 export async function handleOrderCommand(message: Message, args: string[]): Promise<void> {
+  // Support both: G4!order <orderId> wfc AND G4!order wfc <orderId>
+  if (args[1]?.toLowerCase() === 'wfc' && args[0]) {
+    await handleOrderWfc(message, args[0]);
+    return;
+  }
+  if (args[0]?.toLowerCase() === 'wfc') {
+    await handleOrderWfc(message, args[1]);
+    return;
+  }
+
   const subCommand = args[0]?.toLowerCase();
 
   switch (subCommand) {
+    case 'wfc':
+      await handleOrderWfc(message, args[1]);
+      break;
+
     case 'list':
       await handleOrderList(message, args.slice(1));
       break;
@@ -898,6 +913,134 @@ async function handleOrderCancel(message: Message, args: string[]): Promise<void
 }
 
 /**
+ * G4!order <orderId> wfc
+ * Transitions order to 'waiting_for_confirm', archives execution channel images into a ZIP,
+ * links the ZIP on the order, and completely deletes the execution channel.
+ * Authorized for: owner, admin, manager, staff.
+ */
+export async function handleOrderWfc(message: Message, query?: string): Promise<void> {
+  const actorId = message.author.id;
+  const isAuthorized = await isActorStaffOrHigher(actorId, message.member);
+
+  if (!isAuthorized) {
+    await message.reply({
+      content: '❌ **Permission Denied**: Only Staff, Manager, Admin, and Owner may transition orders to `waiting_for_confirm`.',
+    });
+    return;
+  }
+
+  const rawQuery = (query || '').trim().replace(/^#/, '');
+  if (!rawQuery) {
+    await message.reply({
+      content: '❌ **Missing Order ID**. Usage: `G4!order <orderId> wfc`',
+    });
+    return;
+  }
+
+  const parsedId = Number(rawQuery);
+  const order = await prisma.order.findFirst({
+    where: {
+      OR: [
+        { id: isNaN(parsedId) ? -1 : parsedId },
+        { orderRef: rawQuery },
+      ],
+    },
+    include: {
+      assignments: { where: { status: 'assigned' } },
+      orderChannels: { where: { channelType: 'execution' } },
+    },
+  });
+
+  if (!order) {
+    await message.reply({
+      content: `❌ **Order Not Found**: No order found matching \`${rawQuery}\`.`,
+    });
+    return;
+  }
+
+  if (order.status === 'cancelled') {
+    await message.reply({
+      content: `⚠️ **Order #${order.id} is Cancelled**: Cannot transition a cancelled order to \`waiting_for_confirm\`.`,
+    });
+    return;
+  }
+
+  try {
+    const previousStatus = order.status;
+
+    // 1. Update order status to waiting_for_confirm atomically
+    await prisma.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: order.id },
+        data: {
+          status: 'waiting_for_confirm',
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'ORDER_STATUS_CHANGED',
+          entityType: 'Order',
+          entityId: String(order.id),
+          previousValues: JSON.stringify({ status: previousStatus }),
+          newValues: JSON.stringify({ status: 'waiting_for_confirm' }),
+          reason: `Transitioned to waiting_for_confirm via Discord command G4!order <id> wfc by ${message.author.tag || actorId}`,
+          isSuccess: true,
+        },
+      });
+    });
+
+    // 2. Archive channel images to ZIP & delete execution channel
+    const archiveResult = await archiveAndCleanupExecutionChannel(order.id, message.client, actorId);
+
+    // 3. Refresh Discord card on Orders Board if published
+    try {
+      await publishOrRefreshOrderCard(message.client, order.id, {
+        guildId: message.guild?.id,
+      });
+    } catch (refreshErr: any) {
+      console.warn(`[OrderWfc] Card refresh notice for #${order.id}:`, refreshErr.message);
+    }
+
+    // 4. Construct rich Discord response embed
+    const embed = new EmbedBuilder()
+      .setColor(0x57f287)
+      .setTitle(`✅ Order #${order.id} — Waiting for Customer Confirmation (WFC)`)
+      .setDescription(
+        `**Order Reference:** \`${order.orderRef}\`\n` +
+          `**Previous Status:** \`${previousStatus.toUpperCase()}\` ➔ **New Status:** \`WAITING_FOR_CONFIRM\`\n` +
+          `**Transition Authorized By:** <@${actorId}>\n`
+      )
+      .addFields(
+        {
+          name: '📦 Image Archiving (ZIP)',
+          value: archiveResult.zipUrl
+            ? `• **${archiveResult.imageCount}** image(s) archived.\n• **ZIP Link:** [Download Proofs ZIP](${archiveResult.zipUrl})`
+            : `• ${archiveResult.message}`,
+          inline: false,
+        },
+        {
+          name: '🗑️ Coordination Channel',
+          value: archiveResult.channelName
+            ? `• Channel \`#${archiveResult.channelName}\` was safely archived and deleted.`
+            : `• Channel status: \`${archiveResult.message}\``,
+          inline: false,
+        }
+      )
+      .setFooter({ text: 'G4X Lifecycle & Proof Archiver Engine' })
+      .setTimestamp();
+
+    await message.reply({ embeds: [embed] });
+  } catch (err: any) {
+    console.error(`[OrderCommand] WFC transition failed for order #${order.id}:`, err);
+    await message.reply({
+      content: `❌ **Failed to transition order to WFC**: ${err?.message || err}`,
+    });
+  }
+}
+
+/**
  * Sends order help text in English.
  */
 async function sendOrderHelp(message: Message): Promise<void> {
@@ -920,6 +1063,8 @@ async function sendOrderHelp(message: Message): Promise<void> {
         '  *Verify order payment using an authoritative, unconsumed PaymentReceipt reference.*\n\n' +
         '• `G4!order publish <orderId>`\n' +
         '  *Publish an eligible, verified order to the Discord Orders Board.*\n\n' +
+        '• `G4!order <orderId> wfc`\n' +
+        '  *Transition order to Waiting for Customer Confirmation (WFC), archive execution channel proofs to ZIP, and delete channel. (Admin, Staff, Manager, Owner).*\n\n' +
         '• `G4!order create <gameSlug> <serviceId> <amountUsd> [type] [notes...]`\n' +
         '  *Create a new direct boost order. (Authorized Advertisers & Management).*\n\n' +
         '• `G4!order ext-create <gameSlug> <serviceId> <amountUsd> <platform> [accountRef] [gross|net] [type] [notes...]`\n' +
