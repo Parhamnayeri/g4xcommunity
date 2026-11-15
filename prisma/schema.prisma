@@ -87,6 +87,7 @@ model User {
   paymentRequests          PaymentRequest[]           @relation("UserPaymentRequests")
   reviewedPaymentAttempts  PaymentAttempt[]           @relation("ReviewedPaymentAttempts")
   payoutPreference         UserPayoutPreference?
+  createdFinancialTransactions FinancialTransaction[] @relation("FinancialTxAdmin")
 
   @@index([advertiserRank])
   @@map("users")
@@ -1686,3 +1687,88 @@ model UserPolicyAcceptance {
   @@index([versionId])
   @@map("user_policy_acceptances")
 }
+
+// ─── ۴۵. حساب‌های سیستم مدیریت مالی (Phase 1 Financial Accounts) ───────────────
+model FinancialAccount {
+  id                   String   @id @default(uuid())
+  accountRef           String   @unique @map("account_ref")
+  name                 String
+  category             String   // PLATFORM | INTERNAL
+  accountType          String   @map("account_type")
+  // G4X_DIRECT | ELDORADO | SKYCOACH | OVERGEAR | KINGBOOST | USD_WALLET | TOMAN_WALLET | BANK_ACCOUNT | CASH_ACCOUNT
+  currency             String   // USD | IRR (IRR is stored and calculated in integer Tomans)
+  openingBalance       BigInt   @default(0) @map("opening_balance")
+  currentBalance       BigInt   @default(0) @map("current_balance")
+  reservedBalance      BigInt   @default(0) @map("reserved_balance")
+  availableBalance     BigInt   @default(0) @map("available_balance")
+  status               String   @default("ACTIVE") // ACTIVE | INACTIVE | SUSPENDED
+  bankName             String?  @map("bank_name")
+  accountNumber        String?  @map("account_number")
+  iban                 String?  @map("iban")
+  cardNumber           String?  @map("card_number")
+  notes                String?
+  metadata             String?
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  transactions         FinancialTransaction[]
+  ledgerEntries        FinancialLedgerEntry[]
+
+  @@index([category, accountType])
+  @@index([currency, status])
+  @@map("financial_accounts")
+}
+
+// ─── ۴۶. تراکنش‌های مالی و تعدیلات دستی (Phase 1 Financial Transactions) ────────
+model FinancialTransaction {
+  id                   String   @id @default(uuid())
+  transactionRef       String   @unique @map("transaction_ref")
+  idempotencyKey       String   @unique @map("idempotency_key")
+  accountId            String   @map("account_id")
+  type                 String   // MANUAL_ADJUSTMENT | OPENING_BALANCE | PLATFORM_PAYOUT | ORDER_EARNING | WITHDRAWAL | INTERNAL_TRANSFER
+  direction            String   // CREDIT | DEBIT
+  amount               BigInt
+  currency             String   // USD | IRR
+  reason               String   // Required justification for adjustments
+  description          String?
+  attachmentUrl        String?  @map("attachment_url")
+  status               String   @default("COMPLETED") // PENDING | COMPLETED | FAILED | REVERSED
+  adminId              String?  @map("admin_id")
+  orderId              Int?     @map("order_id")
+  orderRef             String?  @map("order_ref")
+  metadata             String?
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  account              FinancialAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  admin                User?                  @relation("FinancialTxAdmin", fields: [adminId], references: [discordId], onDelete: SetNull)
+  ledgerEntries        FinancialLedgerEntry[]
+
+  @@index([accountId, createdAt])
+  @@index([type, direction])
+  @@index([adminId])
+  @@map("financial_transactions")
+}
+
+// ─── ۴۷. دفاتر کل حسابداری (Phase 1 Financial Ledger Entries) ─────────────────
+model FinancialLedgerEntry {
+  id                   String   @id @default(uuid())
+  entryRef             String   @unique @map("entry_ref")
+  transactionId        String   @map("transaction_id")
+  accountId            String   @map("account_id")
+  entryType            String   @map("entry_type") // CREDIT | DEBIT
+  amount               BigInt
+  currency             String
+  balanceBefore        BigInt   @map("balance_before")
+  balanceAfter         BigInt   @map("balance_after")
+  description          String?
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  transaction          FinancialTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  account              FinancialAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+  @@index([transactionId])
+  @@map("financial_ledger_entries")
+}
+

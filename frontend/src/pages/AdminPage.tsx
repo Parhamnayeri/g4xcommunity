@@ -6,6 +6,7 @@ import { OrderManagementWorkspace } from '../components/orders/OrderManagementWo
 import { UserManagementWorkspace } from '../components/admin/UserManagementWorkspace';
 import { WithdrawalQueueWorkspace } from '../components/admin/WithdrawalQueueWorkspace';
 import { AdminFinanceOverviewWorkspace } from '../components/admin/AdminFinanceOverviewWorkspace';
+import { FinancialManagementWorkspace } from '../components/admin/FinancialManagementWorkspace';
 import {
   ApplicationsWorkspace,
   GamesWorkspace,
@@ -82,6 +83,9 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
     setActiveTab(newTab);
     setSearchParams({ tab: newTab });
   };
+
+  // Sub-view toggle for Finance & Treasury tab
+  const [financeView, setFinanceView] = useState<'accounts' | 'solvency'>('accounts');
 
   // Overview state
   const [overview, setOverview] = useState<AdminOverviewResponse | null>(null);
@@ -481,10 +485,35 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
-      {/* TAB 1.2: UNIFIED FINANCE OVERVIEW & PLATFORM BALANCES                         */}
+      {/* TAB 1.2: UNIFIED FINANCE & TREASURY MANAGEMENT (PHASE 1)                      */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'finance' && (
-        <AdminFinanceOverviewWorkspace onNavigateTab={(t) => handleTabChange(t as AdminTab)} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              type="button"
+              className={`btn btn-xs ${financeView === 'accounts' ? 'btn-cta' : 'btn-secondary'}`}
+              onClick={() => setFinanceView('accounts')}
+              style={financeView === 'accounts' ? { background: '#8B5CF6', color: '#fff', border: '1px solid #7C3AED' } : {}}
+            >
+              🏛️ Financial Accounts &amp; Treasury
+            </button>
+            <button
+              type="button"
+              className={`btn btn-xs ${financeView === 'solvency' ? 'btn-cta' : 'btn-secondary'}`}
+              onClick={() => setFinanceView('solvency')}
+              style={financeView === 'solvency' ? { background: '#8B5CF6', color: '#fff', border: '1px solid #7C3AED' } : {}}
+            >
+              📊 Platform Fee Cuts &amp; Solvency
+            </button>
+          </div>
+
+          {financeView === 'accounts' ? (
+            <FinancialManagementWorkspace onNavigateTab={(t) => handleTabChange(t as AdminTab)} />
+          ) : (
+            <AdminFinanceOverviewWorkspace onNavigateTab={(t) => handleTabChange(t as AdminTab)} />
+          )}
+        </div>
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
