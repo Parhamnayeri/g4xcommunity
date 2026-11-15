@@ -18,7 +18,7 @@ import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 import { reviewRunProof, resolveOrderDispute, getDisputesForUser } from '../services/orderDisputeService';
 import { recordStaffReview, recordAdminFinalApproval } from '../services/financeV2/g4xBoostReleaseService';
-import { confirmOrderBoosterEarnings } from '../services/financeV2/boosterEarningsSyncService';
+import { confirmOrderBoosterEarnings, releaseOrderBoosterEarningsImmediately } from '../services/financeV2/boosterEarningsSyncService';
 import { G4XBoostReleaseStage } from '../services/financeV2/financeV2Types';
 import { getSeparatedOrdersList, getCategorizedOrders, publishOrder, getOrderDiagnostics, getOrderAuditHistory, updateOrderOperationalFields } from '../services/orderLifecycleService';
 import { assignOrderBoosters } from '../services/assignmentService';
@@ -687,36 +687,39 @@ operationsRouter.post(
           updateData.completedAt = new Date();
         }
 
-        // When order reaches 'done': funds enter 24H escrow hold before becoming available for withdrawal
-        if (targetStatus === 'done' && existing.creatorType === 'g4x') {
-          const holdExpiresAt = new Date(Date.now() + 24 * 3600 * 1000);
+        // When order reaches 'done' or 'completed': escrow is removed, booster earnings are immediately released to available balance
+        if ((targetStatus === 'done' || targetStatus === 'completed') && existing.creatorType === 'g4x') {
           await tx.g4XBoostReleaseTracker.upsert({
             where: { orderId },
             update: {
-              stage: G4XBoostReleaseStage.HOLD_24_HOURS,
+              stage: G4XBoostReleaseStage.AVAILABLE,
+              isReleased: true,
+              releasedAt: new Date(),
               adminFinalApprovedAt: new Date(),
               adminFinalApprovedBy: actorId,
-              holdDurationHours: 24,
-              holdExpiresAt,
-              notes: notes ? `Transitioned to done: ${notes}` : 'Transitioned to done (24H Escrow started)',
+              holdDurationHours: 0,
+              holdExpiresAt: null,
+              notes: notes ? `Transitioned to ${targetStatus}: ${notes}` : `Transitioned to ${targetStatus} (Instant release - escrow disabled)`,
             },
             create: {
               orderId,
-              stage: G4XBoostReleaseStage.HOLD_24_HOURS,
+              stage: G4XBoostReleaseStage.AVAILABLE,
+              isReleased: true,
+              releasedAt: new Date(),
               adminFinalApprovedAt: new Date(),
               adminFinalApprovedBy: actorId,
-              holdDurationHours: 24,
-              holdExpiresAt,
-              notes: notes ? `Transitioned to done: ${notes}` : 'Transitioned to done (24H Escrow started)',
+              holdDurationHours: 0,
+              holdExpiresAt: null,
+              notes: notes ? `Transitioned to ${targetStatus}: ${notes}` : `Transitioned to ${targetStatus} (Instant release - escrow disabled)`,
             },
           });
 
-          // Align ledger transaction releaseAt to 24 hours
+          // Mark any escrow_lock entries as released immediately
           await tx.ledgerTransaction.updateMany({
             where: { orderId, entryType: 'escrow_lock' },
             data: {
-              escrowStartAt: new Date(),
-              releaseAt: holdExpiresAt,
+              status: 'released',
+              releaseAt: new Date(),
             },
           });
         }
@@ -751,12 +754,12 @@ operationsRouter.post(
         });
       });
 
-      // Confirm booster earnings for order when reaching done
-      if (targetStatus === 'done') {
+      // Confirm & immediately release booster earnings directly into available balance (withdrawable right away)
+      if (targetStatus === 'done' || targetStatus === 'completed') {
         try {
-          await confirmOrderBoosterEarnings(orderId, actorId);
+          await releaseOrderBoosterEarningsImmediately(orderId, actorId);
         } catch (syncErr: any) {
-          console.warn(`[Operations] Error syncing earnings for order #${orderId}:`, syncErr);
+          console.warn(`[Operations] Error releasing booster earnings for order #${orderId}:`, syncErr);
         }
       }
 

@@ -128,20 +128,9 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
       statusText = 'Warranty Period';
       break;
     case 'done':
-      statusColor = 0x9b59b6; // Purple
-      statusEmoji = '🔒';
-      if (order.boostReleaseTracker?.holdExpiresAt) {
-        const diffMs = new Date(order.boostReleaseTracker.holdExpiresAt).getTime() - Date.now();
-        if (diffMs > 0) {
-          const h = Math.floor(diffMs / 3600000);
-          const m = Math.floor((diffMs % 3600000) / 60000);
-          statusText = `Done (24H Escrow: ${h}h ${m}m remaining)`;
-        } else {
-          statusText = 'Done (Escrow Expired — Releasing)';
-        }
-      } else {
-        statusText = 'Done (24H Escrow Hold)';
-      }
+      statusColor = 0x2ecc71; // Emerald Green
+      statusEmoji = '✅';
+      statusText = 'Done (Funds Withdrawable)';
       break;
     case 'cancelled':
       statusColor = 0xed4245; // Red

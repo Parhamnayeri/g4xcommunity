@@ -12,6 +12,12 @@
 import prisma from '../../database/db';
 import { Prisma } from '@prisma/client';
 import { recordPendingEarnings, confirmPendingEarnings } from './financeV2WalletService';
+import {
+  G4XBoostReleaseStage,
+  LedgerV2AccountType,
+  LedgerV2Direction,
+  LedgerV2EntryType,
+} from './financeV2Types';
 
 function equalSplitMinor(poolMinor: number, boosterIds: string[]): Array<{ boosterId: string; allocatedMinor: number }> {
   if (boosterIds.length === 0 || poolMinor <= 0) return [];
@@ -256,6 +262,116 @@ export async function confirmOrderBoosterEarnings(
         orderId,
         allocationsCount: allocations.length,
         newlyCreditedCount: newlyConfirmedCount,
+      };
+    };
+
+    if (externalTx) {
+      return await runInTx(externalTx);
+    }
+    return await prisma.$transaction(runInTx);
+  };
+
+  try {
+    return await execute();
+  } catch (err: any) {
+    if (err?.code === 'P2002' && !externalTx) {
+      return await execute();
+    }
+    throw err;
+  }
+}
+
+/**
+ * Idempotently confirms and immediately releases booster earnings directly to `availableCents`
+ * (withdrawable balance) when an order is completed/done, removing any 24H escrow hold.
+ */
+export async function releaseOrderBoosterEarningsImmediately(
+  orderId: number,
+  actorId: string,
+  externalTx?: Prisma.TransactionClient
+): Promise<EarningsSyncResult & { newlyReleasedCount: number }> {
+  const execute = async (): Promise<EarningsSyncResult & { newlyReleasedCount: number }> => {
+    const runInTx = async (tx: Prisma.TransactionClient): Promise<EarningsSyncResult & { newlyReleasedCount: number }> => {
+      // 1. Ensure allocations exist and are confirmed
+      const confirmRes = await confirmOrderBoosterEarnings(orderId, actorId, tx);
+
+      const allocations = await tx.boosterPayoutAllocation.findMany({
+        where: { orderId },
+        orderBy: { id: 'asc' },
+      });
+
+      let newlyReleasedCount = 0;
+      for (const alloc of allocations) {
+        if (alloc.allocatedMinor <= 0) continue;
+        const releaseIdempotencyKey = `EARN_REL_IMM_ORD_${orderId}_BOOSTER_${alloc.boosterId}`;
+        const existingRelease = await tx.ledgerEntryV2.findUnique({
+          where: { idempotencyKey: releaseIdempotencyKey },
+        });
+        if (existingRelease) {
+          continue;
+        }
+
+        // Move funds atomically from confirmedEarningsCents to availableCents
+        await tx.walletV2.upsert({
+          where: { userId: alloc.boosterId },
+          update: {
+            confirmedEarningsCents: { decrement: alloc.allocatedMinor },
+            availableCents: { increment: alloc.allocatedMinor },
+          },
+          create: {
+            userId: alloc.boosterId,
+            availableCents: alloc.allocatedMinor,
+          },
+        });
+
+        // Record immutable ledger entry for instant release
+        await tx.ledgerEntryV2.create({
+          data: {
+            entryRef: `LEDGER_REL_IMM_${orderId}_${alloc.boosterId}_${Date.now()}`,
+            userId: alloc.boosterId,
+            orderId,
+            amountCents: alloc.allocatedMinor,
+            accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
+            entryType: LedgerV2EntryType.AVAILABLE_RELEASE,
+            direction: LedgerV2Direction.CREDIT,
+            idempotencyKey: releaseIdempotencyKey,
+            description: `Instant boost payout release for order #${orderId} (Available for immediate withdrawal)`,
+            createdBy: actorId,
+          },
+        });
+
+        newlyReleasedCount++;
+      }
+
+      // Update g4XBoostReleaseTracker to AVAILABLE (0-hour hold, released immediately)
+      await tx.g4XBoostReleaseTracker.upsert({
+        where: { orderId },
+        update: {
+          stage: G4XBoostReleaseStage.AVAILABLE,
+          isReleased: true,
+          releasedAt: new Date(),
+          holdDurationHours: 0,
+          holdExpiresAt: null,
+          adminFinalApprovedAt: new Date(),
+          adminFinalApprovedBy: actorId,
+          notes: 'Order done: booster earnings immediately available for withdrawal (escrow disabled)',
+        },
+        create: {
+          orderId,
+          stage: G4XBoostReleaseStage.AVAILABLE,
+          isReleased: true,
+          releasedAt: new Date(),
+          holdDurationHours: 0,
+          holdExpiresAt: null,
+          adminFinalApprovedAt: new Date(),
+          adminFinalApprovedBy: actorId,
+          notes: 'Order done: booster earnings immediately available for withdrawal (escrow disabled)',
+        },
+      });
+
+      return {
+        ...confirmRes,
+        newlyReleasedCount,
       };
     };
 

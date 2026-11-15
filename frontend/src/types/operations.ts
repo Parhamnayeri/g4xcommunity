@@ -261,7 +261,7 @@ export interface OrderDiagnosticsData {
   disputes: Array<{ id: number; status: string; disputeType: string; description: string;
     openedById: string; resolutionNotes: string | null; resolvedById: string | null; createdAt: string }>;
   escrowHolds: Array<{ id: number; status: string; reason: string }>;
-  boostReleaseTracker: { stage: string; proofSubmittedAt: string | null; staffReviewedAt: string | null;
+  boostReleaseTracker: { stage: string; isReleased?: boolean; releasedAt?: string | null; proofSubmittedAt: string | null; staffReviewedAt: string | null;
     adminFinalApprovedAt: string | null; holdExpiresAt: string | null } | null;
 }
 
