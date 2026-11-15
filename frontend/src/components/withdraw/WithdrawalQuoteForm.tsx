@@ -109,6 +109,9 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
 
       if (res.success && res.quote) {
         setActiveQuote(res.quote);
+        setTimeout(() => {
+          document.getElementById('itemized-quote-card')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }, 100);
       } else {
         setQuoteError(res.error || 'Failed to generate authoritative quote.');
       }
@@ -397,14 +400,18 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
       {/* Itemized Quote Preview */}
       {activeQuote && (
         <div
+          id="itemized-quote-card"
           style={{
             marginTop: '1.5rem',
             backgroundColor: 'var(--bg-surface)',
-            border: '1px solid var(--primary-purple)',
+            border: '2px solid var(--primary-purple)',
             borderRadius: 'var(--radius-sm)',
             padding: '1.25rem',
           }}
         >
+          <div style={{ backgroundColor: 'rgba(234, 179, 8, 0.15)', border: '1px solid #EAB308', borderRadius: 'var(--radius-xs)', padding: '0.75rem 1rem', marginBottom: '1rem', color: '#FEF08A', fontSize: '0.84rem', fontWeight: 600 }}>
+            ⚡ <strong>Step 2 of 2:</strong> Quote generated! Review the breakdown below and click <strong>"Confirm &amp; Reserve Funds →"</strong> at the bottom to finalize your withdrawal request.
+          </div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem' }}>
             <div>
               <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>

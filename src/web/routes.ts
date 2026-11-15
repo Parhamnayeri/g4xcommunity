@@ -1634,7 +1634,7 @@ router.get(
   async (_req: Request, res: Response): Promise<void> => {
     try {
       const requests = await prisma.boosterWithdrawalRequest.findMany({
-        where: { status: { in: ['RESERVED', 'PROCESSING', 'QUOTED', 'UNDER_ADMIN_REVIEW'] } },
+        where: { status: { in: ['RESERVED', 'PROCESSING', 'QUOTED', 'UNDER_ADMIN_REVIEW', 'REQUESTED', 'USER_CONFIRMED'] } },
         include: {
           booster: {
             select: { discordId: true, username: true, displayName: true },

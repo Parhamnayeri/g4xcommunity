@@ -352,9 +352,16 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
               <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
                 <div>Booster: <strong>{selectedWithdrawal.boosterName}</strong></div>
                 <div>Method: <strong>{selectedWithdrawal.payoutMethod}</strong></div>
+                <div>Status: <span className="badge badge-purple" style={{ fontSize: '0.72rem', marginLeft: '4px' }}>{selectedWithdrawal.status}</span></div>
                 <div>Requested Amount: <strong style={{ color: 'var(--accent-yellow)' }}>${(selectedWithdrawal.requestedUsdCents ? selectedWithdrawal.requestedUsdCents / 100 : selectedWithdrawal.requestedUsd || 0).toFixed(2)} USD</strong></div>
                 <div>Destination: <span style={{ fontFamily: 'monospace' }}>{selectedWithdrawal.destinationAddress}</span></div>
               </div>
+
+              {selectedWithdrawal.status === 'QUOTED' && (
+                <div style={{ backgroundColor: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.35)', borderRadius: 'var(--radius-sm)', padding: '0.75rem 1rem', marginBottom: '1.25rem', fontSize: '0.82rem', color: '#E9D5FF', lineHeight: 1.4 }}>
+                  ℹ <strong>Unconfirmed Quote:</strong> The booster generated this quote but did not finalize the reservation. Approving or disbursing will automatically verify and reserve <strong>${(selectedWithdrawal.requestedUsdCents ? selectedWithdrawal.requestedUsdCents / 100 : selectedWithdrawal.requestedUsd || 0).toFixed(2)} USD</strong> from their available wallet balance.
+                </div>
+              )}
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
@@ -364,7 +371,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                     checked={decision === 'approve_processing'}
                     onChange={() => setDecision('approve_processing')}
                   />
-                  Approve for Manual Transfer (Processing)
+                  {selectedWithdrawal.status === 'QUOTED' ? 'Auto-Reserve & Approve for Transfer (Processing)' : 'Approve for Manual Transfer (Processing)'}
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                   <input
@@ -373,7 +380,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                     checked={decision === 'approve_paid'}
                     onChange={() => setDecision('approve_paid')}
                   />
-                  Confirm Disbursement (Paid + Tx Proof)
+                  {selectedWithdrawal.status === 'QUOTED' ? 'Auto-Reserve & Confirm Disbursement (Paid + Tx Proof)' : 'Confirm Disbursement (Paid + Tx Proof)'}
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                   <input
@@ -382,7 +389,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                     checked={decision === 'reject'}
                     onChange={() => setDecision('reject')}
                   />
-                  Reject &amp; Refund Reserve
+                  {selectedWithdrawal.status === 'QUOTED' ? 'Reject & Cancel Unconfirmed Quote' : 'Reject & Refund Reserve'}
                 </label>
               </div>
 
@@ -465,7 +472,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                   }
                 }}
               >
-                {submittingReview ? 'Executing...' : 'Confirm Decision'}
+                {submittingReview ? 'Executing...' : selectedWithdrawal.status === 'QUOTED' && decision !== 'reject' ? 'Auto-Reserve & Confirm' : 'Confirm Decision'}
               </button>
             </div>
           </div>

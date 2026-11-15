@@ -772,7 +772,14 @@ export async function adminExecuteManualPayout(
     throw new Error(`ALREADY_PAID: Withdrawal #${requestId} has already been settled and paid`);
   }
 
-  if (![BoosterWithdrawalStatus.RESERVED, BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW, BoosterWithdrawalStatus.PROCESSING].includes(request.status as BoosterWithdrawalStatus)) {
+  if (![
+    BoosterWithdrawalStatus.RESERVED,
+    BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
+    BoosterWithdrawalStatus.PROCESSING,
+    BoosterWithdrawalStatus.QUOTED,
+    BoosterWithdrawalStatus.REQUESTED,
+    BoosterWithdrawalStatus.USER_CONFIRMED,
+  ].includes(request.status as BoosterWithdrawalStatus)) {
     throw new Error(`INVALID_STATUS: Cannot execute payout on withdrawal in status '${request.status}'`);
   }
 
@@ -862,6 +869,33 @@ export async function adminExecuteManualPayout(
 
   // ۴. در صورت تایید انطباق، ورود به تراکنش اتمیک تسویه دفاتر کل و تغییر قطعی به PAID
   return await prisma.$transaction(async (tx) => {
+    // در صورتی که درخواست در وضعیت QUOTED یا REQUESTED بوده و موجودی هنوز رزرو نشده باشد، ابتدا رزرو موجودی از والت انجام می‌شود
+    if ([BoosterWithdrawalStatus.QUOTED, BoosterWithdrawalStatus.REQUESTED, BoosterWithdrawalStatus.USER_CONFIRMED].includes(request.status as BoosterWithdrawalStatus)) {
+      const freshWallet = await tx.walletV2.findUnique({
+        where: { userId: request.boosterId },
+      });
+      if (!freshWallet || freshWallet.availableCents < request.requestedUsdCents) {
+        throw new Error(
+          `INSUFFICIENT_FUNDS: Booster available balance ($${((freshWallet?.availableCents ?? 0) / 100).toFixed(2)}) is less than requested amount ($${(request.requestedUsdCents / 100).toFixed(2)})`
+        );
+      }
+
+      await reserveAvailableCents(
+        request.boosterId,
+        request.requestedUsdCents,
+        LedgerV2EntryType.WITHDRAWAL_RESERVE,
+        {
+          withdrawalRequestId: request.id,
+          postingGroupId: `POSTING_GRP_WDR_${request.withdrawalRef}`,
+          accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
+          entryRef: `LEDGER_WDR_RES_${request.withdrawalRef}`,
+          description: `Auto-reserved funds on payout execution of withdrawal #${request.id} by admin ${actorId}`,
+          createdBy: actorId,
+        },
+        tx
+      );
+    }
+
     const casUpdate = await tx.boosterWithdrawalRequest.updateMany({
       where: {
         id: requestId,
@@ -870,6 +904,9 @@ export async function adminExecuteManualPayout(
             BoosterWithdrawalStatus.RESERVED,
             BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
             BoosterWithdrawalStatus.PROCESSING,
+            BoosterWithdrawalStatus.QUOTED,
+            BoosterWithdrawalStatus.REQUESTED,
+            BoosterWithdrawalStatus.USER_CONFIRMED,
           ],
         },
       },
@@ -879,6 +916,7 @@ export async function adminExecuteManualPayout(
         processedAt: new Date(),
         approvedBy: actorId,
         approvedAt: new Date(),
+        userConfirmedAt: request.userConfirmedAt || new Date(),
         externalTxHash: request.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20 ? normalizedRef : null,
         bankReceiptRef: request.payoutMethod === BoosterWithdrawalMethod.IRT_BANK ? normalizedRef : null,
       },
@@ -1022,6 +1060,33 @@ export async function adminApproveWithdrawalForProcessing(
       return { request, alreadyProcessing: true };
     }
 
+    // در صورتی که درخواست در وضعیت QUOTED یا REQUESTED بوده و موجودی هنوز رزرو نشده باشد، ابتدا رزرو موجودی از والت انجام می‌شود
+    if ([BoosterWithdrawalStatus.QUOTED, BoosterWithdrawalStatus.REQUESTED, BoosterWithdrawalStatus.USER_CONFIRMED].includes(request.status as BoosterWithdrawalStatus)) {
+      const freshWallet = await tx.walletV2.findUnique({
+        where: { userId: request.boosterId },
+      });
+      if (!freshWallet || freshWallet.availableCents < request.requestedUsdCents) {
+        throw new Error(
+          `INSUFFICIENT_FUNDS: Booster available balance ($${((freshWallet?.availableCents ?? 0) / 100).toFixed(2)}) is less than requested amount ($${(request.requestedUsdCents / 100).toFixed(2)})`
+        );
+      }
+
+      await reserveAvailableCents(
+        request.boosterId,
+        request.requestedUsdCents,
+        LedgerV2EntryType.WITHDRAWAL_RESERVE,
+        {
+          withdrawalRequestId: request.id,
+          postingGroupId: `POSTING_GRP_WDR_${request.withdrawalRef}`,
+          accountType: LedgerV2AccountType.LIABILITY_USER_WALLET_AVAILABLE,
+          entryRef: `LEDGER_WDR_RES_${request.withdrawalRef}`,
+          description: `Auto-reserved funds on approval of withdrawal #${request.id} by admin ${actorId}`,
+          createdBy: actorId,
+        },
+        tx
+      );
+    }
+
     const casUpdate = await tx.boosterWithdrawalRequest.updateMany({
       where: {
         id: requestId,
@@ -1029,6 +1094,9 @@ export async function adminApproveWithdrawalForProcessing(
           in: [
             BoosterWithdrawalStatus.RESERVED,
             BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
+            BoosterWithdrawalStatus.QUOTED,
+            BoosterWithdrawalStatus.REQUESTED,
+            BoosterWithdrawalStatus.USER_CONFIRMED,
           ],
         },
       },
@@ -1036,6 +1104,7 @@ export async function adminApproveWithdrawalForProcessing(
         status: BoosterWithdrawalStatus.PROCESSING,
         approvedBy: actorId,
         approvedAt: new Date(),
+        userConfirmedAt: request.userConfirmedAt || new Date(),
       },
     });
 
@@ -1104,6 +1173,31 @@ export async function adminRejectWithdrawal(
       return { request, alreadyRejected: true };
     }
 
+    // در صورتی که درخواست در وضعیت QUOTED باشد، هیچ وجهی در والت رزرو نشده است، لذا وضعیت مستقیماً رد می‌شود
+    if (request.status === BoosterWithdrawalStatus.QUOTED) {
+      const updatedRequest = await tx.boosterWithdrawalRequest.update({
+        where: { id: requestId },
+        data: {
+          status: BoosterWithdrawalStatus.REJECTED,
+          rejectionReason,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId,
+          action: 'BOOSTER_WITHDRAWAL_REJECTED',
+          entityType: 'BoosterWithdrawalRequest',
+          entityId: String(requestId),
+          reason: rejectionReason,
+          previousValues: JSON.stringify({ status: request.status }),
+          newValues: JSON.stringify({ status: BoosterWithdrawalStatus.REJECTED, rejectionReason }),
+        },
+      });
+
+      return { request: updatedRequest, wallet: null, alreadyRejected: false };
+    }
+
     // قفل همروندی اتمیک (Atomic Compare-and-Swap)
     const casUpdate = await tx.boosterWithdrawalRequest.updateMany({
       where: {
@@ -1113,6 +1207,8 @@ export async function adminRejectWithdrawal(
             BoosterWithdrawalStatus.RESERVED,
             BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
             BoosterWithdrawalStatus.PROCESSING,
+            BoosterWithdrawalStatus.REQUESTED,
+            BoosterWithdrawalStatus.USER_CONFIRMED,
           ],
         },
       },
@@ -1128,10 +1224,15 @@ export async function adminRejectWithdrawal(
 
     // استرداد وجوه رزروشده به موجودی در دسترس به طور دقیق یک‌باره
     let updatedWallet = null;
+    const boosterWallet = await tx.walletV2.findUnique({ where: { userId: request.boosterId } });
     if (
-      request.status === BoosterWithdrawalStatus.RESERVED ||
-      request.status === BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW ||
-      request.status === BoosterWithdrawalStatus.PROCESSING
+      boosterWallet &&
+      boosterWallet.reservedCents >= request.requestedUsdCents &&
+      (request.status === BoosterWithdrawalStatus.RESERVED ||
+       request.status === BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW ||
+       request.status === BoosterWithdrawalStatus.PROCESSING ||
+       request.status === BoosterWithdrawalStatus.REQUESTED ||
+       request.status === BoosterWithdrawalStatus.USER_CONFIRMED)
     ) {
       const rev = await reverseReservedCents(
         request.boosterId,
