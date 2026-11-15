@@ -47,8 +47,8 @@ Configure the following variables in your hosting dashboard or local `.env` file
 | `FINANCE_V2_LIVE_CREDITS_ENABLED` | Real advertiser funding credit execution switch | **`false`** (Default false; live credits strictly disabled) | Dev & Prod |
 | `FINANCE_V2_LIVE_PAYOUTS_ENABLED` | Real booster withdrawal payout execution switch | **`false`** (Default false; live payouts strictly disabled) | Dev & Prod |
 | `G4X_BOOST_HOLD_HOURS` | Holding period for G4X published boosts from Admin Final Approval | `24` | Dev & Prod |
-| `BOOSTER_USDT_WITHDRAWAL_FEE_CENTS` | Fixed fee for booster USDT BEP-20 withdrawals | `40` ($0.40) | Dev & Prod |
-| `BOOSTER_IRT_WITHDRAWAL_FEE_CENTS` | Fixed fee for booster IRT bank withdrawals | `130` ($1.30) | Dev & Prod |
+| `BOOSTER_USDT_WITHDRAWAL_FEE_CENTS` | Fixed fee for booster USDT BEP-20 withdrawals | `30` ($0.30) | Dev & Prod |
+| `BOOSTER_IRT_WITHDRAWAL_FEE_CENTS` | Fixed fee for booster IRT bank withdrawals | `100` ($1.00) | Dev & Prod |
 | `BOOSTER_IRT_RATE_DISCOUNT_PER_USD` | Rate discount per USD for booster IRT withdrawals | `3000` (3,000 IRT) | Dev & Prod |
 | `ADVERTISER_IRT_PURCHASE_FEE_RATE` | Currency purchase fee for advertiser IRT funding | *No default. Must be explicitly approved by management* | Admin Config |
 | `IRT_PAYOUT_TUESDAY_CUTOFF_HOUR` | Tuesday morning cutoff hour for Wednesday payout window | *Unapproved by owner. Missing cutoff blocks scheduling* | Admin Config |
@@ -258,8 +258,8 @@ G4X Community Finance V2 is a clean redesign of the financial domain. Because th
    - Applies strictly to G4X-published boosts (`creatorType === 'g4x'`); other orders are excluded.
    - Production safety switch `ESCROW_RELEASE_ENABLED=false` blocks actual automated balance releases.
 7. **Booster Withdrawals**:
-   - **USDT**: BEP-20 only; strict EIP-55 EVM address validation; fixed fee $0.40; Net USD = Requested - $0.40; manual payout with transaction hash.
-   - **IRT**: Fixed fee $1.30; Effective Rate = Admin Rate - 3,000 IRT; Net IRT = `(Requested USD - $1.30) * Effective Rate`; no percentage fee.
+   - **USDT**: BEP-20 only; strict EIP-55 EVM address validation; fixed fee $0.30; Net USD = Requested - $0.30; manual payout with transaction hash.
+   - **IRT**: Fixed fee $1.00; Effective Rate = Admin Rate - 3,000 IRT; Net IRT = `(Requested USD - $1.00) * Effective Rate`; no percentage fee.
    - **Scheduling**: Saturday 08:00 to Tuesday morning cutoff paid on Wednesday; after cutoff paid on Saturday using Tehran timezone (`Asia/Tehran`). Missing Tuesday cutoff config blocks automated scheduling finalization.
 
 ### 9.2 Legacy Table Isolation

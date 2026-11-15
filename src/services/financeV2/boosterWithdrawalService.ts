@@ -4,15 +4,15 @@
  * اصول و قوانین مصوب مالک:
  *  ۱. برداشت تتر (USDT BEP-20):
  *      - منحصراً روی شبکه BNB Smart Chain (BEP-20)
- *      - کارمزد ثابت ۴۰ سنت دلار ($0.40) کسر از مبلغ درخواستی
+ *      - کارمزد ثابت ۳۰ سنت دلار ($0.30) کسر از مبلغ درخواستی
  *      - عدم اخذ کارمزد متغیر ثانویه شبکه از بوستر
- *      - Net USD Payout Value = Requested USD - $0.40
+ *      - Net USD Payout Value = Requested USD - $0.30
  *      - زمان‌بندی عملیاتی ۱ تا ۴۸ ساعت، تسویه کاملاً دستی توسط ادمین
  *
  *  ۲. برداشت تومانی (IRT Bank):
- *      - کارمزد ثابت ۱.۳۰ دلار ($1.30)
+ *      - کارمزد ثابت ۱.۰۰ دلار ($1.00)
  *      - نرخ موثر تومانی: Effective Rate = Admin USD/IRT Rate - 3,000 IRT
- *      - Net IRT = (Requested USD - $1.30) * Effective IRT Rate
+ *      - Net IRT = (Requested USD - $1.00) * Effective IRT Rate
  *      - عدم اعمال کارمزد درصدی خرید ارز (آن کارمزد ویژه شارژ ادورتایزر است)
  *      - چرخه تسویه در روزهای شنبه و چهارشنبه
  *      - بازه تسویه چهارشنبه: درخواست‌های ثبت‌شده از شنبه ساعت ۰۸:۰۰ تا صبح سه‌شنبه
@@ -205,7 +205,7 @@ export function verifyWithdrawalQuoteHash(
 
 /**
  * ۱. محاسبه پیش‌فاکتور برداشت تتر بوستر (USDT BEP-20)
- * کارمزد ثابت ۴۰ سنت ($0.40) و اعتبارسنجی قطعی آدرس استاندارد BEP-20 / EIP-55
+ * کارمزد ثابت ۳۰ سنت ($0.30) و اعتبارسنجی قطعی آدرس استاندارد BEP-20 / EIP-55
  */
 export async function generateUsdtWithdrawalQuote(
   input: UsdtQuoteInput
@@ -275,7 +275,7 @@ export async function generateUsdtWithdrawalQuote(
 
 /**
  * ۲. محاسبه پیش‌فاکتور برداشت تومانی بوستر (IRT Bank)
- * کارمزد ثابت ۱.۳۰ دلار ($1.30)
+ * کارمزد ثابت ۱.۰۰ دلار ($1.00)
  * نرخ موثر = نرخ ادمین منهای ۳,۰۰۰ تومان به ازای هر دلار
  * قانون حاکمیتی: نرخ دلار به تومان موثق در سمت سرور واکشی می‌شود و بوستر حق تعیین یا دستکاری آن را ندارد.
  */
@@ -523,7 +523,7 @@ export async function createWithdrawalRequestFromQuote(quote: WithdrawalQuoteRes
     const config = await prisma.systemFinancialConfig.findUnique({
       where: { key: 'irt_payout_tuesday_cutoff_hour' },
     });
-    const cutoffHour = config ? Number(config.value) : null;
+    const cutoffHour = config && config.value ? Number(config.value) : 10;
     scheduleResult = calculateIrtPayoutSchedule(new Date(), cutoffHour);
   }
 

@@ -1216,7 +1216,7 @@ const handleWithdrawalsOverview = async (req: Request, res: Response): Promise<v
     const effectiveIrtRate = adminUsdIrtRate !== null && adminUsdIrtRate > irtRateDiscount
       ? adminUsdIrtRate - irtRateDiscount
       : null;
-    const irtTuesdayCutoffHour = cutoffConfig?.value ? Number(cutoffConfig.value) : null;
+    const irtTuesdayCutoffHour = cutoffConfig?.value ? Number(cutoffConfig.value) : 10;
     const livePayoutsEnabled = process.env.FINANCE_V2_LIVE_PAYOUTS_ENABLED === 'true';
 
     res.json({
@@ -1238,10 +1238,10 @@ const handleWithdrawalsOverview = async (req: Request, res: Response): Promise<v
         eligibleWithdrawalUsd: (walletSummary.availableCents / 100).toFixed(2),
       },
       policy: {
-        usdtBep20FeeCents: FINANCE_V2_CONSTANTS.BOOSTER_USDT_WITHDRAWAL_FEE_CENTS, // 40
-        usdtBep20FeeUsd: '0.40',
-        irtBankFeeCents: FINANCE_V2_CONSTANTS.BOOSTER_IRT_WITHDRAWAL_FEE_CENTS, // 130
-        irtBankFeeUsd: '1.30',
+        usdtBep20FeeCents: FINANCE_V2_CONSTANTS.BOOSTER_USDT_WITHDRAWAL_FEE_CENTS, // 30
+        usdtBep20FeeUsd: '0.30',
+        irtBankFeeCents: FINANCE_V2_CONSTANTS.BOOSTER_IRT_WITHDRAWAL_FEE_CENTS, // 100
+        irtBankFeeUsd: '1.00',
         adminUsdIrtRate,
         irtRateDiscount,
         effectiveIrtRate,

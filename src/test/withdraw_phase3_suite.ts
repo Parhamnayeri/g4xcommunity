@@ -204,9 +204,9 @@ async function runWithdrawPhase3Suite() {
       '12. Eligible withdrawal amount represents gross liquid funds before method-specific fees'
     );
     assert(
-      resOverviewA.body.policy.usdtBep20FeeCents === 40 &&
-        resOverviewA.body.policy.irtBankFeeCents === 130,
-      '13. Authoritative policy fees ($0.40 USDT / $1.30 IRT) provided'
+      resOverviewA.body.policy.usdtBep20FeeCents === 30 &&
+        resOverviewA.body.policy.irtBankFeeCents === 100,
+      '13. Authoritative policy fees ($0.30 USDT / $1.00 IRT) provided'
     );
 
     // ─── ۵. اعتبارسنجی چکسام و فرمت شبای بانکی ایران (ISO 7064 Mod 97-10) ────
@@ -279,8 +279,8 @@ async function runWithdrawPhase3Suite() {
       });
     assert(quoteUsdtRes.status === 200 && quoteUsdtRes.body.success, '28. USDT BEP-20 withdrawal quote generated');
     const usdtQuote = quoteUsdtRes.body.quote;
-    assert(usdtQuote.fixedFeeUsdCents === 40 && usdtQuote.fixedFeeUsd === '0.40', '29. Flat $0.40 fee applied to USDT BEP-20 quote');
-    assert(usdtQuote.netUsdCents === 4960 && usdtQuote.quotedNetPayoutAmount === '49.60', '30. Net payout equals $49.60 USDT');
+    assert(usdtQuote.fixedFeeUsdCents === 30 && usdtQuote.fixedFeeUsd === '0.30', '29. Flat $0.30 fee applied to USDT BEP-20 quote');
+    assert(usdtQuote.netUsdCents === 4970 && usdtQuote.quotedNetPayoutAmount === '49.70', '30. Net payout equals $49.70 USDT');
 
     // ─── ۹. عدم وجود نرخ مصوب تومان (Fail-Closed Missing Rate) ─────────────
     await prisma.systemFinancialConfig.deleteMany({ where: { key: 'admin_usd_irt_rate' } });
@@ -313,12 +313,12 @@ async function runWithdrawPhase3Suite() {
       });
     assert(quoteIrtRes.status === 200 && quoteIrtRes.body.success, '32. IRT Bank withdrawal quote generated');
     const irtQuote = quoteIrtRes.body.quote;
-    assert(irtQuote.fixedFeeUsdCents === 130 && irtQuote.fixedFeeUsd === '1.30', '33. Flat $1.30 fee applied to IRT withdrawal');
-    assert(irtQuote.netUsdCents === 4870 && irtQuote.netUsd === '48.70', '34. Net USD equals $48.70');
+    assert(irtQuote.fixedFeeUsdCents === 100 && irtQuote.fixedFeeUsd === '1.00', '33. Flat $1.00 fee applied to IRT withdrawal');
+    assert(irtQuote.netUsdCents === 4900 && irtQuote.netUsd === '49.00', '34. Net USD equals $49.00');
     assert(irtQuote.rateDiscount === 3000, '35. 3,000 Toman discount per USD applied to booster withdrawal');
     assert(irtQuote.effectiveRate === 92000, '36. Effective IRT rate equals 92,000 (95,000 - 3,000)');
-    // 48.70 * 92000 = 4,480,400 Toman
-    assert(irtQuote.quotedNetPayoutAmount === '4480400', '37. Expected net Toman payout equals 4,480,400 Toman');
+    // 49.00 * 92000 = 4,508,000 Toman
+    assert(irtQuote.quotedNetPayoutAmount === '4508000', '37. Expected net Toman payout equals 4,508,000 Toman');
 
     // ─── ۱۱. رد درخواست بیش از موجودی در دسترس (Insufficient Funds) ────────
     const overFundRes = await authA.agent

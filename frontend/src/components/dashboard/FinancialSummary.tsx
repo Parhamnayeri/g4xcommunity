@@ -199,7 +199,7 @@ export const FinancialSummary: React.FC<FinancialSummaryProps> = ({
               ${wallet.eligibleWithdrawalUsd} USD
             </span>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block' }}>
-              Method fees apply upon submission: $0.40 (USDT BEP-20) or $1.30 (IRT Bank). Wednesday &amp; Saturday cycles.
+              Method fees apply upon submission: $0.30 (USDT BEP-20) or $1.00 (IRT Bank). Wednesday &amp; Saturday cycles.
             </span>
           </div>
         </div>

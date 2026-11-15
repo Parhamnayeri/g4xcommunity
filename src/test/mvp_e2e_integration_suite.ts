@@ -19,7 +19,7 @@
  *     Failure paths: Self-trading rejection, Expired quote rejection, Exchanger self-approval block, Dispute blocking settlement, Safe reservation refund on cancel.
  *
  *  E. Booster Withdrawal:
- *     Available USD test balance → USDT quote ($0.40 fee, BEP-20) / IRT quote ($1.30 fee, -3,000 IRT/USD) → User Confirmation → Funds Reserved → Manual Payout Review (Simulation).
+ *     Available USD test balance → USDT quote ($0.30 fee, BEP-20) / IRT quote ($1.00 fee, -3,000 IRT/USD) → User Confirmation → Funds Reserved → Manual Payout Review (Simulation).
  *     Failure paths: Insufficient funds, Invalid/burn address, Unauthorized rate override, Duplicate confirmation, Double payout prevention.
  *
  *  F. Simplified Status Verification:
@@ -557,7 +557,7 @@ async function runMvpE2eTestSuite() {
       createdBy: testAdminId,
     });
 
-    // ۵-الف: صدور پیش‌فاکتور برداشت تتری (BEP-20) با کارمزد ثابت ۴۰ سنت ($0.40)
+    // ۵-الف: صدور پیش‌فاکتور برداشت تتری (BEP-20) با کارمزد ثابت ۳۰ سنت ($0.30)
     const validBscAddress = '0x1234567890123456789012345678901234567890';
     const usdtQuote = await generateUsdtWithdrawalQuote({
       boosterId: testBooster1Id,
@@ -566,10 +566,10 @@ async function runMvpE2eTestSuite() {
     });
 
     assert(
-      usdtQuote.fixedFeeUsdCents === 40 &&
-      usdtQuote.netUsdCents === 4960 &&
-      usdtQuote.quotedNetPayoutAmount === '49.60',
-      'E1. Booster USDT withdrawal applies exact fixed $0.40 fee (Net = $49.60 on $50.00 requested)'
+      usdtQuote.fixedFeeUsdCents === 30 &&
+      usdtQuote.netUsdCents === 4970 &&
+      usdtQuote.quotedNetPayoutAmount === '49.70',
+      'E1. Booster USDT withdrawal applies exact fixed $0.30 fee (Net = $49.70 on $50.00 requested)'
     );
 
     // ۵-ب: اعتبارسنجی رد آدرس ناصحیح شبکه یا کارمزد غیرمجاز
@@ -585,9 +585,9 @@ async function runMvpE2eTestSuite() {
     }
     assert(invalidAddressBlocked, 'E2. Invalid or non-BEP20 crypto address is strictly rejected');
 
-    // ۵-ج: صدور پیش‌فاکتور برداشت ریالی با کارمزد ثابت ۱.۳۰ دلار و ۳,۰۰۰ تومان تخفیف نرخ ادمین
+    // ۵-ج: صدور پیش‌فاکتور برداشت ریالی با کارمزد ثابت ۱.۰۰ دلار و ۳,۰۰۰ تومان تخفیف نرخ ادمین
     // نرخ ادمین ۹۰,۰۰۰ تومان -> نرخ مؤثر ۸۷,۰۰۰ تومان
-    // مبلغ: ۳۰.۰۰ دلار (۳۰۰۰ سنت) -> خالص ۲۸.۷۰ دلار -> معادل ۲,۴۹۶,۹۰۰ تومان
+    // مبلغ: ۳۰.۰۰ دلار (۳۰۰۰ سنت) -> خالص ۲۹.۰۰ دلار -> معادل ۲,۵۲۳,۰۰۰ تومان
     const irtQuote = await generateIrtWithdrawalQuote({
       boosterId: testBooster1Id,
       requestedUsdCents: 3000,
@@ -595,10 +595,10 @@ async function runMvpE2eTestSuite() {
     });
 
     assert(
-      irtQuote.fixedFeeUsdCents === 130 &&
+      irtQuote.fixedFeeUsdCents === 100 &&
       irtQuote.effectiveRate === 87000 &&
-      irtQuote.quotedNetPayoutAmount === '2496900',
-      'E3. Booster IRT withdrawal applies fixed $1.30 fee and exact 3,000 IRT discount (-3,000 tomans/USD)'
+      irtQuote.quotedNetPayoutAmount === '2523000',
+      'E3. Booster IRT withdrawal applies fixed $1.00 fee and exact 3,000 IRT discount (-3,000 tomans/USD)'
     );
 
     // ۵-د: تایید پیش‌فاکتور تتری توسط بوستر و قفل موجودی در والت (RESERVED)

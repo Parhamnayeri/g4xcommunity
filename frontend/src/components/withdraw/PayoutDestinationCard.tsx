@@ -153,7 +153,7 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
                 🏦 Iranian Bank (Sheba)
               </span>
               <span className="badge badge-muted" style={{ fontSize: '0.65rem' }}>
-                $1.30 Fee
+                $1.00 Fee
               </span>
             </div>
 
@@ -188,7 +188,7 @@ export const PayoutDestinationCard: React.FC<PayoutDestinationCardProps> = ({
                 💎 USDT (BEP-20)
               </span>
               <span className="badge badge-lime" style={{ fontSize: '0.65rem' }}>
-                $0.40 Fee
+                $0.30 Fee
               </span>
             </div>
 

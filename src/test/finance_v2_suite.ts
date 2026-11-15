@@ -12,8 +12,8 @@
  * 7. SkyCoach 10% per order replaces legacy 5% + $5; no double-charging in batches
  * 8. Deterministic equal booster pool split (100% to boosters, no leader bonus, no lost cents)
  * 9. G4X-published boost 7 release stages; 24h countdown starts at adminFinalApprovedAt
- * 10. Booster USDT withdrawal: fixed fee $0.40, BEP-20 only, Net = Requested - $0.40
- * 11. Booster IRT withdrawal: fixed fee $1.30, 3,000 IRT discount, Net = (USD - 1.30) * Effective
+ * 10. Booster USDT withdrawal: fixed fee $0.30, BEP-20 only, Net = Requested - $0.30
+ * 11. Booster IRT withdrawal: fixed fee $1.00, 3,000 IRT discount, Net = (USD - 1.00) * Effective
  * 12. IRT Payout scheduling: Tuesday cutoff config guard (blocks if missing); Wed/Sat cycles
  * 13. Withdrawal state machine: DRAFT -> QUOTED -> USER_CONFIRMED -> RESERVED -> PAID / REJECTED
  * 14. Production safety: ESCROW_RELEASE_ENABLED=false blocks automated release
@@ -536,7 +536,7 @@ async function runFinanceV2TestSuite() {
     );
 
     // =========================================================================
-    // TEST 10: Booster USDT Withdrawal (Fixed $0.40 fee, BEP-20 only)
+    // TEST 10: Booster USDT Withdrawal (Fixed $0.30 fee, BEP-20 only)
     // =========================================================================
     // Quote $50.00 withdrawal (5000 cents)
     // Credit $100 to booster1 available
@@ -554,11 +554,11 @@ async function runFinanceV2TestSuite() {
     });
 
     assert(
-      usdtQuote.fixedFeeUsdCents === 40 &&
-        usdtQuote.netUsdCents === 4960 &&
+      usdtQuote.fixedFeeUsdCents === 30 &&
+        usdtQuote.netUsdCents === 4970 &&
         usdtQuote.payoutMethod === 'USDT_BEP20',
-      '10a. Booster USDT withdrawal quote charges exactly $0.40 fixed fee on BSC (BEP-20) only',
-      `Fee: $0.40 (40 cents), Net: $49.60 (${usdtQuote.netUsdCents} cents)`
+      '10a. Booster USDT withdrawal quote charges exactly $0.30 fixed fee on BSC (BEP-20) only',
+      `Fee: $0.30 (30 cents), Net: $49.70 (${usdtQuote.netUsdCents} cents)`
     );
 
     const boosterBalBefore = await getOrCreateWalletV2(testBooster1);
@@ -616,7 +616,7 @@ async function runFinanceV2TestSuite() {
                 '0x0000000000000000000000001111111111111111111111111111111111111111',
                 '0x000000000000000000000000' + confirmedReq.destinationAddress.slice(2).toLowerCase(),
               ],
-              data: '0x' + (BigInt(4960) * 10_000_000_000_000_000n).toString(16).padStart(64, '0'),
+              data: '0x' + (BigInt(4970) * 10_000_000_000_000_000n).toString(16).padStart(64, '0'),
             },
           ],
         };
@@ -646,13 +646,13 @@ async function runFinanceV2TestSuite() {
     );
 
     // =========================================================================
-    // TEST 11: Booster IRT Withdrawal (Fixed $1.30 fee + 3,000 IRT discount)
+    // TEST 11: Booster IRT Withdrawal (Fixed $1.00 fee + 3,000 IRT discount)
     // =========================================================================
     // Admin rate: 95,000 IRT per USD.
     // Effective Rate = 95,000 - 3,000 = 92,000 IRT per USD.
     // Requested: $100.00 (10000 cents).
-    // Net USD = $100.00 - $1.30 = $98.70.
-    // Net IRT = 98.70 * 92,000 = 9,080,400 IRT.
+    // Net USD = $100.00 - $1.00 = $99.00.
+    // Net IRT = 99.00 * 92,000 = 9,108,000 IRT.
     // Credit $100 to booster2
     await creditAvailableCents(
       testBooster2,
@@ -676,11 +676,11 @@ async function runFinanceV2TestSuite() {
     });
 
     assert(
-      irtWithdrawQuote.fixedFeeUsdCents === 130 &&
+      irtWithdrawQuote.fixedFeeUsdCents === 100 &&
         irtWithdrawQuote.effectiveRate === 92000 &&
-        irtWithdrawQuote.quotedNetPayoutAmount === '9080400',
-      '11. Booster IRT withdrawal applies fixed $1.30 fee and exact 3,000 IRT rate discount with NO percentage fee',
-      `Fee: $1.30, Effective Rate: ${irtWithdrawQuote.effectiveRate}, Net IRT: ${irtWithdrawQuote.quotedNetPayoutAmount}`
+        irtWithdrawQuote.quotedNetPayoutAmount === '9108000',
+      '11. Booster IRT withdrawal applies fixed $1.00 fee and exact 3,000 IRT rate discount with NO percentage fee',
+      `Fee: $1.00, Effective Rate: ${irtWithdrawQuote.effectiveRate}, Net IRT: ${irtWithdrawQuote.quotedNetPayoutAmount}`
     );
 
     // =========================================================================

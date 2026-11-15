@@ -88,7 +88,7 @@ export const WithdrawalOverviewCards: React.FC<WithdrawalOverviewCardsProps> = (
             ${wallet.eligibleWithdrawalUsd}
           </div>
           <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', lineHeight: 1.3, margin: 0 }}>
-            Before method-specific fees ($0.40 USDT / $1.30 IRT).
+            Before method-specific fees ($0.30 USDT / $1.00 IRT).
           </p>
         </Card>
 

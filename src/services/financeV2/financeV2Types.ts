@@ -6,8 +6,8 @@
  *  ۲. حذف کامل طلا به عنوان واحد پولی والت (Gold is exclusively a trade quantity in advertiser workflows)
  *  ۳. ارزهای USDT و IRT صرفاً روش‌های واریز/برداشت خارجی هستند (External Settlement Methods Only)
  *  ۴. کارمزد اسکای‌کوچ: ۱۰٪ به ازای هر سفارش، جایگزین کامل خط‌مشی قدیمی ۵٪ + ۵ دلار (SkyCoach 10% per order)
- *  ۵. برداشت تتر بوسترها: کارمزد ثابت ۴۰ سنت دلار، شبکه BEP-20، پرداخت دستی (USDT $0.40 fee)
- *  ۶. برداشت تومانی بوسترها: کارمزد ثابت ۱.۳۰ دلار، تخفیف ۳,۰۰۰ تومان به ازای هر دلار، تسویه چهارشنبه/شنبه (IRT $1.30 fee & 3k discount)
+ *  ۵. برداشت تتر بوسترها: کارمزد ثابت ۳۰ سنت دلار، شبکه BEP-20، پرداخت دستی (USDT $0.30 fee)
+ *  ۶. برداشت تومانی بوسترها: کارمزد ثابت ۱.۰۰ دلار، تخفیف ۳,۰۰۰ تومان به ازای هر دلار، تسویه چهارشنبه/شنبه (IRT $1.00 fee & 3k discount)
  *  ۷. فرآیند آزادسازی ۲۴ ساعته اختصاصی بوست‌های منتشره G4X از زمان تایید ادمین (G4X 24h release from Admin approval)
  *  ۸. گردش‌کار شارژ ادورتایزر از طریق مبادله طلا تا زمان تایید شفاف مالک مسدود است (Pending Business Confirmation)
  */
@@ -265,11 +265,11 @@ export enum PayoutCycleDay {
  */
 export const FINANCE_V2_CONSTANTS = {
   // برداشت تتر بوستر
-  BOOSTER_USDT_WITHDRAWAL_FEE_CENTS: 40, // $0.40
+  BOOSTER_USDT_WITHDRAWAL_FEE_CENTS: 30, // $0.30
   BOOSTER_USDT_NETWORK: 'BEP20',
 
   // برداشت تومانی بوستر
-  BOOSTER_IRT_WITHDRAWAL_FEE_CENTS: 130, // $1.30
+  BOOSTER_IRT_WITHDRAWAL_FEE_CENTS: 100, // $1.00
   BOOSTER_IRT_RATE_DISCOUNT_PER_USD: 3000, // 3,000 IRT discount per USD
 
   // خط‌مشی کارمزد اسکای‌کوچ مصوب مالک

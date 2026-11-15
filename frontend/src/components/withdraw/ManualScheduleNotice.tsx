@@ -27,7 +27,7 @@ export const ManualScheduleNotice: React.FC = () => {
                 USDT (BNB Smart Chain BEP-20)
               </strong>
               <span style={{ color: 'var(--text-muted)' }}>
-                Operational window: 1 to 48 hours. Disbursed manually by platform managers with verifiable on-chain TxHash. Fixed fee: $0.40 USD.
+                Operational window: 1 to 48 hours. Disbursed manually by platform managers with verifiable on-chain TxHash. Fixed fee: $0.30 USD.
               </span>
             </div>
 
@@ -36,7 +36,7 @@ export const ManualScheduleNotice: React.FC = () => {
                 Iranian Bank Transfer (Sheba)
               </strong>
               <span style={{ color: 'var(--text-muted)' }}>
-                Disbursed on Wednesday and Saturday batches. Submissions before Tuesday cutoff (Asia/Tehran) disburse Wednesday; later submissions disburse Saturday. Fixed fee: $1.30 USD.
+                Disbursed on Wednesday and Saturday batches. Submissions before Tuesday cutoff (Asia/Tehran) disburse Wednesday; later submissions disburse Saturday. Fixed fee: $1.00 USD.
               </span>
             </div>
           </div>
