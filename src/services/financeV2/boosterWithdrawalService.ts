@@ -740,6 +740,7 @@ export async function adminExecuteManualPayout(
     bankReceiptRef?: string;
     notes?: string;
     secondReviewerId?: string;
+    finalPaidAmount?: string | number;
     bscVerificationOptions?: UsdtReconciliationOptions;
     bankSettlementRecord?: {
       verifiedAt: Date | string;
@@ -919,6 +920,7 @@ export async function adminExecuteManualPayout(
         userConfirmedAt: request.userConfirmedAt || new Date(),
         externalTxHash: request.payoutMethod === BoosterWithdrawalMethod.USDT_BEP20 ? normalizedRef : null,
         bankReceiptRef: request.payoutMethod === BoosterWithdrawalMethod.IRT_BANK ? normalizedRef : null,
+        quotedNetPayoutAmount: options.finalPaidAmount ? String(options.finalPaidAmount) : request.quotedNetPayoutAmount,
       },
     });
 
@@ -1288,7 +1290,11 @@ export async function boosterCancelWithdrawal(
     }
 
     if (request.boosterId !== boosterId) {
-      throw new Error('PERMISSION_DENIED: Cannot cancel another user\'s withdrawal');
+      const authReview = await authorize(boosterId, Permission.WITHDRAWAL_REVIEW);
+      const authAdjust = await authorize(boosterId, Permission.FINANCE_ADJUST);
+      if (!authReview.allowed && !authAdjust.allowed) {
+        throw new Error('PERMISSION_DENIED: Cannot cancel another user\'s withdrawal');
+      }
     }
 
     if (request.status === BoosterWithdrawalStatus.CANCELLED) {
@@ -1307,11 +1313,44 @@ export async function boosterCancelWithdrawal(
       throw new Error('PROCESSING_LOCKED: Withdrawal is currently being processed by finance team and cannot be self-cancelled');
     }
 
+    // در صورتی که درخواست در وضعیت QUOTED باشد، هیچ وجهی در والت قفل نشده است
+    if (request.status === BoosterWithdrawalStatus.QUOTED) {
+      const updated = await tx.boosterWithdrawalRequest.update({
+        where: { id: requestId },
+        data: {
+          status: BoosterWithdrawalStatus.CANCELLED,
+          cancelReason,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: boosterId,
+          action: 'BOOSTER_WITHDRAWAL_CANCELLED',
+          entityType: 'BoosterWithdrawalRequest',
+          entityId: String(requestId),
+          reason: cancelReason,
+          previousValues: JSON.stringify({ status: request.status }),
+          newValues: JSON.stringify({ status: BoosterWithdrawalStatus.CANCELLED, cancelReason }),
+        },
+      });
+
+      return { request: updated, wallet: null, alreadyCancelled: false };
+    }
+
     // قفل همروندی اتمیک (Atomic Compare-and-Swap)
     const casUpdate = await tx.boosterWithdrawalRequest.updateMany({
       where: {
         id: requestId,
-        status: { in: [BoosterWithdrawalStatus.RESERVED, BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW] },
+        status: {
+          in: [
+            BoosterWithdrawalStatus.RESERVED,
+            BoosterWithdrawalStatus.UNDER_ADMIN_REVIEW,
+            BoosterWithdrawalStatus.QUOTED,
+            BoosterWithdrawalStatus.REQUESTED,
+            BoosterWithdrawalStatus.USER_CONFIRMED,
+          ],
+        },
       },
       data: {
         status: BoosterWithdrawalStatus.CANCELLED,

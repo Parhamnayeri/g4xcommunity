@@ -462,11 +462,11 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
 
             <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-subtle)', paddingTop: '0.5rem' }}>
               <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>
-                {activeQuote.payoutMethod === 'IRT_BANK' ? 'مبلغ پرداختی حدودی (تقریبی):' : 'Expected Net Payout:'}
+                {activeQuote.payoutMethod === 'IRT_BANK' ? 'Approximate Net Payout:' : 'Expected Net Payout:'}
               </span>
               <span style={{ fontWeight: 900, fontSize: '1.15rem', color: activeQuote.payoutMethod === 'IRT_BANK' ? 'var(--status-info)' : 'var(--accent-lime)' }}>
                 {activeQuote.payoutMethod === 'IRT_BANK'
-                  ? `~ ${Number(activeQuote.quotedNetPayoutAmount).toLocaleString()} تومان (حدودی)`
+                  ? `~ ${Number(activeQuote.quotedNetPayoutAmount).toLocaleString()} Toman (Approx.)`
                   : `${activeQuote.quotedNetPayoutAmount} USDT`}
               </span>
             </div>
@@ -482,11 +482,9 @@ export const WithdrawalQuoteForm: React.FC<WithdrawalQuoteFormProps> = ({
                   color: '#93C5FD',
                   lineHeight: 1.4,
                   marginTop: '0.25rem',
-                  direction: 'rtl',
-                  textAlign: 'right',
                 }}
               >
-                ⚠️ <strong>توجه:</strong> مبلغ تومانی نمایش‌داده‌شده <strong>حدودی و تقریبی</strong> می‌باشد و تسویه نهایی بر مبنای نرخ روز در تاریخ سیکل واریز بانکی محاسبه و واریز خواهد شد.
+                ⚠️ <strong>Note:</strong> The Toman amount is approximate and based on the daily exchange rate. Final disbursement is calculated and settled on the scheduled batch payout date.
               </div>
             )}
 

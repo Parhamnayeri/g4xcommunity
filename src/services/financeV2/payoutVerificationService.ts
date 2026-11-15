@@ -433,8 +433,8 @@ export async function reconcileIrtBankPayout(
     }
   }
 
-  // اعتبارسنجی‌های تکمیلی در صورت ارائه رکورد تسویه یا ارزیاب دوم
-  if (options?.secondReviewerId && options.secondReviewerId === options.actorId) {
+  // اعتبارسنجی‌های تکمیلی در صورت فعال بودن بررسی دوطرفه
+  if (options?.requireDualAuthorization && options?.secondReviewerId && options.secondReviewerId === options.actorId) {
     return {
       verified: false,
       reason: 'DUAL_AUTHORIZATION_SAME_USER: Secondary finance reviewer must be distinct from executing administrator',

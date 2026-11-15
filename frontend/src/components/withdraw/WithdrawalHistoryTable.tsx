@@ -141,7 +141,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
               setPage(1);
             }}
           >
-            همه روش‌ها
+            All Methods
           </button>
           <button
             type="button"
@@ -163,7 +163,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
               setPage(1);
             }}
           >
-            🏦 تومان بانکی (IRT)
+            🏦 Toman (IRT)
           </button>
         </div>
 
@@ -263,7 +263,7 @@ export const WithdrawalHistoryTable: React.FC<WithdrawalHistoryTableProps> = ({ 
 
                   <td style={{ padding: '0.65rem 0.75rem', textAlign: 'right', fontWeight: 800, color: item.payoutMethod === 'IRT_BANK' ? 'var(--status-info)' : 'var(--accent-lime)' }}>
                     {item.payoutMethod === 'IRT_BANK'
-                      ? `~ ${Number(item.quotedNetPayoutAmount).toLocaleString()} تومان (حدودی)`
+                      ? `~ ${Number(item.quotedNetPayoutAmount).toLocaleString()} Toman (Approx.)`
                       : `${item.quotedNetPayoutAmount} USDT`}
                   </td>
 

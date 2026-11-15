@@ -1754,7 +1754,7 @@ router.post(
       }
 
       const id = Number(req.params.id);
-      const { decision, txHash, bankReceiptRef, reason, secondReviewerId, notes } = req.body;
+      const { decision, txHash, bankReceiptRef, reason, secondReviewerId, notes, finalPaidAmount } = req.body;
 
       if (decision === 'approve_paid') {
         const tx = txHash ? String(txHash).trim() : '';
@@ -1771,6 +1771,7 @@ router.post(
           externalTxHash: tx || undefined,
           bankReceiptRef: receipt || undefined,
           secondReviewerId: secondReviewerId ? String(secondReviewerId).trim() : undefined,
+          finalPaidAmount: finalPaidAmount ? String(finalPaidAmount).trim() : undefined,
           notes: notes || 'Executed via Admin Hub with verified disbursement evidence',
         });
         res.json({

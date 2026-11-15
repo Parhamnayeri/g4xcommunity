@@ -204,6 +204,7 @@ export async function reviewAdminWithdrawal(
         bankReceiptRef?: string;
         reason?: string;
         notes?: string;
+        finalPaidAmount?: string | number;
       },
   notesOrReason?: string
 ): Promise<{ success: boolean; request: any }> {

@@ -19,6 +19,8 @@ interface WithdrawalItem {
   requestedUsd: number;
   requestedUsdCents?: number;
   netUsd: number;
+  quotedNetPayoutAmount?: string;
+  quotedCurrency?: string;
   destinationAddress: string;
   createdAt: string;
   notes?: string | null;
@@ -57,6 +59,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
   const [selectedWithdrawal, setSelectedWithdrawal] = useState<WithdrawalItem | null>(null);
   const [decision, setDecision] = useState<'approve_processing' | 'approve_paid' | 'reject'>('approve_processing');
   const [txHash, setTxHash] = useState('');
+  const [finalPaidAmount, setFinalPaidAmount] = useState('');
   const [reviewNotes, setReviewNotes] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
   const [reviewFeedback, setReviewFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -227,27 +230,27 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
 
       {/* Payout Method Separation Tabs */}
       <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>روش تسویه:</span>
+        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>Payout Method:</span>
         <button
           type="button"
           className={`btn btn-xs ${methodFilter === 'ALL' ? 'btn-primary' : 'btn-outline'}`}
           onClick={() => setMethodFilter('ALL')}
         >
-          همه ({withdrawals.length})
+          All ({withdrawals.length})
         </button>
         <button
           type="button"
           className={`btn btn-xs ${methodFilter === 'USDT_BEP20' ? 'btn-primary' : 'btn-outline'}`}
           onClick={() => setMethodFilter('USDT_BEP20')}
         >
-          💎 USDT BEP-20 ({withdrawals.filter((w) => w.payoutMethod === 'USDT_BEP20').length})
+          💎 USDT (BEP-20) ({withdrawals.filter((w) => w.payoutMethod === 'USDT_BEP20').length})
         </button>
         <button
           type="button"
           className={`btn btn-xs ${methodFilter === 'IRT_BANK' ? 'btn-primary' : 'btn-outline'}`}
           onClick={() => setMethodFilter('IRT_BANK')}
         >
-          🏦 تومان بانکی IRT ({withdrawals.filter((w) => w.payoutMethod === 'IRT_BANK').length})
+          🏦 Toman (IRT) ({withdrawals.filter((w) => w.payoutMethod === 'IRT_BANK').length})
         </button>
       </div>
 
@@ -298,7 +301,7 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                     </div>
                     {w.payoutMethod === 'IRT_BANK' && (
                       <div style={{ fontSize: '0.72rem', color: 'var(--status-info)' }}>
-                        (تومان حدودی)
+                        (Approx. Toman)
                       </div>
                     )}
                   </td>
@@ -349,12 +352,12 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                           className="btn btn-outline btn-xs"
                           style={{ color: 'var(--status-danger)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
                           onClick={async () => {
-                            if (window.confirm(`آیا از لغو پیش‌فاکتور #${w.id} (${w.withdrawalRef}) اطمینان دارید؟`)) {
+                            if (window.confirm(`Are you sure you want to cancel quote #${w.id} (${w.withdrawalRef})?`)) {
                               try {
                                 await reviewAdminWithdrawal(w.id, 'reject', { reason: 'Cancelled by owner' });
                                 loadWithdrawals();
                               } catch (err: any) {
-                                alert(err.message || 'خطا در لغو پیش‌فاکتور');
+                                alert(err.message || 'Failed to cancel quote');
                               }
                             }
                           }}
@@ -369,8 +372,9 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
                           className="btn btn-cta btn-xs"
                           onClick={() => {
                             setSelectedWithdrawal(w);
-                            setDecision('approve_processing');
+                            setDecision(w.payoutMethod === 'IRT_BANK' ? 'approve_paid' : 'approve_processing');
                             setTxHash('');
+                            setFinalPaidAmount(w.quotedNetPayoutAmount ? String(w.quotedNetPayoutAmount) : '');
                             setReviewNotes('');
                             setReviewFeedback(null);
                           }}
@@ -393,7 +397,9 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
           <div className="studio-modal-card" style={{ maxWidth: '520px' }} onClick={(e) => e.stopPropagation()}>
             <div className="studio-modal-header">
               <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
-                Execute Payout Decision #{selectedWithdrawal.id}
+                {selectedWithdrawal.payoutMethod === 'IRT_BANK'
+                  ? `Manual Toman Bank Transfer Payout #${selectedWithdrawal.id}`
+                  : `Execute Payout Decision #${selectedWithdrawal.id}`}
               </h3>
               <button
                 type="button"
@@ -407,88 +413,148 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
             <div className="studio-modal-body">
               <div style={{ backgroundColor: 'var(--bg-main)', padding: '1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem' }}>
                 <div>Booster: <strong>{selectedWithdrawal.boosterName}</strong></div>
-                <div>Method: <strong>{selectedWithdrawal.payoutMethod}</strong></div>
+                <div>Method: <strong style={{ color: selectedWithdrawal.payoutMethod === 'IRT_BANK' ? '#38BDF8' : '#A78BFA' }}>
+                  {selectedWithdrawal.payoutMethod === 'IRT_BANK' ? '🏦 IRT Bank (Toman)' : '💎 USDT (BEP-20)'}
+                </strong></div>
                 <div>Status: <span className="badge badge-purple" style={{ fontSize: '0.72rem', marginLeft: '4px' }}>{selectedWithdrawal.status}</span></div>
                 <div>Requested Amount: <strong style={{ color: 'var(--accent-yellow)' }}>${(selectedWithdrawal.requestedUsdCents ? selectedWithdrawal.requestedUsdCents / 100 : selectedWithdrawal.requestedUsd || 0).toFixed(2)} USD</strong></div>
-                <div>Destination: <span style={{ fontFamily: 'monospace' }}>{selectedWithdrawal.destinationAddress}</span></div>
+                {selectedWithdrawal.payoutMethod === 'IRT_BANK' && (
+                  <div>Estimated Net Toman: <strong style={{ color: '#34D399' }}>{selectedWithdrawal.quotedNetPayoutAmount ? Number(selectedWithdrawal.quotedNetPayoutAmount).toLocaleString() + ' Toman' : '—'}</strong></div>
+                )}
+                <div>Destination Account: <span style={{ fontFamily: 'monospace', fontWeight: 600 }}>{selectedWithdrawal.destinationAddress}</span></div>
               </div>
 
               {selectedWithdrawal.status === 'QUOTED' && (
                 <div style={{ backgroundColor: 'rgba(168, 85, 247, 0.12)', border: '1px solid rgba(168, 85, 247, 0.35)', borderRadius: 'var(--radius-sm)', padding: '0.75rem 1rem', marginBottom: '1.25rem', fontSize: '0.82rem', color: '#E9D5FF', lineHeight: 1.4 }}>
-                  ℹ <strong>Unconfirmed Quote:</strong> The booster generated this quote but did not finalize the reservation. Approving or disbursing will automatically verify and reserve <strong>${(selectedWithdrawal.requestedUsdCents ? selectedWithdrawal.requestedUsdCents / 100 : selectedWithdrawal.requestedUsd || 0).toFixed(2)} USD</strong> from their available wallet balance.
+                  ℹ <strong>Unconfirmed Quote:</strong> Approving or disbursing will automatically verify and reserve <strong>${(selectedWithdrawal.requestedUsdCents ? selectedWithdrawal.requestedUsdCents / 100 : selectedWithdrawal.requestedUsd || 0).toFixed(2)} USD</strong> from the booster's wallet.
                 </div>
               )}
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name="decision"
-                    checked={decision === 'approve_processing'}
-                    onChange={() => setDecision('approve_processing')}
-                  />
-                  {selectedWithdrawal.status === 'QUOTED' ? 'Auto-Reserve & Approve for Transfer (Processing)' : 'Approve for Manual Transfer (Processing)'}
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name="decision"
-                    checked={decision === 'approve_paid'}
-                    onChange={() => setDecision('approve_paid')}
-                  />
-                  {selectedWithdrawal.status === 'QUOTED' ? 'Auto-Reserve & Confirm Disbursement (Paid + Tx Proof)' : 'Confirm Disbursement (Paid + Tx Proof)'}
-                </label>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                  <input
-                    type="radio"
-                    name="decision"
-                    checked={decision === 'reject'}
-                    onChange={() => setDecision('reject')}
-                  />
-                  {selectedWithdrawal.status === 'QUOTED' ? 'Reject & Cancel Unconfirmed Quote' : 'Reject & Refund Reserve'}
-                </label>
-              </div>
+              {/* Toman (IRT_BANK): Direct Manual Paid Form */}
+              {selectedWithdrawal.payoutMethod === 'IRT_BANK' ? (
+                <>
+                  <div style={{ backgroundColor: 'rgba(56, 189, 248, 0.1)', border: '1px solid rgba(56, 189, 248, 0.25)', borderRadius: 'var(--radius-sm)', padding: '0.75rem 1rem', marginBottom: '1.25rem', fontSize: '0.84rem', color: '#BAE6FD', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <span style={{ fontSize: '1.25rem' }}>🏦</span>
+                    <div>
+                      <strong style={{ display: 'block', color: '#38BDF8' }}>Manual Bank Transfer (Direct Paid)</strong>
+                      <span style={{ fontSize: '0.76rem', color: 'rgba(255, 255, 255, 0.7)' }}>
+                        Disburse funds via your banking portal, then enter the tracking code and final sent amount below.
+                      </span>
+                    </div>
+                  </div>
 
-              {decision === 'approve_paid' && (
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                    {selectedWithdrawal.payoutMethod === 'IRT_BANK'
-                      ? 'شماره تراکنش / پیگیری بانکی (تنها وارد کردن شماره پیگیری کافی است)'
-                      : 'Transaction Hash / Payment Proof Reference'}
-                  </label>
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder={
-                      selectedWithdrawal.payoutMethod === 'IRT_BANK'
-                        ? 'مثلاً: TRACK-12345678 یا شماره پیگیری پایا/ساتنا'
-                        : 'e.g. 0xabc... or TxHash'
-                    }
-                    value={txHash}
-                    onChange={(e) => setTxHash(e.target.value)}
-                    style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
-                  />
-                  {selectedWithdrawal.payoutMethod === 'IRT_BANK' && (
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem', fontWeight: 600 }}>
+                      Bank Transaction / Tracking Reference *
+                    </label>
+                    <input
+                      type="text"
+                      className="input"
+                      placeholder="e.g. TRACK-987654321, Satna, or Paya Reference No."
+                      value={txHash}
+                      onChange={(e) => setTxHash(e.target.value)}
+                      style={{ width: '100%', padding: '0.55rem', fontSize: '0.85rem' }}
+                    />
                     <span style={{ fontSize: '0.72rem', color: 'var(--status-info)', display: 'block', marginTop: '0.25rem' }}>
-                      ✓ برای تسویه تومانی، درج کد رهگیری/پیگیری معتبر بانکی برای ثبت وضعیت پرداخت کفایت می‌کند.
+                      ✓ Only a valid bank tracking/reference code is required to confirm this payout.
                     </span>
-                  )}
-                </div>
-              )}
+                  </div>
 
-              <div style={{ marginBottom: '1.25rem' }}>
-                <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
-                  Reviewer Notes {decision === 'reject' && <span style={{ color: 'var(--status-danger)' }}>* (Required)</span>}
-                </label>
-                <textarea
-                  className="input"
-                  rows={2}
-                  placeholder="Authoritative audit notes..."
-                  value={reviewNotes}
-                  onChange={(e) => setReviewNotes(e.target.value)}
-                  style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
-                />
-              </div>
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem', fontWeight: 600 }}>
+                      Final Sent Amount (Toman) *
+                    </label>
+                    <input
+                      type="text"
+                      className="input"
+                      placeholder="e.g. 5200000"
+                      value={finalPaidAmount}
+                      onChange={(e) => setFinalPaidAmount(e.target.value)}
+                      style={{ width: '100%', padding: '0.55rem', fontSize: '0.85rem', fontFamily: 'monospace' }}
+                    />
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.25rem' }}>
+                      Quote estimate was: {selectedWithdrawal.quotedNetPayoutAmount ? Number(selectedWithdrawal.quotedNetPayoutAmount).toLocaleString() + ' Toman' : 'N/A'}
+                    </span>
+                  </div>
+
+                  <div style={{ marginBottom: '1.25rem' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                      Reviewer Notes (Optional)
+                    </label>
+                    <textarea
+                      className="input"
+                      rows={2}
+                      placeholder="Optional administrative or audit notes..."
+                      value={reviewNotes}
+                      onChange={(e) => setReviewNotes(e.target.value)}
+                      style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
+                    />
+                  </div>
+                </>
+              ) : (
+                /* Crypto (USDT): Standard 3-state radio flow */
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="decision"
+                        checked={decision === 'approve_processing'}
+                        onChange={() => setDecision('approve_processing')}
+                      />
+                      {selectedWithdrawal.status === 'QUOTED' ? 'Auto-Reserve & Approve for Transfer (Processing)' : 'Approve for Manual Transfer (Processing)'}
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="decision"
+                        checked={decision === 'approve_paid'}
+                        onChange={() => setDecision('approve_paid')}
+                      />
+                      {selectedWithdrawal.status === 'QUOTED' ? 'Auto-Reserve & Confirm Disbursement (Paid + Tx Proof)' : 'Confirm Disbursement (Paid + Tx Proof)'}
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="decision"
+                        checked={decision === 'reject'}
+                        onChange={() => setDecision('reject')}
+                      />
+                      {selectedWithdrawal.status === 'QUOTED' ? 'Reject & Cancel Unconfirmed Quote' : 'Reject & Refund Reserve'}
+                    </label>
+                  </div>
+
+                  {decision === 'approve_paid' && (
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                        Transaction Hash / Payment Proof Reference *
+                      </label>
+                      <input
+                        type="text"
+                        className="input"
+                        placeholder="e.g. 0xabc... (BEP-20 TxHash)"
+                        value={txHash}
+                        onChange={(e) => setTxHash(e.target.value)}
+                        style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
+                      />
+                    </div>
+                  )}
+
+                  <div style={{ marginBottom: '1.25rem' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                      Reviewer Notes {decision === 'reject' && <span style={{ color: 'var(--status-danger)' }}>* (Required)</span>}
+                    </label>
+                    <textarea
+                      className="input"
+                      rows={2}
+                      placeholder="Authoritative audit notes..."
+                      value={reviewNotes}
+                      onChange={(e) => setReviewNotes(e.target.value)}
+                      style={{ width: '100%', padding: '0.5rem', fontSize: '0.85rem' }}
+                    />
+                  </div>
+                </>
+              )}
 
               {reviewFeedback && (
                 <div
@@ -506,41 +572,100 @@ export const WithdrawalQueueWorkspace: React.FC<Props> = ({
               )}
             </div>
 
-            <div className="studio-modal-footer">
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={() => setSelectedWithdrawal(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={submittingReview || (decision === 'reject' && selectedWithdrawal.status !== 'QUOTED' && !reviewNotes.trim())}
-                className="btn btn-cta btn-sm"
-                onClick={async () => {
-                  setSubmittingReview(true);
-                  setReviewFeedback(null);
-                  try {
-                    await reviewAdminWithdrawal(selectedWithdrawal.id, decision, {
-                      txHash: decision === 'approve_paid' && txHash.trim() ? txHash.trim() : undefined,
-                      reason: reviewNotes.trim() || (selectedWithdrawal.status === 'QUOTED' ? 'Cancelled by owner' : undefined),
-                      notes: reviewNotes.trim() || undefined,
-                    });
-                    setReviewFeedback({ text: 'Payout decision recorded successfully.', type: 'success' });
-                    setTimeout(() => {
-                      setSelectedWithdrawal(null);
-                      loadWithdrawals();
-                    }, 800);
-                  } catch (err: any) {
-                    setReviewFeedback({ text: err.message || 'Payout decision execution failed', type: 'error' });
-                  } finally {
-                    setSubmittingReview(false);
-                  }
-                }}
-              >
-                {submittingReview ? 'Executing...' : selectedWithdrawal.status === 'QUOTED' && decision !== 'reject' ? 'Auto-Reserve & Confirm' : 'Confirm Decision'}
-              </button>
+            <div className="studio-modal-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                {selectedWithdrawal.status === 'QUOTED' && (
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    style={{ color: 'var(--status-danger)', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+                    disabled={submittingReview}
+                    onClick={async () => {
+                      if (window.confirm(`Are you sure you want to cancel quote #${selectedWithdrawal.id}?`)) {
+                        setSubmittingReview(true);
+                        try {
+                          await reviewAdminWithdrawal(selectedWithdrawal.id, 'reject', { reason: 'Cancelled by owner' });
+                          setSelectedWithdrawal(null);
+                          loadWithdrawals();
+                        } catch (err: any) {
+                          setReviewFeedback({ text: err.message || 'Failed to cancel quote', type: 'error' });
+                        } finally {
+                          setSubmittingReview(false);
+                        }
+                      }
+                    }}
+                  >
+                    ✕ Cancel Quote
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setSelectedWithdrawal(null)}
+                >
+                  Close
+                </button>
+                {selectedWithdrawal.payoutMethod === 'IRT_BANK' ? (
+                  <button
+                    type="button"
+                    disabled={submittingReview || !txHash.trim() || !finalPaidAmount.trim()}
+                    className="btn btn-cta btn-sm"
+                    onClick={async () => {
+                      setSubmittingReview(true);
+                      setReviewFeedback(null);
+                      try {
+                        await reviewAdminWithdrawal(selectedWithdrawal.id, 'approve_paid', {
+                          txHash: txHash.trim(),
+                          bankReceiptRef: txHash.trim(),
+                          finalPaidAmount: finalPaidAmount.trim(),
+                          notes: reviewNotes.trim() || undefined,
+                        });
+                        setReviewFeedback({ text: 'Toman payment confirmed & disbursed successfully.', type: 'success' });
+                        setTimeout(() => {
+                          setSelectedWithdrawal(null);
+                          loadWithdrawals();
+                        }, 800);
+                      } catch (err: any) {
+                        setReviewFeedback({ text: err.message || 'Payout confirmation failed', type: 'error' });
+                      } finally {
+                        setSubmittingReview(false);
+                      }
+                    }}
+                  >
+                    {submittingReview ? 'Confirming...' : '✓ Confirm Manual Payment (PAID)'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={submittingReview || (decision === 'reject' && selectedWithdrawal.status !== 'QUOTED' && !reviewNotes.trim())}
+                    className="btn btn-cta btn-sm"
+                    onClick={async () => {
+                      setSubmittingReview(true);
+                      setReviewFeedback(null);
+                      try {
+                        await reviewAdminWithdrawal(selectedWithdrawal.id, decision, {
+                          txHash: decision === 'approve_paid' && txHash.trim() ? txHash.trim() : undefined,
+                          reason: reviewNotes.trim() || (selectedWithdrawal.status === 'QUOTED' ? 'Cancelled by owner' : undefined),
+                          notes: reviewNotes.trim() || undefined,
+                        });
+                        setReviewFeedback({ text: 'Payout decision recorded successfully.', type: 'success' });
+                        setTimeout(() => {
+                          setSelectedWithdrawal(null);
+                          loadWithdrawals();
+                        }, 800);
+                      } catch (err: any) {
+                        setReviewFeedback({ text: err.message || 'Payout decision execution failed', type: 'error' });
+                      } finally {
+                        setSubmittingReview(false);
+                      }
+                    }}
+                  >
+                    {submittingReview ? 'Executing...' : selectedWithdrawal.status === 'QUOTED' && decision !== 'reject' ? 'Auto-Reserve & Confirm' : 'Confirm Decision'}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
