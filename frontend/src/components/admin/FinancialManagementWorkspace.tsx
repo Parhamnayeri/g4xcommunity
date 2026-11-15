@@ -23,6 +23,7 @@ import {
 } from '../../services/financialAccounts';
 import { TransfersExchangeSection } from './TransfersExchangeSection';
 import { PlatformWithdrawalsSection } from './PlatformWithdrawalsSection';
+import { FinancialReportsSection } from './FinancialReportsSection';
 
 interface Props {
   onNavigateTab?: (tab: string) => void;
@@ -30,7 +31,7 @@ interface Props {
 
 export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab }) => {
   // Navigation Sub-tab
-  const [subTab, setSubTab] = useState<'platform' | 'transfers' | 'withdrawals' | 'toman' | 'accounts' | 'adjustments'>('platform');
+  const [subTab, setSubTab] = useState<'platform' | 'reports' | 'transfers' | 'withdrawals' | 'toman' | 'accounts' | 'adjustments'>('platform');
 
   // Loading states
   const [loading, setLoading] = useState(true);
@@ -491,6 +492,7 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab })
       >
         {[
           { key: 'platform', label: 'Platform Balances', icon: '🌐', count: platforms.length },
+          { key: 'reports', label: 'Financial Reports & Analytics', icon: '📊' },
           { key: 'transfers', label: 'Transfers & Exchange', icon: '🔄' },
           { key: 'withdrawals', label: 'Withdrawal Operations', icon: '💸' },
           { key: 'toman', label: 'Local Currency (Toman)', icon: '🇮🇷', count: tomanBankAccounts.length + tomanCashAccounts.length },
@@ -765,6 +767,13 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab })
             </div>
           </div>
         </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB: FINANCIAL REPORTS & ADVERTISER BOOSTS (PHASE 3)                      */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'reports' && (
+        <FinancialReportsSection />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}

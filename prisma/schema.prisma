@@ -366,6 +366,7 @@ model Order {
   boostReleaseTracker      G4XBoostReleaseTracker?
   ledgerEntriesV2          LedgerEntryV2[]
   paymentRequests          PaymentRequest[]
+  advertiserMetadata       AdvertiserOrderMetadata?
 
   @@index([status])
   @@index([gameSlug, status])
@@ -1878,5 +1879,40 @@ model PlatformWithdrawal {
   @@index([adminId])
   @@map("platform_withdrawals")
 }
+
+// ─── ۵۱. فراداده سفارش‌های تبلیغ‌کننده (Phase 3 Advertiser Order Metadata) ─────────
+model AdvertiserOrderMetadata {
+  id                   String   @id @default(uuid())
+  orderId              Int      @unique @map("order_id")
+  advertiserOrderId    String?  @map("advertiser_order_id")
+  additionalCostsMinor Int      @default(0) @map("additional_costs_minor")
+  notes                String?
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  order                Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([advertiserOrderId])
+  @@map("advertiser_order_metadata")
+}
+
+// ─── ۵۲. عکس‌های تجمیعی گزارش‌های مالی (Phase 3 Financial Report Snapshots) ──────
+model FinancialReportSnapshot {
+  id              String   @id @default(uuid())
+  snapshotRef     String   @unique @map("snapshot_ref")
+  reportType      String   @map("report_type") // ALL_PLATFORMS | PLATFORM | ADVERTISER_BOOSTS
+  platform        String?  // direct | eldorado | skycoach | overgear | kingboost
+  periodType      String   @map("period_type") // DAILY | WEEKLY | MONTHLY | QUARTERLY | YEARLY | ALL_TIME | CUSTOM
+  startDate       DateTime @map("start_date")
+  endDate         DateTime @map("end_date")
+  metricsJson     String   @map("metrics_json")
+  generatedBy     String?  @map("generated_by")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([reportType, platform, periodType])
+  @@index([startDate, endDate])
+  @@map("financial_report_snapshots")
+}
+
 
 
