@@ -24,6 +24,11 @@ import {
 import { TransfersExchangeSection } from './TransfersExchangeSection';
 import { PlatformWithdrawalsSection } from './PlatformWithdrawalsSection';
 import { FinancialReportsSection } from './FinancialReportsSection';
+import { FinancialLedgerSection } from './FinancialLedgerSection';
+import { BalanceReconciliationSection } from './BalanceReconciliationSection';
+import { FinancialAuditLogsSection } from './FinancialAuditLogsSection';
+import { UserFinancialRoleInfo } from '../../types/financialLedger';
+import { fetchUserFinancialRole } from '../../services/financialLedger';
 
 interface Props {
   onNavigateTab?: (tab: string) => void;
@@ -31,7 +36,10 @@ interface Props {
 
 export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab }) => {
   // Navigation Sub-tab
-  const [subTab, setSubTab] = useState<'platform' | 'reports' | 'transfers' | 'withdrawals' | 'toman' | 'accounts' | 'adjustments'>('platform');
+  const [subTab, setSubTab] = useState<
+    'platform' | 'reports' | 'transfers' | 'withdrawals' | 'ledger' | 'reconciliation' | 'audit' | 'toman' | 'accounts' | 'adjustments'
+  >('platform');
+  const [userRole, setUserRole] = useState<UserFinancialRoleInfo | null>(null);
 
   // Loading states
   const [loading, setLoading] = useState(true);
@@ -167,18 +175,30 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab })
     }
   }, [categoryFilter, currencyFilter, statusFilter, searchQuery]);
 
+  // Load User Role Tier
+  const loadUserRole = useCallback(async () => {
+    try {
+      const res = await fetchUserFinancialRole();
+      if (res && res.success) {
+        setUserRole(res);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load user financial role:', err);
+    }
+  }, []);
+
   // Initial Load
   const loadWorkspace = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      await Promise.all([loadPlatformData(), loadTomanData(), loadAllAccounts()]);
+      await Promise.all([loadPlatformData(), loadTomanData(), loadAllAccounts(), loadUserRole()]);
     } catch (err: any) {
       setError(err.message || 'Failed to load financial workspace data');
     } finally {
       setLoading(false);
     }
-  }, [loadPlatformData, loadTomanData, loadAllAccounts]);
+  }, [loadPlatformData, loadTomanData, loadAllAccounts, loadUserRole]);
 
   useEffect(() => {
     loadWorkspace();
@@ -495,9 +515,12 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab })
           { key: 'reports', label: 'Financial Reports & Analytics', icon: '📊' },
           { key: 'transfers', label: 'Transfers & Exchange', icon: '🔄' },
           { key: 'withdrawals', label: 'Withdrawal Operations', icon: '💸' },
+          { key: 'ledger', label: 'Double-Entry Ledger', icon: '📖' },
+          { key: 'reconciliation', label: 'Balance Reconciliation', icon: '⚖️' },
+          { key: 'audit', label: 'Audit Trail', icon: '🛡️' },
           { key: 'toman', label: 'Local Currency (Toman)', icon: '🇮🇷', count: tomanBankAccounts.length + tomanCashAccounts.length },
           { key: 'accounts', label: 'All Accounts & Management', icon: '🏛️', count: allAccounts.length },
-          { key: 'adjustments', label: 'Manual Adjustments', icon: '⚖️' },
+          { key: 'adjustments', label: 'Manual Adjustments', icon: '📝' },
         ].map((t) => (
           <button
             key={t.key}
@@ -792,6 +815,39 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab })
       {subTab === 'withdrawals' && (
         <PlatformWithdrawalsSection
           accounts={allAccounts}
+          onRefreshWorkspace={loadWorkspace}
+        />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB: DOUBLE-ENTRY FINANCIAL LEDGER (PHASE 4)                              */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'ledger' && (
+        <FinancialLedgerSection
+          accounts={allAccounts}
+          userRole={userRole}
+          onRefreshWorkspace={loadWorkspace}
+        />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB: BALANCE RECONCILIATION & AUDIT (PHASE 4)                             */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'reconciliation' && (
+        <BalanceReconciliationSection
+          accounts={allAccounts}
+          userRole={userRole}
+          onRefreshWorkspace={loadWorkspace}
+        />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB: FINANCIAL AUDIT TRAIL (PHASE 4)                                      */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'audit' && (
+        <FinancialAuditLogsSection
+          accounts={allAccounts}
+          userRole={userRole}
           onRefreshWorkspace={loadWorkspace}
         />
       )}

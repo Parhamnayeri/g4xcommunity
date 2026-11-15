@@ -325,6 +325,22 @@ export async function ensureDefaultFinancialAccounts(): Promise<void> {
       currency: 'IRR',
       notes: 'Physical cash on hand for local settlements',
     },
+    {
+      accountRef: 'clearing_adjustment_usd',
+      name: 'G4X Adjustment & Reconciliation Clearing (USD)',
+      category: 'INTERNAL',
+      accountType: 'USD_WALLET',
+      currency: 'USD',
+      notes: 'Balancing clearing account for manual adjustments and reconciliations in USD',
+    },
+    {
+      accountRef: 'clearing_adjustment_irr',
+      name: 'G4X Adjustment & Reconciliation Clearing (IRR)',
+      category: 'INTERNAL',
+      accountType: 'TOMAN_WALLET',
+      currency: 'IRR',
+      notes: 'Balancing clearing account for manual adjustments and reconciliations in Toman',
+    },
   ];
 
   for (const item of defaultAccounts) {

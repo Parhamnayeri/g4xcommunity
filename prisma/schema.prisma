@@ -92,6 +92,9 @@ model User {
   createdPlatformWithdrawals   PlatformWithdrawal[]   @relation("WithdrawalAdmin")
   processedPlatformWithdrawals PlatformWithdrawal[]   @relation("WithdrawalProcessor")
   createdExchangeRates         ExchangeRate[]         @relation("ExchangeRateAdmin")
+  reversedFinancialTransactions FinancialTransaction[] @relation("ReversedByAdmin")
+  financialAuditLogs            FinancialAuditLog[]    @relation("FinancialAuditAdmin")
+  reconciliations               BalanceReconciliationRecord[] @relation("ReconciliationAdmin")
 
   @@index([advertiserRank])
   @@map("users")
@@ -1722,6 +1725,9 @@ model FinancialAccount {
   transfersIn          InternalTransfer[]     @relation("TransfersIn")
   withdrawalsSource    PlatformWithdrawal[]   @relation("PlatformWithdrawalsSource")
   withdrawalsDest      PlatformWithdrawal[]   @relation("PlatformWithdrawalsDest")
+  debitJournalEntries  DoubleEntryJournalRecord[] @relation("DebitJournal")
+  creditJournalEntries DoubleEntryJournalRecord[] @relation("CreditJournal")
+  reconciliations      BalanceReconciliationRecord[] @relation("AccountReconciliations")
 
   @@index([category, accountType])
   @@index([currency, status])
@@ -1746,16 +1752,25 @@ model FinancialTransaction {
   orderId              Int?     @map("order_id")
   orderRef             String?  @map("order_ref")
   metadata             String?
+  reversalOfTransactionId String?  @unique @map("reversal_of_transaction_id")
+  isReversal           Boolean  @default(false) @map("is_reversal")
+  reversalReason       String?  @map("reversal_reason")
+  reversedAt           DateTime? @map("reversed_at")
+  reversedBy           String?  @map("reversed_by")
   createdAt            DateTime @default(now()) @map("created_at")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
   account              FinancialAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
   admin                User?                  @relation("FinancialTxAdmin", fields: [adminId], references: [discordId], onDelete: SetNull)
+  reversedByUser       User?                  @relation("ReversedByAdmin", fields: [reversedBy], references: [discordId], onDelete: SetNull)
+  reversalOf           FinancialTransaction?  @relation("TransactionReversals", fields: [reversalOfTransactionId], references: [id], onDelete: SetNull)
+  reversalTransactions FinancialTransaction[] @relation("TransactionReversals")
   ledgerEntries        FinancialLedgerEntry[]
 
   @@index([accountId, createdAt])
   @@index([type, direction])
   @@index([adminId])
+  @@index([reversalOfTransactionId])
   @@map("financial_transactions")
 }
 
@@ -1912,6 +1927,81 @@ model FinancialReportSnapshot {
   @@index([reportType, platform, periodType])
   @@index([startDate, endDate])
   @@map("financial_report_snapshots")
+}
+
+// ─── ۵۳. دفتر روزنامه دوبل حسابداری (Phase 4 Double-Entry Financial Journal) ────
+model DoubleEntryJournalRecord {
+  id                   String   @id @default(uuid())
+  entryRef             String   @unique @map("entry_ref")
+  transactionId        String?  @map("transaction_id")
+  transactionType      String   @map("transaction_type") // ORDER_REVENUE | PLATFORM_FEE | BOOSTER_PAYOUT | ADVERTISER_PAYMENT | WITHDRAWAL | INTERNAL_TRANSFER | CURRENCY_CONVERSION | DEPOSIT | MANUAL_CREDIT | MANUAL_DEBIT | REFUND | ADJUSTMENT | REVERSAL
+  referenceId          String?  @map("reference_id")
+  debitAccountId       String   @map("debit_account_id")
+  creditAccountId      String   @map("credit_account_id")
+  amount               BigInt
+  currency             String   // USD | IRR
+  description          String?
+  metadata             String?
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  debitAccount         FinancialAccount @relation("DebitJournal", fields: [debitAccountId], references: [id], onDelete: Cascade)
+  creditAccount        FinancialAccount @relation("CreditJournal", fields: [creditAccountId], references: [id], onDelete: Cascade)
+
+  @@index([debitAccountId, createdAt])
+  @@index([creditAccountId, createdAt])
+  @@index([transactionType, currency])
+  @@index([referenceId])
+  @@map("double_entry_journal")
+}
+
+// ─── ۵۴. لاگ‌های حسابرسی مالی ادمین (Phase 4 Financial Audit Trail) ───────────
+model FinancialAuditLog {
+  id               String   @id @default(uuid())
+  logRef           String   @unique @map("log_ref")
+  adminId          String?  @map("admin_id")
+  actionType       String   @map("action_type") // ACCOUNT_CREATED | ACCOUNT_UPDATED | BALANCE_ADJUSTED | TRANSFER_EXECUTED | WITHDRAWAL_REQUESTED | WITHDRAWAL_SETTLED | WITHDRAWAL_REJECTED | RATE_CHANGED | TRANSACTION_REVERSED | RECONCILIATION_PERFORMED
+  relatedAccountId String?  @map("related_account_id")
+  transactionId    String?  @map("transaction_id")
+  previousState    String?  @map("previous_state") // JSON serialized
+  newState         String?  @map("new_state")      // JSON serialized
+  reason           String?
+  ipAddress        String?  @map("ip_address")
+  metadata         String?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  admin            User?    @relation("FinancialAuditAdmin", fields: [adminId], references: [discordId], onDelete: SetNull)
+
+  @@index([adminId, createdAt])
+  @@index([actionType, createdAt])
+  @@index([relatedAccountId])
+  @@index([transactionId])
+  @@map("financial_audit_logs")
+}
+
+// ─── ۵۵. مغایرت‌گیری و تطبیق موجودی (Phase 4 Balance Reconciliations) ──────────
+model BalanceReconciliationRecord {
+  id                      String   @id @default(uuid())
+  reconciliationRef       String   @unique @map("reconciliation_ref")
+  accountId               String   @map("account_id")
+  currency                String   // USD | IRR
+  systemBalanceMinor      BigInt   @map("system_balance_minor")
+  actualBalanceMinor      BigInt   @map("actual_balance_minor")
+  differenceMinor         BigInt   @map("difference_minor") // actual - system
+  status                  String   @default("BALANCED") // BALANCED | DISCREPANCY | ADJUSTED
+  adminId                 String?  @map("admin_id")
+  notes                   String?
+  attachmentUrl           String?  @map("attachment_url")
+  adjustmentTransactionId String?  @map("adjustment_transaction_id")
+  reconciliationDate      DateTime @default(now()) @map("reconciliation_date")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
+
+  account                 FinancialAccount @relation("AccountReconciliations", fields: [accountId], references: [id], onDelete: Cascade)
+  admin                   User?            @relation("ReconciliationAdmin", fields: [adminId], references: [discordId], onDelete: SetNull)
+
+  @@index([accountId, reconciliationDate])
+  @@index([status])
+  @@map("balance_reconciliations")
 }
 
 
