@@ -361,9 +361,12 @@ export function buildOrderComponents(
       order.orderType === 'group' ||
       (order.service?.serviceMode || '').toLowerCase() === 'group';
 
+    const presignCustomId =
+      order.orderMode === 'pilot' ? `presign_pilot:${order.id}` : `presign_booster:${order.id}`;
+
     row.addComponents(
       new ButtonBuilder()
-        .setCustomId(`presign_dps:${order.id}`)
+        .setCustomId(presignCustomId)
         .setLabel(`Pre-sign (${activePresigns.length})`)
         .setStyle(ButtonStyle.Primary)
         .setEmoji('✋')
@@ -408,8 +411,19 @@ export function buildOrderComponents(
         badgeEmoji = '📋';
         badgeStyle = ButtonStyle.Secondary;
         break;
+      case 'waiting_for_confirm':
+        badgeLabel = 'Waiting for Confirm';
+        badgeEmoji = '⏳';
+        badgeStyle = ButtonStyle.Secondary;
+        break;
+      case 'warranty':
+        badgeLabel = 'Under Warranty';
+        badgeEmoji = '🛡️';
+        badgeStyle = ButtonStyle.Primary;
+        break;
+      case 'done':
       case 'completed':
-        badgeLabel = 'Completed';
+        badgeLabel = order.status === 'done' ? 'Done (24H Escrow)' : 'Completed';
         badgeEmoji = '🏁';
         badgeStyle = ButtonStyle.Success;
         break;

@@ -1486,6 +1486,9 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                                 <option value="in_progress">In Progress (in_progress)</option>
                                 <option value="pending_review">Pending Final Review (pending_review)</option>
                                 <option value="completed">Completed (completed)</option>
+                                <option value="waiting_for_confirm">Waiting for Customer Confirmation (waiting_for_confirm)</option>
+                                <option value="warranty">Warranty Period (warranty)</option>
+                                <option value="done">Done (done - 24H Escrow)</option>
                                 <option value="disputed">Disputed (disputed)</option>
                                 <option value="cancelled">Cancelled (cancelled)</option>
                               </select>
@@ -1510,6 +1513,9 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                               { id: 'in_progress', label: 'In Progress' },
                               { id: 'pending_review', label: 'Pending Review' },
                               { id: 'completed', label: 'Completed' },
+                              { id: 'waiting_for_confirm', label: 'Waiting Confirm' },
+                              { id: 'warranty', label: 'Warranty' },
+                              { id: 'done', label: 'Done' },
                               { id: 'disputed', label: 'Disputed' },
                               { id: 'cancelled', label: 'Cancelled' },
                             ].map((s) => (

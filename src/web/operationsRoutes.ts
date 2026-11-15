@@ -18,6 +18,8 @@ import { authorize } from '../services/authorizationService';
 import { Permission } from '../services/permissionTypes';
 import { reviewRunProof, resolveOrderDispute, getDisputesForUser } from '../services/orderDisputeService';
 import { recordStaffReview, recordAdminFinalApproval } from '../services/financeV2/g4xBoostReleaseService';
+import { confirmOrderBoosterEarnings } from '../services/financeV2/boosterEarningsSyncService';
+import { G4XBoostReleaseStage } from '../services/financeV2/financeV2Types';
 import { getSeparatedOrdersList, getCategorizedOrders, publishOrder, getOrderDiagnostics, getOrderAuditHistory, updateOrderOperationalFields } from '../services/orderLifecycleService';
 import { assignOrderBoosters } from '../services/assignmentService';
 import { ensureOrderTempChannel } from '../services/orderExecutionChannelService';
@@ -629,6 +631,9 @@ const ALLOWED_ORDER_STATUSES = [
   'in_progress',
   'pending_review',
   'completed',
+  'waiting_for_confirm',
+  'warranty',
+  'done',
   'disputed',
   'cancelled',
 ];
@@ -678,8 +683,42 @@ operationsRouter.post(
           status: targetStatus,
         };
 
-        if (targetStatus === 'completed' && !existing.completedAt) {
+        if ((targetStatus === 'completed' || targetStatus === 'done') && !existing.completedAt) {
           updateData.completedAt = new Date();
+        }
+
+        // When order reaches 'done': funds enter 24H escrow hold before becoming available for withdrawal
+        if (targetStatus === 'done' && existing.creatorType === 'g4x') {
+          const holdExpiresAt = new Date(Date.now() + 24 * 3600 * 1000);
+          await tx.g4XBoostReleaseTracker.upsert({
+            where: { orderId },
+            update: {
+              stage: G4XBoostReleaseStage.HOLD_24_HOURS,
+              adminFinalApprovedAt: new Date(),
+              adminFinalApprovedBy: actorId,
+              holdDurationHours: 24,
+              holdExpiresAt,
+              notes: notes ? `Transitioned to done: ${notes}` : 'Transitioned to done (24H Escrow started)',
+            },
+            create: {
+              orderId,
+              stage: G4XBoostReleaseStage.HOLD_24_HOURS,
+              adminFinalApprovedAt: new Date(),
+              adminFinalApprovedBy: actorId,
+              holdDurationHours: 24,
+              holdExpiresAt,
+              notes: notes ? `Transitioned to done: ${notes}` : 'Transitioned to done (24H Escrow started)',
+            },
+          });
+
+          // Align ledger transaction releaseAt to 24 hours
+          await tx.ledgerTransaction.updateMany({
+            where: { orderId, entryType: 'escrow_lock' },
+            data: {
+              escrowStartAt: new Date(),
+              releaseAt: holdExpiresAt,
+            },
+          });
         }
 
         if (targetStatus === 'cancelled') {
@@ -711,6 +750,15 @@ operationsRouter.post(
           },
         });
       });
+
+      // Confirm booster earnings for order when reaching done
+      if (targetStatus === 'done') {
+        try {
+          await confirmOrderBoosterEarnings(orderId, actorId);
+        } catch (syncErr: any) {
+          console.warn(`[Operations] Error syncing earnings for order #${orderId}:`, syncErr);
+        }
+      }
 
       // If transitioning to assigned or in_progress, ensure temp channel exists automatically
       let channelResult: any = null;

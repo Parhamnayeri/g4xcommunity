@@ -165,7 +165,7 @@ export async function checkEscrowEligibility(
     if (!orderData) {
       reasons.push(`ORDER_NOT_FOUND: Linked order #${record.orderId} does not exist`);
     } else {
-      if (orderData.status !== 'completed') {
+      if (orderData.status !== 'completed' && orderData.status !== 'done') {
         reasons.push(`ORDER_NOT_COMPLETED: Order status is '${orderData.status}'`);
       }
       if (orderData.paymentStatus !== 'verified' && orderData.paymentStatus !== 'unneeded') {
@@ -261,7 +261,8 @@ export async function checkEscrowEligibility(
     );
   } else {
     details.escrowStartAt = reliableEscrowStart;
-    const requiredHours = Number(process.env.ESCROW_RELEASE_HOURS ?? 72);
+    const isG4x = orderData?.creatorType === 'g4x';
+    const requiredHours = isG4x ? 24 : Number(process.env.ESCROW_RELEASE_HOURS ?? 72);
     const minElapsedMs = requiredHours * 60 * 60 * 1000;
     const elapsedSinceCompletion = now.getTime() - reliableEscrowStart.getTime();
 

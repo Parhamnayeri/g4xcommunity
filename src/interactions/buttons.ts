@@ -80,8 +80,19 @@ export async function handleButtonInteraction(interaction: ButtonInteraction): P
     case 'presign_tank':
     case 'presign_healer':
     case 'presign_dps':
+    case 'presign_pilot':
+    case 'presign_booster':
     case 'presign_apply': {
-      const role = action === 'presign_apply' ? 'dps' : action.replace('presign_', '');
+      let role = 'booster';
+      if (action === 'presign_pilot') {
+        role = 'pilot';
+      } else if (action === 'presign_booster') {
+        role = 'booster';
+      } else if (action === 'presign_apply') {
+        role = 'booster';
+      } else {
+        role = action.replace('presign_', '');
+      }
       const orderId = Number(params[0]);
       if (isNaN(orderId) || orderId <= 0) {
         await interaction.reply({ content: '❌ Invalid order ID parameter.', ephemeral: true });

@@ -105,19 +105,19 @@ export async function getUserEligibleRoles(
     ['owner', 'manager', 'admin', 'staff'].includes(r.roleKey)
   );
 
-  // Check Game Booster Approval
+  // Check Game Booster or Pilot Approval
   const approval = await client.userGameApproval.findFirst({
     where: {
       userId,
       gameSlug: { in: [gameSlug, 'wow', 'wow_midnight'] },
-      approvalType: 'booster',
+      approvalType: { in: ['booster', 'pilot'] },
       status: 'approved',
     },
   });
 
-  const hasBoosterRole = user.userRoles.some((r) => r.roleKey === 'booster');
+  const hasBoosterOrPilotRole = user.userRoles.some((r) => ['booster', 'pilot'].includes(r.roleKey));
 
-  if (!isManagement && !approval && !hasBoosterRole) {
+  if (!isManagement && !approval && !hasBoosterOrPilotRole) {
     return [];
   }
 
@@ -216,7 +216,7 @@ export async function toggleBoosterRolePresign(
   role: string,
   client: Prisma.TransactionClient | typeof prisma = prisma
 ): Promise<ToggleRoleResult> {
-  const normRole = role.toLowerCase().trim();
+  let normRole = role.toLowerCase().trim();
   if (!KNOWN_EXECUTION_ROLES.includes(normRole)) {
     throw new DomainError(DomainErrorCode.INVALID_ASSIGNED_ROLE, `Unknown execution role: ${role}`);
   }
@@ -228,6 +228,13 @@ export async function toggleBoosterRolePresign(
 
   if (!order) {
     throw new DomainError(DomainErrorCode.ORDER_NOT_FOUND, `Order #${orderId} not found`);
+  }
+
+  // Normalize role: For pilot orders, applicant is 'pilot'. For non-mythic orders, applicant is 'booster'.
+  if (order.orderMode === 'pilot') {
+    normRole = 'pilot';
+  } else if (!isMythicPlusOrder(order)) {
+    normRole = 'booster';
   }
 
   if (order.status === 'completed' || order.status === 'cancelled') {
@@ -263,12 +270,14 @@ export async function toggleBoosterRolePresign(
   }
 
   // Validate booster approval status
+  // For pilot orders, user must have approved pilot qualification.
+  // For non-pilot orders, having approved booster OR pilot qualification is sufficient.
   const approval = await client.userGameApproval.findFirst({
     where: {
       userId,
       gameSlug: { in: [order.gameSlug, 'wow', 'wow_midnight'] },
       OR: [{ serviceId: null }, { serviceId: order.serviceId }],
-      approvalType: order.orderMode === 'pilot' ? 'pilot' : 'booster',
+      approvalType: order.orderMode === 'pilot' ? 'pilot' : { in: ['booster', 'pilot'] },
       status: 'approved',
     },
   });
@@ -290,7 +299,13 @@ export async function toggleBoosterRolePresign(
   // Validate required roles if defined on order
   if (order.requiredRoles && order.requiredRoles.length > 0) {
     const validRoleNames = order.requiredRoles.map((r) => r.roleName.toLowerCase());
-    if (!validRoleNames.includes(normRole)) {
+    const isDirectMatch = validRoleNames.includes(normRole);
+    const isGeneralMatch =
+      !isMythicPlusOrder(order) &&
+      (normRole === 'booster' || normRole === 'pilot') &&
+      (order.orderMode === 'pilot' ? normRole === 'pilot' : true);
+
+    if (!isDirectMatch && !isGeneralMatch) {
       throw new DomainError(
         DomainErrorCode.INVALID_ASSIGNED_ROLE,
         `Role **${normRole.toUpperCase()}** is not needed for this order. Required: [${validRoleNames.join(', ')}].`
@@ -300,7 +315,13 @@ export async function toggleBoosterRolePresign(
 
   // Validate booster authoritative eligibility for requested role
   const eligibleRoles = await getUserEligibleRoles(userId, order.gameSlug, client);
-  if (!eligibleRoles.includes(normRole)) {
+  const isEligible =
+    eligibleRoles.includes(normRole) ||
+    isStaff ||
+    (normRole === 'booster' && Boolean(approval)) ||
+    (normRole === 'pilot' && (approval?.approvalType === 'pilot' || user?.userRoles.some((r) => r.roleKey === 'pilot')));
+
+  if (!isEligible) {
     throw new DomainError(
       DomainErrorCode.INVALID_ASSIGNED_ROLE,
       `You are not eligible to apply as **${normRole.toUpperCase()}** for this order.`

@@ -39,7 +39,13 @@ export function mapOrderStatus(rawStatus: string, releaseStage?: string | null):
   if (norm === 'cancelled' || norm === 'rejected') {
     return { label: 'Cancelled', colorClass: 'badge-gray', rawStatus };
   }
-  if (norm === 'completed') {
+  if (norm === 'waiting_for_confirm') {
+    return { label: 'Awaiting Verification', colorClass: 'badge-purple', rawStatus };
+  }
+  if (norm === 'warranty') {
+    return { label: 'In Progress', colorClass: 'badge-blue', rawStatus };
+  }
+  if (norm === 'completed' || norm === 'done') {
     if (stage === 'RUN_COMPLETED' || stage === 'PROOF_SUBMITTED' || stage === 'STAFF_REVIEW' || stage === 'HOLD_24_HOURS') {
       return { label: 'Awaiting Verification', colorClass: 'badge-purple', rawStatus: stage || norm };
     }

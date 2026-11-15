@@ -874,16 +874,54 @@ export async function reviewApplication(input: ApplicationReviewInput) {
 
       // شرط دوگانه پایلوت: احراز هویت تاییدشده الزامی است
       if (currentApp.category === 'pilot') {
+        const isAppIdentityVerified = currentApp.identityStatus === 'verified';
         const approvedVerif = await tx.pilotVerification.findFirst({
           where: {
             userId: applicantId,
-            gameSlug: currentApp.gameSlug || '',
             status: 'approved',
           },
         });
+        const anyVerifiedApp = await tx.registrationApplication.findFirst({
+          where: {
+            userId: applicantId,
+            identityStatus: 'verified',
+          },
+        });
 
-        if (!approvedVerif) {
+        const isIdentityVerified = isAppIdentityVerified || Boolean(approvedVerif) || Boolean(anyVerifiedApp);
+
+        if (!isIdentityVerified) {
           throw new Error('PILOT_VERIFICATION_REQUIRED: Pilot approval requires approved identity verification');
+        }
+
+        // اطمینان از وجود رکورد تاییدشده در PilotVerification برای gameSlug درخواست جاری
+        const targetGameSlug = currentApp.gameSlug || 'wow_midnight';
+        const gameVerif = await tx.pilotVerification.findFirst({
+          where: { userId: applicantId, gameSlug: targetGameSlug },
+        });
+        if (gameVerif) {
+          if (gameVerif.status !== 'approved') {
+            await tx.pilotVerification.update({
+              where: { id: gameVerif.id },
+              data: {
+                status: 'approved',
+                reviewedBy: reviewerId,
+                reviewedAt: new Date(),
+                reviewNote: reviewNotes || 'Identity verified during pilot application approval',
+              },
+            });
+          }
+        } else {
+          await tx.pilotVerification.create({
+            data: {
+              userId: applicantId,
+              gameSlug: targetGameSlug,
+              status: 'approved',
+              reviewedBy: reviewerId,
+              reviewedAt: new Date(),
+              reviewNote: reviewNotes || 'Identity verified during pilot application approval',
+            },
+          });
         }
       }
 
@@ -1227,20 +1265,36 @@ export async function reviewApplication(input: ApplicationReviewInput) {
         throw new Error(docValidation.error || 'MANDATORY_EVIDENCE_MISSING: Valid identity evidence files are missing or corrupted');
       }
 
-      if (currentApp.category === 'pilot' && currentApp.gameSlug) {
-        await tx.pilotVerification.updateMany({
+      if (currentApp.category === 'pilot') {
+        const targetGameSlug = currentApp.gameSlug || 'wow_midnight';
+        const existingVerif = await tx.pilotVerification.findFirst({
           where: {
             userId: applicantId,
-            gameSlug: currentApp.gameSlug,
-            status: { not: 'rejected' },
-          },
-          data: {
-            status: 'approved',
-            reviewedBy: reviewerId,
-            reviewedAt: new Date(),
-            reviewNote: reviewNotes || 'Identity verified by authorized management',
+            gameSlug: targetGameSlug,
           },
         });
+        if (existingVerif) {
+          await tx.pilotVerification.update({
+            where: { id: existingVerif.id },
+            data: {
+              status: 'approved',
+              reviewedBy: reviewerId,
+              reviewedAt: new Date(),
+              reviewNote: reviewNotes || 'Identity verified by authorized management',
+            },
+          });
+        } else {
+          await tx.pilotVerification.create({
+            data: {
+              userId: applicantId,
+              gameSlug: targetGameSlug,
+              status: 'approved',
+              reviewedBy: reviewerId,
+              reviewedAt: new Date(),
+              reviewNote: reviewNotes || 'Identity verified by authorized management',
+            },
+          });
+        }
       }
 
       // به‌روزرسانی اتمیک با شرط مقایسه-و-تعویض (Atomic CAS) جهت جلوگیری از تایید همزمان یا متعارض
