@@ -527,6 +527,31 @@ ownerPortalRouter.put(
             },
           });
 
+          // If updating dollar exchange rate, sync active ExchangeRate table
+          if (key === 'admin_usd_irt_rate') {
+            const numRate = Number(value);
+            if (!isNaN(numRate) && numRate > 0) {
+              await tx.exchangeRate.updateMany({
+                where: { fromCurrency: 'USD', toCurrency: 'IRR', isActive: true },
+                data: { isActive: false },
+              });
+              await tx.exchangeRate.create({
+                data: {
+                  rateRef: `FX-USD-IRR-${Date.now().toString(36).toUpperCase()}`,
+                  fromCurrency: 'USD',
+                  toCurrency: 'IRR',
+                  rate: numRate,
+                  inverseRate: 1 / numRate,
+                  spreadPercentage: 0,
+                  isActive: true,
+                  source: 'FINANCIAL_CONFIG',
+                  notes: `Synced from Owner Financial Configuration: ${reason.trim()}`,
+                  adminId: user.discordId,
+                },
+              });
+            }
+          }
+
           // Redact card number or IBAN in audit log
           let loggedPrev = prev?.value || 'UNSET';
           let loggedNew = value;

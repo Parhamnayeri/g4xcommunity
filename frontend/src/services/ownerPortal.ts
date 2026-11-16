@@ -13,6 +13,7 @@ import {
   SecurityHealthResponse,
   OwnerBackupsResponse,
 } from '../types/ownerPortal';
+import { AdminFinanceOverviewResponse } from '../types/adminPortal';
 
 export async function fetchOwnerOverview(): Promise<OwnerOverviewResponse> {
   return apiRequest<OwnerOverviewResponse>('/api/owner/overview');
@@ -103,5 +104,9 @@ export async function restoreOwnerBackup(
     method: 'POST',
     body: JSON.stringify({ snapshotFilename, confirmPhrase, restoreStorage }),
   });
+}
+
+export async function fetchOwnerFinanceOverview(): Promise<AdminFinanceOverviewResponse> {
+  return apiRequest<AdminFinanceOverviewResponse>('/api/owner/finance/overview');
 }
 

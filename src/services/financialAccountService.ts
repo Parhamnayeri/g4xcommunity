@@ -934,6 +934,13 @@ export async function getPlatformBalanceOverview() {
 
   const consolidatedTotalUsdMinor = totalUsdPlatformBalanceMinor + totalUsdWalletBalanceMinor;
 
+  // Fetch dollar rate from SystemFinancialConfig
+  const rateConfig = await prisma.systemFinancialConfig.findUnique({
+    where: { key: 'admin_usd_irt_rate' },
+  });
+  const dollarRate = rateConfig?.value ? parseFloat(rateConfig.value) : 90000;
+  const consolidatedTotalToman = `${Math.round((consolidatedTotalUsdMinor / 100) * dollarRate).toLocaleString('en-US')} Toman`;
+
   return {
     platforms,
     summaryCards: {
@@ -947,6 +954,12 @@ export async function getPlatformBalanceOverview() {
       totalAvailableFundsUsd: formatFinancialAmount(totalAvailableFundsMinor, 'USD'),
       consolidatedTotalUsdMinor,
       consolidatedTotalUsdUsd: formatFinancialAmount(consolidatedTotalUsdMinor, 'USD'),
+      consolidatedTotalToman,
+      dollarRate: {
+        rate: dollarRate,
+        formatted: `${dollarRate.toLocaleString('en-US')} Toman`,
+        source: 'SystemFinancialConfig (admin_usd_irt_rate)',
+      },
     },
     lastReconciledAt: new Date().toISOString(),
   };

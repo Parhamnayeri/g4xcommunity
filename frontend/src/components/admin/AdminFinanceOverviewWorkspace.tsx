@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LoadingState } from '../ui/LoadingState';
-import { fetchAdminFinanceOverview } from '../../services/adminPortal';
+import { fetchOwnerFinanceOverview } from '../../services/ownerPortal';
 import { AdminFinanceOverviewResponse } from '../../types/adminPortal';
 import { PlatformBalancesStrip } from './PlatformBalancesStrip';
 
@@ -21,7 +21,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchAdminFinanceOverview();
+      const res = await fetchOwnerFinanceOverview();
       if (res?.success) {
         setData(res);
         setLastRefreshedAt(new Date());
@@ -43,7 +43,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
     if (onNavigateTab) {
       onNavigateTab('withdrawals');
     } else {
-      navigate('/admin?tab=withdrawals');
+      navigate('/owner?tab=withdrawals');
     }
   };
 
@@ -51,7 +51,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
     if (onNavigateTab) {
       onNavigateTab('orders');
     } else {
-      navigate(platform ? `/admin?tab=orders&source=${platform}` : '/admin?tab=orders');
+      navigate(platform ? `/owner?tab=orders&source=${platform}` : '/owner?tab=orders');
     }
   };
 
@@ -87,7 +87,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
         }}
       >
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.35rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
             <span style={{ fontSize: '1.3rem' }}>💰</span>
             <h2 style={{ fontSize: '1.4rem', fontWeight: 800, margin: 0, color: '#fff' }}>
               Authoritative Financial Overview &amp; Liquidity Engine
@@ -95,9 +95,16 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
             <span className="badge badge-yellow" style={{ fontSize: '0.72rem', textTransform: 'uppercase' }}>
               Ecosystem Reserves
             </span>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', padding: '0.2rem 0.6rem', borderRadius: '6px', background: 'rgba(139, 92, 246, 0.15)', border: '1px solid rgba(139, 92, 246, 0.35)' }}>
+              <span style={{ fontSize: '0.72rem', color: '#C4B5FD', fontWeight: 600 }}>💵 Dollar Price:</span>
+              <strong style={{ fontSize: '0.82rem', color: '#fff', fontFamily: 'monospace' }}>
+                {totals?.dollarRateFormatted || (totals?.dollarRate ? `${totals.dollarRate.toLocaleString()} Toman` : '90,000 Toman')}
+              </strong>
+            </div>
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.86rem', margin: 0 }}>
             Unified real-time tracking across 6 platform sources, booster escrow liabilities, and liquidity solvency.
+            Dollar rate sourced live from <strong>Financial Configuration</strong>.
             Last reconciled: <strong style={{ color: '#fff' }}>{lastRefreshedAt.toLocaleTimeString()}</strong>
           </p>
         </div>
@@ -127,7 +134,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
         </div>
       )}
 
-      {/* Top 6 Executive KPI Cards */}
+      {/* Top Executive KPI Cards */}
       {totals && (
         <div
           style={{
@@ -136,6 +143,20 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
             gap: '1rem',
           }}
         >
+          {/* KPI 0: Dollar Rate from Financial Config */}
+          <div className="card-surface" style={{ padding: '1.25rem', borderRadius: '12px', border: '1px solid rgba(139, 92, 246, 0.4)', background: 'linear-gradient(135deg, rgba(139,92,246,0.08) 0%, rgba(109,40,217,0.03) 100%)' }}>
+            <div style={{ fontSize: '0.68rem', color: '#C4B5FD', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>Dollar Price / نرخ دلار</span>
+              <span style={{ fontSize: '0.62rem', background: '#7C3AED', color: '#fff', padding: '1px 5px', borderRadius: '3px' }}>Live Config</span>
+            </div>
+            <div style={{ fontSize: '1.5rem', fontWeight: 800, fontFamily: 'monospace', color: '#DDD6FE', margin: '4px 0 2px' }}>
+              {totals.dollarRateFormatted || (totals.dollarRate ? `${totals.dollarRate.toLocaleString()} Toman` : '90,000 Toman')}
+            </div>
+            <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+              Source: <strong>SystemFinancialConfig</strong>
+            </div>
+          </div>
+
           {/* KPI 1: Gross Platform Volume */}
           <div className="card-surface" style={{ padding: '1.25rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)' }}>
             <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 700 }}>
@@ -145,7 +166,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
               {totals.grossVolumeUsd}
             </div>
             <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-              Completed: <strong style={{ color: '#fff' }}>{totals.completedVolumeUsd}</strong>
+              {totals.grossVolumeToman ? <strong style={{ color: '#C4B5FD' }}>{totals.grossVolumeToman}</strong> : `Completed: ${totals.completedVolumeUsd}`}
             </div>
           </div>
 
@@ -158,7 +179,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
               {totals.netPlatformProfitUsd}
             </div>
             <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-              Platform cuts &amp; commission fees
+              {totals.netPlatformProfitToman ? <strong style={{ color: '#34D399' }}>{totals.netPlatformProfitToman}</strong> : 'Platform cuts & commission fees'}
             </div>
           </div>
 
@@ -171,7 +192,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
               {totals.boosterPoolUsd}
             </div>
             <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-              Payable pool to active rosters
+              {totals.boosterPoolToman ? <strong style={{ color: 'var(--accent-yellow)' }}>{totals.boosterPoolToman}</strong> : 'Payable pool to active rosters'}
             </div>
           </div>
 
@@ -184,7 +205,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
               {totals.activeEscrowUsd}
             </div>
             <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-              In-progress orders pending proof
+              {totals.activeEscrowToman ? <strong style={{ color: '#FBBF24' }}>{totals.activeEscrowToman}</strong> : 'In-progress orders pending proof'}
             </div>
           </div>
 
@@ -197,7 +218,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
               {totals.pendingWithdrawalsUsd}
             </div>
             <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-              <strong>{totals.pendingWithdrawalsCount}</strong> claims in queue
+              <strong>{totals.pendingWithdrawalsCount}</strong> claims {totals.pendingWithdrawalsToman ? `(${totals.pendingWithdrawalsToman})` : 'in queue'}
             </div>
           </div>
 
@@ -210,7 +231,7 @@ export const AdminFinanceOverviewWorkspace: React.FC<Props> = ({ onNavigateTab }
               {totals.netLiquidReserveUsd}
             </div>
             <div style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
-              Liquid margin after pending claims
+              {totals.netLiquidReserveToman ? <strong style={{ color: isSolvent ? '#38BDF8' : '#EF4444' }}>{totals.netLiquidReserveToman}</strong> : 'Liquid margin after pending claims'}
             </div>
           </div>
         </div>

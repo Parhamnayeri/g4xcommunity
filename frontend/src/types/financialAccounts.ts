@@ -104,6 +104,12 @@ export interface PlatformOverviewSummaryCards {
   totalAvailableFundsUsd: string;
   consolidatedTotalUsdMinor: number;
   consolidatedTotalUsdUsd: string;
+  consolidatedTotalToman?: string;
+  dollarRate?: {
+    rate: number;
+    formatted: string;
+    source: string;
+  };
 }
 
 export interface PlatformBalanceOverviewResponse {

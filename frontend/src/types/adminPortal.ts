@@ -179,33 +179,49 @@ export interface PlatformFinanceBreakdown {
 }
 
 export interface FinanceTotals {
+  dollarRate?: number;
+  dollarRateFormatted?: string;
   grossVolumeMinor: number;
   grossVolumeUsd: string;
+  grossVolumeToman?: string;
   platformFeesMinor: number;
   platformFeesUsd: string;
   netPlatformProfitMinor: number;
   netPlatformProfitUsd: string;
+  netPlatformProfitToman?: string;
   boosterPoolMinor: number;
   boosterPoolUsd: string;
+  boosterPoolToman?: string;
   activeEscrowMinor: number;
   activeEscrowUsd: string;
+  activeEscrowToman?: string;
   completedVolumeMinor: number;
   completedVolumeUsd: string;
+  completedVolumeToman?: string;
   boosterWalletLiabilityMinor: number;
   boosterWalletLiabilityUsd: string;
+  boosterWalletLiabilityToman?: string;
   pendingWithdrawalsCount: number;
   pendingWithdrawalsMinor: number;
   pendingWithdrawalsUsd: string;
+  pendingWithdrawalsToman?: string;
   paidWithdrawalsCount: number;
   paidWithdrawalsMinor: number;
   paidWithdrawalsUsd: string;
   netLiquidReserveMinor: number;
   netLiquidReserveUsd: string;
+  netLiquidReserveToman?: string;
 }
 
 export interface AdminFinanceOverviewResponse {
   success: boolean;
   totals: FinanceTotals;
   byPlatform: PlatformFinanceBreakdown[];
+  dollarRate?: {
+    rate: number;
+    formatted: string;
+    updatedAt?: string;
+    source: string;
+  };
 }
 

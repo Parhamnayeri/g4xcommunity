@@ -21,6 +21,7 @@ import { Permission, SystemRoleKey, ROLE_PERMISSIONS } from '../services/permiss
 import { adminReviewFunding } from '../services/financeV2/walletPageService';
 import { getOrCreatePlatformAccount } from '../services/platformBalanceService';
 import { getUserKycStatus, assistUserKyc, sendKycRequestDm } from '../services/kycDocumentSecurity';
+import { requireOwnerPortalAccess } from './ownerPortalRoutes';
 
 export const adminPortalRouter = Router();
 
@@ -209,9 +210,14 @@ const PLATFORMS_CONFIG = [
 // ─────────────────────────────────────────────────────────────────────────────
 
 adminPortalRouter.get(
-  ['/admin/finance/overview', '/api/admin/finance/overview'],
+  [
+    '/owner/finance/overview',
+    '/api/owner/finance/overview',
+    '/admin/finance/overview',
+    '/api/admin/finance/overview',
+  ],
   requireAuth,
-  requireAdminPortalAccess,
+  requireOwnerPortalAccess,
   async (_req: Request, res: Response): Promise<void> => {
     try {
       // Ensure default accounts exist for all 5 external platforms
@@ -369,35 +375,57 @@ adminPortalRouter.get(
       const totalAvailableLiquidMinor = byPlatform.reduce((sum, p) => sum + p.availableBalanceMinor, 0);
       const netLiquidReserveMinor = totalAvailableLiquidMinor - pendingWithdrawalsMinor;
 
+      // Fetch authoritative dollar rate from SystemFinancialConfig
+      const rateConfig = await prisma.systemFinancialConfig.findUnique({
+        where: { key: 'admin_usd_irt_rate' },
+      });
+      const dollarRate = rateConfig?.value ? parseFloat(rateConfig.value) : 90000;
+
       const totals = {
+        dollarRate,
+        dollarRateFormatted: `${dollarRate.toLocaleString('en-US')} Toman`,
         grossVolumeMinor: totalGrossVolumeMinor,
         grossVolumeUsd: formatCentsToUsd(totalGrossVolumeMinor),
+        grossVolumeToman: `${Math.round((totalGrossVolumeMinor / 100) * dollarRate).toLocaleString('en-US')} Toman`,
         platformFeesMinor: totalPlatformFeesMinor,
         platformFeesUsd: formatCentsToUsd(totalPlatformFeesMinor),
         netPlatformProfitMinor: totalNetPlatformProfitMinor,
         netPlatformProfitUsd: formatCentsToUsd(totalNetPlatformProfitMinor),
+        netPlatformProfitToman: `${Math.round((totalNetPlatformProfitMinor / 100) * dollarRate).toLocaleString('en-US')} Toman`,
         boosterPoolMinor: totalBoosterPoolMinor,
         boosterPoolUsd: formatCentsToUsd(totalBoosterPoolMinor),
+        boosterPoolToman: `${Math.round((totalBoosterPoolMinor / 100) * dollarRate).toLocaleString('en-US')} Toman`,
         activeEscrowMinor,
         activeEscrowUsd: formatCentsToUsd(activeEscrowMinor),
+        activeEscrowToman: `${Math.round((activeEscrowMinor / 100) * dollarRate).toLocaleString('en-US')} Toman`,
         completedVolumeMinor,
         completedVolumeUsd: formatCentsToUsd(completedVolumeMinor),
+        completedVolumeToman: `${Math.round((completedVolumeMinor / 100) * dollarRate).toLocaleString('en-US')} Toman`,
         boosterWalletLiabilityMinor,
         boosterWalletLiabilityUsd: formatCentsToUsd(boosterWalletLiabilityMinor),
+        boosterWalletLiabilityToman: `${Math.round((boosterWalletLiabilityMinor / 100) * dollarRate).toLocaleString('en-US')} Toman`,
         pendingWithdrawalsCount,
         pendingWithdrawalsMinor,
         pendingWithdrawalsUsd: formatCentsToUsd(pendingWithdrawalsMinor),
+        pendingWithdrawalsToman: `${Math.round((pendingWithdrawalsMinor / 100) * dollarRate).toLocaleString('en-US')} Toman`,
         paidWithdrawalsCount,
         paidWithdrawalsMinor,
         paidWithdrawalsUsd: formatCentsToUsd(paidWithdrawalsMinor),
         netLiquidReserveMinor,
         netLiquidReserveUsd: formatCentsToUsd(netLiquidReserveMinor),
+        netLiquidReserveToman: `${Math.round((netLiquidReserveMinor / 100) * dollarRate).toLocaleString('en-US')} Toman`,
       };
 
       res.json({
         success: true,
         totals,
         byPlatform,
+        dollarRate: {
+          rate: dollarRate,
+          formatted: `${dollarRate.toLocaleString('en-US')} Toman`,
+          updatedAt: rateConfig?.updatedAt ? rateConfig.updatedAt.toISOString() : undefined,
+          source: 'SystemFinancialConfig (admin_usd_irt_rate)',
+        },
       });
     } catch (err: any) {
       res.status(500).json({ error: 'FINANCE_OVERVIEW_FAILED', message: err.message || 'Failed to fetch finance overview' });
