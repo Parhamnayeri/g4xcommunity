@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { LoadingState } from '../ui/LoadingState';
 import {
   JournalRecordItem,
   TrialBalanceData,
@@ -21,7 +20,7 @@ interface Props {
   onRefreshWorkspace?: () => void;
 }
 
-export const FinancialLedgerSection: React.FC<Props> = ({ accounts, userRole, onRefreshWorkspace }) => {
+export const FinancialLedgerSection: React.FC<Props> = ({ accounts, userRole: _userRole, onRefreshWorkspace }) => {
   // ─── Trial Balance State ────────────────────────────────────────────────────
   const [tbCurrency, setTbCurrency] = useState<'USD' | 'IRR'>('USD');
   const [trialBalance, setTrialBalance] = useState<TrialBalanceData | null>(null);

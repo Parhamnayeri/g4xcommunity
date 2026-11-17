@@ -4,7 +4,6 @@ import {
   FinancialAccountItem,
   InternalTransferItem,
   ExchangeRateItem,
-  TransferType,
 } from '../../types/financialAccounts';
 import {
   fetchExchangeRates,
@@ -368,6 +367,7 @@ export const TransfersExchangeSection: React.FC<Props> = ({ accounts, onRefreshW
           <button
             type="button"
             className="btn btn-secondary btn-sm"
+            disabled={rateLoading}
             onClick={() => {
               setNewRateValue(activeRate ? String(activeRate.rate) : '88500');
               setShowRateModal(true);
@@ -378,7 +378,7 @@ export const TransfersExchangeSection: React.FC<Props> = ({ accounts, onRefreshW
               fontSize: '0.8rem',
             }}
           >
-            ✏️ Update Rate
+            {rateLoading ? 'Loading...' : '✏️ Update Rate'}
           </button>
           <button
             type="button"

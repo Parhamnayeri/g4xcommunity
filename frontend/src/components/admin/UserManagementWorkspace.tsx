@@ -8,6 +8,7 @@ import {
   sendUserKycDm,
 } from '../../services/adminPortal';
 import { AssistedKycModal } from './AssistedKycModal';
+import { UserDetailsModal } from './UserDetailsModal';
 
 interface UserItem {
   discordId: string;
@@ -74,6 +75,9 @@ export const UserManagementWorkspace: React.FC<Props> = ({
   const [assistedUser, setAssistedUser] = useState<UserItem | null>(null);
   const [kycDmFeedback, setKycDmFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [sendingDmId, setSendingDmId] = useState<string | null>(null);
+
+  // User Details Modal State
+  const [detailsUser, setDetailsUser] = useState<UserItem | null>(null);
 
   const handleSendKycDm = async (u: UserItem) => {
     setSendingDmId(u.discordId);
@@ -280,6 +284,14 @@ export const UserManagementWorkspace: React.FC<Props> = ({
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     <div style={{ display: 'flex', gap: '0.45rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-xs"
+                        onClick={() => setDetailsUser(u)}
+                        title="Inspect aggregated user profile, KYC, financials, orders and audit logs"
+                      >
+                        👤 Details
+                      </button>
                       <button
                         type="button"
                         className="btn btn-secondary btn-xs"
@@ -635,6 +647,27 @@ export const UserManagementWorkspace: React.FC<Props> = ({
           isOpen={Boolean(assistedUser)}
           onClose={() => setAssistedUser(null)}
           onSuccess={() => loadUsers(pagination.page)}
+        />
+      )}
+
+      {/* Comprehensive User Details Modal */}
+      {detailsUser && (
+        <UserDetailsModal
+          discordId={detailsUser.discordId}
+          isOpen={Boolean(detailsUser)}
+          onClose={() => setDetailsUser(null)}
+          onAssistKyc={(u) => {
+            setDetailsUser(null);
+            setAssistedUser({
+              discordId: u.discordId,
+              displayName: u.displayName,
+              username: u.username,
+              isActive: true,
+              advertiserRank: null,
+              roles: [],
+              createdAt: new Date().toISOString(),
+            });
+          }}
         />
       )}
     </div>

@@ -209,3 +209,228 @@ export interface AdminFinanceOverviewResponse {
   byPlatform: PlatformFinanceBreakdown[];
 }
 
+// ==========================================
+// User Details Modal & Aggregated Data Types
+// ==========================================
+
+export interface AdminUserProfile {
+  id: string;
+  discordId: string;
+  username: string;
+  displayName: string | null;
+  avatarUrl: string;
+  isActive: boolean;
+  status: 'Active' | 'Suspended';
+  advertiserRank: string | null;
+  phoneNumber: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AdminUserRoleItem {
+  roleKey: string;
+  grantedAt: string;
+  grantedBy: string | null;
+}
+
+export interface AdminUserGameApprovalItem {
+  id: string;
+  gameSlug: string;
+  gameName: string;
+  serviceId: string | null;
+  serviceName: string | null;
+  approvalType: string;
+  status: string;
+  reviewNote: string | null;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  createdAt: string;
+}
+
+export interface AdminUserWowCharacterItem {
+  id: string;
+  characterName: string;
+  realm: string;
+  region: string;
+  characterClass: string;
+  activeSpec: string;
+  itemLevel: number;
+  mythicScore: number;
+  activeRole: string;
+  faction: string;
+  isMain: boolean;
+  isActive: boolean;
+  syncStatus: string;
+  lastSyncedAt: string | null;
+}
+
+export interface AdminUserPilotVerificationItem {
+  id: string;
+  gameSlug: string;
+  gameName: string;
+  status: string;
+  submittedAt: string;
+  reviewedAt: string | null;
+  reviewedBy: string | null;
+  reviewNote: string | null;
+  hasIdentityDoc: boolean;
+  hasPassportDoc: boolean;
+  hasSelfieDoc: boolean;
+}
+
+export interface AdminUserKycInfo {
+  status: string;
+  isVerified: boolean;
+  verifiedAt: string | null;
+  legalName: string | null;
+  country: string | null;
+  idNumber: string | null;
+  contactInfo: string | null;
+  vpnConfirmed: boolean;
+  adminNotes: string | null;
+  documents: {
+    identity: boolean;
+    passport: boolean;
+    selfie: boolean;
+    totalUploaded: number;
+  };
+  pilotVerifications: AdminUserPilotVerificationItem[];
+}
+
+export interface AdminUserFinancialSummary {
+  availableBalance: number;
+  availableBalanceFormatted: string;
+  pendingEscrowBalance: number;
+  pendingEscrowBalanceFormatted: string;
+  reservedBalance: number;
+  reservedBalanceFormatted: string;
+  totalLifetimeEarnings: number;
+  totalLifetimeEarningsFormatted: string;
+  totalWithdrawn: number;
+  totalWithdrawnFormatted: string;
+  totalOrdersCompleted: number;
+  activeAssignedOrdersCount: number;
+  currency: string;
+  payoutAddress: string | null;
+  payoutNetwork: string | null;
+  bankAccountHolder: string | null;
+  bankIban: string | null;
+  cryptoAddress: string | null;
+  cryptoNetwork: string | null;
+}
+
+export interface AdminUserAssignedOrder {
+  assignmentId: string;
+  orderId: string;
+  orderRef: string;
+  externalOrderId: string | null;
+  title: string;
+  platform: string;
+  status: string;
+  assignmentStatus: string;
+  assignedRole: string;
+  boosterPayoutShare: number;
+  boosterPayoutShareFormatted: string;
+  grossAmountUsd: number;
+  assignedAt: string;
+  completedAt: string | null;
+}
+
+export interface AdminUserCreatedOrder {
+  orderId: string;
+  orderRef: string;
+  externalOrderId: string | null;
+  title: string;
+  platform: string;
+  status: string;
+  grossAmountUsd: number;
+  grossAmountFormatted: string;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface AdminUserPresign {
+  id: string;
+  orderId: string;
+  orderRef: string;
+  orderTitle: string;
+  orderStatus: string;
+  platform: string;
+  claimType: string;
+  registeredRole: string;
+  hasKey: boolean;
+  keyLevel: number | null;
+  characterName: string | null;
+  status: string;
+  registeredAt: string;
+}
+
+export interface AdminUserLedgerTransaction {
+  id: string | number;
+  entryRef: string;
+  type: string;
+  direction: string;
+  amountUsd: number;
+  amountFormatted: string;
+  description: string;
+  createdAt: string;
+}
+
+export interface AdminUserWithdrawal {
+  id: number;
+  withdrawalRef: string;
+  payoutMethod: string;
+  status: string;
+  requestedUsd: number;
+  requestedFormatted: string;
+  netUsd: number;
+  netFormatted: string;
+  fixedFeeUsd: number;
+  destinationAddress: string;
+  externalTxHash: string | null;
+  createdAt: string;
+  reviewedAt: string | null;
+  rejectionReason: string | null;
+}
+
+export interface AdminUserAuditLog {
+  id: number;
+  action: string;
+  entityId: string;
+  actorId: string;
+  actorName: string;
+  reason: string | null;
+  previousValues: any;
+  newValues: any;
+  createdAt: string;
+}
+
+export interface AdminUserDetailsResponse {
+  success: boolean;
+  user: {
+    profile: AdminUserProfile;
+    roles: AdminUserRoleItem[];
+    gameApprovals: AdminUserGameApprovalItem[];
+    wowCharacters: AdminUserWowCharacterItem[];
+    kyc: AdminUserKycInfo;
+    financialSummary: AdminUserFinancialSummary;
+    orders: {
+      assignedOrders: AdminUserAssignedOrder[];
+      createdOrders: AdminUserCreatedOrder[];
+      preSigns: AdminUserPresign[];
+      totalAssigned: number;
+      totalCreated: number;
+      totalPreSigns: number;
+    };
+    ledger: {
+      transactions: AdminUserLedgerTransaction[];
+      totalTransactions: number;
+    };
+    withdrawals: {
+      requests: AdminUserWithdrawal[];
+      totalRequests: number;
+    };
+    auditTrail: AdminUserAuditLog[];
+  };
+}
+

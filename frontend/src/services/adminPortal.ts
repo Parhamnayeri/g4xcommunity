@@ -12,6 +12,7 @@ import {
   AdminAuditLogItem,
   RolesMatrixResponse,
   AdminFinanceOverviewResponse,
+  AdminUserDetailsResponse,
 } from '../types/adminPortal';
 
 export async function fetchAdminOverview(): Promise<AdminOverviewResponse> {
@@ -306,5 +307,9 @@ export async function sendUserKycDm(discordId: string, reason?: string): Promise
     method: 'POST',
     body: JSON.stringify({ reason }),
   });
+}
+
+export async function fetchAdminUserDetails(discordId: string): Promise<AdminUserDetailsResponse> {
+  return apiRequest<AdminUserDetailsResponse>(`/api/admin/users/${discordId}/details`);
 }
 

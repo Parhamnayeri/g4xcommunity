@@ -9,9 +9,6 @@ import {
   AdvertiserBoostSummary,
   ReportingOrderItem,
   ChartDataPoint,
-  PlatformBreakdownPoint,
-  MetricWithComparison,
-  CountWithComparison,
 } from '../../types/financialReports';
 import {
   fetchConsolidatedFinancialReport,
@@ -57,7 +54,6 @@ export const FinancialReportsSection: React.FC = () => {
 
   // ─── Chart Hover Tooltip State ──────────────────────────────────────────────
   const [hoveredChartPoint, setHoveredChartPoint] = useState<ChartDataPoint | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 
   // ─── Fetch Active Report ────────────────────────────────────────────────────
   const loadActiveReport = useCallback(async () => {
@@ -201,7 +197,7 @@ export const FinancialReportsSection: React.FC = () => {
   }, [activeTab, consolidatedData, platformData, advertiserData]);
 
   // ─── Helper Metric Badge Component ──────────────────────────────────────────
-  const renderDeltaBadge = (changePercentage: number | null, trend: 'up' | 'down' | 'neutral', reverseGood = false) => {
+  const renderDeltaBadge = (changePercentage: number | null, _trend: 'up' | 'down' | 'neutral', reverseGood = false) => {
     if (changePercentage === null) {
       return (
         <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
@@ -1038,10 +1034,8 @@ export const FinancialReportsSection: React.FC = () => {
                               stroke="#fff"
                               strokeWidth={hoveredChartPoint?.date === c.point.date ? 2 : 1}
                               style={{ cursor: 'pointer', transition: 'all 0.1s ease' }}
-                              onMouseEnter={(e) => {
+                              onMouseEnter={() => {
                                 setHoveredChartPoint(c.point);
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                setTooltipPos({ x: rect.left, y: rect.top });
                               }}
                               onMouseLeave={() => setHoveredChartPoint(null)}
                             />
@@ -1057,10 +1051,8 @@ export const FinancialReportsSection: React.FC = () => {
                               stroke="#fff"
                               strokeWidth={hoveredChartPoint?.date === c.point.date ? 2 : 1}
                               style={{ cursor: 'pointer', transition: 'all 0.1s ease' }}
-                              onMouseEnter={(e) => {
+                              onMouseEnter={() => {
                                 setHoveredChartPoint(c.point);
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                setTooltipPos({ x: rect.left, y: rect.top });
                               }}
                               onMouseLeave={() => setHoveredChartPoint(null)}
                             />

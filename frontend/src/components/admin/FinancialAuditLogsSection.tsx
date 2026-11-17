@@ -17,8 +17,8 @@ interface Props {
 
 export const FinancialAuditLogsSection: React.FC<Props> = ({
   accounts,
-  userRole,
-  onRefreshWorkspace,
+  userRole: _userRole,
+  onRefreshWorkspace: _onRefreshWorkspace,
 }) => {
   // ─── Audit Log State ────────────────────────────────────────────────────────
   const [logs, setLogs] = useState<FinancialAuditLogItem[]>([]);

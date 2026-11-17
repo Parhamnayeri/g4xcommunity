@@ -3,7 +3,6 @@ import { LoadingState } from '../ui/LoadingState';
 import {
   FinancialAccountItem,
   PlatformWithdrawalItem,
-  WithdrawalStatus,
 } from '../../types/financialAccounts';
 import {
   requestPlatformWithdrawal,

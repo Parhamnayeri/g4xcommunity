@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { LoadingState } from '../ui/LoadingState';
 import {
   BalanceReconciliationItem,
   UserFinancialRoleInfo,
@@ -19,7 +18,7 @@ interface Props {
 
 export const BalanceReconciliationSection: React.FC<Props> = ({
   accounts,
-  userRole,
+  userRole: _userRole,
   onRefreshWorkspace,
 }) => {
   // ─── Reconciliation List State ──────────────────────────────────────────────
