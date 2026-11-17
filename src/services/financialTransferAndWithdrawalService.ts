@@ -153,30 +153,35 @@ export interface SerializedExchangeRate {
 
 /**
  * Seed default baseline exchange rate if none exists.
+ * Synchronizes with SystemFinancialConfig (admin_usd_irt_rate) if available.
  */
 export async function ensureDefaultExchangeRates(): Promise<void> {
   const existingUsdIrt = await prisma.exchangeRate.findFirst({
     where: { fromCurrency: 'USD', toCurrency: 'IRR', isActive: true },
+    orderBy: { effectiveAt: 'desc' },
   });
 
-  if (!existingUsdIrt) {
-    const config = await prisma.systemFinancialConfig.findUnique({
-      where: { key: 'admin_usd_irt_rate' },
-    });
-    const parsedRate = config?.value ? parseFloat(config.value) : null;
-    const rate = parsedRate && !isNaN(parsedRate) && parsedRate > 0 ? parsedRate : 90000.0;
+  const sysConfig = await prisma.systemFinancialConfig.findUnique({
+    where: { key: 'admin_usd_irt_rate' },
+  }).catch(() => null);
 
+  const configuredRate = sysConfig ? parseFloat(sysConfig.value) : NaN;
+  const targetRate = (!isNaN(configuredRate) && configuredRate > 0) ? configuredRate : 72000.0;
+
+  if (!existingUsdIrt) {
     await prisma.exchangeRate.create({
       data: {
         rateRef: `FX-USD-IRR-DEFAULT`,
         fromCurrency: 'USD',
         toCurrency: 'IRR',
-        rate,
-        inverseRate: 1 / rate,
+        rate: targetRate,
+        inverseRate: 1 / targetRate,
         spreadPercentage: 0,
         isActive: true,
-        source: 'FINANCIAL_CONFIG',
-        notes: 'Authoritative initial exchange rate from SystemFinancialConfig',
+        source: sysConfig ? 'FINANCIAL_CONFIG' : 'MANUAL',
+        notes: sysConfig
+          ? 'Synchronized from System Financial Configuration (admin_usd_irt_rate)'
+          : 'Initial default operational exchange rate',
       },
     });
   }
@@ -184,6 +189,7 @@ export async function ensureDefaultExchangeRates(): Promise<void> {
 
 /**
  * Get active exchange rate between two currencies.
+ * Synchronizes with authoritative SystemFinancialConfig for USD/IRR conversions.
  */
 export async function getActiveExchangeRate(fromCurrency: string, toCurrency: string): Promise<number> {
   const from = fromCurrency.toUpperCase();
@@ -198,6 +204,30 @@ export async function getActiveExchangeRate(fromCurrency: string, toCurrency: st
     where: { fromCurrency: from, toCurrency: to, isActive: true },
     orderBy: { effectiveAt: 'desc' },
   });
+
+  // Authoritative fallback check to SystemFinancialConfig for USD <-> IRR
+  if (from === 'USD' && to === 'IRR') {
+    const sysConfig = await prisma.systemFinancialConfig.findUnique({
+      where: { key: 'admin_usd_irt_rate' },
+    }).catch(() => null);
+    if (sysConfig) {
+      const cfgRate = parseFloat(sysConfig.value);
+      if (!isNaN(cfgRate) && cfgRate > 0 && (!direct || direct.source === 'FINANCIAL_CONFIG')) {
+        return cfgRate;
+      }
+    }
+  } else if (from === 'IRR' && to === 'USD') {
+    const sysConfig = await prisma.systemFinancialConfig.findUnique({
+      where: { key: 'admin_usd_irt_rate' },
+    }).catch(() => null);
+    if (sysConfig) {
+      const cfgRate = parseFloat(sysConfig.value);
+      if (!isNaN(cfgRate) && cfgRate > 0 && (!direct || direct.source === 'FINANCIAL_CONFIG')) {
+        return 1 / cfgRate;
+      }
+    }
+  }
+
   if (direct) return direct.rate;
 
   // Inverse lookup
@@ -287,16 +317,24 @@ export async function createExchangeRate(input: CreateExchangeRateInput): Promis
 
   // Keep SystemFinancialConfig admin_usd_irt_rate in exact sync
   if (fromCurrency === 'USD' && (toCurrency === 'IRR' || toCurrency === 'IRT')) {
-    await prisma.systemFinancialConfig.upsert({
-      where: { key: 'admin_usd_irt_rate' },
-      update: { value: String(Math.round(rate)), updatedBy: input.adminId || null },
-      create: {
-        key: 'admin_usd_irt_rate',
-        value: String(Math.round(rate)),
-        description: 'Authoritative Admin USD/IRT rate',
-        updatedBy: input.adminId || null,
-      },
-    });
+    try {
+      await prisma.systemFinancialConfig.upsert({
+        where: { key: 'admin_usd_irt_rate' },
+        create: {
+          key: 'admin_usd_irt_rate',
+          value: String(Math.round(rate)),
+          description: 'Authoritative Admin USD/IRT rate',
+          updatedBy: input.adminId || null,
+        },
+        update: {
+          value: String(Math.round(rate)),
+          updatedBy: input.adminId || null,
+          updatedAt: new Date(),
+        },
+      });
+    } catch {
+      // safe fallback
+    }
   }
 
   return {

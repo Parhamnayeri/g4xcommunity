@@ -33,11 +33,19 @@ import { AutomatedReportingSection } from './AutomatedReportingSection';
 import { UserFinancialRoleInfo } from '../../types/financialLedger';
 import { fetchUserFinancialRole } from '../../services/financialLedger';
 
+function formatFinancialAmount(amount: number | string, currency: string = 'USD'): string {
+  const num = typeof amount === 'number' ? amount : parseFloat(String(amount)) || 0;
+  if (currency === 'USD') {
+    return `$${(num / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  return `${num.toLocaleString()} ${currency}`;
+}
+
 interface Props {
   onNavigateTab?: (tab: string) => void;
 }
 
-export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab }) => {
+export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab: _onNavigateTab }) => {
   // Navigation Sub-tab
   const [subTab, setSubTab] = useState<
     | 'platform'

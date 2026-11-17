@@ -977,3 +977,511 @@ adminPortalRouter.post(
   }
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 12. COMPREHENSIVE AGGREGATED USER PROFILE & DETAILS INSPECTION API
+// ─────────────────────────────────────────────────────────────────────────────
+
+adminPortalRouter.get(
+  ['/admin/users/:discordId/details', '/api/admin/users/:discordId/details'],
+  requireAuth,
+  requireAdminPortalAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { discordId } = req.params;
+      if (!discordId) {
+        res.status(400).json({ error: 'INVALID_REQUEST', message: 'Discord ID parameter required' });
+        return;
+      }
+
+      // 1. Fetch Core User and Roles
+      const user = await prisma.user.findUnique({
+        where: { discordId },
+        include: {
+          userRoles: {
+            orderBy: { grantedAt: 'desc' },
+          },
+        },
+      });
+
+      if (!user) {
+        res.status(404).json({ error: 'USER_NOT_FOUND', message: `User with Discord ID '${discordId}' not found.` });
+        return;
+      }
+
+      // 2. Parallel Aggregate Data Fetching
+      const [
+        gameApprovals,
+        wowCharacters,
+        kycStatus,
+        pilotVerifications,
+        walletV2,
+        legacyWallet,
+        payoutPreference,
+        v2CreditsAgg,
+        v1CreditsAgg,
+        paidWithdrawalsAgg,
+        completedAssignmentsCount,
+        activeAssignmentsCount,
+        assignedOrdersRaw,
+        createdOrdersRaw,
+        presignsRaw,
+        ledgerV2Raw,
+        ledgerV1Raw,
+        withdrawalsRaw,
+        auditLogsRaw,
+      ] = await Promise.all([
+        // Game Approvals
+        prisma.userGameApproval.findMany({
+          where: { userId: discordId },
+          include: {
+            game: { select: { slug: true, displayName: true } },
+            service: { select: { id: true, serviceKey: true, displayName: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+
+        // WoW Characters
+        prisma.wowCharacter.findMany({
+          where: { userId: discordId },
+          orderBy: [{ isMain: 'desc' }, { mythicScore: 'desc' }],
+        }),
+
+        // KYC Status & Documents (via existing helper)
+        getUserKycStatus(discordId).catch(() => null),
+
+        // Pilot Verifications
+        prisma.pilotVerification.findMany({
+          where: { userId: discordId },
+          include: {
+            game: { select: { slug: true, displayName: true } },
+          },
+          orderBy: { submittedAt: 'desc' },
+        }),
+
+        // Wallet V2
+        prisma.walletV2.findUnique({
+          where: { userId: discordId },
+        }),
+
+        // Legacy Wallet
+        prisma.wallet.findUnique({
+          where: { userId: discordId },
+        }),
+
+        // Payout Preference
+        prisma.userPayoutPreference.findUnique({
+          where: { userId: discordId },
+        }),
+
+        // Lifetime Earnings (V2)
+        prisma.ledgerEntryV2.aggregate({
+          where: {
+            userId: discordId,
+            direction: 'CREDIT',
+            entryType: { in: ['EARNING_CONFIRMED', 'AVAILABLE_RELEASE', 'EARNING_PENDING'] },
+          },
+          _sum: { amountCents: true },
+        }),
+
+        // Lifetime Earnings (V1)
+        prisma.ledgerTransaction.aggregate({
+          where: {
+            userId: discordId,
+            entryType: { in: ['credit', 'escrow_release'] },
+            status: { not: 'reversed' },
+          },
+          _sum: { amountMinor: true },
+        }),
+
+        // Total Withdrawn
+        prisma.boosterWithdrawalRequest.aggregate({
+          where: {
+            boosterId: discordId,
+            status: { in: ['PAID', 'COMPLETED', 'SETTLED'] },
+          },
+          _sum: { requestedUsdCents: true },
+        }),
+
+        // Completed Orders Count
+        prisma.orderAssignment.count({
+          where: {
+            userId: discordId,
+            OR: [
+              { status: 'completed' },
+              { order: { status: 'completed' } },
+            ],
+          },
+        }),
+
+        // Active Assigned Orders Count
+        prisma.orderAssignment.count({
+          where: {
+            userId: discordId,
+            status: { in: ['assigned', 'accepted'] },
+            order: { status: { in: ['open_presign', 'presign_closed', 'assigned', 'in_progress'] } },
+          },
+        }),
+
+        // Assigned Orders (Boosts)
+        prisma.orderAssignment.findMany({
+          where: { userId: discordId },
+          include: {
+            order: {
+              select: {
+                id: true,
+                orderRef: true,
+                externalOrderId: true,
+                title: true,
+                orderName: true,
+                sourceWebsite: true,
+                status: true,
+                boosterPoolMinor: true,
+                grossAmountMinor: true,
+                createdAt: true,
+                completedAt: true,
+              },
+            },
+          },
+          orderBy: { assignedAt: 'desc' },
+          take: 50,
+        }),
+
+        // Created Orders (Client / Advertiser)
+        prisma.order.findMany({
+          where: {
+            OR: [
+              { creatorId: discordId },
+              { advertiserId: discordId },
+              { customerId: discordId },
+            ],
+          },
+          select: {
+            id: true,
+            orderRef: true,
+            externalOrderId: true,
+            title: true,
+            orderName: true,
+            sourceWebsite: true,
+            status: true,
+            grossAmountMinor: true,
+            createdAt: true,
+            completedAt: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+
+        // Order Pre-Signs
+        prisma.orderPresign.findMany({
+          where: { userId: discordId },
+          include: {
+            order: {
+              select: {
+                id: true,
+                orderRef: true,
+                title: true,
+                orderName: true,
+                status: true,
+                sourceWebsite: true,
+              },
+            },
+            character: {
+              select: {
+                characterName: true,
+                realm: true,
+              },
+            },
+          },
+          orderBy: { registeredAt: 'desc' },
+          take: 50,
+        }),
+
+        // Ledger V2 Entries
+        prisma.ledgerEntryV2.findMany({
+          where: { userId: discordId },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+
+        // Ledger V1 Entries
+        prisma.ledgerTransaction.findMany({
+          where: { userId: discordId },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+
+        // Withdrawal Requests
+        prisma.boosterWithdrawalRequest.findMany({
+          where: { boosterId: discordId },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
+        }),
+
+        // Audit Logs (targeting this user or acted by this user)
+        prisma.auditLog.findMany({
+          where: {
+            OR: [
+              { entityId: discordId },
+              { actorId: discordId },
+            ],
+          },
+          include: {
+            actor: {
+              select: {
+                discordId: true,
+                username: true,
+                displayName: true,
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 30,
+        }),
+      ]);
+
+      // 3. Format Financials
+      const availableCents = walletV2?.availableCents ?? (legacyWallet?.balanceUsd ?? 0);
+      const reservedCents = walletV2?.reservedCents ?? (legacyWallet?.escrowUsd ?? 0);
+      const pendingEarningsCents = walletV2?.pendingEarningsCents ?? 0;
+      const confirmedEarningsCents = walletV2?.confirmedEarningsCents ?? 0;
+      const paidCents = walletV2?.paidCents ?? 0;
+
+      const lifetimeEarningsCents = Math.max(
+        v2CreditsAgg._sum.amountCents || 0,
+        v1CreditsAgg._sum.amountMinor || 0
+      );
+      const totalWithdrawnCents = paidWithdrawalsAgg._sum.requestedUsdCents || 0;
+
+      const financialSummary = {
+        availableBalance: availableCents / 100,
+        availableBalanceFormatted: formatCentsToUsd(availableCents),
+        pendingEscrowBalance: (reservedCents + pendingEarningsCents) / 100,
+        pendingEscrowBalanceFormatted: formatCentsToUsd(reservedCents + pendingEarningsCents),
+        reservedBalance: reservedCents / 100,
+        reservedBalanceFormatted: formatCentsToUsd(reservedCents),
+        totalLifetimeEarnings: lifetimeEarningsCents / 100,
+        totalLifetimeEarningsFormatted: formatCentsToUsd(lifetimeEarningsCents),
+        totalWithdrawn: totalWithdrawnCents / 100,
+        totalWithdrawnFormatted: formatCentsToUsd(totalWithdrawnCents),
+        totalOrdersCompleted: completedAssignmentsCount,
+        activeAssignedOrdersCount: activeAssignmentsCount,
+        currency: 'USD',
+        payoutAddress: payoutPreference?.cryptoAddress || payoutPreference?.bankIban || null,
+        payoutNetwork: payoutPreference?.cryptoNetwork || (payoutPreference?.bankIban ? 'Shetab / Bank IBAN' : null),
+        bankAccountHolder: payoutPreference?.bankAccountHolder || null,
+        bankIban: payoutPreference?.bankIban || null,
+        cryptoAddress: payoutPreference?.cryptoAddress || null,
+        cryptoNetwork: payoutPreference?.cryptoNetwork || null,
+      };
+
+      // 4. Format Assigned Orders
+      const assignedOrders = assignedOrdersRaw.map((a) => {
+        const poolMinor = a.order.boosterPoolMinor || 0;
+        return {
+          assignmentId: a.id,
+          orderId: a.order.id,
+          orderRef: a.order.orderRef,
+          externalOrderId: a.order.externalOrderId || null,
+          title: a.order.title || a.order.orderName || a.order.orderRef,
+          platform: a.order.sourceWebsite || 'direct',
+          status: a.order.status,
+          assignmentStatus: a.status,
+          assignedRole: a.assignedRole,
+          boosterPayoutShare: poolMinor / 100,
+          boosterPayoutShareFormatted: formatCentsToUsd(poolMinor),
+          grossAmountUsd: (a.order.grossAmountMinor || 0) / 100,
+          assignedAt: a.assignedAt.toISOString(),
+          completedAt: a.order.completedAt ? a.order.completedAt.toISOString() : null,
+        };
+      });
+
+      // 5. Format Created Orders
+      const createdOrders = createdOrdersRaw.map((o) => ({
+        orderId: o.id,
+        orderRef: o.orderRef,
+        externalOrderId: o.externalOrderId || null,
+        title: o.title || o.orderName || o.orderRef,
+        platform: o.sourceWebsite || 'direct',
+        status: o.status,
+        grossAmountUsd: (o.grossAmountMinor || 0) / 100,
+        grossAmountFormatted: formatCentsToUsd(o.grossAmountMinor || 0),
+        createdAt: o.createdAt.toISOString(),
+        completedAt: o.completedAt ? o.completedAt.toISOString() : null,
+      }));
+
+      // 6. Format Pre-Signs
+      const preSigns = presignsRaw.map((p) => ({
+        id: p.id,
+        orderId: p.orderId,
+        orderRef: p.order.orderRef,
+        orderTitle: p.order.title || p.order.orderName || p.order.orderRef,
+        orderStatus: p.order.status,
+        platform: p.order.sourceWebsite || 'direct',
+        claimType: p.claimType,
+        registeredRole: p.registeredRole,
+        hasKey: p.hasKey,
+        keyLevel: p.keyLevel,
+        characterName: p.character ? `${p.character.characterName} (${p.character.realm})` : null,
+        status: p.status,
+        registeredAt: p.registeredAt.toISOString(),
+      }));
+
+      // 7. Format Ledger Transactions
+      const ledgerTransactions = (ledgerV2Raw.length > 0 ? ledgerV2Raw : ledgerV1Raw).map((entry: any) => {
+        const isV2 = 'entryType' in entry && 'amountCents' in entry;
+        const amountCents = isV2 ? Math.abs(entry.amountCents) : Math.abs(entry.amountMinor);
+        const direction = isV2 ? entry.direction : (entry.entryType === 'debit' ? 'DEBIT' : 'CREDIT');
+        return {
+          id: entry.id,
+          entryRef: isV2 ? entry.entryRef : entry.transactionRef,
+          type: entry.entryType,
+          direction,
+          amount: amountCents / 100,
+          amountFormatted: `${direction === 'DEBIT' ? '-' : '+'}$${(amountCents / 100).toFixed(2)}`,
+          balanceAfter: isV2 && entry.balanceAfterAvailableCents != null ? entry.balanceAfterAvailableCents / 100 : null,
+          orderId: entry.orderId || null,
+          note: (isV2 ? entry.description : null) || null,
+          createdAt: entry.createdAt.toISOString(),
+        };
+      });
+
+      // 8. Format Withdrawals
+      const withdrawals = withdrawalsRaw.map((w) => ({
+        id: w.id,
+        withdrawalRef: w.withdrawalRef,
+        amount: w.requestedUsdCents / 100,
+        amountFormatted: formatCentsToUsd(w.requestedUsdCents),
+        netAmount: w.netUsdCents / 100,
+        netAmountFormatted: formatCentsToUsd(w.netUsdCents),
+        fee: w.fixedFeeUsdCents / 100,
+        payoutMethod: w.payoutMethod,
+        walletAddress: w.destinationAddress,
+        accountHolder: w.destinationAccountHolder,
+        status: w.status,
+        txHash: w.externalTxHash,
+        receiptRef: w.bankReceiptRef,
+        createdAt: w.createdAt.toISOString(),
+        processedAt: w.processedAt ? w.processedAt.toISOString() : null,
+      }));
+
+      // 9. Format Audit Logs
+      const auditLogs = auditLogsRaw.map((l) => ({
+        id: l.id,
+        action: l.action,
+        entityType: l.entityType,
+        entityId: l.entityId,
+        actorDiscordId: l.actorId,
+        actorUsername: l.actor ? (l.actor.displayName || l.actor.username) : (l.actorId || 'System'),
+        reason: l.reason,
+        isSuccess: l.isSuccess,
+        details: l.newValues || l.previousValues || null,
+        createdAt: l.createdAt.toISOString(),
+      }));
+
+      // 10. Construct Final Aggregated Response
+      res.json({
+        success: true,
+        user: {
+          id: user.discordId,
+          discordId: user.discordId,
+          username: user.username,
+          displayName: user.displayName || user.username,
+          avatarUrl: null,
+          status: user.isActive ? 'active' : 'suspended',
+          isActive: user.isActive,
+          advertiserRank: user.advertiserRank,
+          phoneNumber: user.phoneNumber,
+          telegramUsername: user.telegramUsername,
+          whatsappNumber: user.whatsappNumber,
+          createdAt: user.createdAt.toISOString(),
+          updatedAt: user.updatedAt.toISOString(),
+        },
+        roles: user.userRoles.map((r) => ({
+          roleKey: r.roleKey,
+          grantedAt: r.grantedAt.toISOString(),
+          grantedBy: r.grantedBy,
+        })),
+        gameApprovals: gameApprovals.map((ga) => ({
+          id: ga.id,
+          gameSlug: ga.gameSlug,
+          gameName: ga.game.displayName,
+          serviceId: ga.serviceId,
+          serviceName: ga.service?.displayName || null,
+          approvalType: ga.approvalType,
+          status: ga.status,
+          reviewNote: ga.reviewNote,
+          reviewedAt: ga.reviewedAt ? ga.reviewedAt.toISOString() : null,
+          reviewedBy: ga.reviewedBy,
+          createdAt: ga.createdAt.toISOString(),
+        })),
+        wowCharacters: wowCharacters.map((c) => ({
+          id: c.id,
+          characterName: c.characterName,
+          realm: c.realm,
+          region: c.region,
+          characterClass: c.characterClass,
+          activeSpec: c.activeSpec,
+          itemLevel: c.itemLevel,
+          mythicScore: c.mythicScore,
+          activeRole: c.activeRole,
+          faction: c.faction,
+          isMain: c.isMain,
+          isActive: c.isActive,
+          syncStatus: c.syncStatus,
+          lastSyncedAt: c.lastSyncedAt ? c.lastSyncedAt.toISOString() : null,
+        })),
+        kyc: {
+          status: kycStatus?.status || 'none',
+          isVerified: kycStatus?.isVerified || false,
+          verifiedAt: kycStatus?.verifiedAt ? new Date(kycStatus.verifiedAt).toISOString() : null,
+          legalName: kycStatus?.profileData?.legalName || null,
+          country: kycStatus?.profileData?.country || null,
+          idNumber: kycStatus?.profileData?.idNumber ? '••••' + kycStatus.profileData.idNumber.slice(-4) : null,
+          contactInfo: kycStatus?.profileData?.phoneNumber || user.phoneNumber || null,
+          vpnConfirmed: Boolean(kycStatus?.profileData?.vpnConfirmed),
+          adminNotes: kycStatus?.profileData?.adminNotes || null,
+          documents: {
+            identity: Boolean(kycStatus?.documents?.identity),
+            passport: Boolean(kycStatus?.documents?.passport),
+            selfie: Boolean(kycStatus?.documents?.selfie),
+            totalUploaded: [kycStatus?.documents?.identity, kycStatus?.documents?.passport, kycStatus?.documents?.selfie].filter(Boolean).length,
+          },
+          pilotVerifications: pilotVerifications.map((pv) => ({
+            id: pv.id,
+            gameSlug: pv.gameSlug,
+            gameName: pv.game.displayName,
+            status: pv.status,
+            submittedAt: pv.submittedAt.toISOString(),
+            reviewedAt: pv.reviewedAt ? pv.reviewedAt.toISOString() : null,
+            reviewedBy: pv.reviewedBy,
+            reviewNote: pv.reviewNote,
+            hasIdentityDoc: Boolean(pv.identityDocumentRef),
+            hasPassportDoc: Boolean(pv.passportDocumentRef),
+            hasSelfieDoc: Boolean(pv.selfieDocumentRef),
+          })),
+        },
+        financialSummary,
+        orders: {
+          assignedOrders,
+          createdOrders,
+          preSigns,
+          totalAssigned: assignedOrders.length,
+          totalCreated: createdOrders.length,
+          totalPreSigns: preSigns.length,
+        },
+        financialActivity: {
+          ledgerTransactions,
+          withdrawals,
+          totalLedgerEntries: ledgerTransactions.length,
+          totalWithdrawals: withdrawals.length,
+        },
+        auditLogs,
+      });
+    } catch (err: any) {
+      console.error('[AdminUserDetails] Failed to aggregate profile:', err);
+      res.status(500).json({ error: 'FAILED_TO_FETCH_USER_DETAILS', message: err.message || 'Internal server error' });
+    }
+  }
+);
+
+

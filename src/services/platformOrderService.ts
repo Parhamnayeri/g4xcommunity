@@ -107,6 +107,7 @@ export interface CreateExternalOrderInput {
   gameSlug: string;
   serviceId: number;
   amountMinor: number;
+  boosterPoolMinor?: number;
   sourcePlatform: SupportedSourcePlatform | string;
   platformAccountRef?: string;
   platformAccountId?: number;
@@ -130,6 +131,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
     gameSlug,
     serviceId,
     amountMinor,
+    boosterPoolMinor: rawBoosterPoolMinor,
     sourcePlatform,
     platformAccountRef,
     platformAccountId,
@@ -173,6 +175,20 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
     );
   }
 
+  // Explicit booster pool validation guardrail
+  if (rawBoosterPoolMinor !== undefined) {
+    if (typeof rawBoosterPoolMinor !== 'number' || !Number.isSafeInteger(rawBoosterPoolMinor) || rawBoosterPoolMinor <= 0) {
+      throw new Error(
+        `INVALID_BOOSTER_POOL: Booster pool must be a positive integer in minor units (cents), got ${rawBoosterPoolMinor}.`
+      );
+    }
+    if (rawBoosterPoolMinor > amountMinor) {
+      throw new Error(
+        `EXCESSIVE_BOOSTER_POOL: Booster pool ($${(rawBoosterPoolMinor / 100).toFixed(2)}) cannot exceed total order amount ($${(amountMinor / 100).toFixed(2)}).`
+      );
+    }
+  }
+
   // Deliverable 2: Parse notes for <#ORDERID> and <t="Title"> and clean notes
   const { externalOrderId: parsedOrderId, cleanNotes, title: parsedTitle } = extractExternalOrderIdAndCleanNotes(
     notes,
@@ -206,7 +222,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
         grossAmountMinor: amountMinor,
         platformFeeMinor: 0, // Updated immediately below from calculated snapshot
         advertiserFeeMinor: 0,
-        boosterPoolMinor: 0, // Updated immediately below from calculated snapshot
+        boosterPoolMinor: rawBoosterPoolMinor ?? 0, // Initial explicit value preserved
         paymentStatus: 'verified', // Commercial commitment is externally validated on the platform
         status: 'open_presign',
         paymentVerifiedBy: actorId,
@@ -241,6 +257,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
         sourcePlatform: platformAccount.platform as any,
         sourceAmountType,
         sourceAmountMinor: amountMinor,
+        explicitBoosterPoolMinor: rawBoosterPoolMinor,
         platformAccountId: platformAccount.id,
         currency: currency.toUpperCase(),
         gameSlug,
@@ -257,7 +274,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
       where: { id: ord.id },
       data: {
         platformFeeMinor: snapshot.platformSaleCommissionMinor,
-        boosterPoolMinor: snapshot.boosterPoolMinor,
+        boosterPoolMinor: rawBoosterPoolMinor !== undefined ? rawBoosterPoolMinor : snapshot.boosterPoolMinor,
       },
       include: {
         game: true,

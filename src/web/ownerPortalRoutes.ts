@@ -545,7 +545,7 @@ ownerPortalRouter.put(
                   spreadPercentage: 0,
                   isActive: true,
                   source: 'FINANCIAL_CONFIG',
-                  notes: `Synced from Owner Financial Configuration: ${reason.trim()}`,
+                  notes: `Synced from Owner Financial Configuration: ${reason ? reason.trim() : (user.username || user.discordId)}`,
                   adminId: user.discordId,
                 },
               });

@@ -101,6 +101,9 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
     setSearchParams({ tab: newTab });
   };
 
+  // Sub-view toggle for Finance & Treasury tab
+  const [financeView, setFinanceView] = useState<'accounts' | 'solvency'>('accounts');
+
   // Overview state
   const [overview, setOverview] = useState<OwnerOverviewResponse | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(true);
@@ -417,7 +420,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
       >
         {[
           { key: 'overview', label: 'Executive Overview', icon: '🏛️' },
-          { key: 'finance', label: 'Finance Overview', icon: '💰' },
+          { key: 'finance', label: 'Financial Management', icon: '💰' },
           { key: 'orders', label: 'Order Workspace', icon: '📦' },
           { key: 'users', label: 'User Management', icon: '👥' },
           { key: 'deposits', label: 'Manual IRT Deposits', icon: '💳' },
@@ -608,7 +611,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* TAB: UNIFIED FINANCE & TREASURY MANAGEMENT (OWNER ONLY)                       */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
-      {activeTab === 'finance' && (
+      {activeTab === 'finance' && isOwner && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
             <button
