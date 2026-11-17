@@ -109,8 +109,6 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
   const [overviewLoading, setOverviewLoading] = useState(true);
   const [overviewError, setOverviewError] = useState<string | null>(null);
 
-  // Finance state
-  const [financeView, setFinanceView] = useState<'accounts' | 'solvency'>('accounts');
 
   // Financial Config state
   const [configData, setConfigData] = useState<FinancialConfigResponse | null>(null);
