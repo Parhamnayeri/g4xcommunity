@@ -721,6 +721,9 @@ export async function calculateOrderFinancialSnapshot(
       );
     }
     boosterPoolMinor = explicitBoosterPoolMinor;
+    if (sourcePlatform !== 'advertiser') {
+      g4xFeeMinor = Math.max(0, externalNetBaseMinor - explicitBoosterPoolMinor);
+    }
   } else if (sourcePlatform === 'advertiser') {
     if (snapAdvertiserRank && snapRemainingMinor !== null) {
       boosterPoolMinor = snapRemainingMinor;

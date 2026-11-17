@@ -31,6 +31,7 @@ import { KYC_DOCS_DIR, validateKycDocumentReference } from '../services/kycDocum
 import { createExternalOrder } from '../services/platformOrderService';
 import { validateGameAndService } from '../services/orderValidationService';
 import { extractExternalOrderIdAndCleanNotes } from '../services/orderParsingUtils';
+import { calculateOrderFinancialSnapshot } from '../services/financialCalculationEngine';
 
 import { configureChannelMapping, inspectMappingConnectivity } from '../services/channelMappingConfigurationService';
 import { listChannelMappings } from '../services/discordProvisioningService';
@@ -891,6 +892,24 @@ operationsRouter.post(
 
       const grossCents = Math.round(amountUsd * 100);
 
+      // Explicit booster pool validation guardrail
+      let boosterPoolMinor: number | undefined;
+      if (boosterPoolUsd !== undefined && boosterPoolUsd !== null && boosterPoolUsd !== '') {
+        const poolNum = typeof boosterPoolUsd === 'number' ? boosterPoolUsd : parseFloat(String(boosterPoolUsd));
+        if (isNaN(poolNum) || poolNum <= 0) {
+          res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Booster pool must be a positive number greater than zero.' });
+          return;
+        }
+        boosterPoolMinor = Math.round(poolNum * 100);
+        if (boosterPoolMinor > grossCents) {
+          res.status(400).json({
+            error: 'VALIDATION_ERROR',
+            message: `Booster pool ($${(boosterPoolMinor / 100).toFixed(2)}) cannot exceed total order amount ($${(grossCents / 100).toFixed(2)}).`,
+          });
+          return;
+        }
+      }
+
       // Parse externalOrderId and title from notes (<#ORDERID>, <t="...">) or explicit fields
       const { externalOrderId: parsedOrderId, title: parsedTitle, cleanNotes } = extractExternalOrderIdAndCleanNotes(
         notes,
@@ -907,6 +926,7 @@ operationsRouter.post(
           gameSlug,
           serviceId: Number(serviceId),
           amountMinor: grossCents,
+          boosterPoolMinor,
           sourcePlatform,
           platformAccountId: platformAccountId ? Number(platformAccountId) : undefined,
           platformAccountRef: platformAccountRef || undefined,
@@ -924,10 +944,8 @@ operationsRouter.post(
 
       // Handle Direct G4X Order
       const { game, service } = await validateGameAndService(gameSlug, Number(serviceId), orderMode);
-      const boosterPoolMinor = typeof boosterPoolUsd === 'number' && boosterPoolUsd > 0
-        ? Math.round(boosterPoolUsd * 100)
-        : grossCents;
-      const platformFeeMinor = Math.max(0, grossCents - boosterPoolMinor);
+      const effectiveBoosterPoolMinor = boosterPoolMinor !== undefined ? boosterPoolMinor : grossCents;
+      const platformFeeMinor = Math.max(0, grossCents - effectiveBoosterPoolMinor);
 
       const orderRef = `ORD_DIR_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
       const effectiveOrderMode = orderMode || (service.serviceMode === 'pilot' ? 'pilot' : 'non_pilot');
@@ -952,7 +970,7 @@ operationsRouter.post(
             grossAmountMinor: grossCents,
             platformFeeMinor,
             advertiserFeeMinor: 0,
-            boosterPoolMinor,
+            boosterPoolMinor: effectiveBoosterPoolMinor,
             paymentStatus: 'verified',
             status: 'open_presign',
             paymentVerifiedBy: actorId,
@@ -1008,6 +1026,22 @@ operationsRouter.post(
           },
         });
 
+        await calculateOrderFinancialSnapshot(
+          {
+            orderId: created.id,
+            sourcePlatform: 'direct',
+            sourceAmountType: 'gross_sale',
+            sourceAmountMinor: grossCents,
+            explicitBoosterPoolMinor: effectiveBoosterPoolMinor,
+            currency: currency.toUpperCase(),
+            gameSlug,
+            notes: cleanNotes || undefined,
+            actorId,
+            allowProvisional: true,
+          },
+          tx
+        );
+
         await tx.auditLog.create({
           data: {
             actorId,
@@ -1015,7 +1049,7 @@ operationsRouter.post(
             entityType: 'Order',
             entityId: String(created.id),
             reason: 'Internal G4X order created via operations workspace',
-            newValues: JSON.stringify({ orderRef, grossCents, boosterPoolMinor, gameSlug }),
+            newValues: JSON.stringify({ orderRef, grossCents, boosterPoolMinor: effectiveBoosterPoolMinor, gameSlug }),
             isSuccess: true,
           },
         });

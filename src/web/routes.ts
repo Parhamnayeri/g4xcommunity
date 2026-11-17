@@ -1987,6 +1987,7 @@ router.post(
         gameSlug,
         serviceId,
         grossAmountUsd,
+        boosterPoolUsd,
         orderType,
         notes,
         externalOrderId,
@@ -2008,6 +2009,24 @@ router.post(
         return;
       }
 
+      // Explicit booster pool validation guardrail
+      let boosterPoolMinor: number | undefined;
+      if (boosterPoolUsd !== undefined && boosterPoolUsd !== null && boosterPoolUsd !== '') {
+        const poolNum = typeof boosterPoolUsd === 'number' ? boosterPoolUsd : parseFloat(String(boosterPoolUsd));
+        if (isNaN(poolNum) || poolNum <= 0) {
+          res.status(400).json({ error: 'VALIDATION_ERROR', message: 'Booster pool must be a positive number greater than zero.' });
+          return;
+        }
+        boosterPoolMinor = Math.round(poolNum * 100);
+        if (boosterPoolMinor > grossCents) {
+          res.status(400).json({
+            error: 'VALIDATION_ERROR',
+            message: `Booster pool ($${(boosterPoolMinor / 100).toFixed(2)}) cannot exceed total order amount ($${(grossCents / 100).toFixed(2)}).`,
+          });
+          return;
+        }
+      }
+
       const { externalOrderId: parsedOrderId, title: parsedTitle, cleanNotes } = extractExternalOrderIdAndCleanNotes(
         notes,
         externalOrderId,
@@ -2023,6 +2042,7 @@ router.post(
           gameSlug,
           serviceId: Number(serviceId),
           amountMinor: grossCents,
+          boosterPoolMinor,
           sourcePlatform,
           platformAccountRef,
           platformAccountId: platformAccountId ? Number(platformAccountId) : undefined,

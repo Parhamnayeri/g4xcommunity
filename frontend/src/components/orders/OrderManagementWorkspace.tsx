@@ -143,6 +143,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   const [createServiceId, setCreateServiceId] = useState<number | ''>('');
   const [createAmountUsd, setCreateAmountUsd] = useState('');
   const [createBoosterPoolUsd, setCreateBoosterPoolUsd] = useState('');
+  const [boosterPoolCustomized, setBoosterPoolCustomized] = useState(false);
   const [createOrderType, setCreateOrderType] = useState('group');
   const [createOrderMode, setCreateOrderMode] = useState('non_pilot');
   const [createRunsCount, setCreateRunsCount] = useState(1);
@@ -313,6 +314,10 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
       setCreateFeedback({ text: 'Please enter a valid booster pool amount in USD.', type: 'error' });
       return;
     }
+    if (pool > amount) {
+      setCreateFeedback({ text: `Booster pool ($${pool.toFixed(2)}) cannot exceed the gross order amount ($${amount.toFixed(2)}).`, type: 'error' });
+      return;
+    }
     if (!createServiceId) {
       setCreateFeedback({ text: 'Please select a game service.', type: 'error' });
       return;
@@ -359,6 +364,9 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
       setCreateFeedback({ text: res.message || 'Order created successfully!', type: 'success' });
       setTimeout(() => {
         setShowCreateModal(false);
+        setCreateAmountUsd('');
+        setCreateBoosterPoolUsd('');
+        setBoosterPoolCustomized(false);
         setCreateTitle('');
         setCreateBoostModel('');
         setCreateVpnRequirement('');
@@ -532,6 +540,9 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
               onClick={() => {
                 setShowCreateModal(true);
                 setCreateFeedback(null);
+                setCreateAmountUsd('');
+                setCreateBoosterPoolUsd('');
+                setBoosterPoolCustomized(false);
                 if (!createServiceId && games.length > 0) {
                   const firstGame = games[0];
                   setCreateGame(firstGame.slug);
@@ -1293,6 +1304,55 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                           {details.paymentStatus}
                         </span>
                       </div>
+
+                      {/* 3-Column Side-by-Side Financial KPI Bar */}
+                      {(() => {
+                        const grossNum = parseFloat(details.grossAmountUsd || '0') || 0;
+                        const feeNum = parseFloat(details.platformFeeUsd || '0') || 0;
+                        const poolNum = parseFloat(details.boosterPoolUsd || '0') || 0;
+                        const netPlatformMargin = Math.round((grossNum - feeNum - poolNum) * 100) / 100;
+
+                        return (
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(3, 1fr)',
+                              gap: '0.5rem',
+                              background: 'rgba(255, 255, 255, 0.03)',
+                              border: '1px solid rgba(255, 255, 255, 0.07)',
+                              borderRadius: '8px',
+                              padding: '0.6rem 0.75rem',
+                              marginBottom: '0.75rem',
+                              textAlign: 'center',
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                Gross Order
+                              </div>
+                              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#fff', fontFamily: 'monospace' }}>
+                                ${grossNum.toFixed(2)}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '0.66rem', color: 'var(--accent-yellow)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                Booster Pool
+                              </div>
+                              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--accent-yellow)', fontFamily: 'monospace' }}>
+                                ${poolNum.toFixed(2)}
+                              </div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: '0.66rem', color: netPlatformMargin >= 0 ? '#34D399' : '#EF4444', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                Platform Margin
+                              </div>
+                              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: netPlatformMargin >= 0 ? '#34D399' : '#EF4444', fontFamily: 'monospace' }}>
+                                ${netPlatformMargin.toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
                       <div style={{ display: 'grid', gap: '0.45rem', fontSize: '0.84rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                           <span style={{ color: 'var(--text-muted)' }}>Gross Amount:</span>
@@ -2132,11 +2192,13 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                       setCreateAmountUsd(val);
                       const num = parseFloat(val);
                       if (!isNaN(num) && num > 0) {
-                        if (has13PercentFee(createSourcePlatform)) {
-                          const split = calculate13PercentSplit(num);
-                          setCreateBoosterPoolUsd(split.netAvailable.toFixed(2));
-                        } else if (!createBoosterPoolUsd) {
-                          setCreateBoosterPoolUsd(val);
+                        if (!boosterPoolCustomized) {
+                          if (has13PercentFee(createSourcePlatform)) {
+                            const split = calculate13PercentSplit(num);
+                            setCreateBoosterPoolUsd(split.netAvailable.toFixed(2));
+                          } else {
+                            setCreateBoosterPoolUsd(val);
+                          }
                         }
                       }
                     }}
@@ -2146,7 +2208,33 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                 </label>
 
                 <label style={{ fontSize: '0.82rem' }}>
-                  Booster Pool Amount (USD) *
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Booster Pool Amount (USD) *</span>
+                    {has13PercentFee(createSourcePlatform) && (parseFloat(createAmountUsd) || 0) > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const num = parseFloat(createAmountUsd) || 0;
+                          if (num > 0) {
+                            const split = calculate13PercentSplit(num);
+                            setCreateBoosterPoolUsd(split.netAvailable.toFixed(2));
+                            setBoosterPoolCustomized(true);
+                          }
+                        }}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--accent-lime, #a3e635)',
+                          fontSize: '0.72rem',
+                          cursor: 'pointer',
+                          textDecoration: 'underline',
+                          padding: 0,
+                        }}
+                      >
+                        Auto-fill 87% (${calculate13PercentSplit(parseFloat(createAmountUsd) || 0).netAvailable.toFixed(2)})
+                      </button>
+                    )}
+                  </div>
                   <input
                     type="number"
                     step="0.01"
@@ -2154,40 +2242,87 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                     className="input"
                     placeholder="e.g. 40.00"
                     value={createBoosterPoolUsd}
-                    onChange={(e) => setCreateBoosterPoolUsd(e.target.value)}
+                    onChange={(e) => {
+                      setCreateBoosterPoolUsd(e.target.value);
+                      setBoosterPoolCustomized(true);
+                    }}
                     style={{ width: '100%', marginTop: '0.25rem' }}
                     required
                   />
                 </label>
               </div>
 
-              {has13PercentFee(createSourcePlatform) && (parseFloat(createAmountUsd) || 0) > 0 && (
-                <div
-                  style={{
-                    background: 'rgba(124, 58, 237, 0.15)',
-                    border: '1px solid rgba(124, 58, 237, 0.4)',
-                    borderRadius: '8px',
-                    padding: '0.5rem 0.75rem',
-                    fontSize: '0.82rem',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                  }}
-                >
-                  <span>
-                    13% Platform Deduction: <strong>-${calculate13PercentSplit(parseFloat(createAmountUsd) || 0).platformFee.toFixed(2)}</strong>
-                  </span>
-                  <span style={{ color: 'var(--accent-lime)', fontWeight: 600 }}>
-                    Net Available Base (87%): ${calculate13PercentSplit(parseFloat(createAmountUsd) || 0).netAvailable.toFixed(2)}
-                  </span>
-                </div>
+              {/* Live Financial Breakdown & Margin Preview */}
+              {(() => {
+                const parsedGross = parseFloat(createAmountUsd) || 0;
+                const is13Fee = has13PercentFee(createSourcePlatform);
+                const platformFeeAmount = is13Fee ? calculate13PercentSplit(parsedGross).platformFee : 0;
+                const parsedPool = parseFloat(createBoosterPoolUsd) || 0;
+                const netMargin = Math.round((parsedGross - platformFeeAmount - parsedPool) * 100) / 100;
+
+                return (
+                  <div
+                    style={{
+                      background: 'rgba(0, 0, 0, 0.4)',
+                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      borderRadius: '10px',
+                      padding: '0.75rem 1rem',
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
+                      gap: '0.75rem',
+                      alignItems: 'center',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Gross Sale
+                      </div>
+                      <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#fff', fontFamily: 'monospace' }}>
+                        ${parsedGross.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: '0.68rem', color: is13Fee ? '#F87171' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        {is13Fee ? '13% Market Fee' : 'Platform Fee'}
+                      </div>
+                      <div style={{ fontSize: '1.05rem', fontWeight: 800, color: is13Fee ? '#F87171' : 'var(--text-muted)', fontFamily: 'monospace' }}>
+                        {is13Fee ? `-$${platformFeeAmount.toFixed(2)}` : '$0.00'}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: '0.68rem', color: 'var(--accent-yellow)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Booster Pool
+                      </div>
+                      <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--accent-yellow)', fontFamily: 'monospace' }}>
+                        ${parsedPool.toFixed(2)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize: '0.68rem', color: netMargin >= 0 ? '#34D399' : '#EF4444', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        Platform Margin
+                      </div>
+                      <div style={{ fontSize: '1.05rem', fontWeight: 800, color: netMargin >= 0 ? '#34D399' : '#EF4444', fontFamily: 'monospace' }}>
+                        ${netMargin.toFixed(2)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {(parseFloat(createAmountUsd) || 0) > 0 && (parseFloat(createBoosterPoolUsd) || 0) > (parseFloat(createAmountUsd) || 0) && (
+                <p style={{ color: 'var(--status-danger, #ef4444)', fontSize: '0.8rem', margin: 0 }}>
+                  ⚠️ Warning: Booster Pool (${(parseFloat(createBoosterPoolUsd) || 0).toFixed(2)}) cannot exceed the Gross Sale Amount (${(parseFloat(createAmountUsd) || 0).toFixed(2)}).
+                </p>
               )}
 
               {has13PercentFee(createSourcePlatform) &&
                 (parseFloat(createAmountUsd) || 0) > 0 &&
                 (parseFloat(createBoosterPoolUsd) || 0) > calculate13PercentSplit(parseFloat(createAmountUsd) || 0).netAvailable && (
                   <p style={{ color: 'var(--status-danger, #ef4444)', fontSize: '0.8rem', margin: 0 }}>
-                    ⚠️ Warning: Booster Pool ($${(parseFloat(createBoosterPoolUsd) || 0).toFixed(2)}) exceeds defensible net available after 13% platform fee ($${calculate13PercentSplit(parseFloat(createAmountUsd) || 0).netAvailable.toFixed(2)}).
+                    ⚠️ Warning: Booster Pool (${(parseFloat(createBoosterPoolUsd) || 0).toFixed(2)}) exceeds defensible net available after 13% platform fee (${calculate13PercentSplit(parseFloat(createAmountUsd) || 0).netAvailable.toFixed(2)}).
                   </p>
                 )}
 
@@ -2201,7 +2336,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                       const newPlat = e.target.value;
                       setCreateSourcePlatform(newPlat);
                       const num = parseFloat(createAmountUsd);
-                      if (!isNaN(num) && num > 0) {
+                      if (!isNaN(num) && num > 0 && !boosterPoolCustomized) {
                         if (has13PercentFee(newPlat)) {
                           const split = calculate13PercentSplit(num);
                           setCreateBoosterPoolUsd(split.netAvailable.toFixed(2));
