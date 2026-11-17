@@ -37,9 +37,12 @@ import {
 import { KycManagementPage } from './KycManagementPage';
 import { DepositQueueWorkspace } from '../components/admin/DepositQueueWorkspace';
 import { RulesManagementWorkspace } from '../components/admin/RulesManagementWorkspace';
+import { FinancialManagementWorkspace } from '../components/admin/FinancialManagementWorkspace';
+import { AdminFinanceOverviewWorkspace } from '../components/admin/AdminFinanceOverviewWorkspace';
 
 export type OwnerTab =
   | 'overview'
+  | 'finance'
   | 'orders'
   | 'users'
   | 'deposits'
@@ -58,6 +61,7 @@ export type OwnerTab =
 
 const VALID_OWNER_TABS: OwnerTab[] = [
   'overview',
+  'finance',
   'orders',
   'users',
   'deposits',
@@ -96,6 +100,9 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
     setActiveTab(newTab);
     setSearchParams({ tab: newTab });
   };
+
+  // Sub-view toggle for Finance & Treasury tab
+  const [financeView, setFinanceView] = useState<'accounts' | 'solvency'>('accounts');
 
   // Overview state
   const [overview, setOverview] = useState<OwnerOverviewResponse | null>(null);
@@ -410,6 +417,7 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
       >
         {[
           { key: 'overview', label: 'Executive Overview', icon: '🏛️' },
+          { key: 'finance', label: 'Financial Management', icon: '💰' },
           { key: 'orders', label: 'Order Workspace', icon: '📦' },
           { key: 'users', label: 'User Management', icon: '👥' },
           { key: 'deposits', label: 'Manual IRT Deposits', icon: '💳' },
@@ -594,6 +602,38 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
               </div>
             </>
           ) : null}
+        </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* TAB: UNIFIED FINANCE & TREASURY MANAGEMENT                                    */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'finance' && isOwner && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <button
+              type="button"
+              className={`btn btn-xs ${financeView === 'accounts' ? 'btn-cta' : 'btn-secondary'}`}
+              onClick={() => setFinanceView('accounts')}
+              style={financeView === 'accounts' ? { background: '#8B5CF6', color: '#fff', border: '1px solid #7C3AED' } : {}}
+            >
+              🏛️ Financial Accounts &amp; Treasury
+            </button>
+            <button
+              type="button"
+              className={`btn btn-xs ${financeView === 'solvency' ? 'btn-cta' : 'btn-secondary'}`}
+              onClick={() => setFinanceView('solvency')}
+              style={financeView === 'solvency' ? { background: '#8B5CF6', color: '#fff', border: '1px solid #7C3AED' } : {}}
+            >
+              📊 Platform Fee Cuts &amp; Solvency
+            </button>
+          </div>
+
+          {financeView === 'accounts' ? (
+            <FinancialManagementWorkspace onNavigateTab={(t) => handleTabChange(t as OwnerTab)} />
+          ) : (
+            <AdminFinanceOverviewWorkspace onNavigateTab={(t) => handleTabChange(t as OwnerTab)} />
+          )}
         </div>
       )}
 

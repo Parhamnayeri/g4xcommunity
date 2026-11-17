@@ -153,25 +153,35 @@ export interface SerializedExchangeRate {
 
 /**
  * Seed default baseline exchange rate if none exists.
+ * Synchronizes with SystemFinancialConfig (admin_usd_irt_rate) if available.
  */
 export async function ensureDefaultExchangeRates(): Promise<void> {
   const existingUsdIrt = await prisma.exchangeRate.findFirst({
     where: { fromCurrency: 'USD', toCurrency: 'IRR', isActive: true },
+    orderBy: { effectiveAt: 'desc' },
   });
 
+  const sysConfig = await prisma.systemFinancialConfig.findUnique({
+    where: { key: 'admin_usd_irt_rate' },
+  }).catch(() => null);
+
+  const configuredRate = sysConfig ? parseFloat(sysConfig.value) : NaN;
+  const targetRate = (!isNaN(configuredRate) && configuredRate > 0) ? configuredRate : 72000.0;
+
   if (!existingUsdIrt) {
-    const rate = 72000.0; // Baseline: 1 USD = 72,000 Tomans
     await prisma.exchangeRate.create({
       data: {
         rateRef: `FX-USD-IRR-DEFAULT`,
         fromCurrency: 'USD',
         toCurrency: 'IRR',
-        rate,
-        inverseRate: 1 / rate,
+        rate: targetRate,
+        inverseRate: 1 / targetRate,
         spreadPercentage: 0,
         isActive: true,
-        source: 'MANUAL',
-        notes: 'Initial default operational exchange rate',
+        source: sysConfig ? 'FINANCIAL_CONFIG' : 'MANUAL',
+        notes: sysConfig
+          ? 'Synchronized from System Financial Configuration (admin_usd_irt_rate)'
+          : 'Initial default operational exchange rate',
       },
     });
   }
@@ -179,6 +189,7 @@ export async function ensureDefaultExchangeRates(): Promise<void> {
 
 /**
  * Get active exchange rate between two currencies.
+ * Synchronizes with authoritative SystemFinancialConfig for USD/IRR conversions.
  */
 export async function getActiveExchangeRate(fromCurrency: string, toCurrency: string): Promise<number> {
   const from = fromCurrency.toUpperCase();
@@ -193,6 +204,30 @@ export async function getActiveExchangeRate(fromCurrency: string, toCurrency: st
     where: { fromCurrency: from, toCurrency: to, isActive: true },
     orderBy: { effectiveAt: 'desc' },
   });
+
+  // Authoritative fallback check to SystemFinancialConfig for USD <-> IRR
+  if (from === 'USD' && to === 'IRR') {
+    const sysConfig = await prisma.systemFinancialConfig.findUnique({
+      where: { key: 'admin_usd_irt_rate' },
+    }).catch(() => null);
+    if (sysConfig) {
+      const cfgRate = parseFloat(sysConfig.value);
+      if (!isNaN(cfgRate) && cfgRate > 0 && (!direct || direct.source === 'FINANCIAL_CONFIG')) {
+        return cfgRate;
+      }
+    }
+  } else if (from === 'IRR' && to === 'USD') {
+    const sysConfig = await prisma.systemFinancialConfig.findUnique({
+      where: { key: 'admin_usd_irt_rate' },
+    }).catch(() => null);
+    if (sysConfig) {
+      const cfgRate = parseFloat(sysConfig.value);
+      if (!isNaN(cfgRate) && cfgRate > 0 && (!direct || direct.source === 'FINANCIAL_CONFIG')) {
+        return 1 / cfgRate;
+      }
+    }
+  }
+
   if (direct) return direct.rate;
 
   // Inverse lookup
@@ -279,6 +314,28 @@ export async function createExchangeRate(input: CreateExchangeRateInput): Promis
       adminId: input.adminId || null,
     },
   });
+
+  // Synchronize into SystemFinancialConfig for USD/IRR
+  if (fromCurrency === 'USD' && toCurrency === 'IRR') {
+    try {
+      await prisma.systemFinancialConfig.upsert({
+        where: { key: 'admin_usd_irt_rate' },
+        create: {
+          key: 'admin_usd_irt_rate',
+          value: String(Math.round(rate)),
+          updatedBy: input.adminId || 'system',
+          updatedAt: new Date(),
+        },
+        update: {
+          value: String(Math.round(rate)),
+          updatedBy: input.adminId || 'system',
+          updatedAt: new Date(),
+        },
+      });
+    } catch {
+      // safe fallback
+    }
+  }
 
   return {
     id: record.id,
