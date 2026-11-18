@@ -1023,6 +1023,7 @@ adminPortalRouter.get(
         completedAssignmentsCount,
         activeAssignmentsCount,
         assignedOrdersRaw,
+        reservationsRaw,
         createdOrdersRaw,
         presignsRaw,
         ledgerV2Raw,
@@ -1146,6 +1147,30 @@ adminPortalRouter.get(
           take: 50,
         }),
 
+        // Active / Recent Reservations (Boosts via Reservations)
+        prisma.boosterReservation.findMany({
+          where: { userId: discordId },
+          include: {
+            order: {
+              select: {
+                id: true,
+                orderRef: true,
+                externalOrderId: true,
+                title: true,
+                orderName: true,
+                sourceWebsite: true,
+                status: true,
+                boosterPoolMinor: true,
+                grossAmountMinor: true,
+                createdAt: true,
+                completedAt: true,
+              },
+            },
+          },
+          orderBy: { reservedAt: 'desc' },
+          take: 50,
+        }),
+
         // Created Orders (Client / Advertiser)
         prisma.order.findMany({
           where: {
@@ -1239,6 +1264,62 @@ adminPortalRouter.get(
         }),
       ]);
 
+      // 4. Combine Assigned Orders (both direct assignments and booster reservations)
+      const seenOrderIds = new Set<number>();
+      const assignedOrders: any[] = [];
+
+      for (const a of assignedOrdersRaw) {
+        if (!a.order) continue;
+        seenOrderIds.add(a.order.id);
+        const poolMinor = a.order.boosterPoolMinor || 0;
+        assignedOrders.push({
+          assignmentId: String(a.id),
+          orderId: String(a.order.id),
+          orderRef: a.order.orderRef,
+          externalOrderId: a.order.externalOrderId || null,
+          title: a.order.title || a.order.orderName || a.order.orderRef,
+          platform: a.order.sourceWebsite || 'direct',
+          status: a.order.status,
+          assignmentStatus: a.status,
+          assignedRole: a.assignedRole || 'Booster',
+          boosterPayoutShare: poolMinor / 100,
+          boosterPayoutShareFormatted: formatCentsToUsd(poolMinor),
+          grossAmountUsd: (a.order.grossAmountMinor || 0) / 100,
+          assignedAt: a.assignedAt.toISOString(),
+          completedAt: a.order.completedAt ? a.order.completedAt.toISOString() : null,
+        });
+      }
+
+      for (const r of reservationsRaw) {
+        if (!r.order || seenOrderIds.has(r.order.id)) continue;
+        seenOrderIds.add(r.order.id);
+        const poolMinor = r.order.boosterPoolMinor || 0;
+        assignedOrders.push({
+          assignmentId: `res_${r.id}`,
+          orderId: String(r.order.id),
+          orderRef: r.order.orderRef,
+          externalOrderId: r.order.externalOrderId || null,
+          title: r.order.title || r.order.orderName || r.order.orderRef,
+          platform: r.order.sourceWebsite || 'direct',
+          status: r.order.status,
+          assignmentStatus: r.status,
+          assignedRole: 'Booster (Reserved)',
+          boosterPayoutShare: poolMinor / 100,
+          boosterPayoutShareFormatted: formatCentsToUsd(poolMinor),
+          grossAmountUsd: (r.order.grossAmountMinor || 0) / 100,
+          assignedAt: r.reservedAt.toISOString(),
+          completedAt: r.order.completedAt ? r.order.completedAt.toISOString() : null,
+        });
+      }
+
+      const activeAssignedCount = Math.max(
+        activeAssignmentsCount,
+        assignedOrders.filter((o) =>
+          ['assigned', 'accepted', 'active'].includes(String(o.assignmentStatus).toLowerCase()) &&
+          ['open_presign', 'presign_closed', 'assigned', 'in_progress'].includes(String(o.status).toLowerCase())
+        ).length
+      );
+
       // 3. Format Financials
       const availableCents = walletV2?.availableCents ?? (legacyWallet?.balanceUsd ?? 0);
       const reservedCents = walletV2?.reservedCents ?? (legacyWallet?.escrowUsd ?? 0);
@@ -1264,7 +1345,7 @@ adminPortalRouter.get(
         totalWithdrawn: totalWithdrawnCents / 100,
         totalWithdrawnFormatted: formatCentsToUsd(totalWithdrawnCents),
         totalOrdersCompleted: completedAssignmentsCount,
-        activeAssignedOrdersCount: activeAssignmentsCount,
+        activeAssignedOrdersCount: activeAssignedCount,
         currency: 'USD',
         payoutAddress: payoutPreference?.cryptoAddress || payoutPreference?.bankIban || null,
         payoutNetwork: payoutPreference?.cryptoNetwork || (payoutPreference?.bankIban ? 'Shetab / Bank IBAN' : null),
@@ -1274,30 +1355,9 @@ adminPortalRouter.get(
         cryptoNetwork: payoutPreference?.cryptoNetwork || null,
       };
 
-      // 4. Format Assigned Orders
-      const assignedOrders = assignedOrdersRaw.map((a) => {
-        const poolMinor = a.order.boosterPoolMinor || 0;
-        return {
-          assignmentId: a.id,
-          orderId: a.order.id,
-          orderRef: a.order.orderRef,
-          externalOrderId: a.order.externalOrderId || null,
-          title: a.order.title || a.order.orderName || a.order.orderRef,
-          platform: a.order.sourceWebsite || 'direct',
-          status: a.order.status,
-          assignmentStatus: a.status,
-          assignedRole: a.assignedRole,
-          boosterPayoutShare: poolMinor / 100,
-          boosterPayoutShareFormatted: formatCentsToUsd(poolMinor),
-          grossAmountUsd: (a.order.grossAmountMinor || 0) / 100,
-          assignedAt: a.assignedAt.toISOString(),
-          completedAt: a.order.completedAt ? a.order.completedAt.toISOString() : null,
-        };
-      });
-
       // 5. Format Created Orders
       const createdOrders = createdOrdersRaw.map((o) => ({
-        orderId: o.id,
+        orderId: String(o.id),
         orderRef: o.orderRef,
         externalOrderId: o.externalOrderId || null,
         title: o.title || o.orderName || o.orderRef,
@@ -1311,8 +1371,8 @@ adminPortalRouter.get(
 
       // 6. Format Pre-Signs
       const preSigns = presignsRaw.map((p) => ({
-        id: p.id,
-        orderId: p.orderId,
+        id: String(p.id),
+        orderId: String(p.orderId),
         orderRef: p.order.orderRef,
         orderTitle: p.order.title || p.order.orderName || p.order.orderRef,
         orderStatus: p.order.status,
@@ -1379,96 +1439,140 @@ adminPortalRouter.get(
       }));
 
       // 10. Construct Final Aggregated Response
+      const userProfile = {
+        id: user.discordId,
+        discordId: user.discordId,
+        username: user.username,
+        displayName: user.displayName || user.username,
+        avatarUrl: null,
+        status: user.isActive ? 'Active' : 'Suspended',
+        isActive: user.isActive,
+        advertiserRank: user.advertiserRank,
+        phoneNumber: user.phoneNumber,
+        telegramUsername: user.telegramUsername,
+        whatsappNumber: user.whatsappNumber,
+        createdAt: user.createdAt.toISOString(),
+        updatedAt: user.updatedAt.toISOString(),
+      };
+
+      const userRoles = user.userRoles.map((r) => ({
+        roleKey: r.roleKey,
+        grantedAt: r.grantedAt.toISOString(),
+        grantedBy: r.grantedBy,
+      }));
+
+      const formattedGameApprovals = gameApprovals.map((ga) => ({
+        id: String(ga.id),
+        gameSlug: ga.gameSlug,
+        gameName: ga.game.displayName,
+        serviceId: ga.serviceId ? String(ga.serviceId) : null,
+        serviceName: ga.service?.displayName || null,
+        approvalType: ga.approvalType,
+        status: ga.status,
+        reviewNote: ga.reviewNote,
+        reviewedAt: ga.reviewedAt ? ga.reviewedAt.toISOString() : null,
+        reviewedBy: ga.reviewedBy,
+        createdAt: ga.createdAt.toISOString(),
+      }));
+
+      const formattedWowCharacters = wowCharacters.map((c) => ({
+        id: String(c.id),
+        characterName: c.characterName,
+        name: c.characterName,
+        realm: c.realm,
+        region: c.region,
+        characterClass: c.characterClass || 'Unknown',
+        class: c.characterClass || 'Unknown',
+        activeSpec: c.activeSpec || '',
+        spec: c.activeSpec || '',
+        itemLevel: c.itemLevel || 0,
+        mythicScore: c.mythicScore || 0,
+        activeRole: c.activeRole || 'DPS',
+        role: c.activeRole || 'DPS',
+        faction: c.faction || 'Neutral',
+        isMain: c.isMain,
+        isActive: c.isActive,
+        syncStatus: c.syncStatus,
+        lastSyncedAt: c.lastSyncedAt ? c.lastSyncedAt.toISOString() : null,
+      }));
+
+      const formattedKyc = {
+        status: kycStatus?.status || 'none',
+        isVerified: kycStatus?.isVerified || false,
+        verifiedAt: kycStatus?.verifiedAt ? new Date(kycStatus.verifiedAt).toISOString() : null,
+        legalName: kycStatus?.profileData?.legalName || null,
+        country: kycStatus?.profileData?.country || null,
+        idNumber: kycStatus?.profileData?.idNumber ? '••••' + kycStatus.profileData.idNumber.slice(-4) : null,
+        contactInfo: kycStatus?.profileData?.phoneNumber || user.phoneNumber || null,
+        vpnConfirmed: Boolean(kycStatus?.profileData?.vpnConfirmed),
+        adminNotes: kycStatus?.profileData?.adminNotes || null,
+        documents: {
+          identity: Boolean(kycStatus?.documents?.identity),
+          passport: Boolean(kycStatus?.documents?.passport),
+          selfie: Boolean(kycStatus?.documents?.selfie),
+          totalUploaded: [kycStatus?.documents?.identity, kycStatus?.documents?.passport, kycStatus?.documents?.selfie].filter(Boolean).length,
+        },
+        pilotVerifications: pilotVerifications.map((pv) => ({
+          id: String(pv.id),
+          gameSlug: pv.gameSlug,
+          gameName: pv.game.displayName,
+          status: pv.status,
+          submittedAt: pv.submittedAt.toISOString(),
+          reviewedAt: pv.reviewedAt ? pv.reviewedAt.toISOString() : null,
+          reviewedBy: pv.reviewedBy,
+          reviewNote: pv.reviewNote,
+          hasIdentityDoc: Boolean(pv.identityDocumentRef),
+          hasPassportDoc: Boolean(pv.passportDocumentRef),
+          hasSelfieDoc: Boolean(pv.selfieDocumentRef),
+        })),
+      };
+
+      const ordersPayload = {
+        assignedOrders,
+        createdOrders,
+        preSigns,
+        totalAssigned: assignedOrders.length,
+        totalCreated: createdOrders.length,
+        totalPreSigns: preSigns.length,
+      };
+
+      const ledgerPayload = {
+        transactions: ledgerTransactions,
+        totalTransactions: ledgerTransactions.length,
+      };
+
+      const withdrawalsPayload = {
+        requests: withdrawals,
+        totalRequests: withdrawals.length,
+      };
+
+      const userPayload = {
+        profile: userProfile,
+        roles: userRoles,
+        gameApprovals: formattedGameApprovals,
+        wowCharacters: formattedWowCharacters,
+        kyc: formattedKyc,
+        financialSummary,
+        orders: ordersPayload,
+        ledger: ledgerPayload,
+        withdrawals: withdrawalsPayload,
+        auditTrail: auditLogs,
+        // Flat backward compatibility
+        ...userProfile,
+      };
+
       res.json({
         success: true,
-        user: {
-          id: user.discordId,
-          discordId: user.discordId,
-          username: user.username,
-          displayName: user.displayName || user.username,
-          avatarUrl: null,
-          status: user.isActive ? 'active' : 'suspended',
-          isActive: user.isActive,
-          advertiserRank: user.advertiserRank,
-          phoneNumber: user.phoneNumber,
-          telegramUsername: user.telegramUsername,
-          whatsappNumber: user.whatsappNumber,
-          createdAt: user.createdAt.toISOString(),
-          updatedAt: user.updatedAt.toISOString(),
-        },
-        roles: user.userRoles.map((r) => ({
-          roleKey: r.roleKey,
-          grantedAt: r.grantedAt.toISOString(),
-          grantedBy: r.grantedBy,
-        })),
-        gameApprovals: gameApprovals.map((ga) => ({
-          id: ga.id,
-          gameSlug: ga.gameSlug,
-          gameName: ga.game.displayName,
-          serviceId: ga.serviceId,
-          serviceName: ga.service?.displayName || null,
-          approvalType: ga.approvalType,
-          status: ga.status,
-          reviewNote: ga.reviewNote,
-          reviewedAt: ga.reviewedAt ? ga.reviewedAt.toISOString() : null,
-          reviewedBy: ga.reviewedBy,
-          createdAt: ga.createdAt.toISOString(),
-        })),
-        wowCharacters: wowCharacters.map((c) => ({
-          id: c.id,
-          characterName: c.characterName,
-          realm: c.realm,
-          region: c.region,
-          characterClass: c.characterClass,
-          activeSpec: c.activeSpec,
-          itemLevel: c.itemLevel,
-          mythicScore: c.mythicScore,
-          activeRole: c.activeRole,
-          faction: c.faction,
-          isMain: c.isMain,
-          isActive: c.isActive,
-          syncStatus: c.syncStatus,
-          lastSyncedAt: c.lastSyncedAt ? c.lastSyncedAt.toISOString() : null,
-        })),
-        kyc: {
-          status: kycStatus?.status || 'none',
-          isVerified: kycStatus?.isVerified || false,
-          verifiedAt: kycStatus?.verifiedAt ? new Date(kycStatus.verifiedAt).toISOString() : null,
-          legalName: kycStatus?.profileData?.legalName || null,
-          country: kycStatus?.profileData?.country || null,
-          idNumber: kycStatus?.profileData?.idNumber ? '••••' + kycStatus.profileData.idNumber.slice(-4) : null,
-          contactInfo: kycStatus?.profileData?.phoneNumber || user.phoneNumber || null,
-          vpnConfirmed: Boolean(kycStatus?.profileData?.vpnConfirmed),
-          adminNotes: kycStatus?.profileData?.adminNotes || null,
-          documents: {
-            identity: Boolean(kycStatus?.documents?.identity),
-            passport: Boolean(kycStatus?.documents?.passport),
-            selfie: Boolean(kycStatus?.documents?.selfie),
-            totalUploaded: [kycStatus?.documents?.identity, kycStatus?.documents?.passport, kycStatus?.documents?.selfie].filter(Boolean).length,
-          },
-          pilotVerifications: pilotVerifications.map((pv) => ({
-            id: pv.id,
-            gameSlug: pv.gameSlug,
-            gameName: pv.game.displayName,
-            status: pv.status,
-            submittedAt: pv.submittedAt.toISOString(),
-            reviewedAt: pv.reviewedAt ? pv.reviewedAt.toISOString() : null,
-            reviewedBy: pv.reviewedBy,
-            reviewNote: pv.reviewNote,
-            hasIdentityDoc: Boolean(pv.identityDocumentRef),
-            hasPassportDoc: Boolean(pv.passportDocumentRef),
-            hasSelfieDoc: Boolean(pv.selfieDocumentRef),
-          })),
-        },
+        user: userPayload,
+        profile: userProfile,
+        roles: userRoles,
+        gameApprovals: formattedGameApprovals,
+        wowCharacters: formattedWowCharacters,
+        kyc: formattedKyc,
         financialSummary,
-        orders: {
-          assignedOrders,
-          createdOrders,
-          preSigns,
-          totalAssigned: assignedOrders.length,
-          totalCreated: createdOrders.length,
-          totalPreSigns: preSigns.length,
-        },
+        orders: ordersPayload,
+        ledger: ledgerPayload,
+        withdrawals: withdrawalsPayload,
         financialActivity: {
           ledgerTransactions,
           withdrawals,
@@ -1476,6 +1580,7 @@ adminPortalRouter.get(
           totalWithdrawals: withdrawals.length,
         },
         auditLogs,
+        auditTrail: auditLogs,
       });
     } catch (err: any) {
       console.error('[AdminUserDetails] Failed to aggregate profile:', err);

@@ -43,9 +43,82 @@ export const UserDetailsModal: React.FC<Props> = ({
     setLedgerSubTab('transactions');
 
     fetchAdminUserDetails(discordId)
-      .then((res) => {
-        if (res.success && res.user) {
-          setData(res.user);
+      .then((res: any) => {
+        if (res.success) {
+          const rawUser = res.user || {};
+          const rawProfile = rawUser.profile || (rawUser.username ? rawUser : res.profile) || {};
+          const normalized: any = {
+            profile: {
+              id: rawProfile.id || rawProfile.discordId || discordId,
+              discordId: rawProfile.discordId || discordId,
+              username: rawProfile.username || '—',
+              displayName: rawProfile.displayName || rawProfile.username || null,
+              avatarUrl: rawProfile.avatarUrl || '',
+              isActive: rawProfile.isActive ?? (rawProfile.status === 'Active' || rawProfile.status === 'active' || true),
+              status: rawProfile.status || (rawProfile.isActive === false ? 'Suspended' : 'Active'),
+              advertiserRank: rawProfile.advertiserRank || null,
+              phoneNumber: rawProfile.phoneNumber || null,
+              telegramUsername: rawProfile.telegramUsername || null,
+              whatsappNumber: rawProfile.whatsappNumber || null,
+              createdAt: rawProfile.createdAt || new Date().toISOString(),
+              updatedAt: rawProfile.updatedAt || new Date().toISOString(),
+            },
+            roles: rawUser.roles || res.roles || [],
+            gameApprovals: rawUser.gameApprovals || res.gameApprovals || [],
+            wowCharacters: rawUser.wowCharacters || res.wowCharacters || [],
+            kyc: rawUser.kyc || res.kyc || {
+              status: 'none',
+              isVerified: false,
+              verifiedAt: null,
+              legalName: null,
+              country: null,
+              idNumber: null,
+              contactInfo: null,
+              vpnConfirmed: false,
+              adminNotes: null,
+              documents: { identity: false, passport: false, selfie: false, totalUploaded: 0 },
+              pilotVerifications: [],
+            },
+            financialSummary: rawUser.financialSummary || res.financialSummary || {
+              availableBalance: 0,
+              availableBalanceFormatted: '$0.00',
+              pendingEscrowBalance: 0,
+              pendingEscrowBalanceFormatted: '$0.00',
+              reservedBalance: 0,
+              reservedBalanceFormatted: '$0.00',
+              totalLifetimeEarnings: 0,
+              totalLifetimeEarningsFormatted: '$0.00',
+              totalWithdrawn: 0,
+              totalWithdrawnFormatted: '$0.00',
+              totalOrdersCompleted: 0,
+              activeAssignedOrdersCount: 0,
+              currency: 'USD',
+              payoutAddress: null,
+              payoutNetwork: null,
+              bankAccountHolder: null,
+              bankIban: null,
+              cryptoAddress: null,
+              cryptoNetwork: null,
+            },
+            orders: rawUser.orders || res.orders || {
+              assignedOrders: [],
+              createdOrders: [],
+              preSigns: [],
+              totalAssigned: 0,
+              totalCreated: 0,
+              totalPreSigns: 0,
+            },
+            ledger: rawUser.ledger || {
+              transactions: res.financialActivity?.ledgerTransactions || rawUser.financialActivity?.ledgerTransactions || [],
+              totalTransactions: (res.financialActivity?.ledgerTransactions || []).length,
+            },
+            withdrawals: rawUser.withdrawals || {
+              requests: res.financialActivity?.withdrawals || rawUser.financialActivity?.withdrawals || [],
+              totalRequests: (res.financialActivity?.withdrawals || []).length,
+            },
+            auditTrail: rawUser.auditTrail || res.auditLogs || res.auditTrail || [],
+          };
+          setData(normalized);
         } else {
           setError('Failed to load user details: Malformed response.');
         }
@@ -560,8 +633,101 @@ export const UserDetailsModal: React.FC<Props> = ({
               {/* Tab 1: Overview & KYC */}
               {activeTab === 'overview' && (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: '1.25rem' }}>
-                  {/* Left Column: KYC & Identity */}
+                  {/* Left Column: Profile & KYC */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                    {/* User Profile & Account Identity Card */}
+                    <div className="card-surface" style={{ padding: '1.25rem', borderRadius: '10px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                        <h4 style={{ margin: 0, fontSize: '0.95rem', color: '#f3f4f6', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span>👤</span> User Profile &amp; Contact
+                        </h4>
+                        <span className={`badge ${profile?.isActive ? 'badge-green' : 'badge-danger'}`} style={{ fontSize: '0.72rem' }}>
+                          {profile?.status || (profile?.isActive ? 'Active' : 'Suspended')}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem', fontSize: '0.82rem' }}>
+                        <div>
+                          <div style={{ color: '#9ca3af', fontSize: '0.75rem' }}>Display Name</div>
+                          <div style={{ color: '#f3f4f6', fontWeight: 600, marginTop: '2px' }}>
+                            {profile?.displayName || '—'}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ color: '#9ca3af', fontSize: '0.75rem' }}>Username</div>
+                          <div style={{ color: '#facc15', fontWeight: 500, marginTop: '2px' }}>
+                            @{profile?.username || '—'}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ color: '#9ca3af', fontSize: '0.75rem' }}>Discord ID</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '2px' }}>
+                            <code style={{ fontSize: '0.76rem', color: '#cbd5e1', backgroundColor: 'rgba(255, 255, 255, 0.05)', padding: '0.1rem 0.35rem', borderRadius: '4px' }}>
+                              {profile?.discordId || discordId}
+                            </code>
+                            <button
+                              type="button"
+                              onClick={() => handleCopy(profile?.discordId || discordId, 'profDiscordId')}
+                              style={{ background: 'none', border: 'none', color: copiedField === 'profDiscordId' ? '#4ade80' : '#9ca3af', cursor: 'pointer', fontSize: '0.72rem' }}
+                            >
+                              {copiedField === 'profDiscordId' ? '✓' : '📋'}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ color: '#9ca3af', fontSize: '0.75rem' }}>Advertiser Rank</div>
+                          <div style={{ color: '#c084fc', fontWeight: 600, marginTop: '2px' }}>
+                            {profile?.advertiserRank || 'Standard'}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ color: '#9ca3af', fontSize: '0.75rem' }}>Phone Number</div>
+                          <div style={{ color: '#f3f4f6', fontWeight: 500, marginTop: '2px' }}>
+                            {profile?.phoneNumber || 'Not provided'}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ color: '#9ca3af', fontSize: '0.75rem' }}>Telegram</div>
+                          <div style={{ color: '#60a5fa', fontWeight: 500, marginTop: '2px' }}>
+                            {profile?.telegramUsername ? `@${profile.telegramUsername.replace(/^@/, '')}` : '—'}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ color: '#9ca3af', fontSize: '0.75rem' }}>WhatsApp</div>
+                          <div style={{ color: '#4ade80', fontWeight: 500, marginTop: '2px' }}>
+                            {profile?.whatsappNumber || '—'}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ color: '#9ca3af', fontSize: '0.75rem' }}>Member Since</div>
+                          <div style={{ color: '#9ca3af', marginTop: '2px' }}>
+                            {profile?.createdAt ? new Date(profile.createdAt).toLocaleDateString() : '—'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Roles Strip */}
+                      <div style={{ marginTop: '0.85rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255, 255, 255, 0.06)', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '0.75rem', color: '#9ca3af' }}>Assigned Roles:</span>
+                        {data?.roles && data.roles.length > 0 ? (
+                          data.roles.map((r) => (
+                            <span key={r.roleKey} className="badge badge-purple" style={{ fontSize: '0.7rem' }}>
+                              {r.roleKey}
+                            </span>
+                          ))
+                        ) : (
+                          <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Standard User</span>
+                        )}
+                      </div>
+                    </div>
+
                     {/* KYC Verification Status Card */}
                     <div className="card-surface" style={{ padding: '1.25rem', borderRadius: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>

@@ -233,8 +233,18 @@ export const ProfilePage: React.FC = () => {
     );
   }
 
-  const { profile, approvedGames, pilotVerification, latestApplication, characters, activitySummary, discordLinkage } =
-    data;
+  const profile = data.profile || ({} as any);
+  const roles = Array.isArray(profile.roles) ? profile.roles : [];
+  const characters = Array.isArray(data.characters) ? data.characters : [];
+  const approvedGames = Array.isArray(data.approvedGames) ? data.approvedGames : [];
+  const pilotVerification = data.pilotVerification;
+  const latestApplication = data.latestApplication;
+  const activitySummary = data.activitySummary || {
+    activeAssignmentsCount: (data as any).activity?.activeAssignments || 0,
+    completedRunsCount: (data as any).activity?.completedRuns || 0,
+    ordersCount: (data as any).activity?.activeOrders || 0,
+    joinedDaysAgo: 0,
+  };
 
   const isKycVerified = pilotVerification?.status === 'approved' || latestApplication?.identityStatus === 'verified';
 
@@ -244,20 +254,23 @@ export const ProfilePage: React.FC = () => {
       <div className="card-surface p-6 rounded-xl border border-[var(--border-subtle)] flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
         <div className="flex items-center gap-5">
           <img
-            src={profile.avatarUrl}
-            alt={profile.username}
+            src={profile.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png'}
+            alt={profile.username || 'User'}
+            onError={(e) => {
+              (e.target as HTMLImageElement).src = 'https://cdn.discordapp.com/embed/avatars/0.png';
+            }}
             className="w-20 h-20 rounded-full border-2 border-[var(--accent-yellow)] object-cover shadow-lg"
             style={{ width: '80px', height: '80px', minWidth: '80px', minHeight: '80px', borderRadius: '50%' }}
           />
           <div>
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-bold text-white">
-                {profile.displayName || profile.username}
+                {profile.displayName || profile.username || 'User Profile'}
               </h1>
               <span className={`badge ${profile.isActive ? 'badge-green' : 'badge-danger'}`}>
                 {profile.isActive ? 'Active Member' : 'Inactive'}
               </span>
-              {profile.roles.map((r) => (
+              {roles.map((r) => (
                 <span key={r} className="badge badge-purple">
                   {r}
                 </span>
@@ -265,14 +278,14 @@ export const ProfilePage: React.FC = () => {
             </div>
             <div className="flex items-center gap-2 mt-2 flex-wrap text-xs">
               <span className="px-2.5 py-0.5 rounded bg-[rgba(255,255,255,0.04)] border border-[rgba(255,255,255,0.08)] font-mono text-[var(--accent-yellow)] font-semibold">
-                @{profile.username}
+                @{profile.username || '—'}
               </span>
               <span className="px-2 py-0.5 rounded bg-[rgba(255,255,255,0.03)] border border-[rgba(255,255,255,0.06)] font-mono text-gray-400">
-                {profile.discordId}
+                {profile.discordId || '—'}
               </span>
               <span className="text-gray-400 text-xs ml-1">
-                Member for {activitySummary.joinedDaysAgo} days &bull; Joined{' '}
-                {new Date(profile.createdAt).toLocaleDateString()}
+                Member for {activitySummary.joinedDaysAgo ?? 0} days &bull; Joined{' '}
+                {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : '—'}
               </span>
             </div>
           </div>
@@ -590,7 +603,7 @@ export const ProfilePage: React.FC = () => {
                       <tr key={char.id}>
                         <td style={{ fontWeight: 600, color: '#ffffff' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span>{char.name}</span>
+                            <span>{char.name || char.characterName || 'Unknown'}</span>
                             {char.isMain && (
                               <span className="badge badge-yellow" style={{ fontSize: '0.65rem' }}>
                                 MAIN
@@ -599,23 +612,23 @@ export const ProfilePage: React.FC = () => {
                           </div>
                         </td>
                         <td style={{ color: 'var(--text-secondary)' }}>
-                          {char.realm} ({char.region.toUpperCase()})
+                          {char.realm} ({(char.region || 'EU').toUpperCase()})
                         </td>
                         <td style={{ color: 'var(--text-secondary)' }}>
-                          {char.spec ? `${char.spec} ` : ''}
-                          {char.class}
+                          {(char.spec || char.activeSpec) ? `${char.spec || char.activeSpec} ` : ''}
+                          {char.class || char.characterClass || 'Unknown'}
                         </td>
                         <td>
                           <span
                             className={`badge ${
-                              char.role === 'TANK'
+                              (char.role || char.activeRole) === 'TANK'
                                 ? 'badge-blue'
-                                : char.role === 'HEALER'
+                                : (char.role || char.activeRole) === 'HEALER'
                                 ? 'badge-green'
                                 : 'badge-danger'
                             }`}
                           >
-                            {char.role}
+                            {char.role || char.activeRole || 'DPS'}
                           </span>
                         </td>
                         <td style={{ fontFamily: 'monospace', color: 'var(--text-primary)' }}>
