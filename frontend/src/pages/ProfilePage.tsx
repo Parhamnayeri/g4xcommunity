@@ -247,6 +247,13 @@ export const ProfilePage: React.FC = () => {
   };
 
   const isKycVerified = pilotVerification?.status === 'approved' || latestApplication?.identityStatus === 'verified';
+  const discordLinkage = data.discordLinkage || {
+    discordId: profile.discordId || '—',
+    username: profile.username || '—',
+    connected: true,
+    serverName: 'G4X Community Guild',
+    rolesInGuild: roles,
+  };
 
   return (
     <div className="space-y-6">
@@ -684,15 +691,15 @@ export const ProfilePage: React.FC = () => {
               </div>
               <div className="flex justify-between py-1.5 border-b border-[rgba(255,255,255,0.06)]">
                 <span className="text-gray-400">Discord User</span>
-                <span className="text-[var(--accent-yellow)] font-mono">@{discordLinkage.username}</span>
+                <span className="text-[var(--accent-yellow)] font-mono">@{discordLinkage?.username || profile.username || '—'}</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-[rgba(255,255,255,0.06)]">
                 <span className="text-gray-400">Discord ID</span>
-                <span className="text-gray-300 font-mono">{discordLinkage.discordId}</span>
+                <span className="text-gray-300 font-mono">{discordLinkage?.discordId || profile.discordId || '—'}</span>
               </div>
               <div className="flex justify-between py-1.5">
                 <span className="text-gray-400">Community Guild</span>
-                <span className="text-gray-300">{discordLinkage.serverName}</span>
+                <span className="text-gray-300">{discordLinkage?.serverName || 'G4X Community Guild'}</span>
               </div>
             </div>
           </div>
