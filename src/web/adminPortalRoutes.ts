@@ -22,8 +22,38 @@ import { adminReviewFunding } from '../services/financeV2/walletPageService';
 import { getOrCreatePlatformAccount } from '../services/platformBalanceService';
 import { getUserKycStatus, assistUserKyc, sendKycRequestDm } from '../services/kycDocumentSecurity';
 import { requireOwnerPortalAccess } from './ownerPortalRoutes';
+import { G4XBoostReleaseStage } from '../services/financeV2/financeV2Types';
+import { publishOrRefreshOrderCard, getGlobalDiscordClient } from '../services/orderDiscordService';
 
 export const adminPortalRouter = Router();
+
+/**
+ * Ensures caller holds active Admin or Owner role.
+ */
+export function requireAdminOrOwner(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  const user = (req as AuthenticatedRequest).user;
+  if (!user || !user.isActive) {
+    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentication session required' });
+    return;
+  }
+
+  const userRoles = (user.userRoles || []).map((r) => String(r.roleKey).toLowerCase());
+  const isAuthorized = userRoles.includes('admin') || userRoles.includes('owner');
+
+  if (!isAuthorized) {
+    res.status(403).json({
+      error: 'ADMIN_OR_OWNER_REQUIRED',
+      message: 'Access restricted exclusively to Administrator or Owner personnel.',
+    });
+    return;
+  }
+
+  next();
+}
 
 /**
  * Ensures caller holds active Admin, Manager, or Owner role.
@@ -1588,5 +1618,393 @@ adminPortalRouter.get(
     }
   }
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 11. ADMIN & OWNER FULL ORDER EDIT ENDPOINTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/admin/orders/:id/edit-data
+ * Returns the target order with all editable fields along with active games and services.
+ */
+adminPortalRouter.get(
+  ['/api/admin/orders/:id/edit-data', '/admin/orders/:id/edit-data'],
+  requireAuth,
+  requireAdminOrOwner,
+  async (req: Request, res: Response): Promise<void> => {
+    const orderId = Number(req.params.id);
+    if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+      res.status(400).json({ error: 'INVALID_ORDER_ID', message: 'Valid positive order ID required.' });
+      return;
+    }
+
+    try {
+      const [order, games, services] = await Promise.all([
+        prisma.order.findUnique({
+          where: { id: orderId },
+          include: {
+            game: { select: { slug: true, displayName: true } },
+            service: { select: { id: true, displayName: true, serviceKey: true } },
+            creator: { select: { discordId: true, username: true, displayName: true } },
+            advertiser: { select: { discordId: true, username: true, displayName: true } },
+            customer: { select: { discordId: true, username: true, displayName: true } },
+          },
+        }),
+        prisma.game.findMany({
+          where: { isActive: true },
+          select: { slug: true, displayName: true },
+          orderBy: { displayName: 'asc' },
+        }),
+        prisma.gameService.findMany({
+          select: { id: true, gameSlug: true, displayName: true, serviceKey: true, serviceMode: true },
+          orderBy: { displayName: 'asc' },
+        }),
+      ]);
+
+      if (!order) {
+        res.status(404).json({ error: 'ORDER_NOT_FOUND', message: 'Order not found.' });
+        return;
+      }
+
+      res.json({
+        success: true,
+        order: {
+          id: order.id,
+          orderRef: order.orderRef,
+          title: order.title || order.orderName || '',
+          orderName: order.orderName || order.title || '',
+          gameSlug: order.gameSlug,
+          serviceId: order.serviceId,
+          orderType: order.orderType,
+          orderMode: order.orderMode,
+          boostModel: order.boostModel || '',
+          vpnRequirement: order.vpnRequirement || '',
+          quantity: order.quantity || 1,
+          notes: order.notes || '',
+          sourceType: order.sourceType,
+          sourceWebsite: order.sourceWebsite || 'direct',
+          externalOrderId: order.externalOrderId || '',
+          currency: order.currency,
+          grossAmountUsd: (order.grossAmountMinor / 100).toFixed(2),
+          grossAmountMinor: order.grossAmountMinor,
+          platformFeeUsd: (order.platformFeeMinor / 100).toFixed(2),
+          platformFeeMinor: order.platformFeeMinor,
+          advertiserFeeUsd: (order.advertiserFeeMinor / 100).toFixed(2),
+          advertiserFeeMinor: order.advertiserFeeMinor,
+          boosterPoolUsd: (order.boosterPoolMinor / 100).toFixed(2),
+          boosterPoolMinor: order.boosterPoolMinor,
+          status: order.status,
+          paymentStatus: order.paymentStatus,
+          advertiserId: order.advertiserId || '',
+          creatorId: order.creatorId || '',
+          customerId: order.customerId || '',
+          discordChannelId: order.discordChannelId || '',
+          discordMessageId: order.discordMessageId || '',
+          executionChannelId: order.executionChannelId || '',
+          reviewChannelId: order.reviewChannelId || '',
+          createdAt: order.createdAt.toISOString(),
+          updatedAt: order.updatedAt.toISOString(),
+          completedAt: order.completedAt ? order.completedAt.toISOString() : null,
+          creator: order.creator,
+          advertiser: order.advertiser,
+          customer: order.customer,
+        },
+        games,
+        services,
+      });
+    } catch (err: any) {
+      console.error('[AdminOrderEditData] Error fetching order edit data:', err);
+      res.status(500).json({ error: 'FAILED_TO_FETCH_EDIT_DATA', message: err.message || 'Internal server error' });
+    }
+  }
+);
+
+/**
+ * Full modification of order fields by Administrator or Owner with strict financial safety & audit logging.
+ */
+const handleAdminFullOrderUpdate = async (req: Request, res: Response): Promise<void> => {
+  const orderId = Number(req.params.id);
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) {
+    res.status(400).json({ error: 'INVALID_ORDER_ID', message: 'Valid positive order ID required.' });
+    return;
+  }
+
+  const actor = (req as AuthenticatedRequest).user;
+  const {
+    title,
+    orderName,
+    gameSlug,
+    serviceId,
+    orderType,
+    orderMode,
+    boostModel,
+    vpnRequirement,
+    quantity,
+    notes,
+    externalOrderId,
+    sourceType,
+    sourceWebsite,
+    currency,
+    grossAmountUsd,
+    grossAmountMinor: inputGrossAmountMinor,
+    boosterPoolUsd,
+    boosterPoolMinor: inputBoosterPoolMinor,
+    platformFeeUsd,
+    platformFeeMinor: inputPlatformFeeMinor,
+    status: targetStatus,
+    paymentStatus: targetPaymentStatus,
+    advertiserId,
+    customerId,
+    creatorId,
+    executionChannelId,
+    discordChannelId,
+    reason,
+  } = req.body;
+
+  try {
+    const existing = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        game: true,
+        service: true,
+      },
+    });
+
+    if (!existing) {
+      res.status(404).json({ error: 'ORDER_NOT_FOUND', message: 'Target order not found.' });
+      return;
+    }
+
+    // 1. Process Financials
+    let newGrossMinor = existing.grossAmountMinor;
+    if (grossAmountUsd !== undefined && grossAmountUsd !== null && grossAmountUsd !== '') {
+      newGrossMinor = Math.round(Number(grossAmountUsd) * 100);
+    } else if (inputGrossAmountMinor !== undefined && inputGrossAmountMinor !== null) {
+      newGrossMinor = Number(inputGrossAmountMinor);
+    }
+
+    let newBoosterPoolMinor = existing.boosterPoolMinor;
+    if (boosterPoolUsd !== undefined && boosterPoolUsd !== null && boosterPoolUsd !== '') {
+      newBoosterPoolMinor = Math.round(Number(boosterPoolUsd) * 100);
+    } else if (inputBoosterPoolMinor !== undefined && inputBoosterPoolMinor !== null) {
+      newBoosterPoolMinor = Number(inputBoosterPoolMinor);
+    }
+
+    if (isNaN(newGrossMinor) || newGrossMinor < 0) {
+      res.status(400).json({ error: 'INVALID_GROSS_AMOUNT', message: 'Gross amount must be a non-negative number.' });
+      return;
+    }
+
+    if (isNaN(newBoosterPoolMinor) || newBoosterPoolMinor < 0) {
+      res.status(400).json({ error: 'INVALID_BOOSTER_POOL', message: 'Booster reward pool must be a non-negative number.' });
+      return;
+    }
+
+    if (newGrossMinor > 0 && newBoosterPoolMinor > newGrossMinor) {
+      res.status(400).json({
+        error: 'INVALID_FINANCIAL_SPLIT',
+        message: `Booster pool ($${(newBoosterPoolMinor / 100).toFixed(2)}) cannot exceed total order price ($${(newGrossMinor / 100).toFixed(2)}).`,
+      });
+      return;
+    }
+
+    let newPlatformFeeMinor = Math.max(0, newGrossMinor - newBoosterPoolMinor);
+    if (platformFeeUsd !== undefined && platformFeeUsd !== null && platformFeeUsd !== '') {
+      newPlatformFeeMinor = Math.round(Number(platformFeeUsd) * 100);
+    } else if (inputPlatformFeeMinor !== undefined && inputPlatformFeeMinor !== null) {
+      newPlatformFeeMinor = Number(inputPlatformFeeMinor);
+    }
+
+    // 2. Validate Game & Service if changed
+    const targetGameSlug = gameSlug ? String(gameSlug).trim() : existing.gameSlug;
+    let targetServiceId = existing.serviceId;
+    if (serviceId) {
+      const sId = Number(serviceId);
+      if (Number.isSafeInteger(sId) && sId > 0) {
+        targetServiceId = sId;
+      }
+    }
+
+    // 3. Prepare Update Payload
+    const resolvedTitle = title !== undefined ? (title ? String(title).trim() : null) : existing.title;
+    const resolvedOrderName = orderName !== undefined ? (orderName ? String(orderName).trim() : null) : (resolvedTitle || existing.orderName);
+
+    const updateData: any = {
+      title: resolvedTitle,
+      orderName: resolvedOrderName,
+      gameSlug: targetGameSlug,
+      serviceId: targetServiceId,
+      grossAmountMinor: newGrossMinor,
+      boosterPoolMinor: newBoosterPoolMinor,
+      platformFeeMinor: newPlatformFeeMinor,
+      currency: currency ? String(currency).toUpperCase().trim() : existing.currency,
+      quantity: quantity !== undefined ? Math.max(1, Number(quantity) || 1) : existing.quantity,
+      orderType: orderType ? String(orderType).trim() : existing.orderType,
+      orderMode: orderMode ? String(orderMode).trim() : existing.orderMode,
+      boostModel: boostModel !== undefined ? (boostModel ? String(boostModel).trim() : null) : existing.boostModel,
+      vpnRequirement: vpnRequirement !== undefined ? (vpnRequirement ? String(vpnRequirement).trim() : null) : existing.vpnRequirement,
+      notes: notes !== undefined ? (notes ? String(notes).trim() : null) : existing.notes,
+      externalOrderId: externalOrderId !== undefined ? (externalOrderId ? String(externalOrderId).trim() : null) : existing.externalOrderId,
+      sourceType: sourceType ? String(sourceType).trim() : existing.sourceType,
+      sourceWebsite: sourceWebsite !== undefined ? (sourceWebsite ? String(sourceWebsite).trim().toLowerCase() : null) : existing.sourceWebsite,
+      updatedAt: new Date(),
+    };
+
+    if (advertiserId !== undefined) {
+      updateData.advertiserId = advertiserId ? String(advertiserId).trim() : null;
+    }
+    if (customerId !== undefined) {
+      updateData.customerId = customerId ? String(customerId).trim() : null;
+    }
+    if (creatorId !== undefined) {
+      updateData.creatorId = creatorId ? String(creatorId).trim() : null;
+    }
+    if (executionChannelId !== undefined) {
+      updateData.executionChannelId = executionChannelId ? String(executionChannelId).trim() : null;
+    }
+    if (discordChannelId !== undefined) {
+      updateData.discordChannelId = discordChannelId ? String(discordChannelId).trim() : null;
+    }
+
+    // 4. Handle Status Transitions
+    const nextStatus = targetStatus ? String(targetStatus).trim() : existing.status;
+    const nextPaymentStatus = targetPaymentStatus ? String(targetPaymentStatus).trim() : existing.paymentStatus;
+    updateData.status = nextStatus;
+    updateData.paymentStatus = nextPaymentStatus;
+
+    if (['completed', 'done'].includes(nextStatus) && !existing.completedAt) {
+      updateData.completedAt = new Date();
+    }
+
+    // 5. Build Diffs for Audit Log
+    const previousSnapshot: Record<string, any> = {};
+    const newSnapshot: Record<string, any> = {};
+
+    for (const [key, val] of Object.entries(updateData)) {
+      const prevVal = (existing as any)[key];
+      if (prevVal !== val && key !== 'updatedAt') {
+        previousSnapshot[key] = prevVal;
+        newSnapshot[key] = val;
+      }
+    }
+
+    // 6. Execute Atomic Transaction
+    const updatedOrder = await prisma.$transaction(async (tx) => {
+      // If status changed to completed/done, ensure tracker and escrow release
+      if (['completed', 'done'].includes(nextStatus) && existing.creatorType === 'g4x') {
+        await tx.g4XBoostReleaseTracker.upsert({
+          where: { orderId },
+          update: {
+            stage: G4XBoostReleaseStage.AVAILABLE,
+            isReleased: true,
+            releasedAt: new Date(),
+            adminFinalApprovedAt: new Date(),
+            adminFinalApprovedBy: actor.discordId,
+            holdDurationHours: 0,
+            holdExpiresAt: null,
+            notes: reason ? `Admin Edit to ${nextStatus}: ${reason}` : `Admin Edit to ${nextStatus}`,
+          },
+          create: {
+            orderId,
+            stage: G4XBoostReleaseStage.AVAILABLE,
+            isReleased: true,
+            releasedAt: new Date(),
+            adminFinalApprovedAt: new Date(),
+            adminFinalApprovedBy: actor.discordId,
+            holdDurationHours: 0,
+            holdExpiresAt: null,
+            notes: reason ? `Admin Edit to ${nextStatus}: ${reason}` : `Admin Edit to ${nextStatus}`,
+          },
+        });
+
+        await tx.ledgerTransaction.updateMany({
+          where: { orderId, entryType: 'escrow_lock' },
+          data: {
+            status: 'released',
+            releaseAt: new Date(),
+          },
+        });
+      }
+
+      // If status changed to cancelled, release any reservations
+      if (nextStatus === 'cancelled' && existing.status !== 'cancelled') {
+        await tx.boosterReservation.updateMany({
+          where: { orderId, status: 'active' },
+          data: {
+            status: 'cancelled',
+            releaseReason: reason || 'Cancelled via Admin Edit',
+            releasedAt: new Date(),
+          },
+        });
+      }
+
+      const orderResult = await tx.order.update({
+        where: { id: orderId },
+        data: updateData,
+        include: {
+          game: { select: { slug: true, displayName: true } },
+          service: { select: { id: true, displayName: true, serviceKey: true } },
+        },
+      });
+
+      // Record Audit Trail
+      await tx.auditLog.create({
+        data: {
+          action: 'ORDER_FULL_UPDATE_BY_ADMIN',
+          entityType: 'Order',
+          entityId: String(orderId),
+          actorId: actor.discordId,
+          previousValues: JSON.stringify(previousSnapshot),
+          newValues: JSON.stringify(newSnapshot),
+          reason: reason ? String(reason).trim() : 'Full order fields modification by administrator/owner',
+        },
+      });
+
+      return orderResult;
+    });
+
+    // 7. Silent Discord Board Synchronisation if published
+    if (updatedOrder.discordChannelId && updatedOrder.discordMessageId) {
+      try {
+        await publishOrRefreshOrderCard(getGlobalDiscordClient(), orderId);
+      } catch (err: any) {
+        console.warn(`[AdminOrderEdit] Discord board refresh warning for order #${orderId}:`, err?.message || err);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Order #${orderId} (${updatedOrder.orderRef}) updated successfully.`,
+      order: {
+        id: updatedOrder.id,
+        orderRef: updatedOrder.orderRef,
+        title: updatedOrder.title || updatedOrder.orderName,
+        orderName: updatedOrder.orderName || updatedOrder.title,
+        gameSlug: updatedOrder.gameSlug,
+        gameName: updatedOrder.game?.displayName,
+        serviceId: updatedOrder.serviceId,
+        serviceName: updatedOrder.service?.displayName,
+        grossAmountUsd: (updatedOrder.grossAmountMinor / 100).toFixed(2),
+        boosterPoolUsd: (updatedOrder.boosterPoolMinor / 100).toFixed(2),
+        platformFeeUsd: (updatedOrder.platformFeeMinor / 100).toFixed(2),
+        status: updatedOrder.status,
+        paymentStatus: updatedOrder.paymentStatus,
+        sourceWebsite: updatedOrder.sourceWebsite,
+        externalOrderId: updatedOrder.externalOrderId,
+        updatedAt: updatedOrder.updatedAt.toISOString(),
+      },
+    });
+  } catch (err: any) {
+    console.error(`[AdminOrderEdit] Failed to update order #${orderId}:`, err);
+    res.status(500).json({
+      error: 'ORDER_UPDATE_FAILED',
+      message: err.message || 'Failed to update order details.',
+    });
+  }
+};
+
+adminPortalRouter.put(['/api/admin/orders/:id', '/admin/orders/:id'], requireAuth, requireAdminOrOwner, requireCsrf, handleAdminFullOrderUpdate);
+adminPortalRouter.patch(['/api/admin/orders/:id', '/admin/orders/:id'], requireAuth, requireAdminOrOwner, requireCsrf, handleAdminFullOrderUpdate);
+
 
 

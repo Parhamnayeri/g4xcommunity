@@ -26,6 +26,7 @@ import { fetchAdminFinanceOverview } from '../../services/adminPortal';
 import { AdminFinanceOverviewResponse } from '../../types/adminPortal';
 import { PlatformBalancesStrip } from '../admin/PlatformBalancesStrip';
 import { extractExternalOrderIdAndCleanNotes, has13PercentFee, calculate13PercentSplit } from '../../utils/orderParsers';
+import { AdminEditOrderModal } from './AdminEditOrderModal';
 
 interface Props {
   initialTab?: 'g4x' | 'advertiser';
@@ -128,6 +129,9 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
 
   // Discord Channel Sync State
   const [syncingChannel, setSyncingChannel] = useState(false);
+
+  // Admin & Owner Full Order Edit Modal State
+  const [editingOrderId, setEditingOrderId] = useState<number | null>(null);
   const [syncChannelFeedback, setSyncChannelFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Financial Overview & Real-Time Platform Balances
@@ -971,13 +975,31 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                           </div>
                         </td>
                         <td style={{ textAlign: 'right' }}>
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={() => openDetails(o.id)}
-                          >
-                            Details &amp; Actions
-                          </button>
+                          <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', alignItems: 'center' }}>
+                            {hasRole('admin', 'owner') && (
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                style={{
+                                  borderColor: 'rgba(250, 204, 21, 0.45)',
+                                  color: '#facc15',
+                                  backgroundColor: 'rgba(250, 204, 21, 0.05)',
+                                  fontWeight: 600,
+                                }}
+                                title="Full Order Edit & Financial Override (Admin/Owner)"
+                                onClick={() => setEditingOrderId(o.id)}
+                              >
+                                ✏️ Edit
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => openDetails(o.id)}
+                            >
+                              Details &amp; Actions
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1056,16 +1078,34 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                   Lifecycle tracking, financial calculations, booster assignment roster, and proof review.
                 </p>
               </div>
-              <button
-                ref={closeButton}
-                type="button"
-                disabled={busy}
-                onClick={closeDetails}
-                className="studio-modal-close"
-                aria-label="Close"
-              >
-                ✕
-              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {hasRole('admin', 'owner') && details && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    style={{
+                      borderColor: 'rgba(250, 204, 21, 0.45)',
+                      color: '#facc15',
+                      backgroundColor: 'rgba(250, 204, 21, 0.05)',
+                      fontWeight: 600,
+                    }}
+                    title="Full Order Edit & Financial Override (Admin/Owner)"
+                    onClick={() => setEditingOrderId(details.orderId)}
+                  >
+                    ✏️ Edit Order
+                  </button>
+                )}
+                <button
+                  ref={closeButton}
+                  type="button"
+                  disabled={busy}
+                  onClick={closeDetails}
+                  className="studio-modal-close"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
             {detailsLoading && <LoadingState message="Loading lifecycle, evidence and history…" />}
             {detailsError && <p role="alert">{detailsError}</p>}
@@ -1595,6 +1635,19 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                               {savingOp ? 'Saving…' : 'Save Operational Changes'}
                             </button>
                           </div>
+                          {hasRole('admin', 'owner') && (
+                            <div style={{ marginTop: '0.5rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontSize: '0.78rem', color: '#facc15' }}>Admin/Owner Override: Modify all pricing, booster pool, game/service, platform, and lifecycle fields.</span>
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                style={{ color: '#facc15', borderColor: 'rgba(250, 204, 21, 0.4)', backgroundColor: 'rgba(250, 204, 21, 0.08)', fontWeight: 600 }}
+                                onClick={() => setEditingOrderId(details.orderId)}
+                              >
+                                ✏️ Open Full Field Editor
+                              </button>
+                            </div>
+                          )}
                         </form>
                       </div>
                     )}
@@ -2501,6 +2554,20 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {editingOrderId && (
+        <AdminEditOrderModal
+          isOpen={Boolean(editingOrderId)}
+          orderId={editingOrderId}
+          onClose={() => setEditingOrderId(null)}
+          onSuccess={() => {
+            setRevision((r) => r + 1);
+            if (details && details.orderId === editingOrderId) {
+              openDetails(editingOrderId);
+            }
+          }}
+        />
       )}
     </div>
   );

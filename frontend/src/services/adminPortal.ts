@@ -313,3 +313,93 @@ export async function fetchAdminUserDetails(discordId: string): Promise<AdminUse
   return apiRequest<AdminUserDetailsResponse>(`/api/admin/users/${discordId}/details`);
 }
 
+export interface AdminOrderEditDataResponse {
+  success: boolean;
+  order: {
+    id: number;
+    orderRef: string;
+    title: string;
+    orderName: string;
+    gameSlug: string;
+    serviceId: number;
+    orderType: string;
+    orderMode: string;
+    boostModel: string;
+    vpnRequirement: string;
+    quantity: number;
+    notes: string;
+    sourceType: string;
+    sourceWebsite: string;
+    externalOrderId: string;
+    currency: string;
+    grossAmountUsd: string;
+    grossAmountMinor: number;
+    platformFeeUsd: string;
+    platformFeeMinor: number;
+    advertiserFeeUsd: string;
+    advertiserFeeMinor: number;
+    boosterPoolUsd: string;
+    boosterPoolMinor: number;
+    status: string;
+    paymentStatus: string;
+    advertiserId: string;
+    creatorId: string;
+    customerId: string;
+    discordChannelId: string;
+    discordMessageId: string;
+    executionChannelId: string;
+    reviewChannelId: string;
+    createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+    creator?: any;
+    advertiser?: any;
+    customer?: any;
+  };
+  games: Array<{ slug: string; displayName: string }>;
+  services: Array<{ id: number; gameSlug: string; displayName: string; serviceKey: string; serviceMode?: string }>;
+}
+
+export interface AdminOrderUpdatePayload {
+  title?: string;
+  orderName?: string;
+  gameSlug?: string;
+  serviceId?: number;
+  orderType?: string;
+  orderMode?: string;
+  boostModel?: string;
+  vpnRequirement?: string;
+  quantity?: number;
+  notes?: string;
+  externalOrderId?: string;
+  sourceType?: string;
+  sourceWebsite?: string;
+  currency?: string;
+  grossAmountUsd?: number | string;
+  boosterPoolUsd?: number | string;
+  platformFeeUsd?: number | string;
+  status?: string;
+  paymentStatus?: string;
+  advertiserId?: string;
+  customerId?: string;
+  creatorId?: string;
+  executionChannelId?: string;
+  discordChannelId?: string;
+  reason?: string;
+}
+
+export async function fetchAdminOrderEditData(orderId: number): Promise<AdminOrderEditDataResponse> {
+  return apiRequest<AdminOrderEditDataResponse>(`/api/admin/orders/${orderId}/edit-data`);
+}
+
+export async function adminUpdateFullOrder(
+  orderId: number,
+  data: AdminOrderUpdatePayload
+): Promise<{ success: boolean; message: string; order: any }> {
+  return apiRequest(`/api/admin/orders/${orderId}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+
