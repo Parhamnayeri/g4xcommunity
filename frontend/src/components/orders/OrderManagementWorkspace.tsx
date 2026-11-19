@@ -30,6 +30,7 @@ import { AdminEditOrderModal } from './AdminEditOrderModal';
 import { CategoryBoostSpecsTabs } from './CategoryBoostSpecsTabs';
 import { BoostSpecsBadgeGrid } from './BoostSpecsBadgeGrid';
 import { BoostCategoryKey } from '../../types/boostSpecs';
+import { OrderDetailsWorkspace, Action, actionLabels } from './OrderDetailsWorkspace';
 
 interface Props {
   initialTab?: 'g4x' | 'advertiser';
@@ -45,23 +46,6 @@ const initialFilters = {
   sourceWebsite: '',
   startDate: '',
   endDate: '',
-};
-type Action =
-  | 'publish'
-  | 'refresh_card'
-  | 'staff_review'
-  | 'final_approve'
-  | 'pay_wallet'
-  | 'verify_payment'
-  | 'cancel';
-const actionLabels: Record<Action, string> = {
-  publish: 'Publish to Discord',
-  refresh_card: 'Refresh Discord card',
-  staff_review: 'Staff review',
-  final_approve: 'Final operational approval',
-  pay_wallet: 'Reserve creator wallet funds',
-  verify_payment: 'Verify payment receipt',
-  cancel: 'Cancel order',
 };
 const panelStyle: React.CSSProperties = { padding: '1rem', display: 'grid', gap: '1rem' };
 const time = (value: string | null) => (value ? new Date(value).toLocaleString() : '—');
@@ -1060,1072 +1044,149 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
         </Card>
       )}
       {selectedId !== null && (
-        <div className="studio-modal-backdrop" onClick={closeDetails}>
+        <div className="studio-modal-backdrop" onClick={closeDetails} style={{ padding: '16px' }}>
           <div
             ref={detailsDialog}
             role="dialog"
             aria-modal="true"
             aria-labelledby="order-details-title"
-            className="studio-modal-card studio-modal-card-xl"
+            className="studio-modal-card"
             onClick={(e) => e.stopPropagation()}
-            style={{ width: 'min(1050px, 100%)', maxHeight: '90vh' }}
+            style={{
+              width: 'min(1360px, 98vw)',
+              maxHeight: '94vh',
+              padding: 0,
+              backgroundColor: '#0c0d14',
+              border: '1px solid rgba(255, 255, 255, 0.1)',
+              borderRadius: '16px',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
           >
-            <div className="studio-modal-header">
-              <div>
-                <h2 id="order-details-title" style={{ margin: 0, fontSize: '1.25rem' }}>
-                  {details?.title || details?.orderName || `Order ${details?.orderRef || `#${selectedId}`}`}
-                </h2>
-                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '4px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                    Ref: <code style={{ color: 'var(--accent-lime)' }}>{details?.orderRef}</code>
-                  </span>
-                  {details?.boostModel && (
-                    <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
-                      {details.boostModel}
-                    </span>
-                  )}
-                  {details?.vpnRequirement && (
-                    <span className="badge badge-blue" style={{ fontSize: '0.72rem' }}>
-                      🛡️ {details.vpnRequirement}
-                    </span>
-                  )}
-                </div>
-                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  Lifecycle tracking, financial calculations, booster assignment roster, and proof review.
-                </p>
+            {detailsLoading && (
+              <div style={{ padding: '3rem', textAlign: 'center' }}>
+                <LoadingState message="Loading lifecycle, evidence and history…" />
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                {hasRole('admin', 'owner') && details && (
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    style={{
-                      borderColor: 'rgba(250, 204, 21, 0.45)',
-                      color: '#facc15',
-                      backgroundColor: 'rgba(250, 204, 21, 0.05)',
-                      fontWeight: 600,
-                    }}
-                    title="Full Order Edit & Financial Override (Admin/Owner)"
-                    onClick={() => setEditingOrderId(details.orderId)}
-                  >
-                    ✏️ Edit Order
-                  </button>
-                )}
-                <button
-                  ref={closeButton}
-                  type="button"
-                  disabled={busy}
-                  onClick={closeDetails}
-                  className="studio-modal-close"
-                  aria-label="Close"
-                >
-                  ✕
-                </button>
+            )}
+            {detailsError && (
+              <div style={{ padding: '2rem', textAlign: 'center' }}>
+                <p role="alert" style={{ color: '#EF4444' }}>{detailsError}</p>
+                <button onClick={() => setRevision((n) => n + 1)} className="btn btn-secondary btn-sm">Retry details</button>
               </div>
-            </div>
-            {detailsLoading && <LoadingState message="Loading lifecycle, evidence and history…" />}
-            {detailsError && <p role="alert">{detailsError}</p>}
-            {actionError && <p role="alert">{actionError}</p>}
-            {feedback && <p role="status">{feedback}</p>}
-            {!detailsLoading && !details && (
-              <button onClick={() => setRevision((n) => n + 1)}>Retry details</button>
+            )}
+            {!detailsLoading && !details && !detailsError && (
+              <div style={{ padding: '3rem', textAlign: 'center' }}>
+                <p style={{ color: 'var(--text-muted)' }}>No order details available.</p>
+                <button onClick={() => setRevision((n) => n + 1)} className="btn btn-secondary btn-sm">Retry details</button>
+              </div>
             )}
             {!detailsLoading && details && (
-              <>
-                <div className="studio-modal-body" style={{ display: 'grid', gap: '1.25rem' }}>
-                  {/* Visual G4X Post-Completion Lifecycle Stepper */}
-                  {(() => {
-                    const statusLower = (details.status || '').toLowerCase();
-                    const isDoneStage = statusLower === 'done' || statusLower === 'completed' || details.boostReleaseTracker?.stage === 'AVAILABLE' || Boolean(details.boostReleaseTracker?.isReleased);
-
-                    // Determine active step (1 to 4)
-                    let activeStep = 1;
-                    if (statusLower === 'waiting_for_confirm') activeStep = 2;
-                    else if (statusLower === 'warranty') activeStep = 3;
-                    else if (isDoneStage) activeStep = 4;
-                    else if (['assigned', 'in_progress', 'pending_review'].includes(statusLower)) activeStep = 1;
-
-                    const isRelevantOrder = ['in_progress', 'completed', 'waiting_for_confirm', 'warranty', 'done', 'pending_review'].includes(statusLower) || details.boostReleaseTracker;
-
-                    if (!isRelevantOrder) return null;
-
-                    const steps = [
-                      { num: 1, title: 'Run Execution', subtitle: 'In Progress & Proof', icon: '⚔️' },
-                      { num: 2, title: 'Customer Confirm', subtitle: 'Waiting Confirm', icon: '⏳' },
-                      { num: 3, title: 'Warranty Period', subtitle: 'Safety Window', icon: '🛡️' },
-                      { num: 4, title: 'Done (Withdrawable)', subtitle: 'Instant Release', icon: '💰' },
-                    ];
-
-                    return (
-                      <div
-                        style={{
-                          background: 'linear-gradient(180deg, rgba(30, 27, 46, 0.7) 0%, rgba(15, 12, 28, 0.9) 100%)',
-                          border: '1px solid rgba(124, 58, 237, 0.3)',
-                          borderRadius: '14px',
-                          padding: '16px 20px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '14px',
-                        }}
-                      >
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: '1.1rem' }}>🔄</span>
-                            <span style={{ fontWeight: 800, fontSize: '0.95rem', color: '#fff', letterSpacing: '0.02em' }}>
-                              G4X Order Completion &amp; Payout Pipeline
-                            </span>
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                              {isDoneStage ? 'Booster Released Earnings:' : 'Booster Pending Earnings:'}
-                            </span>
-                            <span style={{ fontWeight: 800, color: isDoneStage ? '#10B981' : 'var(--accent-yellow)', fontSize: '0.95rem', fontFamily: 'monospace' }}>
-                              ${details.boosterPoolUsd} USD
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Stepper Progress Bar */}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '8px', position: 'relative' }}>
-                          {steps.map((st) => {
-                            const isPast = activeStep > st.num;
-                            const isCurrent = activeStep === st.num;
-
-                            const stepBg = isCurrent
-                              ? 'linear-gradient(135deg, rgba(124, 58, 237, 0.4) 0%, rgba(168, 85, 247, 0.25) 100%)'
-                              : isPast
-                              ? 'rgba(16, 185, 129, 0.12)'
-                              : 'rgba(255, 255, 255, 0.03)';
-                            const stepBorder = isCurrent
-                              ? '1px solid #A855F7'
-                              : isPast
-                              ? '1px solid rgba(16, 185, 129, 0.4)'
-                              : '1px solid rgba(255, 255, 255, 0.08)';
-
-                            return (
-                              <div
-                                key={st.num}
-                                style={{
-                                  background: stepBg,
-                                  border: stepBorder,
-                                  borderRadius: '10px',
-                                  padding: '10px 12px',
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  gap: '4px',
-                                  position: 'relative',
-                                  transition: 'all 0.2s ease',
-                                  boxShadow: isCurrent ? '0 0 16px rgba(168, 85, 247, 0.25)' : 'none',
-                                }}
-                              >
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <span style={{ fontSize: '1rem' }}>{isPast ? '✅' : st.icon}</span>
-                                  <span
-                                    style={{
-                                      fontSize: '0.68rem',
-                                      fontWeight: 700,
-                                      padding: '1px 6px',
-                                      borderRadius: '10px',
-                                      background: isCurrent ? '#A855F7' : isPast ? '#10B981' : 'rgba(255,255,255,0.08)',
-                                      color: isCurrent || isPast ? '#fff' : 'var(--text-muted)',
-                                    }}
-                                  >
-                                    Step {st.num}
-                                  </span>
-                                </div>
-                                <div style={{ fontWeight: isCurrent ? 800 : 600, fontSize: '0.82rem', color: isCurrent ? '#fff' : isPast ? '#D1FAE5' : 'var(--text-muted)', marginTop: '2px' }}>
-                                  {st.title}
-                                </div>
-                                <div style={{ fontSize: '0.72rem', color: isCurrent ? '#E9D5FF' : isPast ? '#6EE7B7' : 'rgba(255,255,255,0.3)' }}>
-                                  {st.subtitle}
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-
-                        {/* Live Status & Withdrawable Callout */}
-                        {isDoneStage && (
-                          <div
-                            style={{
-                              background: 'rgba(16, 185, 129, 0.12)',
-                              border: '1px solid rgba(16, 185, 129, 0.35)',
-                              borderRadius: '8px',
-                              padding: '10px 14px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'space-between',
-                              flexWrap: 'wrap',
-                              gap: '8px',
-                              fontSize: '0.84rem',
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span>✅</span>
-                              <span style={{ color: '#fff', fontWeight: 600 }}>
-                                Order Completed &amp; Released: Booster earnings (${details.boosterPoolUsd} USD) are available for immediate withdrawal!
-                              </span>
-                            </div>
-                            <a href="/withdraw" className="btn btn-primary btn-xs" style={{ textDecoration: 'none' }}>
-                              Request Withdrawal ↗
-                            </a>
-                          </div>
-                        )}
-                        {statusLower === 'waiting_for_confirm' && (
-                          <div style={{ background: 'rgba(245, 158, 11, 0.12)', border: '1px solid rgba(245, 158, 11, 0.35)', borderRadius: '8px', padding: '10px 14px', fontSize: '0.84rem', color: '#FDE68A' }}>
-                            ⏳ <strong>Waiting for Customer Confirmation:</strong> The run has completed. The order is waiting for customer or support confirmation before transitioning to warranty.
-                          </div>
-                        )}
-                        {statusLower === 'warranty' && (
-                          <div style={{ background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.35)', borderRadius: '8px', padding: '10px 14px', fontSize: '0.84rem', color: '#BFDBFE' }}>
-                            🛡️ <strong>Safety Warranty Period:</strong> Order has entered active warranty protection. Next step: Done (Funds immediately released for withdrawal).
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  {/* Top 3 Summary Cards */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
-                    {/* Card 1: Game & Service */}
-                    <div style={{ background: '#0E1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '16px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
-                        <span style={{ fontSize: '1rem', fontWeight: 800, color: '#fff' }}>
-                          {details.gameName}
-                        </span>
-                        <span className="badge badge-purple">{details.serviceName}</span>
-                      </div>
-                      <div style={{ display: 'grid', gap: '0.45rem', fontSize: '0.84rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Mode &amp; Status:</span>
-                          <span style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                            <span className="badge badge-blue">{details.orderMode === 'non_pilot' ? 'selfpay' : details.orderMode}</span>
-                            <span className={`badge ${['completed', 'approved', 'active'].includes((details.status || '').toLowerCase()) ? 'badge-green' : ['cancelled', 'disputed'].includes((details.status || '').toLowerCase()) ? 'badge-danger' : 'badge-yellow'}`}>
-                              {details.status}
-                            </span>
-                          </span>
-                        </div>
-                        {(details.executionChannelUrl || details.discordChannelUrl) && (
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '2px' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>Discord Channel:</span>
-                            <a
-                              href={details.executionChannelUrl || details.discordChannelUrl || undefined}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="btn btn-xs"
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(88, 101, 242, 0.25)', border: '1px solid #5865F2', color: '#8ea1e1', fontWeight: 600, padding: '2px 8px', borderRadius: '4px', textDecoration: 'none' }}
-                            >
-                              <span>💬</span> Open Discord Channel ↗
-                            </a>
-                          </div>
-                        )}
-                        {details.title && (
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>Title:</span>
-                            <span style={{ fontWeight: 600, color: '#fff', textAlign: 'right' }}>{details.title}</span>
-                          </div>
-                        )}
-                        {details.boostModel && (
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>Boost Model:</span>
-                            <span style={{ color: 'var(--accent-yellow)', fontWeight: 600 }}>{details.boostModel}</span>
-                          </div>
-                        )}
-                        {details.vpnRequirement && (
-                          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>VPN:</span>
-                            <span style={{ color: 'var(--accent-lime)' }}>{details.vpnRequirement}</span>
-                          </div>
-                        )}
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Customer:</span>
-                          <span style={{ fontFamily: 'monospace' }}>{details.customerId || '—'}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Creator:</span>
-                          <span style={{ fontFamily: 'monospace' }}>{details.creatorId || '—'}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>External Ref:</span>
-                          <span style={{ fontFamily: 'monospace', color: 'var(--accent-yellow)', fontWeight: 600 }}>{details.externalOrderId || '—'}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Category-Specific Service Specifications */}
-                    <BoostSpecsBadgeGrid
-                      boostModel={details.boostModel}
-                      boostSpecs={details.boostSpecs}
-                      boostSpecsJson={details.boostSpecsJson}
-                    />
-
-                    {/* Card 2: Payment & Fees */}
-                    <div style={{ background: '#0E1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '16px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                        <span style={{ fontSize: '1rem', fontWeight: 800, color: '#fff' }}>Financial Ledger</span>
-                        <span className={`badge ${details.paymentStatus === 'verified' ? 'badge-green' : details.paymentStatus === 'pending' ? 'badge-yellow' : 'badge-muted'}`}>
-                          {details.paymentStatus}
-                        </span>
-                      </div>
-
-                      {/* 3-Column Side-by-Side Financial KPI Bar */}
-                      {(() => {
-                        const grossNum = parseFloat(details.grossAmountUsd || '0') || 0;
-                        const feeNum = parseFloat(details.platformFeeUsd || '0') || 0;
-                        const poolNum = parseFloat(details.boosterPoolUsd || '0') || 0;
-                        const netPlatformMargin = Math.round((grossNum - feeNum - poolNum) * 100) / 100;
-
-                        return (
-                          <div
-                            style={{
-                              display: 'grid',
-                              gridTemplateColumns: 'repeat(3, 1fr)',
-                              gap: '0.5rem',
-                              background: 'rgba(255, 255, 255, 0.03)',
-                              border: '1px solid rgba(255, 255, 255, 0.07)',
-                              borderRadius: '8px',
-                              padding: '0.6rem 0.75rem',
-                              marginBottom: '0.75rem',
-                              textAlign: 'center',
-                            }}
-                          >
-                            <div>
-                              <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                Gross Order
-                              </div>
-                              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#fff', fontFamily: 'monospace' }}>
-                                ${grossNum.toFixed(2)}
-                              </div>
-                            </div>
-                            <div>
-                              <div style={{ fontSize: '0.66rem', color: 'var(--accent-yellow)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                Booster Pool
-                              </div>
-                              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--accent-yellow)', fontFamily: 'monospace' }}>
-                                ${poolNum.toFixed(2)}
-                              </div>
-                            </div>
-                            <div>
-                              <div style={{ fontSize: '0.66rem', color: netPlatformMargin >= 0 ? '#34D399' : '#EF4444', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                Platform Margin
-                              </div>
-                              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: netPlatformMargin >= 0 ? '#34D399' : '#EF4444', fontFamily: 'monospace' }}>
-                                ${netPlatformMargin.toFixed(2)}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })()}
-                      <div style={{ display: 'grid', gap: '0.45rem', fontSize: '0.84rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Gross Amount:</span>
-                          <span style={{ fontWeight: 700, color: '#fff' }}>{details.grossAmountUsd} {details.currency}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Booster Pool:</span>
-                          <span style={{ fontWeight: 700, color: 'var(--accent-yellow)' }}>${details.boosterPoolUsd}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Platform Fee:</span>
-                          <span>{details.platformFeeUsd}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Advertiser Fee:</span>
-                          <span>{details.advertiserFeeUsd}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Card 3: Release Status */}
-                    <div style={{ background: '#0E1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '16px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                        <span style={{ fontSize: '1rem', fontWeight: 800, color: '#fff' }}>Release &amp; Payout</span>
-                        <span className={`badge ${['done', 'completed'].includes((details.status || '').toLowerCase()) || details.boostReleaseTracker?.stage === 'AVAILABLE' ? 'badge-green' : 'badge-purple'}`}>
-                          {['done', 'completed'].includes((details.status || '').toLowerCase()) ? 'AVAILABLE' : details.boostReleaseTracker?.stage || details.status}
-                        </span>
-                      </div>
-                      <div style={{ display: 'grid', gap: '0.45rem', fontSize: '0.84rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Booster Pool:</span>
-                          <span style={{ color: 'var(--accent-yellow)', fontWeight: 700 }}>${details.boosterPoolUsd}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Escrow Policy:</span>
-                          <span style={{ color: '#10B981', fontWeight: 600 }}>Instant Payout (No Escrow)</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Withdrawable:</span>
-                          <span style={{ color: ['done', 'completed'].includes((details.status || '').toLowerCase()) || details.boostReleaseTracker?.stage === 'AVAILABLE' ? '#10B981' : 'var(--text-muted)', fontWeight: 700 }}>
-                            {['done', 'completed'].includes((details.status || '').toLowerCase()) || details.boostReleaseTracker?.stage === 'AVAILABLE' ? '✅ Ready to Withdraw' : 'Pending Completion'}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Staff Review:</span>
-                          <span>{time(details.boostReleaseTracker?.staffReviewedAt || null)}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Released At:</span>
-                          <span>{time(details.boostReleaseTracker?.releasedAt || null)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Notes Callout */}
-                  {details.notes && (
-                    <div style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '10px', padding: '12px 16px', fontSize: '0.85rem' }}>
-                      <strong style={{ color: 'var(--accent-yellow)', display: 'block', marginBottom: '4px' }}>Customer / Order Instructions:</strong>
-                      <div style={{ color: 'var(--text-secondary)', whiteSpace: 'pre-wrap' }}>{details.notes}</div>
-                    </div>
-                  )}
-
-                  {/* Detailed Dashboard Sub-Cards (2-Column Grid on Desktop) */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '1.25rem' }}>
-                    {/* Sub-Card 1: Lifecycle & Next Step */}
-                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>🧭</span> Lifecycle &amp; Required Actions
-                      </h3>
-                      <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                        {details.explanationEnglish}
-                      </div>
-                      <div style={{ padding: '8px 12px', borderRadius: '8px', background: 'rgba(139, 92, 246, 0.1)', border: '1px solid rgba(139, 92, 246, 0.25)', fontSize: '0.82rem', color: '#C4B5FD' }}>
-                        <strong style={{ color: '#fff' }}>Next Action:</strong> {details.requiredNextActionEnglish}
-                      </div>
-                      {details.publicationBlockReasons.length > 0 && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                          <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#EF4444', textTransform: 'uppercase' }}>Publication Blockers:</span>
-                          {details.publicationBlockReasons.map((r, i) => (
-                            <div key={i} style={{ fontSize: '0.8rem', color: '#FCA5A5', paddingLeft: '8px', borderLeft: '2px solid #EF4444' }}>
-                              {r}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Sub-Card 2: Discord Synchronization */}
-                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span>💬</span> Discord Synchronization
-                        </h3>
-                        {details.executionChannelUrl || details.discordChannelUrl ? (
-                          <a
-                            href={details.executionChannelUrl || details.discordChannelUrl || undefined}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="btn btn-primary btn-xs"
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#5865F2', color: '#fff', fontWeight: 600, textDecoration: 'none', padding: '4px 10px', borderRadius: '6px' }}
-                          >
-                            <span>💬</span> Open Discord Order Channel ↗
-                          </a>
-                        ) : !isReadOnly && (
-                          <button
-                            type="button"
-                            disabled={syncingChannel}
-                            className="btn btn-secondary btn-xs"
-                            onClick={async () => {
-                              setSyncingChannel(true);
-                              setSyncChannelFeedback(null);
-                              try {
-                                const res = await ensureOrderDiscordChannel(details.orderId);
-                                setSyncChannelFeedback({ text: res.message || 'Discord coordination channel synchronized.', type: 'success' });
-                                setRevision((n) => n + 1);
-                              } catch (err: any) {
-                                setSyncChannelFeedback({ text: err.message || 'Failed to provision channel', type: 'error' });
-                              } finally {
-                                setSyncingChannel(false);
-                              }
-                            }}
-                          >
-                            {syncingChannel ? 'Provisioning…' : 'Create / Sync Discord Channel'}
-                          </button>
-                        )}
-                      </div>
-                      <div style={{ display: 'grid', gap: '0.4rem', fontSize: '0.82rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Board Message:</span>
-                          <span style={{ fontFamily: 'monospace' }}>{details.discordMessageId || 'Not published'}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Board Channel:</span>
-                          <span style={{ fontFamily: 'monospace' }}>{details.discordChannelId || 'Not provisioned'}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Execution Channel:</span>
-                          <span style={{ fontFamily: 'monospace' }}>
-                            {details.executionChannelId || 'Not provisioned'}
-                            {(details.executionChannelUrl || details.discordChannelUrl) && (
-                              <a
-                                href={details.executionChannelUrl || details.discordChannelUrl || undefined}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{ marginLeft: '8px', color: '#5865F2', textDecoration: 'underline' }}
-                              >
-                                [Open ↗]
-                              </a>
-                            )}
-                          </span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0' }}>
-                          <span style={{ color: 'var(--text-muted)' }}>Review Channel:</span>
-                          <span style={{ fontFamily: 'monospace' }}>{details.reviewChannelId || 'Not provisioned'}</span>
-                        </div>
-                      </div>
-                      {syncChannelFeedback && (
-                        <p style={{ margin: 0, fontSize: '0.8rem', color: syncChannelFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)' }}>
-                          {syncChannelFeedback.text}
-                        </p>
-                      )}
-                      <p style={{ margin: 0, fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        Temporary private Discord channel is automatically provisioned for assigned boosters.
-                      </p>
-                    </div>
-
-                    {/* Sub-Card 3: Operational Fields */}
-                    {!isReadOnly && !['completed', 'cancelled'].includes(details.status) && (
-                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                        <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span>⚙️</span> Operational Fields
-                        </h3>
-                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
-                          Update operational notes or external reference. Historical payments remain unchanged.
-                        </p>
-                        <form
-                          onSubmit={async (e) => {
-                            e.preventDefault();
-                            if (opReason.trim().length < 5) return;
-                            setSavingOp(true);
-                            setOpFeedback(null);
-                            try {
-                              await updateOrderOperational(details.orderId, {
-                                notes: opNotes.trim() || undefined,
-                                externalOrderId: opExternalId.trim() || undefined,
-                                reason: opReason.trim(),
-                              });
-                              setOpFeedback({ text: 'Operational fields saved successfully.', type: 'success' });
-                              setRevision((n) => n + 1);
-                            } catch (err: any) {
-                              setOpFeedback({ text: err.message || 'Operational update failed', type: 'error' });
-                            } finally {
-                              setSavingOp(false);
-                            }
-                          }}
-                          style={{ display: 'grid', gap: '0.65rem' }}
-                        >
-                          <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                            <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Operational Notes</span>
-                            <textarea
-                              className="input"
-                              rows={2}
-                              value={opNotes}
-                              onChange={(e) => setOpNotes(e.target.value)}
-                              placeholder="Operational notes or customer requirements..."
-                            />
-                          </label>
-                          <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                            <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>External Order ID</span>
-                            <input
-                              className="input"
-                              value={opExternalId}
-                              onChange={(e) => setOpExternalId(e.target.value)}
-                              placeholder="e.g. SKY-123456"
-                            />
-                          </label>
-                          <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                            <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Audit Reason * (Min 5 chars)</span>
-                            <input
-                              className="input"
-                              required
-                              minLength={5}
-                              placeholder="Reason for audit trail..."
-                              value={opReason}
-                              onChange={(e) => setOpReason(e.target.value)}
-                            />
-                          </label>
-                          {opFeedback && (
-                            <p style={{ color: opFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)', fontSize: '0.82rem', margin: 0 }}>
-                              {opFeedback.text}
-                            </p>
-                          )}
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '0.25rem' }}>
-                            <button
-                              type="submit"
-                              disabled={busy || savingOp || opReason.trim().length < 5}
-                              className="btn btn-secondary btn-sm"
-                            >
-                              {savingOp ? 'Saving…' : 'Save Operational Changes'}
-                            </button>
-                          </div>
-                          {hasRole('admin', 'owner') && (
-                            <div style={{ marginTop: '0.5rem', paddingTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                              <span style={{ fontSize: '0.78rem', color: '#facc15' }}>Admin/Owner Override: Modify all pricing, booster pool, game/service, platform, and lifecycle fields.</span>
-                              <button
-                                type="button"
-                                className="btn btn-secondary btn-sm"
-                                style={{ color: '#facc15', borderColor: 'rgba(250, 204, 21, 0.4)', backgroundColor: 'rgba(250, 204, 21, 0.08)', fontWeight: 600 }}
-                                onClick={() => setEditingOrderId(details.orderId)}
-                              >
-                                ✏️ Open Full Field Editor
-                              </button>
-                            </div>
-                          )}
-                        </form>
-                      </div>
-                    )}
-
-                    {/* Sub-Card 4: Authorized Actions */}
-                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>⚡</span> Authorized Actions
-                      </h3>
-                      {isReadOnly ? (
-                        <p style={{ color: 'var(--text-muted)', fontSize: '0.84rem', margin: 0 }}>
-                          Staff read-only view: inspecting permitted orders. Creation, operational modification, cancellation, payment, and roster assignment actions are disabled.
-                        </p>
-                      ) : (
-                        <>
-                          <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
-                            Operational approval transitions order lifecycle. Real-money payouts remain guarded under double-entry escrow policy.
-                          </p>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem' }}>
-                            {(Object.keys(actionLabels) as Action[])
-                              .filter((a) => details.authorizedActions.includes(a))
-                              .map((a) => (
-                                <button
-                                  key={a}
-                                  className="btn btn-secondary btn-xs"
-                                  disabled={busy}
-                                  onClick={() => {
-                                    setAction(a);
-                                    setReason('');
-                                    setReceipt(details.activeReceiptRef || '');
-                                  }}
-                                >
-                                  {actionLabels[a]}
-                                </button>
-                              ))}
-                          </div>
-                          {action && details.authorizedActions.includes(action) && (
-                            <form
-                              onSubmit={submitAction}
-                              style={{ display: 'grid', gap: '0.65rem', padding: '12px', borderRadius: '10px', background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.08)' }}
-                            >
-                              <h4 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--accent-yellow)' }}>{actionLabels[action]}</h4>
-                              {action === 'pay_wallet' && (
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>
-                                  Reserve {details.grossAmountUsd} from the creator's backed wallet. Available: {(details.creatorWalletAvailableCents / 100).toFixed(2)} USD.
-                                </p>
-                              )}
-                              {action === 'verify_payment' ? (
-                                <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                  <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Verified Order Receipt Ref</span>
-                                  <input
-                                    className="input"
-                                    required
-                                    value={receipt}
-                                    onChange={(e) => setReceipt(e.target.value)}
-                                  />
-                                </label>
-                              ) : (
-                                ['cancel', 'staff_review', 'final_approve'].includes(action) && (
-                                  <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                    <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Reason / Review Notes</span>
-                                    <textarea
-                                      className="input"
-                                      required
-                                      minLength={5}
-                                      value={reason}
-                                      onChange={(e) => setReason(e.target.value)}
-                                    />
-                                  </label>
-                                )
-                              )}
-                              <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  className="btn btn-secondary btn-xs"
-                                  onClick={() => setAction(null)}
-                                >
-                                  Go back
-                                </button>
-                                <button type="submit" disabled={busy} className="btn btn-cta btn-xs">
-                                  {busy ? 'Working…' : 'Confirm Action'}
-                                </button>
-                              </div>
-                            </form>
-                          )}
-                        </>
-                      )}
-                    </div>
-
-                    {/* Sub-Card: Order Lifecycle & Status Control */}
-                    {!isReadOnly && (
-                      <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span>🔄</span> Lifecycle &amp; Status Control
-                          </h3>
-                          <span className={`badge ${['completed', 'approved', 'active'].includes((details.status || '').toLowerCase()) ? 'badge-green' : ['cancelled', 'disputed'].includes((details.status || '').toLowerCase()) ? 'badge-danger' : 'badge-yellow'}`}>
-                            Current: {details.status}
-                          </span>
-                        </div>
-                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
-                          Advance or transition the order lifecycle across operational states. Automatically creates private Discord coordination channels and updates the public order board.
-                        </p>
-                        <form
-                          onSubmit={async (e) => {
-                            e.preventDefault();
-                            if (!targetStatus || targetStatus === details.status) return;
-                            setUpdatingStatus(true);
-                            setStatusFeedback(null);
-                            try {
-                              const res = await updateOrderStatus(details.orderId, targetStatus, statusNote.trim() || undefined);
-                              setStatusFeedback({ text: res.message || 'Status updated successfully.', type: 'success' });
-                              setStatusNote('');
-                              setRevision((n) => n + 1);
-                            } catch (err: any) {
-                              setStatusFeedback({ text: err.message || 'Failed to update order status', type: 'error' });
-                            } finally {
-                              setUpdatingStatus(false);
-                            }
-                          }}
-                          style={{ display: 'grid', gap: '0.65rem' }}
-                        >
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.65rem' }}>
-                            <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                              <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Target Lifecycle Status</span>
-                              <select
-                                className="input"
-                                value={targetStatus}
-                                onChange={(e) => setTargetStatus(e.target.value)}
-                                disabled={updatingStatus}
-                              >
-                                <option value="open_presign">Open Pre-sign (open_presign)</option>
-                                <option value="assigned">Assigned / Squad Formed (assigned)</option>
-                                <option value="in_progress">In Progress (in_progress)</option>
-                                <option value="pending_review">Pending Final Review (pending_review)</option>
-                                <option value="completed">Completed (completed)</option>
-                                <option value="waiting_for_confirm">Waiting for Customer Confirmation (waiting_for_confirm)</option>
-                                <option value="warranty">Warranty Period (warranty)</option>
-                                <option value="done">Done (done - Instant Release &amp; Withdrawable)</option>
-                                <option value="disputed">Disputed (disputed)</option>
-                                <option value="cancelled">Cancelled (cancelled)</option>
-                              </select>
-                            </label>
-                            <label style={{ fontSize: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                              <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Transition Note / Reason</span>
-                              <input
-                                className="input"
-                                placeholder="Audit reason or operational note..."
-                                value={statusNote}
-                                onChange={(e) => setStatusNote(e.target.value)}
-                                disabled={updatingStatus}
-                              />
-                            </label>
-                          </div>
-                          {/* Quick Action Badges */}
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem', alignItems: 'center' }}>
-                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginRight: '4px' }}>Quick Select:</span>
-                            {[
-                              { id: 'open_presign', label: 'Open Pre-sign' },
-                              { id: 'assigned', label: 'Assigned' },
-                              { id: 'in_progress', label: 'In Progress' },
-                              { id: 'pending_review', label: 'Pending Review' },
-                              { id: 'completed', label: 'Completed' },
-                              { id: 'waiting_for_confirm', label: 'Waiting Confirm' },
-                              { id: 'warranty', label: 'Warranty' },
-                              { id: 'done', label: 'Done' },
-                              { id: 'disputed', label: 'Disputed' },
-                              { id: 'cancelled', label: 'Cancelled' },
-                            ].map((s) => (
-                              <button
-                                key={s.id}
-                                type="button"
-                                className={`btn btn-xs ${targetStatus === s.id ? 'btn-cta' : 'btn-secondary'}`}
-                                onClick={() => setTargetStatus(s.id)}
-                                disabled={updatingStatus}
-                                style={{ fontSize: '0.72rem', padding: '2px 8px' }}
-                              >
-                                {s.label}
-                              </button>
-                            ))}
-                          </div>
-                          {statusFeedback && (
-                            <p style={{ margin: 0, fontSize: '0.82rem', color: statusFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)' }}>
-                              {statusFeedback.text}
-                            </p>
-                          )}
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '0.25rem' }}>
-                            <button
-                              type="submit"
-                              disabled={updatingStatus || !targetStatus || targetStatus === details.status}
-                              className="btn btn-cta btn-sm"
-                            >
-                              {updatingStatus ? 'Updating Status…' : `Transition Status to '${targetStatus}'`}
-                            </button>
-                          </div>
-                        </form>
-                      </div>
-                    )}
-
-                    {/* Sub-Card 5: Roster & Direct Booster Assignment */}
-                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>👥</span> Roster &amp; Assignment
-                      </h3>
-                      <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                        Required Roles: <strong style={{ color: '#fff' }}>{details.requiredRoles.map((r) => `${r.quantity} ${r.roleName}`).join(', ') || 'Service default'}</strong>
-                      </div>
-
-                      {/* Current assignments */}
-                      <div style={{ display: 'grid', gap: '0.4rem' }}>
-                        {!details.assignments.length ? (
-                          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>No boosters assigned yet.</div>
-                        ) : (
-                          details.assignments.map((a) => (
-                            <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 10px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', fontSize: '0.82rem' }}>
-                              <div>
-                                <span style={{ fontWeight: 600, color: '#fff' }}>{a.user.displayName || a.user.username}</span>
-                                <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginLeft: '6px' }}>({a.assignedRole})</span>
-                              </div>
-                              <span className={`badge ${a.status === 'assigned' ? 'badge-green' : 'badge-muted'}`} style={{ fontSize: '0.68rem' }}>
-                                {a.status}
-                              </span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-
-                      {/* Presign Applicants Form */}
-                      {!isReadOnly && details.authorizedActions.includes('assign') && (
-                        <form
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            void mutate(
-                              () =>
-                                assignOrderRoster(
-                                  details.orderId,
-                                  Object.entries(selectedClaims).map(([id, assignedRole]) => ({
-                                    claimId: Number(id),
-                                    assignedRole,
-                                  })),
-                                ),
-                              'Roster assigned. Verify Discord synchronization status.',
-                            );
-                          }}
-                          style={{ padding: '10px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', border: '1px solid rgba(255,255,255,0.06)' }}
-                        >
-                          <h4 style={{ margin: '0 0 0.4rem', fontSize: '0.84rem' }}>Assign Registered Applicants</h4>
-                          {!details.presigns.length ? (
-                            <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>No applicants presigned.</p>
-                          ) : (
-                            details.presigns.map((p) => (
-                              <label key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', margin: '4px 0' }}>
-                                <span>{p.user.displayName || p.user.username} {p.squadId ? `(Team ${p.squadId})` : ''}</span>
-                                <select
-                                  disabled={busy}
-                                  className="input"
-                                  style={{ padding: '2px 8px', fontSize: '0.78rem' }}
-                                  value={selectedClaims[p.id] || ''}
-                                  onChange={(e) => {
-                                    const next = { ...selectedClaims };
-                                    if (e.target.value) next[p.id] = e.target.value;
-                                    else delete next[p.id];
-                                    setSelectedClaims(next);
-                                  }}
-                                >
-                                  <option value="">Not selected</option>
-                                  {p.registeredRole
-                                    .split(',')
-                                    .filter((r) => ['tank', 'healer', 'dps', 'booster', 'pilot'].includes(r.trim()))
-                                    .map((r) => (
-                                      <option key={r} value={r.trim()}>
-                                        {r.trim()}
-                                      </option>
-                                    ))}
-                                </select>
-                              </label>
-                            ))
-                          )}
-                          <button
-                            className="btn btn-cta btn-xs"
-                            type="submit"
-                            style={{ marginTop: '0.5rem' }}
-                            disabled={busy || !Object.keys(selectedClaims).length}
-                          >
-                            Confirm Roster
-                          </button>
-                        </form>
-                      )}
-
-                      {/* Direct Booster Assignment */}
-                      {!isReadOnly && !['completed', 'cancelled'].includes(details.status) && (
-                        <div style={{ padding: '10px', backgroundColor: 'rgba(250, 204, 21, 0.04)', borderRadius: '10px', border: '1px solid rgba(250, 204, 21, 0.2)' }}>
-                          <h4 style={{ margin: '0 0 0.35rem', fontSize: '0.84rem', color: 'var(--accent-yellow)' }}>⚡ Direct Booster Assignment</h4>
-                          <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0 0 0.5rem' }}>
-                            Assign an approved booster directly without requiring a presign.
-                          </p>
-                          <form onSubmit={handleDirectBoosterAssign} style={{ display: 'grid', gap: '0.5rem' }}>
-                            <select
-                              className="input"
-                              value={directBoosterUserId}
-                              onChange={(e) => setDirectBoosterUserId(e.target.value)}
-                              required
-                              style={{ fontSize: '0.8rem' }}
-                            >
-                              <option value="">— Choose Approved Booster —</option>
-                              {approvedBoosters.map((b) => (
-                                <option key={b.userId} value={b.userId} disabled={b.hasActiveReservation}>
-                                  {b.displayName || b.username} ({b.roles.join(', ')}){b.hasActiveReservation ? ` [Busy: Order #${b.activeOrderId}]` : ''}
-                                </option>
-                              ))}
-                            </select>
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                              <select
-                                className="input"
-                                value={directBoosterRole}
-                                onChange={(e) => setDirectBoosterRole(e.target.value)}
-                                style={{ fontSize: '0.8rem', flex: 1 }}
-                              >
-                                <option value="tank">Tank</option>
-                                <option value="healer">Healer</option>
-                                <option value="dps">DPS</option>
-                                <option value="booster">Booster</option>
-                                <option value="pilot">Pilot</option>
-                              </select>
-                              <button
-                                type="submit"
-                                className="btn btn-cta btn-xs"
-                                disabled={submittingDirectAssign || !directBoosterUserId}
-                              >
-                                {submittingDirectAssign ? 'Assigning...' : 'Assign'}
-                              </button>
-                            </div>
-                          </form>
-                          {directAssignFeedback && (
-                            <p style={{ color: directAssignFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)', fontSize: '0.8rem', marginTop: '0.4rem', marginBottom: 0 }}>
-                              {directAssignFeedback.text}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Sub-Card 6: Runs & Proof */}
-                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>🏆</span> Runs &amp; Proof Submission
-                      </h3>
-                      {!details.runs.length ? (
-                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>No carry runs recorded.</p>
-                      ) : (
-                        details.runs.map((run) => (
-                          <div key={run.id} style={{ padding: '10px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                              <span style={{ fontWeight: 700, fontSize: '0.85rem', color: '#fff' }}>Run #{run.runNumber}</span>
-                              <span className={`badge ${run.status === 'completed' ? 'badge-green' : 'badge-yellow'}`} style={{ fontSize: '0.68rem' }}>
-                                {run.status}
-                              </span>
-                            </div>
-                            {!run.proofs.length ? (
-                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>No proof submitted yet.</div>
-                            ) : (
-                              run.proofs.map((proof) => (
-                                <div key={proof.id} style={{ marginTop: '6px', fontSize: '0.8rem', padding: '6px 8px', borderRadius: '6px', background: 'rgba(0,0,0,0.25)' }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--accent-yellow)' }}>
-                                    <span>Proof #{proof.id} ({proof.proofType})</span>
-                                    <span>{proof.status}</span>
-                                  </div>
-                                  <div style={{ margin: '4px 0' }}>
-                                    <Evidence value={proof.evidenceUrl} />
-                                  </div>
-                                  {proof.description && <div style={{ color: 'var(--text-secondary)' }}>{proof.description}</div>}
-                                  <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                                    Reviewer: {proof.reviewedBy?.username || '—'} · {proof.reviewNotes || 'No notes'}
-                                  </div>
-                                </div>
-                              ))
-                            )}
-                          </div>
-                        ))
-                      )}
-                    </div>
-
-                    {/* Sub-Card 7: Disputes & Holds */}
-                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>⚖️</span> Disputes &amp; Escrow Holds
-                      </h3>
-                      {!details.disputes.length && !details.escrowHolds.length ? (
-                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>No active disputes or escrow holds on this order.</p>
-                      ) : (
-                        <div style={{ display: 'grid', gap: '0.5rem' }}>
-                          {details.disputes.map((d) => (
-                            <div key={d.id} style={{ padding: '8px 10px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', fontSize: '0.82rem' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', color: '#F87171', fontWeight: 700 }}>
-                                <span>Dispute #{d.id} ({d.disputeType})</span>
-                                <span>{d.status}</span>
-                              </div>
-                              <div style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>{d.description}</div>
-                            </div>
-                          ))}
-                          {details.escrowHolds.map((h) => (
-                            <div key={h.id} style={{ padding: '6px 10px', borderRadius: '8px', background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', fontSize: '0.8rem', color: '#FBBF24' }}>
-                              Hold #{h.id}: {h.status} · {h.reason}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <div style={{ paddingTop: '0.25rem' }}>
-                        <Link to="/management?tab=disputes" className="btn btn-secondary btn-xs" style={{ textDecoration: 'none' }}>
-                          Open Dispute Workspace &rarr;
-                        </Link>
-                      </div>
-                    </div>
-
-                    {/* Sub-Card 8: Audit History */}
-                    <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '12px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '0.75rem', gridColumn: '1 / -1' }}>
-                      <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800, color: '#fff', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <span>📜</span> Audit History Trail
-                      </h3>
-                      {!details.auditAvailable ? (
-                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>Audit access is not granted.</p>
-                      ) : !details.auditLogs.length ? (
-                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>No order audit events recorded.</p>
-                      ) : (
-                        <div style={{ display: 'grid', gap: '0.5rem' }}>
-                          {details.auditLogs.map((log) => (
-                            <details key={log.id} style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '8px 12px', fontSize: '0.82rem' }}>
-                              <summary style={{ cursor: 'pointer', fontWeight: 600, color: log.isSuccess ? '#10B981' : '#EF4444' }}>
-                                {time(log.createdAt)} · {log.actor?.username || log.actorId || 'System'} · {log.action}
-                              </summary>
-                              {log.reason && <p style={{ margin: '6px 0 4px', color: 'var(--text-muted)' }}>{log.reason}</p>}
-                              <pre style={{ background: '#090A0F', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '8px', padding: '10px', fontSize: '0.76rem', color: '#A5B4FC', margin: '6px 0 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                                {log.previousValues || '—'}
-                                {'\n→\n'}
-                                {log.newValues || '—'}
-                              </pre>
-                            </details>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="studio-modal-footer">
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-sm"
-                    onClick={closeDetails}
-                  >
-                    Close Details
-                  </button>
-                </div>
-              </>
+              <OrderDetailsWorkspace
+                details={details}
+                actionError={actionError}
+                feedback={feedback}
+                action={action}
+                setAction={setAction}
+                reason={reason}
+                setReason={setReason}
+                receipt={receipt}
+                setReceipt={setReceipt}
+                submitAction={submitAction}
+                busy={busy}
+                targetStatus={targetStatus}
+                setTargetStatus={setTargetStatus}
+                statusNote={statusNote}
+                setStatusNote={setStatusNote}
+                updatingStatus={updatingStatus}
+                statusFeedback={statusFeedback}
+                onUpdateStatus={async (e) => {
+                  e.preventDefault();
+                  if (!targetStatus || targetStatus === details.status) return;
+                  setUpdatingStatus(true);
+                  setStatusFeedback(null);
+                  try {
+                    const res = await updateOrderStatus(details.orderId, targetStatus, statusNote.trim() || undefined);
+                    setStatusFeedback({ text: res.message || 'Status updated successfully.', type: 'success' });
+                    setStatusNote('');
+                    setRevision((n) => n + 1);
+                  } catch (err: any) {
+                    setStatusFeedback({ text: err.message || 'Failed to update order status', type: 'error' });
+                  } finally {
+                    setUpdatingStatus(false);
+                  }
+                }}
+                syncingChannel={syncingChannel}
+                syncChannelFeedback={syncChannelFeedback}
+                onSyncChannel={async () => {
+                  setSyncingChannel(true);
+                  setSyncChannelFeedback(null);
+                  try {
+                    const res = await ensureOrderDiscordChannel(details.orderId);
+                    setSyncChannelFeedback({ text: res.message || 'Discord coordination channel synchronized.', type: 'success' });
+                    setRevision((n) => n + 1);
+                  } catch (err: any) {
+                    setSyncChannelFeedback({ text: err.message || 'Failed to provision channel', type: 'error' });
+                  } finally {
+                    setSyncingChannel(false);
+                  }
+                }}
+                opNotes={opNotes}
+                setOpNotes={setOpNotes}
+                opExternalId={opExternalId}
+                setOpExternalId={setOpExternalId}
+                opReason={opReason}
+                setOpReason={setOpReason}
+                opFeedback={opFeedback}
+                savingOp={savingOp}
+                onSaveOperational={async (e) => {
+                  e.preventDefault();
+                  if (opReason.trim().length < 5) return;
+                  setSavingOp(true);
+                  setOpFeedback(null);
+                  try {
+                    await updateOrderOperational(details.orderId, {
+                      notes: opNotes.trim() || undefined,
+                      externalOrderId: opExternalId.trim() || undefined,
+                      reason: opReason.trim(),
+                    });
+                    setOpFeedback({ text: 'Operational fields saved successfully.', type: 'success' });
+                    setRevision((n) => n + 1);
+                  } catch (err: any) {
+                    setOpFeedback({ text: err.message || 'Operational update failed', type: 'error' });
+                  } finally {
+                    setSavingOp(false);
+                  }
+                }}
+                approvedBoosters={approvedBoosters}
+                directBoosterUserId={directBoosterUserId}
+                setDirectBoosterUserId={setDirectBoosterUserId}
+                directBoosterRole={directBoosterRole}
+                setDirectBoosterRole={setDirectBoosterRole}
+                submittingDirectAssign={submittingDirectAssign}
+                directAssignFeedback={directAssignFeedback}
+                onDirectBoosterAssign={handleDirectBoosterAssign}
+                selectedClaims={selectedClaims}
+                setSelectedClaims={setSelectedClaims}
+                onConfirmRoster={(e) => {
+                  e.preventDefault();
+                  void mutate(
+                    () =>
+                      assignOrderRoster(
+                        details.orderId,
+                        Object.entries(selectedClaims).map(([id, assignedRole]) => ({
+                          claimId: Number(id),
+                          assignedRole,
+                        })),
+                      ),
+                    'Roster assigned. Verify Discord synchronization status.',
+                  );
+                }}
+                isReadOnly={isReadOnly}
+                hasRole={hasRole}
+                onClose={closeDetails}
+                onOpenFullEditor={(orderId) => setEditingOrderId(orderId)}
+              />
             )}
           </div>
         </div>
