@@ -181,6 +181,57 @@ button {
   max-width: 980px;
 }
 
+/* Full-scale Order Management Workspace Modal (90vw / min 1000px / max 1400px) */
+.modal-card-workspace,
+.studio-modal-card-workspace {
+  width: 90vw !important;
+  max-width: 1400px !important;
+  min-width: 1000px;
+  height: 90vh !important;
+  max-height: 90vh !important;
+  overflow: hidden !important;
+}
+
+.order-workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 68fr) minmax(320px, 32fr);
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .modal-card-workspace,
+  .studio-modal-card-workspace {
+    width: 96vw !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    height: 95vh !important;
+    max-height: 95vh !important;
+  }
+
+  .order-workspace-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .modal-backdrop.workspace-backdrop,
+  .studio-modal-backdrop.workspace-backdrop {
+    padding: 0 !important;
+  }
+
+  .modal-card-workspace,
+  .studio-modal-card-workspace {
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: 100vw !important;
+    max-height: 100vh !important;
+    min-width: 0 !important;
+    border-radius: 0 !important;
+    border: none !important;
+  }
+}
+
 .modal-header,
 .studio-modal-header {
   position: sticky;

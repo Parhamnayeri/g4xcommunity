@@ -1044,17 +1044,20 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
         </Card>
       )}
       {selectedId !== null && (
-        <div className="studio-modal-backdrop" onClick={closeDetails} style={{ padding: '16px' }}>
+        <div className="studio-modal-backdrop workspace-backdrop" onClick={closeDetails}>
           <div
             ref={detailsDialog}
             role="dialog"
             aria-modal="true"
             aria-labelledby="order-details-title"
-            className="studio-modal-card"
+            className="studio-modal-card studio-modal-card-workspace"
             onClick={(e) => e.stopPropagation()}
             style={{
-              width: 'min(1360px, 98vw)',
-              maxHeight: '94vh',
+              width: '90vw',
+              maxWidth: '1400px',
+              minWidth: 'min(1000px, 96vw)',
+              height: '90vh',
+              maxHeight: '90vh',
               padding: 0,
               backgroundColor: '#0c0d14',
               border: '1px solid rgba(255, 255, 255, 0.1)',
