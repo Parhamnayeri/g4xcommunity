@@ -239,6 +239,8 @@ export interface AdminUserProfile {
   status: 'Active' | 'Suspended';
   advertiserRank: string | null;
   phoneNumber: string | null;
+  telegramUsername?: string | null;
+  whatsappNumber?: string | null;
   createdAt: string;
   updatedAt: string;
 }

@@ -24,6 +24,11 @@ import { getUserKycStatus, assistUserKyc, sendKycRequestDm } from '../services/k
 import { requireOwnerPortalAccess } from './ownerPortalRoutes';
 import { G4XBoostReleaseStage } from '../services/financeV2/financeV2Types';
 import { publishOrRefreshOrderCard, getGlobalDiscordClient } from '../services/orderDiscordService';
+import {
+  listUserWallets,
+  adjustUserWalletBalance,
+  freezeUserWallet,
+} from '../services/adminWalletManagementService';
 
 export const adminPortalRouter = Router();
 
@@ -2012,6 +2017,134 @@ const handleAdminFullOrderUpdate = async (req: Request, res: Response): Promise<
 
 adminPortalRouter.put(['/api/admin/orders/:id', '/admin/orders/:id'], requireAuth, requireAdminOrOwner, requireCsrf, handleAdminFullOrderUpdate);
 adminPortalRouter.patch(['/api/admin/orders/:id', '/admin/orders/:id'], requireAuth, requireAdminOrOwner, requireCsrf, handleAdminFullOrderUpdate);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// USER & BOOSTER WALLET BALANCE CONTROLS (BONUS, DEDUCT, FREEZE/UNFREEZE)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function requireFinanceManageAccess(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  const user = (req as AuthenticatedRequest).user;
+  if (!user || !user.isActive) {
+    res.status(401).json({ error: 'UNAUTHORIZED', message: 'Authentication session required' });
+    return;
+  }
+
+  const userRoles = (user.userRoles || []).map((r) => String(r.roleKey).toLowerCase());
+  const isAuthorized =
+    userRoles.includes('admin') ||
+    userRoles.includes('owner') ||
+    userRoles.includes('finance_manage') ||
+    userRoles.includes('manager') ||
+    (user as any).isOwner;
+
+  if (!isAuthorized) {
+    res.status(403).json({
+      error: 'FORBIDDEN',
+      message: 'Access restricted to Administrator, Owner, or Finance Personnel.',
+    });
+    return;
+  }
+
+  next();
+}
+
+/**
+ * GET /api/admin/finance/wallets
+ * Lists all user & booster wallets with balance breakdowns and search.
+ */
+adminPortalRouter.get(
+  ['/api/admin/finance/wallets', '/admin/finance/wallets'],
+  requireAuth,
+  requireFinanceManageAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const result = await listUserWallets(search);
+      res.json({
+        success: true,
+        ...result,
+      });
+    } catch (err: any) {
+      console.error('[AdminFinanceWallets] Failed to list wallets:', err);
+      res.status(500).json({
+        error: 'WALLET_LIST_FAILED',
+        message: err.message || 'Failed to list user wallets.',
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/admin/finance/wallets/:discordId/adjust
+ * Adjusts a user's wallet balance (BONUS or DEDUCT).
+ */
+adminPortalRouter.post(
+  ['/api/admin/finance/wallets/:discordId/adjust', '/admin/finance/wallets/:discordId/adjust'],
+  requireAuth,
+  requireFinanceManageAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { discordId } = req.params;
+      const { action, amount, reason, allowNegative } = req.body;
+      const actorId = (req as AuthenticatedRequest).user?.discordId;
+
+      const result = await adjustUserWalletBalance({
+        discordId,
+        action,
+        amount,
+        reason,
+        allowNegative: Boolean(allowNegative),
+        actorId,
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('[AdminFinanceWallets] Adjustment error:', err);
+      res.status(400).json({
+        error: 'WALLET_ADJUST_FAILED',
+        message: err.message || 'Failed to adjust user wallet.',
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/admin/finance/wallets/:discordId/freeze
+ * Freezes/unfreezes wallet funds or toggles entire wallet freeze state.
+ */
+adminPortalRouter.post(
+  ['/api/admin/finance/wallets/:discordId/freeze', '/admin/finance/wallets/:discordId/freeze'],
+  requireAuth,
+  requireFinanceManageAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { discordId } = req.params;
+      const { mode, amount, reason } = req.body;
+      const actorId = (req as AuthenticatedRequest).user?.discordId;
+
+      const result = await freezeUserWallet({
+        discordId,
+        mode,
+        amount,
+        reason,
+        actorId,
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('[AdminFinanceWallets] Freeze error:', err);
+      res.status(400).json({
+        error: 'WALLET_FREEZE_FAILED',
+        message: err.message || 'Failed to execute wallet freeze operation.',
+      });
+    }
+  }
+);
+
 
 
 

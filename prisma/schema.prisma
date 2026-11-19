@@ -270,6 +270,8 @@ model Wallet {
   escrowUsdt           Int      @default(0) @map("escrow_usdt")
   balanceIrt           Int      @default(0) @map("balance_irt")
   escrowIrt            Int      @default(0) @map("escrow_irt")
+  frozenBalance        Int      @default(0) @map("frozen_balance")
+  isFrozen             Boolean  @default(false) @map("is_frozen")
   customCommissionRate Float?   @map("custom_commission_rate")
   updatedAt            DateTime @updatedAt @map("updated_at")
 
@@ -1143,6 +1145,8 @@ model WalletV2 {
   userId                 String   @id @map("user_id")
   availableCents         Int      @default(0) @map("available_cents")
   reservedCents          Int      @default(0) @map("reserved_cents")
+  frozenCents            Int      @default(0) @map("frozen_cents")
+  isFrozen               Boolean  @default(false) @map("is_frozen")
   pendingEarningsCents   Int      @default(0) @map("pending_earnings_cents")
   confirmedEarningsCents Int      @default(0) @map("confirmed_earnings_cents")
   paidCents              Int      @default(0) @map("paid_cents")

@@ -228,8 +228,12 @@ export async function generateUsdtWithdrawalQuote(
 
   const normalizedAddress = addressValidation.checksumAddress || destinationAddress.trim();
 
-  // بررسی موجودی در دسترس
+  // بررسی موجودی در دسترس و عدم مسدودی کیف‌پول
   const wallet = await getOrCreateWalletV2(boosterId);
+  const legacyWallet = await prisma.wallet.findUnique({ where: { userId: boosterId } });
+  if (wallet.isFrozen || legacyWallet?.isFrozen) {
+    throw new Error('WALLET_FROZEN: Your wallet is currently frozen by financial management. Withdrawals are disabled.');
+  }
   if (wallet.availableCents < requestedUsdCents) {
     throw new Error(
       `INSUFFICIENT_FUNDS: Available USD balance ($${(wallet.availableCents / 100).toFixed(2)}) is less than requested amount ($${(requestedUsdCents / 100).toFixed(2)})`
@@ -336,6 +340,10 @@ export async function generateIrtWithdrawalQuote(
   }
 
   const wallet = await getOrCreateWalletV2(boosterId);
+  const legacyWallet = await prisma.wallet.findUnique({ where: { userId: boosterId } });
+  if (wallet.isFrozen || legacyWallet?.isFrozen) {
+    throw new Error('WALLET_FROZEN: Your wallet is currently frozen by financial management. Withdrawals are disabled.');
+  }
   if (wallet.availableCents < requestedUsdCents) {
     throw new Error(
       `INSUFFICIENT_FUNDS: Available USD balance ($${(wallet.availableCents / 100).toFixed(2)}) is less than requested amount ($${(requestedUsdCents / 100).toFixed(2)})`
@@ -583,6 +591,13 @@ export async function confirmAndSubmitWithdrawalRequest(
 
     if (request.status !== BoosterWithdrawalStatus.QUOTED) {
       throw new Error(`INVALID_STATUS: Withdrawal request is in '${request.status}' status, cannot confirm`);
+    }
+
+    // بررسی وضعیت مسدودی کیف‌پول (Wallet Freeze Guard)
+    const userWallet = await tx.walletV2.findUnique({ where: { userId: boosterId } });
+    const userLegacyWallet = await tx.wallet.findUnique({ where: { userId: boosterId } });
+    if (userWallet?.isFrozen || userLegacyWallet?.isFrozen) {
+      throw new Error('WALLET_FROZEN: Your wallet is currently frozen by financial management. Withdrawals are disabled.');
     }
 
     // بررسی انقضای پیش‌فاکتور (Quote Expiration Guard)

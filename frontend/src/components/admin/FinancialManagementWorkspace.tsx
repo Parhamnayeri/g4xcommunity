@@ -30,6 +30,7 @@ import { FinancialAuditLogsSection } from './FinancialAuditLogsSection';
 import { HistoricalSnapshotsSection } from './HistoricalSnapshotsSection';
 import { AdvancedAnalyticsSection } from './AdvancedAnalyticsSection';
 import { AutomatedReportingSection } from './AutomatedReportingSection';
+import { UserBoosterWalletControlsSection } from './UserBoosterWalletControlsSection';
 import { UserFinancialRoleInfo } from '../../types/financialLedger';
 import { fetchUserFinancialRole } from '../../services/financialLedger';
 
@@ -48,6 +49,7 @@ interface Props {
 export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab: _onNavigateTab }) => {
   // Navigation Sub-tab
   const [subTab, setSubTab] = useState<
+    | 'wallets'
     | 'platform'
     | 'snapshots'
     | 'analytics'
@@ -61,7 +63,7 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab: _
     | 'toman'
     | 'accounts'
     | 'adjustments'
-  >('platform');
+  >('wallets');
   const [userRole, setUserRole] = useState<UserFinancialRoleInfo | null>(null);
 
   // Loading states
@@ -534,6 +536,7 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab: _
         }}
       >
         {[
+          { key: 'wallets', label: 'User & Booster Wallets', icon: '👛' },
           { key: 'platform', label: 'Platform Balances', icon: '🌐', count: platforms.length },
           { key: 'snapshots', label: 'Financial Snapshots', icon: '📸' },
           { key: 'analytics', label: 'Advanced Analytics & P&L', icon: '📈' },
@@ -586,6 +589,13 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab: _
           </button>
         ))}
       </div>
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB 0: USER & BOOSTER WALLET CONTROLS                                     */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'wallets' && (
+        <UserBoosterWalletControlsSection onRefreshParent={loadWorkspace} />
+      )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {/* SUB-TAB 1: PLATFORM BALANCE OVERVIEW                                          */}
@@ -815,6 +825,9 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab: _
               </table>
             </div>
           </div>
+
+          {/* User & Booster Wallet Controls Section on Main Overview */}
+          <UserBoosterWalletControlsSection onRefreshParent={loadWorkspace} />
         </div>
       )}
 

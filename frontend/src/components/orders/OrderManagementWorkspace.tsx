@@ -28,7 +28,7 @@ import { PlatformBalancesStrip } from '../admin/PlatformBalancesStrip';
 import { extractExternalOrderIdAndCleanNotes, has13PercentFee, calculate13PercentSplit } from '../../utils/orderParsers';
 import { AdminEditOrderModal } from './AdminEditOrderModal';
 import { CategoryBoostSpecsTabs } from './CategoryBoostSpecsTabs';
-import { BoostSpecsBadgeGrid } from './BoostSpecsBadgeGrid';
+// BoostSpecsBadgeGrid imported in details workspace
 import { BoostCategoryKey } from '../../types/boostSpecs';
 import { OrderDetailsWorkspace, Action, actionLabels } from './OrderDetailsWorkspace';
 
@@ -50,7 +50,7 @@ const initialFilters = {
 const panelStyle: React.CSSProperties = { padding: '1rem', display: 'grid', gap: '1rem' };
 const time = (value: string | null) => (value ? new Date(value).toLocaleString() : '—');
 // Never render untrusted evidence references as executable URLs.
-function Evidence({ value }: { value: string }) {
+export function Evidence({ value }: { value: string }) {
   try {
     const url = new URL(value);
     if (['https:', 'http:'].includes(url.protocol))
