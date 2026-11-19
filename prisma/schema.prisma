@@ -317,6 +317,7 @@ model Order {
   title               String?   @map("title")
   boostModel          String?   @map("boost_model")
   vpnRequirement      String?   @map("vpn_requirement")
+  boostSpecsJson      String?   @map("boost_specs_json")
   orderType           String    @map("order_type") // solo | group | pilot
   orderMode           String    @default("non_pilot") @map("order_mode") // non_pilot | pilot
   quantity            Int       @default(1)

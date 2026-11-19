@@ -246,6 +246,80 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
     });
   }
 
+  // Category-Specific Service Specifications (Deliverable 2)
+  let specsObj: Record<string, any> | null = null;
+  if (order.boostSpecs && typeof order.boostSpecs === 'object') {
+    specsObj = order.boostSpecs;
+  } else if (order.boostSpecsJson && typeof order.boostSpecsJson === 'string') {
+    try {
+      specsObj = JSON.parse(order.boostSpecsJson);
+    } catch {
+      specsObj = null;
+    }
+  }
+
+  if (specsObj && typeof specsObj === 'object') {
+    const specPills: string[] = [];
+    const cat = (order.boostModel || '').toLowerCase();
+
+    if (cat.includes('mythic')) {
+      if (specsObj.regionFaction) specPills.push(`Region: **${specsObj.regionFaction}**`);
+      if (specsObj.keystoneLevel) specPills.push(`Keystone: **${specsObj.keystoneLevel}**`);
+      if (specsObj.runsCount) specPills.push(`Runs: **${specsObj.runsCount}**`);
+      if (specsObj.dungeonSelection && specsObj.dungeonSelection !== 'Any / Random') specPills.push(`Dungeon: **${specsObj.dungeonSelection}**`);
+      if (specsObj.timerGuarantee) specPills.push(`Timer: **${specsObj.timerGuarantee}**`);
+      if (specsObj.armorStack && specsObj.armorStack !== 'No Loot Traders') specPills.push(`Loot: **${specsObj.armorStack}**`);
+    } else if (cat.includes('leveling') || cat.includes('campaign')) {
+      if (specsObj.regionRealm) specPills.push(`Realm: **${specsObj.regionRealm}**`);
+      if (specsObj.levelRangeCurrent || specsObj.levelRangeTarget) {
+        specPills.push(`Level: **${specsObj.levelRangeCurrent || '?'} → ${specsObj.levelRangeTarget || '?'}**`);
+      }
+      if (specsObj.classSpec) specPills.push(`Class/Spec: **${specsObj.classSpec}**`);
+      if (specsObj.campaignUnlock) specPills.push(`Campaign: **${specsObj.campaignUnlock}**`);
+      if (specsObj.streamingOption && specsObj.streamingOption !== 'No Stream') specPills.push(`Stream: **${specsObj.streamingOption}**`);
+    } else if (cat.includes('raid')) {
+      if (specsObj.regionFaction) specPills.push(`Region: **${specsObj.regionFaction}**`);
+      if (specsObj.raidName) specPills.push(`Raid: **${specsObj.raidName}**`);
+      if (specsObj.difficulty) specPills.push(`Difficulty: **${specsObj.difficulty}**`);
+      if (specsObj.runScope) specPills.push(`Scope: **${specsObj.runScope}**`);
+      if (specsObj.lootMode) specPills.push(`Loot: **${specsObj.lootMode}**`);
+      if (specsObj.scheduledTime) specPills.push(`Scheduled: **${specsObj.scheduledTime}**`);
+    } else if (cat.includes('pvp') || cat.includes('arena') || cat.includes('rbg')) {
+      if (specsObj.regionFaction) specPills.push(`Region: **${specsObj.regionFaction}**`);
+      if (specsObj.bracketMode) specPills.push(`Mode: **${specsObj.bracketMode}**`);
+      if (specsObj.ratingCurrent || specsObj.ratingTarget) {
+        specPills.push(`Rating: **${specsObj.ratingCurrent || '0'} → ${specsObj.ratingTarget || '?'}**`);
+      }
+      if (specsObj.classSpec) specPills.push(`Class/Spec: **${specsObj.classSpec}**`);
+      if (specsObj.gearFarmOption) specPills.push(`Gear: **${specsObj.gearFarmOption}**`);
+    } else if (cat.includes('delve') || cat.includes('farm')) {
+      if (specsObj.regionClass) specPills.push(`Region/Class: **${specsObj.regionClass}**`);
+      if (specsObj.activityType) specPills.push(`Activity: **${specsObj.activityType}**`);
+      if (specsObj.targetQuantity) specPills.push(`Quantity/Runs: **${specsObj.targetQuantity}**`);
+      if (specsObj.specificDropName) specPills.push(`Drop: **${specsObj.specificDropName}**`);
+    } else {
+      // Custom / Bundle
+      if (specsObj.regionServer) specPills.push(`Server: **${specsObj.regionServer}**`);
+      if (specsObj.serviceScope) specPills.push(`Scope: **${specsObj.serviceScope}**`);
+      if (specsObj.estimatedTime) specPills.push(`Est. Time: **${specsObj.estimatedTime}**`);
+      if (specsObj.boosterCount) specPills.push(`Team: **${specsObj.boosterCount}**`);
+      for (const [k, v] of Object.entries(specsObj)) {
+        if (!['regionServer', 'serviceScope', 'estimatedTime', 'boosterCount'].includes(k) && v) {
+          specPills.push(`${k}: **${v}**`);
+        }
+      }
+    }
+
+    const filteredSpecs = specPills.filter(Boolean);
+    if (filteredSpecs.length > 0) {
+      embed.addFields({
+        name: '📋 Service Specifications',
+        value: filteredSpecs.join(' | '),
+        inline: false,
+      });
+    }
+  }
+
   // Safe requirements & notes (excluding financial secrets & private customer data)
   if (order.notes && typeof order.notes === 'string' && order.notes.trim().length > 0) {
     const { cleanNotes } = extractExternalOrderIdAndCleanNotes(order.notes);

@@ -326,6 +326,8 @@ export interface AdminOrderEditDataResponse {
     orderMode: string;
     boostModel: string;
     vpnRequirement: string;
+    boostSpecs?: Record<string, any> | null;
+    boostSpecsJson?: string | null;
     quantity: number;
     notes: string;
     sourceType: string;
@@ -369,6 +371,8 @@ export interface AdminOrderUpdatePayload {
   orderMode?: string;
   boostModel?: string;
   vpnRequirement?: string;
+  boostSpecs?: Record<string, any> | null;
+  boostSpecsJson?: string | null;
   quantity?: number;
   notes?: string;
   externalOrderId?: string;

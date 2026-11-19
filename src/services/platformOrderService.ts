@@ -121,6 +121,8 @@ export interface CreateExternalOrderInput {
   title?: string | null;
   boostModel?: string | null;
   vpnRequirement?: string | null;
+  boostSpecs?: Record<string, any> | null;
+  boostSpecsJson?: string | null;
 }
 
 /**
@@ -209,6 +211,7 @@ export async function createExternalOrder(input: CreateExternalOrderInput) {
         orderName: parsedTitle || null,
         boostModel: input.boostModel || null,
         vpnRequirement: input.vpnRequirement || null,
+        boostSpecsJson: input.boostSpecsJson || (input.boostSpecs ? JSON.stringify(input.boostSpecs) : null),
         gameSlug,
         serviceId,
         creatorId: actorId,

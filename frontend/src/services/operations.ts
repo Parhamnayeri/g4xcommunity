@@ -348,6 +348,7 @@ export async function createManagementOrder(input: {
   title?: string;
   boostModel?: string;
   vpnRequirement?: string;
+  boostSpecs?: Record<string, any>;
   gameSlug: string;
   serviceId: number;
   amountUsd: number;

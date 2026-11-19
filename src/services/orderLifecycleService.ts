@@ -76,6 +76,10 @@ export interface OrderDiagnostics {
   activeReceiptRef: string | null;
   creatorWalletAvailableCents: number;
   hasSufficientWalletBalance: boolean;
+  title?: string | null;
+  boostModel?: string | null;
+  vpnRequirement?: string | null;
+  boostSpecs?: Record<string, any> | null;
 }
 
 /**
@@ -281,6 +285,10 @@ export async function getOrderDiagnostics(orderId: number): Promise<OrderDiagnos
     activeReceiptRef,
     creatorWalletAvailableCents: walletAvailableCents,
     hasSufficientWalletBalance: walletAvailableCents >= order.grossAmountMinor,
+    title: order.title || order.orderName || null,
+    boostModel: order.boostModel || null,
+    vpnRequirement: order.vpnRequirement || null,
+    boostSpecs: order.boostSpecsJson ? (() => { try { return JSON.parse(order.boostSpecsJson); } catch { return null; } })() : null,
   };
 }
 
@@ -359,6 +367,10 @@ export async function getCategorizedOrders(options?: {
       isPublishable: eligibility.isPublishable,
       blockReason: eligibility.reasons.length > 0 ? eligibility.reasons[0] : null,
       nextAction: eligibility.nextAction,
+      title: o.title || o.orderName || null,
+      boostModel: o.boostModel || null,
+      vpnRequirement: o.vpnRequirement || null,
+      boostSpecs: o.boostSpecsJson ? (() => { try { return JSON.parse(o.boostSpecsJson); } catch { return null; } })() : null,
     });
   }
 
@@ -473,6 +485,8 @@ export interface CreateAdvertiserBoostOrderInput {
   title?: string | null;
   boostModel?: string | null;
   vpnRequirement?: string | null;
+  boostSpecs?: Record<string, any> | null;
+  boostSpecsJson?: string | null;
   actorId: string;
   idempotencyKey?: string | null;
   actionSource?: 'web' | 'web_portal' | 'discord_wizard';
@@ -691,6 +705,7 @@ export async function createAdvertiserBoostOrder(
         orderName: parsedTitle || null,
         boostModel: input.boostModel || null,
         vpnRequirement: input.vpnRequirement || (orderMode === 'pilot' ? (input.vpnLocation ? `VPN Required — ${input.vpnLocation.trim()}` : 'VPN Required') : 'No VPN Required (Self-Play)'),
+        boostSpecsJson: input.boostSpecsJson || (input.boostSpecs ? JSON.stringify(input.boostSpecs) : null),
         gameSlug: game.slug,
         serviceId: service.id,
         creatorId: actorId,

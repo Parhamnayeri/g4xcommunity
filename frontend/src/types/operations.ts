@@ -242,6 +242,7 @@ export interface OrderDiagnosticsData {
   customerId: string | null; creatorId: string | null; advertiserId: string | null;
   notes: string | null; externalOrderId: string | null;
   title?: string | null; orderName?: string | null; boostModel?: string | null; vpnRequirement?: string | null;
+  boostSpecs?: Record<string, any> | null; boostSpecsJson?: string | null;
   discordMessageId: string | null; discordChannelId: string | null;
   executionChannelId: string | null; reviewChannelId: string | null;
   executionChannelUrl?: string | null; discordChannelUrl?: string | null;

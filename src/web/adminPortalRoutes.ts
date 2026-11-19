@@ -1679,6 +1679,8 @@ adminPortalRouter.get(
           orderMode: order.orderMode,
           boostModel: order.boostModel || '',
           vpnRequirement: order.vpnRequirement || '',
+          boostSpecs: order.boostSpecsJson ? (() => { try { return JSON.parse(order.boostSpecsJson); } catch { return null; } })() : null,
+          boostSpecsJson: order.boostSpecsJson || '',
           quantity: order.quantity || 1,
           notes: order.notes || '',
           sourceType: order.sourceType,
@@ -1739,6 +1741,8 @@ const handleAdminFullOrderUpdate = async (req: Request, res: Response): Promise<
     orderMode,
     boostModel,
     vpnRequirement,
+    boostSpecs,
+    boostSpecsJson,
     quantity,
     notes,
     externalOrderId,
@@ -1843,6 +1847,9 @@ const handleAdminFullOrderUpdate = async (req: Request, res: Response): Promise<
       orderMode: orderMode ? String(orderMode).trim() : existing.orderMode,
       boostModel: boostModel !== undefined ? (boostModel ? String(boostModel).trim() : null) : existing.boostModel,
       vpnRequirement: vpnRequirement !== undefined ? (vpnRequirement ? String(vpnRequirement).trim() : null) : existing.vpnRequirement,
+      boostSpecsJson: boostSpecs !== undefined
+        ? (boostSpecs ? (typeof boostSpecs === 'string' ? boostSpecs : JSON.stringify(boostSpecs)) : null)
+        : (boostSpecsJson !== undefined ? (boostSpecsJson ? String(boostSpecsJson).trim() : null) : existing.boostSpecsJson),
       notes: notes !== undefined ? (notes ? String(notes).trim() : null) : existing.notes,
       externalOrderId: externalOrderId !== undefined ? (externalOrderId ? String(externalOrderId).trim() : null) : existing.externalOrderId,
       sourceType: sourceType ? String(sourceType).trim() : existing.sourceType,

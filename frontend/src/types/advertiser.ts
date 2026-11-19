@@ -169,9 +169,11 @@ export interface CreateOrderRequest {
   title?: string;
   boostModel?: string;
   vpnRequirement?: string;
+  boostSpecs?: Record<string, any>;
   gameSlug: string;
   serviceId: number;
   grossAmountUsd: string | number;
+  boosterPoolUsd?: string | number;
   orderMode?: 'pilot' | 'non_pilot';
   runsCount?: number;
   keyLevel?: string;

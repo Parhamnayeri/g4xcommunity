@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { fetchPublicGames, createAdvertiserOrder } from '../../services/advertiser';
 import { PublicGame, AdvertiserRankData, AdvertiserWallet, DiscordIntegrationInfo, CreateOrderRequest } from '../../types/advertiser';
 import { extractExternalOrderIdAndCleanNotes } from '../../utils/orderParsers';
+import { CategoryBoostSpecsTabs } from '../orders/CategoryBoostSpecsTabs';
+import { BoostCategoryKey } from '../../types/boostSpecs';
 
 interface CreateOrderModalProps {
   rankData: AdvertiserRankData;
@@ -24,9 +26,18 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
 }) => {
   const [games, setGames] = useState<PublicGame[]>([]);
   const [loadingGames, setLoadingGames] = useState(true);
-  const [orderTitle, setOrderTitle] = useState('');
-  const [boostModel, setBoostModel] = useState('');
-  const [vpnRequirement, setVpnRequirement] = useState('');
+  const [activeCategory, setActiveCategory] = useState<BoostCategoryKey>('mythic_plus');
+  const [boostSpecs, setBoostSpecs] = useState<Record<string, any>>({
+    regionFaction: 'EU - Cross-Faction',
+    keystoneLevel: '+10',
+    runsCount: 1,
+    dungeonSelection: '',
+    timerGuarantee: 'Timed (In-Time)',
+    armorStack: 'No Loot Traders',
+  });
+  const [orderTitle, setOrderTitle] = useState('Mythic+ 10-20 Timed Bundle');
+  const [boostModel, setBoostModel] = useState('Mythic+ Keystone');
+  const [vpnRequirement, setVpnRequirement] = useState('No VPN Required (Self-Play)');
   const [selectedGameSlug, setSelectedGameSlug] = useState('');
   const [selectedServiceId, setSelectedServiceId] = useState<number | ''>('');
   const [orderMode, setOrderMode] = useState<'non_pilot' | 'pilot'>('non_pilot');
@@ -131,15 +142,16 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
       setError('Please select a service.');
       return;
     }
-    if (isMythicPlus && !keyLevel.trim()) {
+    if (activeCategory === 'mythic_plus' && !boostSpecs?.keystoneLevel && !keyLevel.trim()) {
       setError('Target dungeon and key level is required for Mythic+ orders (e.g. "+10 Ara-Kara").');
       return;
     }
-    if (orderMode === 'pilot' && !vpnLocation.trim()) {
-      setError('Required VPN location is strictly required for Pilot orders.');
+    if (orderMode === 'pilot' && !vpnLocation.trim() && (!vpnRequirement || vpnRequirement.includes('No VPN'))) {
+      setError('Required VPN location or VPN requirement is strictly required for Pilot orders.');
       return;
     }
-    if (runsCount < 1) {
+    const effectiveRuns = boostSpecs?.runsCount ? Number(boostSpecs.runsCount) : runsCount;
+    if (effectiveRuns < 1) {
       setError('Number of runs must be at least 1.');
       return;
     }
@@ -163,17 +175,19 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         null,
         orderTitle
       );
+      const effectiveVpn = vpnRequirement || (orderMode === 'pilot' && vpnLocation.trim() ? `VPN Required — ${vpnLocation.trim()}` : undefined);
       const res = await createOrder({
         title: parsedTitle || undefined,
         boostModel: boostModel || undefined,
-        vpnRequirement: vpnRequirement || (orderMode === 'pilot' && vpnLocation.trim() ? `VPN Required — ${vpnLocation.trim()}` : undefined),
+        vpnRequirement: effectiveVpn,
+        boostSpecs,
         gameSlug: selectedGameSlug,
         serviceId: Number(selectedServiceId),
         grossAmountUsd: parsedGross.toFixed(2),
         orderMode,
-        runsCount,
-        keyLevel: isMythicPlus ? keyLevel.trim() : undefined,
-        vpnLocation: orderMode === 'pilot' ? vpnLocation.trim() : undefined,
+        runsCount: effectiveRuns,
+        keyLevel: boostSpecs?.keystoneLevel || (isMythicPlus ? keyLevel.trim() : undefined),
+        vpnLocation: orderMode === 'pilot' ? (vpnLocation.trim() || effectiveVpn) : undefined,
         customerInfo: customerParts || undefined,
         notes: cleanNotes || undefined,
       });
@@ -269,74 +283,91 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               />
             </div>
 
-            {/* Game Selector */}
-            <div>
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: '0.8rem',
-                  color: 'var(--text-muted, #9490a6)',
-                  marginBottom: '0.35rem',
-                  fontWeight: 600,
+            {/* Top Boost Category Selector Tabs (6 Distinct Forms) */}
+            <div style={{ marginBottom: '0.4rem' }}>
+              <CategoryBoostSpecsTabs
+                activeCategory={activeCategory}
+                onSelectCategory={(key, model, defTitle) => {
+                  setActiveCategory(key);
+                  setBoostModel(model);
+                  if (!orderTitle || orderTitle.includes('Bundle') || orderTitle.includes('Clear') || orderTitle.includes('Boost') || orderTitle.includes('Package') || orderTitle.includes('Leveling') || orderTitle.includes('Raid') || orderTitle.includes('Arena') || orderTitle.includes('Delves')) {
+                    setOrderTitle(defTitle);
+                  }
                 }}
-              >
-                Game:
-              </label>
-              <select
-                value={selectedGameSlug}
-                onChange={(e) => handleGameChange(e.target.value)}
-                style={{
-                  width: '100%',
-                  backgroundColor: 'rgba(13, 11, 18, 0.8)',
-                  border: '1px solid rgba(124, 58, 237, 0.3)',
-                  borderRadius: '8px',
-                  padding: '0.65rem 0.75rem',
-                  color: 'var(--text-primary, #f4f4f6)',
-                  fontSize: '0.9rem',
-                  outline: 'none',
-                }}
-              >
-                {games.map((g) => (
-                  <option key={g.slug} value={g.slug}>
-                    {g.displayName}
-                  </option>
-                ))}
-              </select>
+                specs={boostSpecs}
+                onUpdateSpecs={setBoostSpecs}
+              />
             </div>
 
-            {/* Service Selector */}
-            <div>
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: '0.8rem',
-                  color: 'var(--text-muted, #9490a6)',
-                  marginBottom: '0.35rem',
-                  fontWeight: 600,
-                }}
-              >
-                Service Category:
-              </label>
-              <select
-                value={selectedServiceId}
-                onChange={(e) => handleServiceChange(Number(e.target.value))}
-                style={{
-                  width: '100%',
-                  backgroundColor: 'rgba(13, 11, 18, 0.8)',
-                  border: '1px solid rgba(124, 58, 237, 0.3)',
-                  borderRadius: '8px',
-                  padding: '0.65rem 0.75rem',
-                  color: 'var(--text-primary, #f4f4f6)',
-                  fontSize: '0.9rem',
-                  outline: 'none',
-                }}
-              >
-                {availableServices.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.displayName} ({s.serviceMode})
-                  </option>
-                ))}
-              </select>
+            {/* Game & Service Selector */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted, #9490a6)',
+                    marginBottom: '0.35rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Game:
+                </label>
+                <select
+                  value={selectedGameSlug}
+                  onChange={(e) => handleGameChange(e.target.value)}
+                  style={{
+                    width: '100%',
+                    backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                    border: '1px solid rgba(124, 58, 237, 0.3)',
+                    borderRadius: '8px',
+                    padding: '0.65rem 0.75rem',
+                    color: 'var(--text-primary, #f4f4f6)',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                  }}
+                >
+                  {games.map((g) => (
+                    <option key={g.slug} value={g.slug}>
+                      {g.displayName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted, #9490a6)',
+                    marginBottom: '0.35rem',
+                    fontWeight: 600,
+                  }}
+                >
+                  Service Category:
+                </label>
+                <select
+                  value={selectedServiceId}
+                  onChange={(e) => handleServiceChange(Number(e.target.value))}
+                  style={{
+                    width: '100%',
+                    backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                    border: '1px solid rgba(124, 58, 237, 0.3)',
+                    borderRadius: '8px',
+                    padding: '0.65rem 0.75rem',
+                    color: 'var(--text-primary, #f4f4f6)',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                  }}
+                >
+                  {availableServices.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.displayName} ({s.serviceMode})
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* Boost Model & VPN Requirement */}
@@ -464,62 +495,6 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               </div>
             )}
 
-            {/* Mythic+ Key Level & Role Composition Notice */}
-            {isMythicPlus && (
-              <div
-                style={{
-                  backgroundColor: 'rgba(124, 58, 237, 0.12)',
-                  border: '1px solid rgba(124, 58, 237, 0.3)',
-                  borderRadius: '10px',
-                  padding: '0.85rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.6rem',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-lime, #ccff00)' }}>
-                    WoW Midnight Mythic+ Composition
-                  </span>
-                  <span style={{ fontSize: '0.75rem', color: '#c4b5fd' }}>
-                    4 Boosters (1 Tank • 1 Healer • 2 DPS)
-                  </span>
-                </div>
-
-                <div>
-                  <label
-                    style={{
-                      display: 'block',
-                      fontSize: '0.75rem',
-                      color: 'var(--text-muted, #9490a6)',
-                      marginBottom: '0.25rem',
-                      fontWeight: 600,
-                    }}
-                  >
-                    Target Dungeon & Key Level (required):
-                  </label>
-                  <input
-                    type="text"
-                    value={keyLevel}
-                    onChange={(e) => setKeyLevel(e.target.value)}
-                    placeholder="+10 Ara-Kara or +12 City of Threads"
-                    required
-                    style={{
-                      width: '100%',
-                      boxSizing: 'border-box',
-                      backgroundColor: 'rgba(13, 11, 18, 0.8)',
-                      border: '1px solid rgba(124, 58, 237, 0.4)',
-                      borderRadius: '6px',
-                      padding: '0.5rem 0.65rem',
-                      color: 'var(--text-primary, #f4f4f6)',
-                      fontSize: '0.85rem',
-                      outline: 'none',
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
             {/* Pilot VPN Location Field */}
             {orderMode === 'pilot' && (
               <div>
@@ -532,14 +507,13 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                     fontWeight: 600,
                   }}
                 >
-                  Required Booster VPN Location (required):
+                  Required Booster VPN Location (required if no VPN Requirement selected):
                 </label>
                 <input
                   type="text"
                   value={vpnLocation}
                   onChange={(e) => setVpnLocation(e.target.value)}
                   placeholder="e.g. US - Chicago or Germany - Frankfurt"
-                  required
                   style={{
                     width: '100%',
                     boxSizing: 'border-box',

@@ -27,6 +27,9 @@ import { AdminFinanceOverviewResponse } from '../../types/adminPortal';
 import { PlatformBalancesStrip } from '../admin/PlatformBalancesStrip';
 import { extractExternalOrderIdAndCleanNotes, has13PercentFee, calculate13PercentSplit } from '../../utils/orderParsers';
 import { AdminEditOrderModal } from './AdminEditOrderModal';
+import { CategoryBoostSpecsTabs } from './CategoryBoostSpecsTabs';
+import { BoostSpecsBadgeGrid } from './BoostSpecsBadgeGrid';
+import { BoostCategoryKey } from '../../types/boostSpecs';
 
 interface Props {
   initialTab?: 'g4x' | 'advertiser';
@@ -140,9 +143,18 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
 
   // Create Order Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createTitle, setCreateTitle] = useState('');
-  const [createBoostModel, setCreateBoostModel] = useState('');
-  const [createVpnRequirement, setCreateVpnRequirement] = useState('');
+  const [createCategory, setCreateCategory] = useState<BoostCategoryKey>('mythic_plus');
+  const [createBoostSpecs, setCreateBoostSpecs] = useState<Record<string, any>>({
+    regionFaction: 'EU - Cross-Faction',
+    keystoneLevel: '+10',
+    runsCount: 1,
+    dungeonSelection: '',
+    timerGuarantee: 'Timed (In-Time)',
+    armorStack: 'No Loot Traders',
+  });
+  const [createTitle, setCreateTitle] = useState('Mythic+ 10-20 Timed Bundle');
+  const [createBoostModel, setCreateBoostModel] = useState('Mythic+ Keystone');
+  const [createVpnRequirement, setCreateVpnRequirement] = useState('No VPN Required (Self-Play)');
   const [createGame, setCreateGame] = useState('wow_midnight');
   const [createServiceId, setCreateServiceId] = useState<number | ''>('');
   const [createAmountUsd, setCreateAmountUsd] = useState('');
@@ -152,9 +164,6 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   const [createOrderMode, setCreateOrderMode] = useState('non_pilot');
   const [createRunsCount, setCreateRunsCount] = useState(1);
   const [createNotes, setCreateNotes] = useState('');
-  const [createMythicKeyLevel, setCreateMythicKeyLevel] = useState('');
-  const [createDungeonName, setCreateDungeonName] = useState('');
-  const [createVpnLocation, setCreateVpnLocation] = useState('');
   const [createSourcePlatform, setCreateSourcePlatform] = useState('direct');
   const [createExternalOrderId, setCreateExternalOrderId] = useState('');
   const [submittingCreate, setSubmittingCreate] = useState(false);
@@ -351,6 +360,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
         title: parsedTitle || undefined,
         boostModel: createBoostModel || undefined,
         vpnRequirement: createVpnRequirement || undefined,
+        boostSpecs: createBoostSpecs,
         gameSlug: createGame,
         serviceId: Number(createServiceId),
         amountUsd: amount,
@@ -360,9 +370,6 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
         runsCount: createRunsCount,
         notes: cleanNotes || undefined,
         externalOrderId: parsedOrderId || undefined,
-        mythicKeyLevel: createMythicKeyLevel ? Number(createMythicKeyLevel) : undefined,
-        dungeonName: createDungeonName.trim() || undefined,
-        vpnLocation: createVpnLocation.trim() || undefined,
         sourcePlatform: createSourcePlatform,
       });
       setCreateFeedback({ text: res.message || 'Order created successfully!', type: 'success' });
@@ -371,9 +378,18 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
         setCreateAmountUsd('');
         setCreateBoosterPoolUsd('');
         setBoosterPoolCustomized(false);
-        setCreateTitle('');
-        setCreateBoostModel('');
-        setCreateVpnRequirement('');
+        setCreateTitle('Mythic+ 10-20 Timed Bundle');
+        setCreateBoostModel('Mythic+ Keystone');
+        setCreateCategory('mythic_plus');
+        setCreateBoostSpecs({
+          regionFaction: 'EU - Cross-Faction',
+          keystoneLevel: '+10',
+          runsCount: 1,
+          dungeonSelection: '',
+          timerGuarantee: 'Timed (In-Time)',
+          armorStack: 'No Loot Traders',
+        });
+        setCreateVpnRequirement('No VPN Required (Self-Play)');
         setCreateExternalOrderId('');
         setCreateNotes('');
         setRevision((n) => n + 1);
@@ -1336,6 +1352,13 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                       </div>
                     </div>
 
+                    {/* Category-Specific Service Specifications */}
+                    <BoostSpecsBadgeGrid
+                      boostModel={details.boostModel}
+                      boostSpecs={details.boostSpecs}
+                      boostSpecsJson={details.boostSpecsJson}
+                    />
+
                     {/* Card 2: Payment & Fees */}
                     <div style={{ background: '#0E1017', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '12px', padding: '16px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -2137,7 +2160,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
             <form onSubmit={handleCreateOrderSubmit}>
               <div className="studio-modal-body">
                 <label style={{ fontSize: '0.82rem', display: 'block', marginBottom: '0.75rem' }}>
-                  Order Title (Descriptive Name)
+                  Order Title (Descriptive Name) *
                   <input
                     type="text"
                     className="input"
@@ -2145,44 +2168,24 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                     value={createTitle}
                     onChange={(e) => setCreateTitle(e.target.value)}
                     style={{ width: '100%', marginTop: '0.25rem' }}
+                    required
                   />
                 </label>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                  <label style={{ fontSize: '0.82rem' }}>
-                    Boost Model
-                    <select
-                      className="input"
-                      value={createBoostModel}
-                      onChange={(e) => setCreateBoostModel(e.target.value)}
-                      style={{ width: '100%', marginTop: '0.25rem' }}
-                    >
-                      <option value="">— Select Boost Model —</option>
-                      <option value="Mythic+ Keystone">Mythic+ Keystone</option>
-                      <option value="Raid Run (Normal/Heroic/Mythic)">Raid Run (Normal/Heroic/Mythic)</option>
-                      <option value="Leveling / Campaign">Leveling / Campaign</option>
-                      <option value="PvP / Arena / RBG">PvP / Arena / RBG</option>
-                      <option value="Delves / Farming">Delves / Farming</option>
-                      <option value="Custom">Custom</option>
-                    </select>
-                  </label>
-
-                  <label style={{ fontSize: '0.82rem' }}>
-                    VPN Requirement
-                    <select
-                      className="input"
-                      value={createVpnRequirement}
-                      onChange={(e) => setCreateVpnRequirement(e.target.value)}
-                      style={{ width: '100%', marginTop: '0.25rem' }}
-                    >
-                      <option value="">— Select VPN Requirement —</option>
-                      <option value="No VPN Required (Self-Play)">No VPN Required (Self-Play)</option>
-                      <option value="VPN Required — Client Country (Match IP)">VPN Required — Client Country (Match IP)</option>
-                      <option value="VPN Required — EU Region">VPN Required — EU Region</option>
-                      <option value="VPN Required — US Region">VPN Required — US Region</option>
-                      <option value="ExitLag / Gaming VPN Recommended">ExitLag / Gaming VPN Recommended</option>
-                    </select>
-                  </label>
+                {/* Top Boost Category Selector Tabs (6 Distinct Forms) */}
+                <div style={{ marginBottom: '0.85rem' }}>
+                  <CategoryBoostSpecsTabs
+                    activeCategory={createCategory}
+                    onSelectCategory={(key, model, defTitle) => {
+                      setCreateCategory(key);
+                      setCreateBoostModel(model);
+                      if (!createTitle || createTitle.includes('Bundle') || createTitle.includes('Clear') || createTitle.includes('Boost') || createTitle.includes('Package')) {
+                        setCreateTitle(defTitle);
+                      }
+                    }}
+                    specs={createBoostSpecs}
+                    onUpdateSpecs={setCreateBoostSpecs}
+                  />
                 </div>
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
@@ -2459,45 +2462,21 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                     style={{ width: '100%', marginTop: '0.25rem' }}
                   />
                 </label>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
-                <label style={{ fontSize: '0.82rem' }}>
-                  Mythic Key Level
-                  <input
-                    type="number"
-                    min="2"
-                    max="35"
-                    className="input"
-                    placeholder="e.g. 10"
-                    value={createMythicKeyLevel}
-                    onChange={(e) => setCreateMythicKeyLevel(e.target.value)}
-                    style={{ width: '100%', marginTop: '0.25rem' }}
-                  />
-                </label>
 
                 <label style={{ fontSize: '0.82rem' }}>
-                  Dungeon Name
-                  <input
-                    type="text"
+                  VPN &amp; Security Requirement
+                  <select
                     className="input"
-                    placeholder="e.g. Ara-Kara"
-                    value={createDungeonName}
-                    onChange={(e) => setCreateDungeonName(e.target.value)}
+                    value={createVpnRequirement}
+                    onChange={(e) => setCreateVpnRequirement(e.target.value)}
                     style={{ width: '100%', marginTop: '0.25rem' }}
-                  />
-                </label>
-
-                <label style={{ fontSize: '0.82rem' }}>
-                  VPN Location
-                  <input
-                    type="text"
-                    className="input"
-                    placeholder="e.g. Germany / Frankfurt"
-                    value={createVpnLocation}
-                    onChange={(e) => setCreateVpnLocation(e.target.value)}
-                    style={{ width: '100%', marginTop: '0.25rem' }}
-                  />
+                  >
+                    <option value="No VPN Required (Self-Play)">No VPN Required (Self-Play)</option>
+                    <option value="VPN Required — Client Country (Match IP)">VPN Required — Client Country (Match IP)</option>
+                    <option value="VPN Required — EU Region">VPN Required — EU Region</option>
+                    <option value="VPN Required — US Region">VPN Required — US Region</option>
+                    <option value="ExitLag / Gaming VPN Recommended">ExitLag / Gaming VPN Recommended</option>
+                  </select>
                 </label>
               </div>
 
