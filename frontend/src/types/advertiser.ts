@@ -37,6 +37,10 @@ export interface AdvertiserWallet {
   pendingEarningsUsd: string;
   paidCents: number;
   paidUsd: string;
+  frozenCents?: number;
+  frozenUsd?: string;
+  isFrozen?: boolean;
+  payoutAddress?: string | null;
   canPlaceOrders: boolean;
 }
 
@@ -184,3 +188,67 @@ export interface CreateOrderRequest {
   notes?: string;
   idempotencyKey?: string;
 }
+
+export interface DepositIntent {
+  id: number;
+  intentRef: string;
+  amountUsd: number;
+  payCurrency: string;
+  paymentId?: string | null;
+  invoiceUrl?: string | null;
+  status: 'WAITING' | 'CONFIRMED' | 'EXPIRED';
+  createdAt: string;
+  confirmedAt?: string | null;
+}
+
+export interface OrderChangeRequest {
+  id: number;
+  orderId: number;
+  orderRef?: string;
+  orderTitle?: string;
+  orderStatus?: string;
+  gameName?: string;
+  serviceName?: string;
+  grossAmountUsd?: string;
+  boosterPoolUsd?: string;
+  requester?: {
+    discordId?: string;
+    username?: string;
+    displayName?: string;
+    advertiserRank?: string;
+  };
+  requestType: 'EDIT' | 'CANCEL';
+  reason: string;
+  proposedChanges?: any;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  reviewNote?: string | null;
+  reviewedBy?: string | null;
+  createdAt: string;
+  reviewedAt?: string | null;
+}
+
+export interface DepositIntentResponse {
+  success: boolean;
+  deposit: DepositIntent;
+  instructions: {
+    message: string;
+    invoiceUrl?: string | null;
+    payCurrency: string;
+    amountUsd: number;
+    provider: string;
+  };
+}
+
+export interface WithdrawalResponse {
+  success: boolean;
+  withdrawal: {
+    id: number;
+    ref: string;
+    amountUsd: string;
+    status: string;
+    payoutAddress: string;
+    createdAt: string;
+  };
+  message: string;
+}
+

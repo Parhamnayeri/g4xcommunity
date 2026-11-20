@@ -158,6 +158,20 @@ export const DashboardLayout: React.FC = () => {
           >
             Booster Hub
           </Link>
+          {hasRole('advertiser', 'admin', 'owner', 'staff', 'manager') && (
+            <Link
+              to="/advertiser"
+              style={{
+                padding: '0.4rem 0.8rem',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                color: location.pathname === '/advertiser' ? 'var(--accent-lime)' : 'var(--text-muted)',
+                borderBottom: location.pathname === '/advertiser' ? '2px solid var(--accent-lime)' : 'none',
+              }}
+            >
+              📢 Advertiser Portal
+            </Link>
+          )}
           {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner') && (
             <Link
               to="/discord-commands"

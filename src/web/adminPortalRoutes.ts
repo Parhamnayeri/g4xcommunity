@@ -29,6 +29,12 @@ import {
   adjustUserWalletBalance,
   freezeUserWallet,
 } from '../services/adminWalletManagementService';
+import {
+  AdvertiserRank,
+  isValidAdvertiserRank,
+  ADVERTISER_RANK_LABELS,
+  setAdvertiserRank,
+} from '../services/advertiserRankService';
 
 export const adminPortalRouter = Router();
 
@@ -2136,14 +2142,427 @@ adminPortalRouter.post(
 
       res.json(result);
     } catch (err: any) {
-      console.error('[AdminFinanceWallets] Freeze error:', err);
-      res.status(400).json({
-        error: 'WALLET_FREEZE_FAILED',
-        message: err.message || 'Failed to execute wallet freeze operation.',
-      });
+      console.error('[AdminFinanceFreezeWallet] Error:', err);
+      res.status(400).json({ error: err.message || 'Failed to update wallet freeze status' });
     }
   }
 );
+
+/**
+ * GET /api/admin/order-change-requests
+ * Lists all advertiser order change and cancellation requests.
+ */
+adminPortalRouter.get(
+  ['/api/admin/order-change-requests', '/admin/order-change-requests'],
+  requireAuth,
+  requireAdminPortalAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const statusParam = typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : undefined;
+      const where: any = {};
+      if (statusParam && ['PENDING', 'APPROVED', 'REJECTED'].includes(statusParam)) {
+        where.status = statusParam;
+      }
+
+      const requests = await prisma.orderChangeRequest.findMany({
+        where,
+        include: {
+          order: {
+            select: {
+              id: true,
+              orderRef: true,
+              title: true,
+              status: true,
+              grossAmountMinor: true,
+              boosterPoolMinor: true,
+              platformFeeMinor: true,
+              gameSlug: true,
+              notes: true,
+              boostSpecsJson: true,
+              game: { select: { displayName: true } },
+              service: { select: { displayName: true } },
+            },
+          },
+          requester: {
+            select: {
+              discordId: true,
+              username: true,
+              displayName: true,
+              advertiserRank: true,
+            },
+          },
+          reviewer: {
+            select: {
+              discordId: true,
+              username: true,
+              displayName: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const formatted = requests.map((cr) => {
+        let proposedChanges: any = null;
+        if (cr.proposedChangesJson) {
+          try {
+            proposedChanges = JSON.parse(cr.proposedChangesJson);
+          } catch {
+            proposedChanges = null;
+          }
+        }
+
+        return {
+          id: cr.id,
+          orderId: cr.orderId,
+          orderRef: cr.order?.orderRef,
+          orderTitle: cr.order?.title,
+          orderStatus: cr.order?.status,
+          gameName: cr.order?.game?.displayName || cr.order?.gameSlug,
+          serviceName: cr.order?.service?.displayName || 'Service',
+          grossAmountUsd: cr.order ? (cr.order.grossAmountMinor / 100).toFixed(2) : '0.00',
+          boosterPoolUsd: cr.order ? (cr.order.boosterPoolMinor / 100).toFixed(2) : '0.00',
+          requester: {
+            discordId: cr.requester?.discordId,
+            username: cr.requester?.username,
+            displayName: cr.requester?.displayName || cr.requester?.username,
+            advertiserRank: cr.requester?.advertiserRank || 'BRONZE',
+          },
+          requestType: cr.requestType,
+          reason: cr.reason,
+          proposedChanges,
+          status: cr.status,
+          reviewNote: cr.reviewNote,
+          reviewedBy: cr.reviewer ? cr.reviewer.displayName || cr.reviewer.username : null,
+          createdAt: cr.createdAt,
+          reviewedAt: cr.reviewedAt,
+        };
+      });
+
+      res.json({
+        success: true,
+        changeRequests: formatted,
+      });
+    } catch (err: any) {
+      console.error('[AdminOrderChangeRequests] Error:', err);
+      res.status(500).json({ error: err.message || 'Failed to list order change requests' });
+    }
+  }
+);
+
+/**
+ * POST /api/admin/order-change-requests/:id/resolve
+ * Approves or rejects an advertiser's EDIT or CANCEL request.
+ */
+adminPortalRouter.post(
+  ['/api/admin/order-change-requests/:id/resolve', '/admin/order-change-requests/:id/resolve'],
+  requireAuth,
+  requireAdminPortalAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const requestId = parseInt(req.params.id, 10);
+      const { decision, reviewNote } = req.body;
+      const actorId = (req as AuthenticatedRequest).user?.discordId;
+
+      if (isNaN(requestId)) {
+        res.status(400).json({ error: 'Invalid change request ID' });
+        return;
+      }
+
+      const dec = (decision || '').trim().toUpperCase();
+      if (dec !== 'APPROVED' && dec !== 'REJECTED') {
+        res.status(400).json({ error: "decision must be either 'APPROVED' or 'REJECTED'" });
+        return;
+      }
+
+      const cr = await prisma.orderChangeRequest.findUnique({
+        where: { id: requestId },
+        include: { order: true },
+      });
+
+      if (!cr) {
+        res.status(404).json({ error: 'Order change request not found' });
+        return;
+      }
+
+      if (cr.status !== 'PENDING') {
+        res.status(400).json({ error: `Change request #${requestId} has already been resolved (${cr.status})` });
+        return;
+      }
+
+      const note = typeof reviewNote === 'string' ? reviewNote.trim() : null;
+
+      if (dec === 'APPROVED') {
+        if (cr.requestType === 'EDIT') {
+          // Parse proposed changes
+          let changes: any = {};
+          if (cr.proposedChangesJson) {
+            try {
+              changes = JSON.parse(cr.proposedChangesJson);
+            } catch {
+              changes = {};
+            }
+          }
+
+          const orderUpdateData: any = {};
+          if (changes.title && typeof changes.title === 'string') {
+            orderUpdateData.title = changes.title.trim();
+          }
+          if (changes.notes && typeof changes.notes === 'string') {
+            orderUpdateData.notes = changes.notes.trim();
+          }
+          if (changes.boostSpecs) {
+            orderUpdateData.boostSpecsJson = JSON.stringify(changes.boostSpecs);
+          }
+          if (changes.boosterPoolUsd) {
+            const poolFloat = parseFloat(String(changes.boosterPoolUsd));
+            if (!isNaN(poolFloat) && poolFloat > 0) {
+              orderUpdateData.boosterPoolMinor = Math.round(poolFloat * 100);
+            }
+          }
+
+          await prisma.$transaction(async (tx) => {
+            if (Object.keys(orderUpdateData).length > 0) {
+              await tx.order.update({
+                where: { id: cr.orderId },
+                data: orderUpdateData,
+              });
+            }
+
+            await tx.orderChangeRequest.update({
+              where: { id: cr.id },
+              data: {
+                status: 'APPROVED',
+                reviewedByDiscordId: actorId,
+                reviewedAt: new Date(),
+                reviewNote: note,
+              },
+            });
+
+            await tx.auditLog.create({
+              data: {
+                actorId,
+                action: 'ADVERTISER_EDIT_APPROVED',
+                entityType: 'OrderChangeRequest',
+                entityId: String(cr.id),
+                newValues: JSON.stringify({
+                  orderId: cr.orderId,
+                  appliedChanges: orderUpdateData,
+                  reviewNote: note,
+                }),
+              },
+            });
+          });
+
+          // Refresh Discord embed
+          publishOrRefreshOrderCard(getGlobalDiscordClient(), cr.orderId).catch(() => {});
+
+          res.json({
+            success: true,
+            status: 'APPROVED',
+            message: `Order #${cr.orderId} modifications approved and applied successfully.`,
+          });
+          return;
+        }
+
+        if (cr.requestType === 'CANCEL') {
+          // Cancel order and refund escrow to advertiser
+          await prisma.$transaction(async (tx) => {
+            const currentOrder = await tx.order.findUnique({
+              where: { id: cr.orderId },
+            });
+
+            if (!currentOrder) {
+              throw new Error('Order not found');
+            }
+
+            // Set order status to cancelled
+            await tx.order.update({
+              where: { id: cr.orderId },
+              data: {
+                status: 'cancelled',
+                paymentStatus: 'refunded',
+              },
+            });
+
+            // Refund locked escrow back to advertiser wallet
+            const refundCents = currentOrder.grossAmountMinor;
+            if (refundCents > 0 && currentOrder.advertiserId) {
+              await tx.walletV2.upsert({
+                where: { userId: currentOrder.advertiserId },
+                create: {
+                  userId: currentOrder.advertiserId,
+                  availableCents: refundCents,
+                  reservedCents: 0,
+                },
+                update: {
+                  availableCents: { increment: refundCents },
+                  reservedCents: { decrement: Math.min(refundCents, 999999999) },
+                },
+              });
+
+              await tx.wallet.updateMany({
+                where: { userId: currentOrder.advertiserId },
+                data: {
+                  balanceUsd: { increment: refundCents },
+                  escrowUsd: { decrement: Math.min(refundCents, 999999999) },
+                },
+              });
+
+              await tx.ledgerEntryV2.create({
+                data: {
+                  entryRef: `REF_${currentOrder.orderRef}_${Date.now()}`,
+                  accountType: 'USER_WALLET',
+                  userId: currentOrder.advertiserId,
+                  orderId: currentOrder.id,
+                  amountCents: refundCents,
+                  entryType: 'ORDER_REFUND',
+                  direction: 'CREDIT',
+                  description: `Full refund for cancelled Order #${currentOrder.orderRef}`,
+                  createdBy: actorId,
+                },
+              });
+            }
+
+            await tx.orderChangeRequest.update({
+              where: { id: cr.id },
+              data: {
+                status: 'APPROVED',
+                reviewedByDiscordId: actorId,
+                reviewedAt: new Date(),
+                reviewNote: note,
+              },
+            });
+
+            await tx.auditLog.create({
+              data: {
+                actorId,
+                action: 'ADVERTISER_CANCEL_APPROVED',
+                entityType: 'OrderChangeRequest',
+                entityId: String(cr.id),
+                newValues: JSON.stringify({
+                  orderId: cr.orderId,
+                  refundCents,
+                  reviewNote: note,
+                }),
+              },
+            });
+          });
+
+          publishOrRefreshOrderCard(getGlobalDiscordClient(), cr.orderId).catch(() => {});
+
+          res.json({
+            success: true,
+            status: 'APPROVED',
+            message: `Order #${cr.orderId} cancellation approved and funds refunded to advertiser wallet.`,
+          });
+          return;
+        }
+      }
+
+      // REJECTED
+      await prisma.$transaction(async (tx) => {
+        await tx.orderChangeRequest.update({
+          where: { id: cr.id },
+          data: {
+            status: 'REJECTED',
+            reviewedByDiscordId: actorId,
+            reviewedAt: new Date(),
+            reviewNote: note,
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            actorId,
+            action: 'ADVERTISER_CHANGE_REQUEST_REJECTED',
+            entityType: 'OrderChangeRequest',
+            entityId: String(cr.id),
+            newValues: JSON.stringify({
+              orderId: cr.orderId,
+              requestType: cr.requestType,
+              reviewNote: note,
+            }),
+          },
+        });
+      });
+
+      res.json({
+        success: true,
+        status: 'REJECTED',
+        message: `Change request #${requestId} was rejected.`,
+      });
+    } catch (err: any) {
+      console.error('[AdminOrderChangeRequestResolve] Error:', err);
+      res.status(400).json({ error: err.message || 'Failed to resolve change request' });
+    }
+  }
+);
+
+/**
+ * PATCH /api/admin/users/:discordId/advertiser-rank
+ * Promotes/demotes an advertiser across the 6 approved commission tiers.
+ */
+adminPortalRouter.patch(
+  ['/api/admin/users/:discordId/advertiser-rank', '/admin/users/:discordId/advertiser-rank'],
+  requireAuth,
+  requireAdminPortalAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { discordId } = req.params;
+      const { advertiserRank, reason } = req.body;
+      const actorId = (req as AuthenticatedRequest).user?.discordId;
+
+      if (!advertiserRank || typeof advertiserRank !== 'string') {
+        res.status(400).json({ error: 'advertiserRank is required' });
+        return;
+      }
+
+      const upper = advertiserRank.trim().toUpperCase();
+      let normalizedRank: AdvertiserRank;
+      if (upper === 'FOUNDING_PARTNER' || upper === 'FOUNDING_ADVERTISER') {
+        normalizedRank = AdvertiserRank.FOUNDING_ADVERTISER;
+      } else if (upper === 'OFFICIAL_PARTNER' || upper === 'OFFICIAL_PARTNERS') {
+        normalizedRank = AdvertiserRank.OFFICIAL_PARTNERS;
+      } else if (isValidAdvertiserRank(upper)) {
+        normalizedRank = upper as AdvertiserRank;
+      } else {
+        res.status(400).json({
+          error: `Invalid advertiser rank '${upper}'. Valid options: BRONZE, SILVER, GOLD, DIAMOND, FOUNDING_PARTNER, OFFICIAL_PARTNER`,
+        });
+        return;
+      }
+
+      const updateReason = typeof reason === 'string' && reason.trim().length >= 3
+        ? reason.trim()
+        : 'Management manual rank adjustment via Admin User Management';
+
+      const result = await setAdvertiserRank({
+        advertiserId: discordId,
+        newRank: normalizedRank,
+        reason: updateReason,
+        actorId: actorId || 'ADMIN',
+      });
+
+      res.json({
+        success: true,
+        user: {
+          discordId: result.user.discordId,
+          username: result.user.username,
+          displayName: result.user.displayName,
+          advertiserRank: normalizedRank,
+          rankLabel: ADVERTISER_RANK_LABELS[normalizedRank],
+          commissionRate: result.effectiveCommissionRate,
+        },
+        message: `Advertiser rank updated to ${ADVERTISER_RANK_LABELS[normalizedRank]} (${result.effectiveCommissionRate})`,
+      });
+    } catch (err: any) {
+      console.error('[AdminUpdateAdvertiserRank] Error:', err);
+      res.status(400).json({ error: err.message || 'Failed to update advertiser rank' });
+    }
+  }
+);
+
 
 
 

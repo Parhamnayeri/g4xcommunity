@@ -27,6 +27,8 @@ import { AdminFinanceOverviewResponse } from '../../types/adminPortal';
 import { PlatformBalancesStrip } from '../admin/PlatformBalancesStrip';
 import { extractExternalOrderIdAndCleanNotes, has13PercentFee, calculate13PercentSplit } from '../../utils/orderParsers';
 import { AdminEditOrderModal } from './AdminEditOrderModal';
+import { AdminOrderChangeRequestsModal } from './AdminOrderChangeRequestsModal';
+import { fetchOrderChangeRequests } from '../../services/advertiser';
 import { DynamicServiceFormRenderer } from './DynamicServiceFormRenderer';
 import { DiscordWelcomeMessagePreview } from './DiscordWelcomeMessagePreview';
 // BoostSpecsBadgeGrid imported in details workspace
@@ -125,6 +127,10 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
   // Financial Overview & Real-Time Platform Balances
   const [financeOverview, setFinanceOverview] = useState<AdminFinanceOverviewResponse | null>(null);
   const [loadingFinance, setLoadingFinance] = useState(false);
+
+  // Change Requests Review State
+  const [showChangeRequestsModal, setShowChangeRequestsModal] = useState(false);
+  const [pendingChangeRequestsCount, setPendingChangeRequestsCount] = useState(0);
 
   // Create Order Modal State
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -236,6 +242,21 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
       .finally(() => {
         if (current) setLoadingFinance(false);
       });
+    return () => {
+      current = false;
+    };
+  }, [allowed, revision]);
+
+  useEffect(() => {
+    if (!allowed) return;
+    let current = true;
+    fetchOrderChangeRequests('PENDING')
+      .then((res) => {
+        if (current && res?.changeRequests) {
+          setPendingChangeRequestsCount(res.changeRequests.length);
+        }
+      })
+      .catch(() => {});
     return () => {
       current = false;
     };
@@ -536,6 +557,35 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
               onClick={() => setRevision((n) => n + 1)}
             >
               ↻ Refresh
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{
+                position: 'relative',
+                borderColor: pendingChangeRequestsCount > 0 ? '#f59e0b' : undefined,
+                color: pendingChangeRequestsCount > 0 ? '#fcd34d' : undefined,
+                fontWeight: pendingChangeRequestsCount > 0 ? 700 : undefined,
+              }}
+              onClick={() => setShowChangeRequestsModal(true)}
+              title="Review advertiser order edit and cancellation requests"
+            >
+              📋 Change Requests
+              {pendingChangeRequestsCount > 0 && (
+                <span
+                  style={{
+                    backgroundColor: '#ef4444',
+                    color: '#ffffff',
+                    borderRadius: '10px',
+                    padding: '0.1rem 0.45rem',
+                    fontSize: '0.7rem',
+                    fontWeight: 800,
+                    marginLeft: '0.4rem',
+                  }}
+                >
+                  {pendingChangeRequestsCount}
+                </span>
+              )}
             </button>
           </div>
           {!isReadOnly && (
@@ -1640,6 +1690,16 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
             if (details && details.orderId === editingOrderId) {
               openDetails(editingOrderId);
             }
+          }}
+        />
+      )}
+
+      {showChangeRequestsModal && (
+        <AdminOrderChangeRequestsModal
+          isOpen={showChangeRequestsModal}
+          onClose={() => setShowChangeRequestsModal(false)}
+          onResolved={() => {
+            setRevision((r) => r + 1);
           }}
         />
       )}

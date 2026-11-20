@@ -80,3 +80,72 @@ export async function createAdvertiserOrder(
     body: JSON.stringify(orderData),
   });
 }
+
+export async function createDepositIntent(
+  amountUsd: number,
+  payCurrency: string
+): Promise<{
+  success: boolean;
+  deposit: any;
+  instructions: { message: string; invoiceUrl?: string | null; payCurrency: string; amountUsd: number; provider: string };
+}> {
+  return await apiRequest('/api/advertiser/deposits/intent', {
+    method: 'POST',
+    body: JSON.stringify({ amountUsd, payCurrency }),
+  });
+}
+
+export async function submitAdvertiserWithdrawal(
+  amountUsd: number,
+  destinationAddress: string,
+  payoutMethod = 'USDT_BEP20',
+  notes?: string
+): Promise<{
+  success: boolean;
+  withdrawal: { id: number; ref: string; amountUsd: string; status: string; payoutAddress: string; createdAt: string };
+  message: string;
+}> {
+  return await apiRequest('/api/advertiser/withdrawals', {
+    method: 'POST',
+    body: JSON.stringify({ amount: amountUsd, payoutAddress: destinationAddress, payoutMethod, notes }),
+  });
+}
+
+export async function submitOrderChangeRequest(
+  orderId: number,
+  data: { requestType: 'EDIT' | 'CANCEL'; reason: string; proposedChanges?: any }
+): Promise<{ success: boolean; changeRequest: any; message: string }> {
+  return await apiRequest(`/api/advertiser/orders/${orderId}/change-request`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function fetchOrderChangeRequests(
+  status?: 'PENDING' | 'APPROVED' | 'REJECTED'
+): Promise<{ success: boolean; changeRequests: any[] }> {
+  const query = status ? `?status=${status}` : '';
+  return await apiRequest(`/api/admin/order-change-requests${query}`);
+}
+
+export async function resolveOrderChangeRequest(
+  id: number,
+  decision: 'APPROVED' | 'REJECTED',
+  reviewNote?: string
+): Promise<{ success: boolean; status: string; message: string }> {
+  return await apiRequest(`/api/admin/order-change-requests/${id}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, reviewNote }),
+  });
+}
+
+export async function updateAdvertiserRank(
+  discordId: string,
+  advertiserRank: string,
+  reason?: string
+): Promise<{ success: boolean; user: any; message: string }> {
+  return await apiRequest(`/api/admin/users/${discordId}/advertiser-rank`, {
+    method: 'PATCH',
+    body: JSON.stringify({ advertiserRank, reason }),
+  });
+}

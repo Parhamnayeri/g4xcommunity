@@ -93,6 +93,9 @@ model User {
   processedPlatformWithdrawals PlatformWithdrawal[]   @relation("WithdrawalProcessor")
   createdExchangeRates         ExchangeRate[]         @relation("ExchangeRateAdmin")
   reversedFinancialTransactions FinancialTransaction[] @relation("ReversedByAdmin")
+  requestedOrderChanges        OrderChangeRequest[]   @relation("RequestedOrderChanges")
+  reviewedOrderChanges         OrderChangeRequest[]   @relation("ReviewedOrderChanges")
+  depositIntents               DepositIntent[]        @relation("UserDepositIntents")
   financialAuditLogs            FinancialAuditLog[]    @relation("FinancialAuditAdmin")
   reconciliations               BalanceReconciliationRecord[] @relation("ReconciliationAdmin")
   financialSnapshots            FinancialSnapshot[]    @relation("SnapshotAdmin")
@@ -377,6 +380,7 @@ model Order {
   ledgerEntriesV2          LedgerEntryV2[]
   paymentRequests          PaymentRequest[]
   advertiserMetadata       AdvertiserOrderMetadata?
+  changeRequests           OrderChangeRequest[]
 
   @@index([status])
   @@index([gameSlug, status])
@@ -2116,3 +2120,51 @@ model SystemSetting {
 
   @@map("system_settings")
 }
+
+// ─── ۶۰. درخواست‌های تغییر/لغو سفارشات ادورتایزر (Advertiser Order Change & Cancel Requests) ─
+model OrderChangeRequest {
+  id                  Int       @id @default(autoincrement())
+  orderId             Int       @map("order_id")
+  requesterDiscordId  String    @map("requester_discord_id")
+  requestType         String    @map("request_type") // EDIT | CANCEL
+  proposedChangesJson String?   @map("proposed_changes_json")
+  reason              String
+  status              String    @default("PENDING") @map("status") // PENDING | APPROVED | REJECTED
+  reviewedByDiscordId String?   @map("reviewed_by_discord_id")
+  reviewNote          String?   @map("review_note")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  reviewedAt          DateTime? @map("reviewed_at")
+
+  order               Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  requester           User      @relation("RequestedOrderChanges", fields: [requesterDiscordId], references: [discordId], onDelete: Cascade)
+  reviewer            User?     @relation("ReviewedOrderChanges", fields: [reviewedByDiscordId], references: [discordId], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([requesterDiscordId])
+  @@index([status])
+  @@map("order_change_requests")
+}
+
+// ─── ۶۱. درخواست‌های شارژ کیف‌پول کریپتو / NOWPayments (Crypto Deposit Intents) ─────────────
+model DepositIntent {
+  id             Int       @id @default(autoincrement())
+  intentRef      String    @unique @map("intent_ref")
+  userId         String    @map("user_id")
+  provider       String    @default("NOWPAYMENTS") @map("provider") // NOWPAYMENTS
+  amountUsd      Float     @map("amount_usd")
+  payCurrency    String    @map("pay_currency") // USDTTRC20 | USDTBSC | USDC | BTC | ETH
+  paymentId      String?   @unique @map("payment_id")
+  invoiceUrl     String?   @map("invoice_url")
+  status         String    @default("WAITING") @map("status") // WAITING | CONFIRMED | EXPIRED | CANCELLED
+  metadata       String?   @map("metadata")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  confirmedAt    DateTime? @map("confirmed_at")
+
+  user           User      @relation("UserDepositIntents", fields: [userId], references: [discordId], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@map("deposit_intents")
+}
+

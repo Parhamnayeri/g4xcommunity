@@ -287,9 +287,28 @@ export const ActiveOrdersSection: React.FC<ActiveOrdersSectionProps> = ({
 
                     {/* Status */}
                     <td>
-                      <span className={badgeClass}>
-                        {o.simplifiedStatus.label}
-                      </span>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                        <span className={badgeClass}>
+                          {o.simplifiedStatus.label}
+                        </span>
+                        {((o as any).changeRequests?.some((c: any) => c.status === 'PENDING') || (o as any).hasPendingChangeRequest) && (
+                          <span
+                            style={{
+                              backgroundColor: 'rgba(245, 158, 11, 0.2)',
+                              border: '1px solid rgba(245, 158, 11, 0.4)',
+                              color: '#f59e0b',
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              borderRadius: '4px',
+                              padding: '0.15rem 0.4rem',
+                              display: 'inline-block',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            ⏳ Pending Admin Review
+                          </span>
+                        )}
+                      </div>
                     </td>
 
                     {/* Boosters Assigned */}

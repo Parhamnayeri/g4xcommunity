@@ -234,6 +234,27 @@ export const Header: React.FC = () => {
                     Portal Overview
                   </Link>
 
+                  {hasRole('advertiser', 'admin', 'owner', 'staff', 'manager') && (
+                    <Link
+                      to="/advertiser"
+                      onClick={() => setUserDropdownOpen(false)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.6rem 0.75rem',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.85rem',
+                        color: 'var(--accent-lime)',
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                      📢 Advertiser Portal
+                    </Link>
+                  )}
+
                   {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner') && (
                     <Link
                       to="/discord-commands"

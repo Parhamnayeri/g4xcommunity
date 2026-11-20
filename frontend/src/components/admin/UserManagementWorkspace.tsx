@@ -9,6 +9,7 @@ import {
 } from '../../services/adminPortal';
 import { AssistedKycModal } from './AssistedKycModal';
 import { UserDetailsModal } from './UserDetailsModal';
+import { updateAdvertiserRank } from '../../services/advertiser';
 
 interface UserItem {
   discordId: string;
@@ -58,10 +59,11 @@ export const UserManagementWorkspace: React.FC<Props> = ({
 
   // Selected User & Modals
   const [selectedUser, setSelectedUser] = useState<UserItem | null>(null);
-  const [modModalType, setModModalType] = useState<'status' | 'role' | null>(null);
+  const [modModalType, setModModalType] = useState<'status' | 'role' | 'rank' | null>(null);
   const [modReason, setModReason] = useState('');
   const [roleToModify, setRoleToModify] = useState(canManageRoles && !allowPrivilegedRoles ? 'staff' : 'booster');
   const [roleAction, setRoleAction] = useState<'grant' | 'revoke'>('grant');
+  const [advertiserRankToSet, setAdvertiserRankToSet] = useState('BRONZE');
   const [submittingMod, setSubmittingMod] = useState(false);
   const [modFeedback, setModFeedback] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -318,18 +320,34 @@ export const UserManagementWorkspace: React.FC<Props> = ({
                         ✏️ Assist KYC
                       </button>
                       {canManageRoles && (
-                        <button
-                          type="button"
-                          className="btn btn-secondary btn-xs"
-                          onClick={() => {
-                            setSelectedUser(u);
-                            setModModalType('role');
-                            setModFeedback(null);
-                            setModReason('');
-                          }}
-                        >
-                          🛡️ Roles
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-xs"
+                            onClick={() => {
+                              setSelectedUser(u);
+                              setModModalType('role');
+                              setModFeedback(null);
+                              setModReason('');
+                            }}
+                          >
+                            🛡️ Roles
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-secondary btn-xs"
+                            onClick={() => {
+                              setSelectedUser(u);
+                              setModModalType('rank');
+                              setAdvertiserRankToSet(u.advertiserRank || 'BRONZE');
+                              setModFeedback(null);
+                              setModReason('');
+                            }}
+                            title="Adjust commercial advertiser rank tier"
+                          >
+                            ⭐ Rank
+                          </button>
+                        </>
                       )}
                       {canBan && (
                         <button
@@ -426,7 +444,9 @@ export const UserManagementWorkspace: React.FC<Props> = ({
               <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)' }}>
                 {modModalType === 'status'
                   ? `${selectedUser.isActive ? 'Suspend' : 'Activate'} User Account`
-                  : 'Manage Assigned User Roles'}
+                  : modModalType === 'role'
+                  ? 'Manage Assigned User Roles'
+                  : 'Manage Advertiser Commission Rank'}
               </h3>
               <button
                 type="button"
@@ -445,6 +465,30 @@ export const UserManagementWorkspace: React.FC<Props> = ({
               <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
                 Target: <strong>{selectedUser.displayName || selectedUser.username}</strong> ({selectedUser.discordId})
               </p>
+
+              {modModalType === 'rank' && (
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                    Commercial Advertiser Rank Tier
+                  </label>
+                  <select
+                    className="input"
+                    value={advertiserRankToSet}
+                    onChange={(e) => setAdvertiserRankToSet(e.target.value)}
+                    style={{ width: '100%', padding: '0.5rem' }}
+                  >
+                    <option value="BRONZE">Bronze Partner (14.99% fee)</option>
+                    <option value="SILVER">Silver Partner (12.99% fee)</option>
+                    <option value="GOLD">Gold Partner (10.99% fee)</option>
+                    <option value="DIAMOND">Diamond Partner (8.99% fee)</option>
+                    <option value="FOUNDING_PARTNER">Founding Partner (8.99% fee)</option>
+                    <option value="OFFICIAL_PARTNER">Official Partner (6.99% fee)</option>
+                  </select>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.35rem', display: 'block' }}>
+                    Sets the authoritative commission percentage deducted from future direct boost orders created by this user.
+                  </span>
+                </div>
+              )}
 
               {modModalType === 'role' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.25rem' }}>
@@ -535,9 +579,12 @@ export const UserManagementWorkspace: React.FC<Props> = ({
                     if (modModalType === 'status') {
                       await updateAdminUserStatus(selectedUser.discordId, !selectedUser.isActive, modReason.trim());
                       setModFeedback({ text: 'Account status successfully updated.', type: 'success' });
-                    } else {
+                    } else if (modModalType === 'role') {
                       await updateAdminUserRole(selectedUser.discordId, roleToModify, roleAction, modReason.trim());
                       setModFeedback({ text: `Role ${roleAction}ed successfully.`, type: 'success' });
+                    } else if (modModalType === 'rank') {
+                      await updateAdvertiserRank(selectedUser.discordId, advertiserRankToSet, modReason.trim());
+                      setModFeedback({ text: `Advertiser rank updated to ${advertiserRankToSet}.`, type: 'success' });
                     }
                     setTimeout(() => {
                       setSelectedUser(null);

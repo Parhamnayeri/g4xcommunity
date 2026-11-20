@@ -7,9 +7,10 @@ import { AdvertiserWalletCard } from '../components/advertiser/AdvertiserWalletC
 import { AdvertiserMetrics } from '../components/advertiser/AdvertiserMetrics';
 import { ActiveOrdersSection } from '../components/advertiser/ActiveOrdersSection';
 import { OrderHistorySection } from '../components/advertiser/OrderHistorySection';
-import { EditNoteModal } from '../components/advertiser/EditNoteModal';
-import { CancelRequestModal } from '../components/advertiser/CancelRequestModal';
 import { CreateOrderModal } from '../components/advertiser/CreateOrderModal';
+import { DepositCryptoModal } from '../components/advertiser/DepositCryptoModal';
+import { WithdrawModal } from '../components/advertiser/WithdrawModal';
+import { OrderChangeRequestModal } from '../components/advertiser/OrderChangeRequestModal';
 import { LoadingState } from '../components/ui/LoadingState';
 import { ErrorState } from '../components/ui/ErrorState';
 
@@ -20,11 +21,15 @@ export const AdvertiserPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Modals state
+  // Tabs state
   const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
-  const [editingNoteOrder, setEditingNoteOrder] = useState<AdvertiserOrder | null>(null);
-  const [cancellingOrder, setCancellingOrder] = useState<AdvertiserOrder | null>(null);
+
+  // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isDepositModalOpen, setIsDepositModalOpen] = useState(false);
+  const [isWithdrawModalOpen, setIsWithdrawModalOpen] = useState(false);
+  const [changeRequestOrder, setChangeRequestOrder] = useState<AdvertiserOrder | null>(null);
+  const [changeRequestType, setChangeRequestType] = useState<'EDIT' | 'CANCEL'>('EDIT');
 
   // Success Notification Banner
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
@@ -59,22 +64,27 @@ export const AdvertiserPage: React.FC = () => {
     }, 6000);
   };
 
-  const handleNoteSuccess = (_updatedNotes: string) => {
-    setEditingNoteOrder(null);
-    showNotification('Order notes updated successfully.');
-    setRefreshTrigger((prev) => prev + 1);
+  const handleDepositSuccess = () => {
+    showNotification('Crypto deposit invoice generated. Complete transaction to fund wallet.', 'info');
+    loadOverview(true);
   };
 
-  const handleCancelSuccess = (status: 'cancelled' | 'pending_review', message: string) => {
-    setCancellingOrder(null);
-    showNotification(message, status === 'cancelled' ? 'success' : 'info');
+  const handleWithdrawSuccess = (msg: string) => {
+    setIsWithdrawModalOpen(false);
+    showNotification(msg, 'success');
+    loadOverview(true);
+  };
+
+  const handleChangeRequestSuccess = (msg: string) => {
+    setChangeRequestOrder(null);
+    showNotification(msg, 'info');
     setRefreshTrigger((prev) => prev + 1);
     loadOverview(true);
   };
 
   const handleCreateOrderSuccess = (orderRef: string) => {
     setIsCreateModalOpen(false);
-    showNotification(`Boost order ${orderRef} created and funded successfully!`);
+    showNotification(`Boost order #${orderRef} created and funded via wallet escrow!`, 'success');
     setRefreshTrigger((prev) => prev + 1);
     loadOverview(true);
   };
@@ -165,7 +175,11 @@ export const AdvertiserPage: React.FC = () => {
         }}
       >
         <AdvertiserRankCard rankData={data.rank} />
-        <AdvertiserWalletCard wallet={data.wallet} />
+        <AdvertiserWalletCard
+          wallet={data.wallet}
+          onDepositClick={() => setIsDepositModalOpen(true)}
+          onWithdrawClick={() => setIsWithdrawModalOpen(true)}
+        />
       </div>
 
       {/* ─── 4. Orders Workspace Navigation (Active vs History Tabs) ────────── */}
@@ -245,8 +259,14 @@ export const AdvertiserPage: React.FC = () => {
         {/* Tab Content */}
         {activeTab === 'active' ? (
           <ActiveOrdersSection
-            onEditNote={(order) => setEditingNoteOrder(order)}
-            onCancelRequest={(order) => setCancellingOrder(order)}
+            onEditNote={(order) => {
+              setChangeRequestOrder(order);
+              setChangeRequestType('EDIT');
+            }}
+            onCancelRequest={(order) => {
+              setChangeRequestOrder(order);
+              setChangeRequestType('CANCEL');
+            }}
             refreshTrigger={refreshTrigger}
           />
         ) : (
@@ -255,19 +275,30 @@ export const AdvertiserPage: React.FC = () => {
       </section>
 
       {/* ─── Modals ───────────────────────────────────────────────────────── */}
-      {editingNoteOrder && (
-        <EditNoteModal
-          order={editingNoteOrder}
-          onClose={() => setEditingNoteOrder(null)}
-          onSuccess={handleNoteSuccess}
+      {isDepositModalOpen && (
+        <DepositCryptoModal
+          isOpen={isDepositModalOpen}
+          onClose={() => setIsDepositModalOpen(false)}
+          onSuccess={handleDepositSuccess}
         />
       )}
 
-      {cancellingOrder && (
-        <CancelRequestModal
-          order={cancellingOrder}
-          onClose={() => setCancellingOrder(null)}
-          onSuccess={handleCancelSuccess}
+      {isWithdrawModalOpen && (
+        <WithdrawModal
+          isOpen={isWithdrawModalOpen}
+          onClose={() => setIsWithdrawModalOpen(false)}
+          wallet={data.wallet}
+          onSuccess={handleWithdrawSuccess}
+        />
+      )}
+
+      {changeRequestOrder && (
+        <OrderChangeRequestModal
+          isOpen={Boolean(changeRequestOrder)}
+          onClose={() => setChangeRequestOrder(null)}
+          order={changeRequestOrder}
+          initialType={changeRequestType}
+          onSuccess={handleChangeRequestSuccess}
         />
       )}
 

@@ -815,7 +815,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                 vpnRequirement={vpnRequirement}
                 specs={boostSpecs}
                 notes={notes}
-                grossAmount={totalCostUsd}
+                grossAmount={grossAmountUsd || parsedGross.toFixed(2)}
                 boosterPool={boosterPoolUsd}
                 serviceTemplate={selectedService?.tempChannelTemplate}
               />
