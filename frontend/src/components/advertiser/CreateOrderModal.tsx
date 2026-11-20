@@ -4,6 +4,7 @@ import { PublicGame, AdvertiserRankData, AdvertiserWallet, DiscordIntegrationInf
 import { extractExternalOrderIdAndCleanNotes } from '../../utils/orderParsers';
 import { DynamicServiceFormRenderer } from '../orders/DynamicServiceFormRenderer';
 import { BoostCategoryKey } from '../../types/boostSpecs';
+import { DiscordWelcomeMessagePreview } from '../orders/DiscordWelcomeMessagePreview';
 
 interface CreateOrderModalProps {
   rankData: AdvertiserRankData;
@@ -209,7 +210,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
     >
       <div
         className="studio-modal-card studio-modal-card-lg"
-        style={{ maxWidth: '620px' }}
+        style={{ width: 'min(1080px, 94vw)', maxWidth: '1080px', maxHeight: '92vh', overflowY: 'auto' }}
       >
         {/* Header */}
         <div className="studio-modal-header">
@@ -251,7 +252,88 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
           </div>
         ) : (
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
-            {/* Order Title */}
+            {/* 1. Game & Service Selector (Top Level) */}
+            <div
+              style={{
+                background: 'rgba(255, 255, 255, 0.03)',
+                border: '1px solid rgba(168, 85, 247, 0.25)',
+                borderRadius: '10px',
+                padding: '0.85rem 1rem',
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '0.85rem',
+              }}
+            >
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted, #9490a6)',
+                    marginBottom: '0.35rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  🎮 Select Game:
+                </label>
+                <select
+                  value={selectedGameSlug}
+                  onChange={(e) => handleGameChange(e.target.value)}
+                  style={{
+                    width: '100%',
+                    backgroundColor: 'rgba(13, 11, 18, 0.9)',
+                    border: '1px solid rgba(124, 58, 237, 0.4)',
+                    borderRadius: '8px',
+                    padding: '0.65rem 0.75rem',
+                    color: 'var(--text-primary, #f4f4f6)',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                  }}
+                >
+                  {games.map((g) => (
+                    <option key={g.slug} value={g.slug}>
+                      {g.displayName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label
+                  style={{
+                    display: 'block',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-muted, #9490a6)',
+                    marginBottom: '0.35rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  ⚡ Select Game Service:
+                </label>
+                <select
+                  value={selectedServiceId}
+                  onChange={(e) => handleServiceChange(Number(e.target.value))}
+                  style={{
+                    width: '100%',
+                    backgroundColor: 'rgba(13, 11, 18, 0.9)',
+                    border: '1px solid rgba(124, 58, 237, 0.4)',
+                    borderRadius: '8px',
+                    padding: '0.65rem 0.75rem',
+                    color: 'var(--text-primary, #f4f4f6)',
+                    fontSize: '0.9rem',
+                    outline: 'none',
+                  }}
+                >
+                  {availableServices.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.displayName} ({s.serviceMode})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* 2. Order Title */}
             <div>
               <label
                 style={{
@@ -283,7 +365,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               />
             </div>
 
-            {/* Dynamic Service Form or Category Selector Tabs */}
+            {/* 3. Dynamic Service Form Specifications */}
             <div style={{ marginBottom: '0.4rem' }}>
               <DynamicServiceFormRenderer
                 selectedService={selectedService}
@@ -298,77 +380,6 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                 specs={boostSpecs}
                 onUpdateSpecs={setBoostSpecs}
               />
-            </div>
-
-            {/* Game & Service Selector */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              <div>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: '0.8rem',
-                    color: 'var(--text-muted, #9490a6)',
-                    marginBottom: '0.35rem',
-                    fontWeight: 600,
-                  }}
-                >
-                  Game:
-                </label>
-                <select
-                  value={selectedGameSlug}
-                  onChange={(e) => handleGameChange(e.target.value)}
-                  style={{
-                    width: '100%',
-                    backgroundColor: 'rgba(13, 11, 18, 0.8)',
-                    border: '1px solid rgba(124, 58, 237, 0.3)',
-                    borderRadius: '8px',
-                    padding: '0.65rem 0.75rem',
-                    color: 'var(--text-primary, #f4f4f6)',
-                    fontSize: '0.9rem',
-                    outline: 'none',
-                  }}
-                >
-                  {games.map((g) => (
-                    <option key={g.slug} value={g.slug}>
-                      {g.displayName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label
-                  style={{
-                    display: 'block',
-                    fontSize: '0.8rem',
-                    color: 'var(--text-muted, #9490a6)',
-                    marginBottom: '0.35rem',
-                    fontWeight: 600,
-                  }}
-                >
-                  Service Category:
-                </label>
-                <select
-                  value={selectedServiceId}
-                  onChange={(e) => handleServiceChange(Number(e.target.value))}
-                  style={{
-                    width: '100%',
-                    backgroundColor: 'rgba(13, 11, 18, 0.8)',
-                    border: '1px solid rgba(124, 58, 237, 0.3)',
-                    borderRadius: '8px',
-                    padding: '0.65rem 0.75rem',
-                    color: 'var(--text-primary, #f4f4f6)',
-                    fontSize: '0.9rem',
-                    outline: 'none',
-                  }}
-                >
-                  {availableServices.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.displayName} ({s.serviceMode})
-                    </option>
-                  ))}
-                </select>
-              </div>
             </div>
 
             {/* Boost Model & VPN Requirement */}
@@ -793,6 +804,21 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
                   💡 Auto-detected External Order ID: <strong>{notes.match(/<#([^>]+)>/)?.[1]}</strong> (will be automatically extracted and stripped from notes).
                 </p>
               )}
+            </div>
+
+            {/* Discord Temporary Channel Welcome Message Live Preview */}
+            <div style={{ marginTop: '0.4rem', marginBottom: '0.4rem' }}>
+              <DiscordWelcomeMessagePreview
+                orderTitle={orderTitle}
+                orderIdPlaceholder="NEW"
+                boostModel={boostModel}
+                vpnRequirement={vpnRequirement}
+                specs={boostSpecs}
+                notes={notes}
+                grossAmount={totalCostUsd}
+                boosterPool={boosterPoolUsd}
+                serviceTemplate={selectedService?.tempChannelTemplate}
+              />
             </div>
 
             {/* Discord Order Channel Alternative */}

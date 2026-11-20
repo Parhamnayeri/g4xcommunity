@@ -28,6 +28,7 @@ import { PlatformBalancesStrip } from '../admin/PlatformBalancesStrip';
 import { extractExternalOrderIdAndCleanNotes, has13PercentFee, calculate13PercentSplit } from '../../utils/orderParsers';
 import { AdminEditOrderModal } from './AdminEditOrderModal';
 import { DynamicServiceFormRenderer } from './DynamicServiceFormRenderer';
+import { DiscordWelcomeMessagePreview } from './DiscordWelcomeMessagePreview';
 // BoostSpecsBadgeGrid imported in details workspace
 import { BoostCategoryKey } from '../../types/boostSpecs';
 import { OrderDetailsWorkspace, Action, actionLabels } from './OrderDetailsWorkspace';
@@ -88,7 +89,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
     totalPages: 1,
   });
   const [counts, setCounts] = useState({ g4x: 0, advertiser: 0, needsReview: 0 });
-  const [games, setGames] = useState<Array<{ slug: string; displayName: string; services?: Array<{ id: number; serviceKey: string; displayName: string; serviceMode?: string }> }>>([]);
+  const [games, setGames] = useState<Array<{ slug: string; displayName: string; services?: Array<{ id: number; serviceKey: string; displayName: string; serviceMode?: string; formSchemaJson?: string | null; tempChannelTemplate?: string | null }> }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -1199,6 +1200,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
         <div className="studio-modal-backdrop" onClick={() => setShowCreateModal(false)}>
           <div
             className="studio-modal-card studio-modal-card-lg"
+            style={{ width: 'min(1100px, 95vw)', maxWidth: '1100px', maxHeight: '92vh', overflowY: 'auto' }}
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
@@ -1223,6 +1225,64 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
 
             <form onSubmit={handleCreateOrderSubmit}>
               <div className="studio-modal-body">
+                {/* 1. Game & Service Selection (Top Level) */}
+                <div
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.03)',
+                    border: '1px solid rgba(168, 85, 247, 0.25)',
+                    borderRadius: '10px',
+                    padding: '0.85rem 1rem',
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: '0.85rem',
+                    marginBottom: '0.5rem',
+                  }}
+                >
+                  <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                    🎮 Game *
+                    <select
+                      className="input"
+                      value={createGame}
+                      onChange={(e) => {
+                        const newGameSlug = e.target.value;
+                        setCreateGame(newGameSlug);
+                        const g = games.find((item) => item.slug === newGameSlug);
+                        if (g?.services && g.services.length > 0) {
+                          setCreateServiceId(g.services[0].id);
+                        } else {
+                          setCreateServiceId('');
+                        }
+                      }}
+                      style={{ width: '100%', marginTop: '0.35rem' }}
+                    >
+                      {games.map((g) => (
+                        <option key={g.slug} value={g.slug}>
+                          {g.displayName}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                    ⚡ Service *
+                    <select
+                      className="input"
+                      value={createServiceId}
+                      onChange={(e) => setCreateServiceId(Number(e.target.value))}
+                      style={{ width: '100%', marginTop: '0.35rem' }}
+                      required
+                    >
+                      <option value="">— Select Service —</option>
+                      {(games.find((g) => g.slug === createGame)?.services || []).map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.displayName} ({s.serviceKey})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                {/* 2. Order Title */}
                 <label style={{ fontSize: '0.82rem', display: 'block', marginBottom: '0.75rem' }}>
                   Order Title (Descriptive Name) *
                   <input
@@ -1236,7 +1296,7 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                   />
                 </label>
 
-                {/* Dynamic Service Form or Category Selector Tabs */}
+                {/* 3. Dynamic Service Form Specifications */}
                 <div style={{ marginBottom: '0.85rem' }}>
                   <DynamicServiceFormRenderer
                     selectedService={games.find((g) => g.slug === createGame)?.services?.find((s) => s.id === Number(createServiceId))}
@@ -1252,51 +1312,6 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                     onUpdateSpecs={setCreateBoostSpecs}
                   />
                 </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-                <label style={{ fontSize: '0.82rem' }}>
-                  Game *
-                  <select
-                    className="input"
-                    value={createGame}
-                    onChange={(e) => {
-                      const newGameSlug = e.target.value;
-                      setCreateGame(newGameSlug);
-                      const g = games.find((item) => item.slug === newGameSlug);
-                      if (g?.services && g.services.length > 0) {
-                        setCreateServiceId(g.services[0].id);
-                      } else {
-                        setCreateServiceId('');
-                      }
-                    }}
-                    style={{ width: '100%', marginTop: '0.25rem' }}
-                  >
-                    {games.map((g) => (
-                      <option key={g.slug} value={g.slug}>
-                        {g.displayName}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label style={{ fontSize: '0.82rem' }}>
-                  Service *
-                  <select
-                    className="input"
-                    value={createServiceId}
-                    onChange={(e) => setCreateServiceId(Number(e.target.value))}
-                    style={{ width: '100%', marginTop: '0.25rem' }}
-                    required
-                  >
-                    <option value="">— Select Service —</option>
-                    {(games.find((g) => g.slug === createGame)?.services || []).map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.displayName} ({s.serviceKey})
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <label style={{ fontSize: '0.82rem' }}>
@@ -1569,6 +1584,21 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                   </p>
                 )}
               </label>
+
+              {/* 4. Discord Temporary Channel Welcome Message Live Preview */}
+              <div style={{ marginTop: '0.75rem', marginBottom: '0.5rem' }}>
+                <DiscordWelcomeMessagePreview
+                  orderTitle={createTitle}
+                  orderIdPlaceholder="NEW"
+                  boostModel={createBoostModel}
+                  vpnRequirement={createVpnRequirement}
+                  specs={createBoostSpecs}
+                  notes={createNotes}
+                  grossAmount={createAmountUsd || '0.00'}
+                  boosterPool={createBoosterPoolUsd || '0.00'}
+                  serviceTemplate={games.find((g) => g.slug === createGame)?.services?.find((s) => s.id === Number(createServiceId))?.tempChannelTemplate}
+                />
+              </div>
 
               {createFeedback && (
                 <p style={{ color: createFeedback.type === 'success' ? 'var(--status-success)' : 'var(--status-danger)', fontSize: '0.85rem', margin: 0 }}>

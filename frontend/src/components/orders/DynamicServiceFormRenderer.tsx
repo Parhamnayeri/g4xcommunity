@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { BoostCategoryKey } from '../../types/boostSpecs';
 import { CategoryBoostSpecsTabs } from './CategoryBoostSpecsTabs';
-import { ServiceFormField } from '../admin/DynamicServiceFormAndTemplateBuilder';
+import { ServiceFormField, WOW_PRESETS } from '../admin/DynamicServiceFormAndTemplateBuilder';
 
 interface ServiceLike {
   id?: number;
@@ -27,16 +27,46 @@ export const DynamicServiceFormRenderer: React.FC<DynamicServiceFormRendererProp
 }) => {
   const [preferStandardTabs, setPreferStandardTabs] = useState(false);
 
-  // Parse custom dynamic fields from selected service schema if available
+  // Parse custom dynamic fields from selected service schema, or auto-match preset
   const dynamicFields = useMemo<ServiceFormField[]>(() => {
-    if (!selectedService?.formSchemaJson) return [];
-    try {
-      const parsed = JSON.parse(selectedService.formSchemaJson);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
+    if (selectedService?.formSchemaJson) {
+      try {
+        const parsed = JSON.parse(selectedService.formSchemaJson);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch {
+        // fallback to auto-detection
+      }
     }
-  }, [selectedService?.formSchemaJson]);
+
+    if (selectedService) {
+      const key = (selectedService.serviceKey || '').toLowerCase();
+      const name = (selectedService.displayName || '').toLowerCase();
+
+      if (key.includes('mythic') || key.includes('keystone') || name.includes('mythic') || name.includes('keystone')) {
+        return WOW_PRESETS.mythic_plus.fields;
+      }
+      if (key.includes('raid') || name.includes('raid')) {
+        return WOW_PRESETS.raid.fields;
+      }
+      if (key.includes('level') || name.includes('level')) {
+        return WOW_PRESETS.leveling.fields;
+      }
+      if (key.includes('pvp') || key.includes('arena') || name.includes('pvp') || name.includes('arena')) {
+        return WOW_PRESETS.pvp.fields;
+      }
+      if (key.includes('delve') || key.includes('farm') || name.includes('delve') || name.includes('farm')) {
+        return WOW_PRESETS.delves.fields;
+      }
+
+      // Default fallback based on activeCategory
+      if (WOW_PRESETS[activeCategory]) {
+        return WOW_PRESETS[activeCategory].fields;
+      }
+      return key.includes('pilot') ? WOW_PRESETS.leveling.fields : WOW_PRESETS.mythic_plus.fields;
+    }
+
+    return WOW_PRESETS[activeCategory]?.fields || [];
+  }, [selectedService, activeCategory]);
 
   const handleFieldChange = (key: string, value: any) => {
     onUpdateSpecs({
@@ -51,11 +81,11 @@ export const DynamicServiceFormRenderer: React.FC<DynamicServiceFormRendererProp
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
           <div>
-            <label style={{ fontSize: '0.8rem', color: 'var(--text-muted, #94a3b8)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-              <span>📋</span> Service Custom Specifications: <strong style={{ color: 'var(--text-primary, #fff)' }}>{selectedService?.displayName}</strong>
+            <label style={{ fontSize: '0.82rem', color: 'var(--text-muted, #94a3b8)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <span>⚡</span> Dynamic Service Specifications: <strong style={{ color: 'var(--accent-lime, #a3e635)' }}>{selectedService?.displayName || 'Active Service'}</strong>
             </label>
             <span style={{ fontSize: '0.72rem', color: 'var(--text-muted, #64748b)' }}>
-              ({dynamicFields.length} custom field{dynamicFields.length > 1 ? 's' : ''} defined for this service)
+              ({dynamicFields.length} dynamic field{dynamicFields.length > 1 ? 's' : ''} active for this service)
             </span>
           </div>
           <button
@@ -78,12 +108,12 @@ export const DynamicServiceFormRenderer: React.FC<DynamicServiceFormRendererProp
         <div
           style={{
             background: 'rgba(255, 255, 255, 0.02)',
-            border: '1px solid rgba(255, 255, 255, 0.08)',
+            border: '1px solid rgba(168, 85, 247, 0.25)',
             borderRadius: '10px',
-            padding: '12px 14px',
+            padding: '14px 16px',
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-            gap: '0.85rem',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: '0.95rem',
           }}
         >
           {dynamicFields.map((field) => {
@@ -97,7 +127,7 @@ export const DynamicServiceFormRenderer: React.FC<DynamicServiceFormRendererProp
                       type="checkbox"
                       checked={Boolean(val)}
                       onChange={(e) => handleFieldChange(field.key, e.target.checked)}
-                      style={{ cursor: 'pointer' }}
+                      style={{ cursor: 'pointer', accentColor: '#a855f7' }}
                     />
                     <span>{field.label}</span>
                     {field.required && <span style={{ color: '#ef4444' }}>*</span>}
@@ -119,7 +149,14 @@ export const DynamicServiceFormRenderer: React.FC<DynamicServiceFormRendererProp
                   </label>
                   <select
                     className="input select"
-                    style={{ width: '100%', padding: '0.5rem 0.65rem', fontSize: '0.85rem', boxSizing: 'border-box' }}
+                    style={{
+                      width: '100%',
+                      padding: '0.55rem 0.65rem',
+                      fontSize: '0.85rem',
+                      boxSizing: 'border-box',
+                      backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                      borderColor: 'rgba(124, 58, 237, 0.3)',
+                    }}
                     value={val}
                     onChange={(e) => handleFieldChange(field.key, e.target.value)}
                     required={field.required}
@@ -143,7 +180,14 @@ export const DynamicServiceFormRenderer: React.FC<DynamicServiceFormRendererProp
                 <input
                   type={field.type === 'number' ? 'number' : 'text'}
                   className="input"
-                  style={{ width: '100%', padding: '0.5rem 0.65rem', fontSize: '0.85rem', boxSizing: 'border-box' }}
+                  style={{
+                    width: '100%',
+                    padding: '0.55rem 0.65rem',
+                    fontSize: '0.85rem',
+                    boxSizing: 'border-box',
+                    backgroundColor: 'rgba(13, 11, 18, 0.8)',
+                    borderColor: 'rgba(124, 58, 237, 0.3)',
+                  }}
                   placeholder={field.placeholder || `Enter ${field.label}`}
                   value={val}
                   onChange={(e) => handleFieldChange(field.key, field.type === 'number' ? (e.target.value === '' ? '' : Number(e.target.value)) : e.target.value)}
@@ -175,7 +219,7 @@ export const DynamicServiceFormRenderer: React.FC<DynamicServiceFormRendererProp
               padding: 0,
             }}
           >
-            ← Back to Custom Service Form ({selectedService?.displayName})
+            ← Back to Dynamic Service Form ({selectedService?.displayName})
           </button>
         </div>
       )}

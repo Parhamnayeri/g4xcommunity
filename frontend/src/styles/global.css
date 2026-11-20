@@ -173,12 +173,14 @@ button {
 
 .modal-card-lg,
 .studio-modal-card-lg {
-  max-width: 760px;
+  width: min(1080px, 94vw);
+  max-width: 1080px;
 }
 
 .modal-card-xl,
 .studio-modal-card-xl {
-  max-width: 980px;
+  width: min(1300px, 95vw);
+  max-width: 1300px;
 }
 
 /* Full-scale Order Management Workspace Modal (90vw / min 1000px / max 1400px) */
