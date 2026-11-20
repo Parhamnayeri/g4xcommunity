@@ -5,6 +5,7 @@ import {
   PublicGamesResponse,
   AdvertiserOrder,
   CreateOrderRequest,
+  DepositIntent,
 } from '../types/advertiser';
 
 export async function fetchAdvertiserOverview(): Promise<AdvertiserOverviewResponse> {
@@ -148,4 +149,19 @@ export async function updateAdvertiserRank(
     method: 'PATCH',
     body: JSON.stringify({ advertiserRank, reason }),
   });
+}
+
+export async function fetchAdvertiserDeposits(): Promise<{ success: boolean; deposits: DepositIntent[] }> {
+  return await apiRequest<{ success: boolean; deposits: DepositIntent[] }>('/api/advertiser/deposits');
+}
+
+export async function cancelAdvertiserDeposit(
+  depositId: number
+): Promise<{ success: boolean; message: string; deposit: DepositIntent }> {
+  return await apiRequest<{ success: boolean; message: string; deposit: DepositIntent }>(
+    `/api/advertiser/deposits/${depositId}/cancel`,
+    {
+      method: 'POST',
+    }
+  );
 }

@@ -349,7 +349,7 @@ export const DepositCryptoModal: React.FC<DepositCryptoModalProps> = ({ isOpen, 
                   </div>
                 </div>
 
-                {invoiceUrl && (
+                {invoiceUrl && (invoiceUrl.startsWith('http://') || invoiceUrl.startsWith('https://')) ? (
                   <a
                     href={invoiceUrl}
                     target="_blank"
@@ -368,6 +368,24 @@ export const DepositCryptoModal: React.FC<DepositCryptoModalProps> = ({ isOpen, 
                   >
                     Open NOWPayments Payment Portal ↗
                   </a>
+                ) : (
+                  <div
+                    style={{
+                      backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                      border: '1px solid rgba(245, 158, 11, 0.35)',
+                      borderRadius: '8px',
+                      padding: '0.85rem',
+                      textAlign: 'center',
+                      color: '#fbbf24',
+                      fontSize: '0.85rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    ⏳ Gateway Pending Setup (Awaiting Activation)
+                    <p style={{ margin: '0.35rem 0 0', fontSize: '0.75rem', color: '#d1d5db', fontWeight: 400 }}>
+                      Invoice recorded as WAITING. Your balance will be credited upon gateway activation or manual admin approval.
+                    </p>
+                  </div>
                 )}
 
               <button

@@ -27,6 +27,33 @@ export interface CreatePaymentParams {
   isFeePaidByUser?: boolean;
 }
 
+export interface CreateInvoiceParams {
+  priceAmount: number;
+  priceCurrency?: string;
+  payCurrency?: string;
+  orderId: string | number;
+  orderDescription?: string;
+  ipnCallbackUrl?: string;
+  successUrl?: string;
+  cancelUrl?: string;
+}
+
+export interface NowpaymentsInvoiceResponse {
+  id: string | number;
+  token_id?: string;
+  order_id?: string;
+  order_description?: string;
+  price_amount?: string | number;
+  price_currency?: string;
+  pay_currency?: string;
+  ipn_callback_url?: string;
+  invoice_url: string;
+  success_url?: string;
+  cancel_url?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface MinAmountResponse {
   currency_from: string;
   currency_to: string;
@@ -158,6 +185,33 @@ export class NowpaymentsClient {
       return res.data;
     } catch (err: any) {
       throw this.handleApiError(err, 'createPayment');
+    }
+  }
+
+  /**
+   * ۵.۱ ایجاد فاکتور هاست‌شده پرداخت کریپتو (Create Hosted Invoice)
+   * POST /v1/invoice
+   */
+  async createInvoice(params: CreateInvoiceParams): Promise<NowpaymentsInvoiceResponse> {
+    const config = getNowpaymentsConfig();
+    const payload: any = {
+      price_amount: params.priceAmount,
+      price_currency: (params.priceCurrency || 'usd').toLowerCase(),
+      order_id: String(params.orderId),
+      order_description: params.orderDescription || `G4X Deposit #${params.orderId}`,
+      ipn_callback_url: params.ipnCallbackUrl || config.ipnCallbackUrl,
+      success_url: params.successUrl,
+      cancel_url: params.cancelUrl,
+    };
+    if (params.payCurrency) {
+      payload.pay_currency = params.payCurrency.toLowerCase();
+    }
+
+    try {
+      const res = await this.axiosInstance.post('/invoice', payload);
+      return res.data;
+    } catch (err: any) {
+      throw this.handleApiError(err, 'createInvoice');
     }
   }
 

@@ -3017,7 +3017,7 @@ router.get(
         ? { sourceWebsite: null, OR: [{ creatorType: 'advertiser' }, { advertiserId: { not: null } }] }
         : { sourceWebsite: null, OR: [{ advertiserId: user.discordId }, { creatorId: user.discordId, creatorType: 'advertiser' }] };
 
-      const [totalCreated, activeCount, completedCount, cancelledCount, volumeAgg] = await Promise.all([
+      const [totalCreated, activeCount, completedCount, cancelledCount, volumeAgg, recentDeposits] = await Promise.all([
         prisma.order.count({ where: ownershipWhere }),
         prisma.order.count({ where: { AND: [ownershipWhere, { status: { in: activeStatuses } }] } }),
         prisma.order.count({ where: { AND: [ownershipWhere, { status: 'completed' }] } }),
@@ -3025,6 +3025,11 @@ router.get(
         prisma.order.aggregate({
           where: { AND: [ownershipWhere, { status: 'completed' }] },
           _sum: { grossAmountMinor: true, platformFeeMinor: true },
+        }),
+        prisma.depositIntent.findMany({
+          where: { userId: user.discordId },
+          orderBy: { createdAt: 'desc' },
+          take: 50,
         }),
       ]);
 
@@ -3091,6 +3096,28 @@ router.get(
           ordersChannelId,
           becomeAdvChannelId,
           orderEntryUrl,
+        },
+        deposits: recentDeposits.map((d) => ({
+          id: d.id,
+          intentRef: d.intentRef,
+          amountUsd: d.amountUsd,
+          payCurrency: d.payCurrency,
+          paymentId: d.paymentId,
+          invoiceUrl: d.invoiceUrl,
+          status: d.status,
+          createdAt: d.createdAt,
+          confirmedAt: d.confirmedAt,
+        })),
+        recentActivity: {
+          deposits: recentDeposits.map((d) => ({
+            id: d.id,
+            ref: d.intentRef,
+            amountUsd: d.amountUsd.toFixed(2),
+            currency: d.payCurrency,
+            status: d.status,
+            invoiceUrl: d.invoiceUrl,
+            createdAt: d.createdAt,
+          })),
         },
       });
     } catch (err: any) {

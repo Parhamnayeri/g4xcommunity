@@ -154,6 +154,19 @@ class MockNowpaymentsClient extends NowpaymentsClient {
     };
   }
 
+  async createInvoice(params: any): Promise<any> {
+    this.mockPaymentIdCounter++;
+    return {
+      id: String(this.mockPaymentIdCounter),
+      order_id: String(params.orderId),
+      order_description: params.orderDescription,
+      price_amount: params.priceAmount,
+      price_currency: params.priceCurrency || 'usd',
+      pay_currency: params.payCurrency,
+      invoice_url: `https://nowpayments.io/payment/?iid=${this.mockPaymentIdCounter}`,
+    };
+  }
+
   async getPaymentStatus(paymentId: string): Promise<any> {
     return {
       payment_id: paymentId,

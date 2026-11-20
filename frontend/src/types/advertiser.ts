@@ -67,6 +67,13 @@ export interface AdvertiserOverviewResponse {
   wallet: AdvertiserWallet;
   performance: AdvertiserPerformance;
   discordIntegration: DiscordIntegrationInfo;
+  deposits?: DepositIntent[];
+  recentActivity?: {
+    deposits?: any[];
+    ledger?: any[];
+    withdrawals?: any[];
+    changeRequests?: any[];
+  };
 }
 
 export interface AdvertiserOrder {
@@ -196,9 +203,12 @@ export interface DepositIntent {
   payCurrency: string;
   paymentId?: string | null;
   invoiceUrl?: string | null;
-  status: 'WAITING' | 'CONFIRMED' | 'EXPIRED';
+  status: 'WAITING' | 'CONFIRMED' | 'EXPIRED' | 'CANCELLED';
   createdAt: string;
   confirmedAt?: string | null;
+  updatedAt?: string;
+  provider?: string;
+  instructions?: string;
 }
 
 export interface OrderChangeRequest {

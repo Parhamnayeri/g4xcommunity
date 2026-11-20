@@ -334,6 +334,17 @@ advertiserRouter.get(
             reviewedAt: c.reviewedAt,
           })),
         },
+        deposits: recentDepositIntents.map((d) => ({
+          id: d.id,
+          intentRef: d.intentRef,
+          amountUsd: d.amountUsd,
+          payCurrency: d.payCurrency,
+          paymentId: d.paymentId,
+          invoiceUrl: d.invoiceUrl,
+          status: d.status,
+          createdAt: d.createdAt,
+          confirmedAt: d.confirmedAt,
+        })),
       });
     } catch (err: any) {
       console.error('[AdvertiserOverview] Error:', err);
@@ -344,7 +355,7 @@ advertiserRouter.get(
 
 /**
  * 2. POST /api/advertiser/deposits/intent
- * Initiates a crypto deposit intent with NOWPayments adapter hook
+ * Initiates a crypto deposit intent with NOWPayments hosted invoice or fallback
  */
 advertiserRouter.post(
   ['/advertiser/deposits/intent', '/api/advertiser/deposits/intent'],
@@ -364,51 +375,68 @@ advertiserRouter.post(
       const selectedCurrency = (payCurrency || 'USDTTRC20').trim().toUpperCase();
       const intentRef = `DEP_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-      // Check NOWPayments live config
-      const config = getNowpaymentsConfig();
-      let paymentId: string | null = null;
-      let invoiceUrl: string | null = null;
-
-      if (config.isCollectionActive && config.apiKey) {
-        try {
-          const client = new NowpaymentsClient();
-          const paymentResult = await client.createPayment({
-            priceAmount: parsedAmount,
-            priceCurrency: 'usd',
-            payCurrency: selectedCurrency.toLowerCase(),
-            orderId: intentRef,
-            orderDescription: `G4X Wallet Top-up: ${user.username} ($${parsedAmount.toFixed(2)})`,
-          });
-
-          paymentId = String(paymentResult.payment_id);
-          invoiceUrl = paymentResult.pay_address || null;
-        } catch (npErr: any) {
-          console.warn('[NOWPayments] Live invoice creation call failed, falling back to clean intent:', npErr.message);
-        }
-      }
-
-      // Record DepositIntent in database
-      const depositIntent = await prisma.depositIntent.create({
+      // Create DepositIntent in database first
+      let depositIntent = await prisma.depositIntent.create({
         data: {
           intentRef,
           userId: user.discordId,
           provider: 'NOWPAYMENTS',
           amountUsd: parsedAmount,
           payCurrency: selectedCurrency,
-          paymentId,
-          invoiceUrl,
           status: 'WAITING',
           metadata: JSON.stringify({
-            nowpaymentsConfigured: Boolean(config.apiKey),
-            mode: config.mode,
             createdAt: new Date().toISOString(),
           }),
         },
       });
 
-      const instructionsText = depositIntent.invoiceUrl
-        ? `Send exactly $${parsedAmount.toFixed(2)} worth of ${selectedCurrency} to ${depositIntent.invoiceUrl}`
-        : `NOWPayments deposit registered (${selectedCurrency}). When live gateway key is active, instant payment address is auto-generated.`;
+      const publicUrl = (process.env.PUBLIC_URL || process.env.APP_URL || '').replace(/\/+$/, '') || 'https://g4xcommunity.com';
+      const nowpaymentsApiKey = (process.env.NOWPAYMENTS_API_KEY || '').trim();
+
+      let paymentId: string | null = null;
+      let invoiceUrl: string | null = null;
+      let isConfigured = false;
+
+      if (nowpaymentsApiKey) {
+        try {
+          const client = new NowpaymentsClient(undefined, nowpaymentsApiKey);
+          const invoiceResult = await client.createInvoice({
+            priceAmount: parsedAmount,
+            priceCurrency: 'usd',
+            payCurrency: selectedCurrency.toLowerCase(),
+            orderId: String(depositIntent.id),
+            orderDescription: `G4X Deposit #${depositIntent.id} ($${parsedAmount.toFixed(2)}) - ${user.username}`,
+            ipnCallbackUrl: `${publicUrl}/api/webhooks/nowpayments`,
+            successUrl: `${publicUrl}/advertiser?deposit=success`,
+            cancelUrl: `${publicUrl}/advertiser?deposit=cancelled`,
+          });
+
+          if (invoiceResult && invoiceResult.invoice_url && (invoiceResult.invoice_url.startsWith('http://') || invoiceResult.invoice_url.startsWith('https://'))) {
+            paymentId = String(invoiceResult.id || '');
+            invoiceUrl = invoiceResult.invoice_url;
+            isConfigured = true;
+
+            depositIntent = await prisma.depositIntent.update({
+              where: { id: depositIntent.id },
+              data: {
+                paymentId,
+                invoiceUrl,
+                metadata: JSON.stringify({
+                  nowpaymentsConfigured: true,
+                  invoiceId: invoiceResult.id,
+                  createdAt: new Date().toISOString(),
+                }),
+              },
+            });
+          }
+        } catch (npErr: any) {
+          console.warn('[NOWPayments] Live invoice creation call failed, falling back to clean intent:', npErr?.message || npErr);
+        }
+      }
+
+      const instructionsText = isConfigured && invoiceUrl
+        ? `Send exactly $${parsedAmount.toFixed(2)} worth of ${selectedCurrency} via NOWPayments hosted portal.`
+        : 'NOWPayments gateway API key is not configured on server yet. Invoice saved as WAITING for manual/admin approval or gateway activation.';
 
       const depositPayload = {
         id: depositIntent.id,
@@ -416,18 +444,21 @@ advertiserRouter.post(
         amountUsd: depositIntent.amountUsd,
         payCurrency: depositIntent.payCurrency,
         status: depositIntent.status,
-        invoiceUrl: depositIntent.invoiceUrl,
-        paymentId: depositIntent.paymentId,
+        invoiceUrl: invoiceUrl || null,
+        paymentId: paymentId || null,
         instructions: instructionsText,
+        createdAt: depositIntent.createdAt,
       };
 
       res.json({
         success: true,
+        configured: isConfigured,
+        invoiceUrl: invoiceUrl || null,
         deposit: depositPayload,
         depositIntent: depositPayload,
         instructions: {
           message: instructionsText,
-          invoiceUrl: depositIntent.invoiceUrl,
+          invoiceUrl: invoiceUrl || null,
           payCurrency: depositIntent.payCurrency,
           amountUsd: parsedAmount,
           provider: 'NOWPAYMENTS',
@@ -436,7 +467,124 @@ advertiserRouter.post(
       });
     } catch (err: any) {
       console.error('[AdvertiserDepositIntent] Error:', err);
-      res.status(500).json({ error: err.message || 'Failed to create deposit intent' });
+      res.status(500).json({ error: err?.message || 'Failed to create deposit intent' });
+    }
+  }
+);
+
+/**
+ * 2.1 POST /api/advertiser/deposits/:id/cancel
+ * Cancels a WAITING deposit invoice for the requesting advertiser
+ */
+advertiserRouter.post(
+  ['/advertiser/deposits/:id/cancel', '/api/advertiser/deposits/:id/cancel'],
+  requireAuth,
+  requireAdvertiserOrStaff,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const depositId = parseInt(req.params.id, 10);
+      if (isNaN(depositId)) {
+        res.status(400).json({ error: 'INVALID_ID', message: 'Valid deposit ID is required.' });
+        return;
+      }
+
+      const deposit = await prisma.depositIntent.findUnique({
+        where: { id: depositId },
+      });
+
+      if (!deposit) {
+        res.status(404).json({ error: 'NOT_FOUND', message: 'Deposit invoice not found.' });
+        return;
+      }
+
+      // Verify ownership
+      const userRoles = (user.userRoles || []).map((r) => String(r.roleKey).toLowerCase());
+      const isStaff = userRoles.some((r) => ['admin', 'owner', 'manager'].includes(r));
+      if (deposit.userId !== user.discordId && !isStaff) {
+        res.status(403).json({ error: 'FORBIDDEN', message: 'You are not authorized to cancel this deposit invoice.' });
+        return;
+      }
+
+      if (deposit.status === 'CONFIRMED') {
+        res.status(400).json({ error: 'ALREADY_CONFIRMED', message: 'Cannot cancel a confirmed deposit invoice.' });
+        return;
+      }
+
+      if (deposit.status === 'CANCELLED') {
+        res.status(400).json({ error: 'ALREADY_CANCELLED', message: 'This deposit invoice is already cancelled.' });
+        return;
+      }
+
+      if (deposit.status === 'EXPIRED') {
+        res.status(400).json({ error: 'EXPIRED', message: 'This deposit invoice has expired.' });
+        return;
+      }
+
+      const updated = await prisma.depositIntent.update({
+        where: { id: depositId },
+        data: {
+          status: 'CANCELLED',
+          updatedAt: new Date(),
+        },
+      });
+
+      res.json({
+        success: true,
+        message: 'Deposit invoice cancelled successfully.',
+        deposit: {
+          id: updated.id,
+          intentRef: updated.intentRef,
+          amountUsd: updated.amountUsd,
+          payCurrency: updated.payCurrency,
+          status: updated.status,
+          invoiceUrl: updated.invoiceUrl,
+          paymentId: updated.paymentId,
+          createdAt: updated.createdAt,
+          updatedAt: updated.updatedAt,
+        },
+      });
+    } catch (err: any) {
+      console.error('[AdvertiserDepositCancel] Error:', err);
+      res.status(500).json({ error: err?.message || 'Failed to cancel deposit invoice' });
+    }
+  }
+);
+
+/**
+ * 2.2 GET /api/advertiser/deposits
+ * Lists all deposit invoices for the requesting advertiser
+ */
+advertiserRouter.get(
+  ['/advertiser/deposits', '/api/advertiser/deposits'],
+  requireAuth,
+  requireAdvertiserOrStaff,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const deposits = await prisma.depositIntent.findMany({
+        where: { userId: user.discordId },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      res.json({
+        success: true,
+        deposits: deposits.map((d) => ({
+          id: d.id,
+          intentRef: d.intentRef,
+          amountUsd: d.amountUsd,
+          payCurrency: d.payCurrency,
+          paymentId: d.paymentId,
+          invoiceUrl: d.invoiceUrl,
+          status: d.status,
+          createdAt: d.createdAt,
+          updatedAt: d.updatedAt,
+          confirmedAt: d.confirmedAt,
+        })),
+      });
+    } catch (err: any) {
+      console.error('[AdvertiserDepositsList] Error:', err);
+      res.status(500).json({ error: err?.message || 'Failed to fetch deposits' });
     }
   }
 );

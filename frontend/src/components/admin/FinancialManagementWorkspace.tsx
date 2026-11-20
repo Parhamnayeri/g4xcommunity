@@ -31,6 +31,7 @@ import { HistoricalSnapshotsSection } from './HistoricalSnapshotsSection';
 import { AdvancedAnalyticsSection } from './AdvancedAnalyticsSection';
 import { AutomatedReportingSection } from './AutomatedReportingSection';
 import { UserBoosterWalletControlsSection } from './UserBoosterWalletControlsSection';
+import { AdminDepositInvoicesSection } from './AdminDepositInvoicesSection';
 import { UserFinancialRoleInfo } from '../../types/financialLedger';
 import { fetchUserFinancialRole } from '../../services/financialLedger';
 
@@ -50,6 +51,7 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab: _
   // Navigation Sub-tab
   const [subTab, setSubTab] = useState<
     | 'wallets'
+    | 'deposits'
     | 'platform'
     | 'snapshots'
     | 'analytics'
@@ -537,6 +539,7 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab: _
       >
         {[
           { key: 'wallets', label: 'User & Booster Wallets', icon: '👛' },
+          { key: 'deposits', label: 'Deposit Invoices (NOWPayments & Manual Top-Ups)', icon: '📥' },
           { key: 'platform', label: 'Platform Balances', icon: '🌐', count: platforms.length },
           { key: 'snapshots', label: 'Financial Snapshots', icon: '📸' },
           { key: 'analytics', label: 'Advanced Analytics & P&L', icon: '📈' },
@@ -595,6 +598,13 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab: _
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {subTab === 'wallets' && (
         <UserBoosterWalletControlsSection onRefreshParent={loadWorkspace} />
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB 0.1: ADVERTISER CRYPTO DEPOSIT INVOICES (NOWPAYMENTS & TOP-UPS)       */}
+      {/* ───────────────────────────────────────────────────────────────────────────── */}
+      {subTab === 'deposits' && (
+        <AdminDepositInvoicesSection />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}

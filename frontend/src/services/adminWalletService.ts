@@ -93,3 +93,57 @@ export async function freezeAdminWallet(
     }
   );
 }
+
+export interface AdminDepositInvoice {
+  id: number;
+  intentRef: string;
+  userId: string;
+  username: string;
+  displayName: string;
+  advertiserRank: string;
+  amountUsd: number;
+  payCurrency: string;
+  paymentId: string | null;
+  invoiceUrl: string | null;
+  status: 'WAITING' | 'CONFIRMED' | 'CANCELLED' | 'EXPIRED';
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt: string | null;
+  provider: string;
+}
+
+export interface AdminDepositListResponse {
+  success: boolean;
+  deposits: AdminDepositInvoice[];
+}
+
+export async function fetchAdminDeposits(params?: {
+  status?: string;
+  search?: string;
+}): Promise<AdminDepositListResponse> {
+  const query = new URLSearchParams();
+  if (params?.status && params.status !== 'all') query.set('status', params.status);
+  if (params?.search && params.search.trim()) query.set('search', params.search.trim());
+  const qs = query.toString() ? `?${query.toString()}` : '';
+  return apiRequest<AdminDepositListResponse>(`/api/admin/finance/deposits${qs}`);
+}
+
+export async function confirmAdminDeposit(
+  id: number,
+  reason?: string
+): Promise<{ success: boolean; message: string; deposit: any; wallet?: any }> {
+  return apiRequest(`/api/admin/finance/deposits/${id}/confirm`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function cancelAdminDeposit(
+  id: number,
+  reason?: string
+): Promise<{ success: boolean; message: string; deposit: any }> {
+  return apiRequest(`/api/admin/finance/deposits/${id}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}

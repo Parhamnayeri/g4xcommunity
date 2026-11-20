@@ -28,6 +28,9 @@ import {
   listUserWallets,
   adjustUserWalletBalance,
   freezeUserWallet,
+  listAdminDepositInvoices,
+  adminConfirmDepositInvoice,
+  adminCancelDepositInvoice,
 } from '../services/adminWalletManagementService';
 import {
   AdvertiserRank,
@@ -2144,6 +2147,91 @@ adminPortalRouter.post(
     } catch (err: any) {
       console.error('[AdminFinanceFreezeWallet] Error:', err);
       res.status(400).json({ error: err.message || 'Failed to update wallet freeze status' });
+    }
+  }
+);
+
+/**
+ * GET /api/admin/finance/deposits
+ * Lists all advertiser deposit invoices with optional status filter and search.
+ */
+adminPortalRouter.get(
+  ['/api/admin/finance/deposits', '/admin/finance/deposits'],
+  requireAuth,
+  requireFinanceManageAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+      const search = typeof req.query.search === 'string' ? req.query.search : undefined;
+      const result = await listAdminDepositInvoices(status, search);
+      res.json({
+        success: true,
+        ...result,
+      });
+    } catch (err: any) {
+      console.error('[AdminFinanceDeposits] Failed to list deposits:', err);
+      res.status(500).json({
+        error: 'DEPOSITS_LIST_FAILED',
+        message: err?.message || 'Failed to list deposit invoices.',
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/admin/finance/deposits/:id/confirm
+ * Manually confirms a WAITING deposit invoice and credits the amount to the advertiser's wallet.
+ */
+adminPortalRouter.post(
+  ['/api/admin/finance/deposits/:id/confirm', '/admin/finance/deposits/:id/confirm'],
+  requireAuth,
+  requireFinanceManageAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const depositId = parseInt(req.params.id, 10);
+      if (isNaN(depositId)) {
+        res.status(400).json({ error: 'INVALID_ID', message: 'Valid deposit ID is required.' });
+        return;
+      }
+      const actorId = (req as AuthenticatedRequest).user?.discordId;
+      const { reason } = req.body || {};
+      const result = await adminConfirmDepositInvoice(depositId, actorId, reason);
+      res.json(result);
+    } catch (err: any) {
+      console.error('[AdminFinanceDeposits] Confirm error:', err);
+      res.status(400).json({
+        error: 'CONFIRM_FAILED',
+        message: err?.message || 'Failed to confirm deposit invoice.',
+      });
+    }
+  }
+);
+
+/**
+ * POST /api/admin/finance/deposits/:id/cancel
+ * Cancels a WAITING deposit invoice on administrative request.
+ */
+adminPortalRouter.post(
+  ['/api/admin/finance/deposits/:id/cancel', '/admin/finance/deposits/:id/cancel'],
+  requireAuth,
+  requireFinanceManageAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const depositId = parseInt(req.params.id, 10);
+      if (isNaN(depositId)) {
+        res.status(400).json({ error: 'INVALID_ID', message: 'Valid deposit ID is required.' });
+        return;
+      }
+      const actorId = (req as AuthenticatedRequest).user?.discordId;
+      const { reason } = req.body || {};
+      const result = await adminCancelDepositInvoice(depositId, actorId, reason);
+      res.json(result);
+    } catch (err: any) {
+      console.error('[AdminFinanceDeposits] Cancel error:', err);
+      res.status(400).json({
+        error: 'CANCEL_FAILED',
+        message: err?.message || 'Failed to cancel deposit invoice.',
+      });
     }
   }
 );

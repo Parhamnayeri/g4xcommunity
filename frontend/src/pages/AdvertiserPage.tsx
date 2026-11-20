@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { AdvertiserOverviewResponse, AdvertiserOrder } from '../types/advertiser';
-import { fetchAdvertiserOverview } from '../services/advertiser';
+import { AdvertiserOverviewResponse, AdvertiserOrder, DepositIntent } from '../types/advertiser';
+import { fetchAdvertiserOverview, fetchAdvertiserDeposits } from '../services/advertiser';
 import { AdvertiserProfileHeader } from '../components/advertiser/AdvertiserProfileHeader';
 import { AdvertiserRankCard } from '../components/advertiser/AdvertiserRankCard';
 import { AdvertiserWalletCard } from '../components/advertiser/AdvertiserWalletCard';
 import { AdvertiserMetrics } from '../components/advertiser/AdvertiserMetrics';
 import { ActiveOrdersSection } from '../components/advertiser/ActiveOrdersSection';
 import { OrderHistorySection } from '../components/advertiser/OrderHistorySection';
+import { AdvertiserDepositInvoicesSection } from '../components/advertiser/AdvertiserDepositInvoicesSection';
 import { CreateOrderModal } from '../components/advertiser/CreateOrderModal';
 import { DepositCryptoModal } from '../components/advertiser/DepositCryptoModal';
 import { WithdrawModal } from '../components/advertiser/WithdrawModal';
@@ -16,13 +17,14 @@ import { ErrorState } from '../components/ui/ErrorState';
 
 export const AdvertiserPage: React.FC = () => {
   const [data, setData] = useState<AdvertiserOverviewResponse | null>(null);
+  const [deposits, setDeposits] = useState<DepositIntent[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Tabs state
-  const [activeTab, setActiveTab] = useState<'active' | 'history'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'history' | 'deposits'>('active');
 
   // Modals state
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -45,6 +47,18 @@ export const AdvertiserPage: React.FC = () => {
     try {
       const res = await fetchAdvertiserOverview();
       setData(res);
+      if (res?.deposits && Array.isArray(res.deposits)) {
+        setDeposits(res.deposits);
+      } else if (res?.recentActivity?.deposits && Array.isArray(res.recentActivity.deposits)) {
+        setDeposits(res.recentActivity.deposits as any);
+      } else {
+        try {
+          const depRes = await fetchAdvertiserDeposits();
+          if (depRes?.success && Array.isArray(depRes.deposits)) {
+            setDeposits(depRes.deposits);
+          }
+        } catch {}
+      }
     } catch (err: any) {
       setError(err?.message || (typeof err === 'string' ? err : 'Failed to load Advertiser Portal.'));
     } finally {
@@ -66,6 +80,7 @@ export const AdvertiserPage: React.FC = () => {
 
   const handleDepositSuccess = () => {
     showNotification('Crypto deposit invoice generated. Complete transaction to fund wallet.', 'info');
+    setActiveTab('deposits');
     loadOverview(true);
   };
 
@@ -254,10 +269,41 @@ export const AdvertiserPage: React.FC = () => {
               {data.performance.completedOrdersCount + data.performance.cancelledOrdersCount}
             </span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('deposits')}
+            style={{
+              backgroundColor: activeTab === 'deposits' ? 'var(--primary-purple, #7c3aed)' : 'transparent',
+              color: activeTab === 'deposits' ? '#ffffff' : 'var(--text-muted, #9490a6)',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '0.6rem 1.25rem',
+              fontSize: '0.95rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span>📥 Deposit Invoices &amp; Top-Ups</span>
+            <span
+              style={{
+                backgroundColor: activeTab === 'deposits' ? 'rgba(0,0,0,0.25)' : 'rgba(124, 58, 237, 0.2)',
+                color: activeTab === 'deposits' ? 'var(--accent-lime, #ccff00)' : 'var(--text-primary, #f4f4f6)',
+                padding: '0.1rem 0.45rem',
+                borderRadius: '12px',
+                fontSize: '0.75rem',
+              }}
+            >
+              {deposits.length}
+            </span>
+          </button>
         </div>
 
         {/* Tab Content */}
-        {activeTab === 'active' ? (
+        {activeTab === 'active' && (
           <ActiveOrdersSection
             onEditNote={(order) => {
               setChangeRequestOrder(order);
@@ -269,8 +315,20 @@ export const AdvertiserPage: React.FC = () => {
             }}
             refreshTrigger={refreshTrigger}
           />
-        ) : (
+        )}
+
+        {activeTab === 'history' && (
           <OrderHistorySection refreshTrigger={refreshTrigger} />
+        )}
+
+        {activeTab === 'deposits' && (
+          <AdvertiserDepositInvoicesSection
+            deposits={deposits}
+            onRefresh={() => loadOverview(true)}
+            onNotification={showNotification}
+            onDepositClick={() => setIsDepositModalOpen(true)}
+            refreshing={refreshing}
+          />
         )}
       </section>
 
