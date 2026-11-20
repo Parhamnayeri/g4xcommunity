@@ -53,6 +53,8 @@ export interface CreateServiceInput {
   description?: string;
   sortOrder?: number;
   isActive?: boolean;
+  formSchemaJson?: string | null;
+  tempChannelTemplate?: string | null;
   settings?: GameSettingsInput;
 }
 
@@ -65,6 +67,8 @@ export interface UpdateServiceInput {
   sortOrder?: number;
   isActive?: boolean;
   serviceKey?: string;
+  formSchemaJson?: string | null;
+  tempChannelTemplate?: string | null;
   settings?: GameSettingsInput;
 }
 
@@ -516,6 +520,8 @@ export async function createGameService(
       description,
       sortOrder,
       isActive,
+      formSchemaJson: input.formSchemaJson !== undefined ? (input.formSchemaJson ? String(input.formSchemaJson) : null) : null,
+      tempChannelTemplate: input.tempChannelTemplate !== undefined ? (input.tempChannelTemplate ? String(input.tempChannelTemplate) : null) : null,
       settings: {
         create: {
           claimWindowSeconds: input.settings?.claimWindowSeconds ?? 600,
@@ -614,6 +620,12 @@ export async function updateGameService(
 
   const sortOrder = typeof input.sortOrder === 'number' ? input.sortOrder : existing.sortOrder;
   const isActive = typeof input.isActive === 'boolean' ? input.isActive : existing.isActive;
+  const formSchemaJson = input.formSchemaJson !== undefined
+    ? (input.formSchemaJson ? String(input.formSchemaJson) : null)
+    : existing.formSchemaJson;
+  const tempChannelTemplate = input.tempChannelTemplate !== undefined
+    ? (input.tempChannelTemplate ? String(input.tempChannelTemplate) : null)
+    : existing.tempChannelTemplate;
 
   const updated = await prisma.gameService.update({
     where: { id },
@@ -626,6 +638,8 @@ export async function updateGameService(
       description,
       sortOrder,
       isActive,
+      formSchemaJson,
+      tempChannelTemplate,
     },
     include: {
       settings: true,

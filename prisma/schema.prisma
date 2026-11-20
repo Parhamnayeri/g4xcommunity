@@ -162,6 +162,8 @@ model GameService {
   description          String?
   sortOrder            Int     @default(0) @map("sort_order")
   isActive             Boolean @default(true) @map("is_active")
+  formSchemaJson       String? @map("form_schema_json")
+  tempChannelTemplate  String? @map("temp_channel_template")
 
   game          Game            @relation(fields: [gameSlug], references: [slug], onDelete: Cascade)
   orders        Order[]
@@ -2104,5 +2106,13 @@ model GeneratedFinancialReport {
   @@map("generated_financial_reports")
 }
 
+// ─── ۵۹. تنظیمات سراسری سیستم (System Settings) ──────────────────────────────
+model SystemSetting {
+  key         String   @id @map("setting_key")
+  value       String   @map("setting_value")
+  description String?
+  updatedBy   String?  @map("updated_by")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
 
-
+  @@map("system_settings")
+}

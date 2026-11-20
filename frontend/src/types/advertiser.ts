@@ -140,6 +140,8 @@ export interface PublicGameService {
   displayName: string;
   serviceMode: string;
   sortOrder: number;
+  formSchemaJson?: string | null;
+  tempChannelTemplate?: string | null;
 }
 
 export interface PublicGame {

@@ -9,6 +9,8 @@ export interface GameService {
   description?: string | null;
   sortOrder?: number;
   isActive: boolean;
+  formSchemaJson?: string | null;
+  tempChannelTemplate?: string | null;
 }
 
 export interface Game {

@@ -141,6 +141,10 @@ import {
   deleteGameService,
 } from '../services/gameManagementService';
 import {
+  getGlobalChannelRules,
+  setGlobalChannelRules,
+} from '../services/systemSettingService';
+import {
   provisionAllChannels,
   reconcileChannelMappings,
   validateDiscordChannel,
@@ -4704,6 +4708,43 @@ router.delete(
     } catch (err: any) {
       const status = err instanceof DomainError ? 400 : 500;
       res.status(status).json({ error: err.message || 'Failed to delete service category' });
+    }
+  }
+);
+
+// دریافت قوانین سراسری و ثابت کانال‌های دیسکورد موقت
+router.get(
+  '/admin/settings/channel-rules',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const rules = await getGlobalChannelRules();
+      res.json({ success: true, rules });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch global channel rules' });
+    }
+  }
+);
+
+// به‌روزرسانی قوانین سراسری و ثابت کانال‌های دیسکورد موقت
+router.put(
+  '/admin/settings/channel-rules',
+  requireAuth,
+  requireRole('owner', 'manager', 'admin'),
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const actorId = (req as AuthenticatedRequest).user.discordId;
+      const { rules } = req.body;
+      if (typeof rules !== 'string') {
+        res.status(400).json({ error: 'rules string is required' });
+        return;
+      }
+      const updated = await setGlobalChannelRules(rules, actorId);
+      res.json({ success: true, rules: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to update global channel rules' });
     }
   }
 );

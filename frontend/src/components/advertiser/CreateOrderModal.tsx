@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { fetchPublicGames, createAdvertiserOrder } from '../../services/advertiser';
 import { PublicGame, AdvertiserRankData, AdvertiserWallet, DiscordIntegrationInfo, CreateOrderRequest } from '../../types/advertiser';
 import { extractExternalOrderIdAndCleanNotes } from '../../utils/orderParsers';
-import { CategoryBoostSpecsTabs } from '../orders/CategoryBoostSpecsTabs';
+import { DynamicServiceFormRenderer } from '../orders/DynamicServiceFormRenderer';
 import { BoostCategoryKey } from '../../types/boostSpecs';
 
 interface CreateOrderModalProps {
@@ -283,9 +283,10 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
               />
             </div>
 
-            {/* Top Boost Category Selector Tabs (6 Distinct Forms) */}
+            {/* Dynamic Service Form or Category Selector Tabs */}
             <div style={{ marginBottom: '0.4rem' }}>
-              <CategoryBoostSpecsTabs
+              <DynamicServiceFormRenderer
+                selectedService={selectedService}
                 activeCategory={activeCategory}
                 onSelectCategory={(key, model, defTitle) => {
                   setActiveCategory(key);

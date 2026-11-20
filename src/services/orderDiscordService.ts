@@ -303,10 +303,22 @@ export function buildOrderEmbed(order: any, presigns: any[] = [], assignments: a
       if (specsObj.serviceScope) specPills.push(`Scope: **${specsObj.serviceScope}**`);
       if (specsObj.estimatedTime) specPills.push(`Est. Time: **${specsObj.estimatedTime}**`);
       if (specsObj.boosterCount) specPills.push(`Team: **${specsObj.boosterCount}**`);
-      for (const [k, v] of Object.entries(specsObj)) {
-        if (!['regionServer', 'serviceScope', 'estimatedTime', 'boosterCount'].includes(k) && v) {
-          specPills.push(`${k}: **${v}**`);
-        }
+    }
+
+    // Support dynamic custom fields defined via Form Builder
+    const knownPresetKeys = new Set([
+      'regionFaction', 'keystoneLevel', 'runsCount', 'dungeonSelection', 'timerGuarantee', 'armorStack',
+      'regionRealm', 'levelRangeCurrent', 'levelRangeTarget', 'classSpec', 'campaignUnlock', 'streamingOption',
+      'raidName', 'difficulty', 'runScope', 'lootMode', 'scheduledTime',
+      'bracketMode', 'ratingCurrent', 'ratingTarget', 'gearFarmOption',
+      'regionClass', 'activityType', 'targetQuantity', 'specificDropName',
+      'regionServer', 'serviceScope', 'estimatedTime', 'boosterCount'
+    ]);
+
+    for (const [k, v] of Object.entries(specsObj)) {
+      if (!knownPresetKeys.has(k) && v !== undefined && v !== null && String(v).trim().length > 0) {
+        const readableKey = k.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
+        specPills.push(`${readableKey}: **${v}**`);
       }
     }
 

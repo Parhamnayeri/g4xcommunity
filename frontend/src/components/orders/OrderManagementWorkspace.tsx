@@ -27,7 +27,7 @@ import { AdminFinanceOverviewResponse } from '../../types/adminPortal';
 import { PlatformBalancesStrip } from '../admin/PlatformBalancesStrip';
 import { extractExternalOrderIdAndCleanNotes, has13PercentFee, calculate13PercentSplit } from '../../utils/orderParsers';
 import { AdminEditOrderModal } from './AdminEditOrderModal';
-import { CategoryBoostSpecsTabs } from './CategoryBoostSpecsTabs';
+import { DynamicServiceFormRenderer } from './DynamicServiceFormRenderer';
 // BoostSpecsBadgeGrid imported in details workspace
 import { BoostCategoryKey } from '../../types/boostSpecs';
 import { OrderDetailsWorkspace, Action, actionLabels } from './OrderDetailsWorkspace';
@@ -1236,9 +1236,10 @@ export const OrderManagementWorkspace: React.FC<Props> = ({
                   />
                 </label>
 
-                {/* Top Boost Category Selector Tabs (6 Distinct Forms) */}
+                {/* Dynamic Service Form or Category Selector Tabs */}
                 <div style={{ marginBottom: '0.85rem' }}>
-                  <CategoryBoostSpecsTabs
+                  <DynamicServiceFormRenderer
+                    selectedService={games.find((g) => g.slug === createGame)?.services?.find((s) => s.id === Number(createServiceId))}
                     activeCategory={createCategory}
                     onSelectCategory={(key, model, defTitle) => {
                       setCreateCategory(key);

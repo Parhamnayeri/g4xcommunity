@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { apiRequest } from '../../services/api';
 import { normalizePagination } from '../../services/operations';
+import { DynamicServiceFormAndTemplateBuilder } from './DynamicServiceFormAndTemplateBuilder';
+import { GlobalChannelRulesEditor } from './GlobalChannelRulesEditor';
 
 const grid: React.CSSProperties = {
   display: 'grid',
@@ -573,6 +575,8 @@ interface Service {
   description?: string;
   sortOrder: number;
   isActive: boolean;
+  formSchemaJson?: string | null;
+  tempChannelTemplate?: string | null;
   settings?: Record<string, any>;
   _count?: { orders: number; approvals: number; registrationApplications: number };
 }
@@ -603,6 +607,8 @@ const emptyService = {
   requiresPilotApproval: false,
   sortOrder: 0,
   isActive: true,
+  formSchemaJson: null as string | null,
+  tempChannelTemplate: null as string | null,
   settings: {
     claimWindowSeconds: 600,
     proofRequired: true,
@@ -891,6 +897,8 @@ export function GamesWorkspace({ embedded = false }: { embedded?: boolean } = {}
                                 ...emptyService,
                                 ...s,
                                 description: s.description || '',
+                                formSchemaJson: s.formSchemaJson || null,
+                                tempChannelTemplate: s.tempChannelTemplate || null,
                                 settings: { ...emptyService.settings, ...s.settings },
                               });
                               setServiceOpen(true);
@@ -1022,6 +1030,14 @@ export function GamesWorkspace({ embedded = false }: { embedded?: boolean } = {}
                     </label>
                   ))}
                 </div>
+
+                <DynamicServiceFormAndTemplateBuilder
+                  formSchemaJson={serviceForm.formSchemaJson}
+                  tempChannelTemplate={serviceForm.tempChannelTemplate}
+                  onChangeFormSchemaJson={(json) => setServiceForm({ ...serviceForm, formSchemaJson: json })}
+                  onChangeTempChannelTemplate={(tmpl) => setServiceForm({ ...serviceForm, tempChannelTemplate: tmpl })}
+                />
+
                 <div style={{ gridColumn: '1 / -1', display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
                   <button type="button" className="btn btn-secondary btn-sm" onClick={() => setServiceOpen(false)}>
                     Cancel
@@ -1035,6 +1051,9 @@ export function GamesWorkspace({ embedded = false }: { embedded?: boolean } = {}
           )}
         </section>
       )}
+
+      {/* Global Discord Temporary Channel Rules Editor */}
+      <GlobalChannelRulesEditor />
     </Shell>
   );
 }

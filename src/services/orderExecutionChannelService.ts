@@ -32,6 +32,10 @@ import {
 import prisma from '../database/db';
 import { DomainError, DomainErrorCode } from './domainErrors';
 import { getGlobalDiscordClient } from './orderDiscordService';
+import {
+  getGlobalChannelRules,
+  DEFAULT_GLOBAL_CHANNEL_RULES,
+} from './systemSettingService';
 
 export interface OrderExecutionChannelResult {
   success: boolean;
@@ -322,12 +326,67 @@ export function buildExecutionChannelOverwrites(
 }
 
 /**
- * Generates the English coordination summary embed and action buttons for the channel.
+ * Interpolates service channel template with dynamic order tokens.
  */
-export function buildExecutionChannelSummary(order: any, activeAssignments: any[]): {
+export function interpolateServiceTemplate(
+  template: string,
+  order: any,
+  activeAssignments: any[] = []
+): string {
+  if (!template) return '';
+
+  const boosterMention = activeAssignments.length > 0
+    ? activeAssignments.map((a: any) => `<@${a.userId}>`).join(' ')
+    : 'Assigned Booster(s)';
+
+  let specsText = 'Standard Service';
+  let specsObj: Record<string, any> | null = null;
+  if (order.boostSpecs && typeof order.boostSpecs === 'object') {
+    specsObj = order.boostSpecs;
+  } else if (order.boostSpecsJson && typeof order.boostSpecsJson === 'string') {
+    try {
+      specsObj = JSON.parse(order.boostSpecsJson);
+    } catch {
+      specsObj = null;
+    }
+  }
+
+  if (specsObj && typeof specsObj === 'object') {
+    const parts = Object.entries(specsObj)
+      .filter(([_, v]) => v !== undefined && v !== null && String(v).trim().length > 0)
+      .map(([k, v]) => `${k.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase())}: ${v}`);
+    if (parts.length > 0) {
+      specsText = parts.join(' | ');
+    }
+  }
+
+  const orderTitle = order.title || order.orderName || `Order #${order.id}`;
+  const boostType = order.boostModel || (order.orderMode === 'pilot' ? 'Pilot' : 'Self-Play');
+  const vpnReq = order.vpnRequirement || (order.orderMode === 'pilot' ? 'VPN Required (Client Country)' : 'No VPN Required');
+  const notesText = order.notes && String(order.notes).trim().length > 0 ? String(order.notes).trim() : 'None';
+
+  return template
+    .replace(/\{order_id\}/gi, String(order.id))
+    .replace(/\{order_title\}/gi, orderTitle)
+    .replace(/\{booster_mention\}/gi, boosterMention)
+    .replace(/\{boost_type\}/gi, boostType)
+    .replace(/\{vpn_requirement\}/gi, vpnReq)
+    .replace(/\{specs\}/gi, specsText)
+    .replace(/\{notes\}/gi, notesText);
+}
+
+/**
+ * Generates the English coordination summary embed (2-part structured rules) and action buttons for the channel.
+ */
+export function buildExecutionChannelSummary(
+  order: any,
+  activeAssignments: any[],
+  globalRules?: string
+): {
   embed: EmbedBuilder;
   components: ActionRowBuilder<ButtonBuilder>[];
 } {
+  const customTitle = order.title || order.orderName;
   const gameName = order.game?.displayName || order.gameSlug;
   const serviceName = order.service?.displayName || `Service #${order.serviceId}`;
 
@@ -342,36 +401,68 @@ export function buildExecutionChannelSummary(order: any, activeAssignments: any[
     .setColor(0x5865f2)
     .setTitle(`⚔️ Boost Order Coordination — #${order.id} (${order.orderRef})`)
     .setDescription(
-      `Welcome to the private coordination channel for **Order #${order.id}**.\n` +
+      `Welcome to the private coordination channel for **${customTitle || `Order #${order.id}`}**.\n` +
         `This channel is accessible only to assigned Boosters, authorized Staff, and management.`
     )
     .addFields(
-      { name: '🎮 Game', value: gameName, inline: true },
-      { name: '🛡️ Service', value: serviceName, inline: true },
+      { name: '🎮 Game & Service', value: `${gameName} · ${serviceName}`, inline: true },
       { name: '📊 Status', value: `\`${order.status.toUpperCase()}\``, inline: true },
-      { name: '👥 Assigned Boosters', value: boosterList, inline: false }
+      { name: '🛡️ Boost Mode', value: order.orderMode === 'pilot' ? 'Pilot' : 'Self-Play', inline: true },
+      { name: '👥 Assigned Squad', value: boosterList, inline: false }
     );
 
-  if (order.runs && order.runs.length > 0) {
-    embed.addFields({
-      name: '🏃 Runs Required',
-      value: `${order.runs.length} Run(s) — Quantity: ${order.quantity || 1}`,
-      inline: true,
-    });
+  // Specifications
+  let specsObj: Record<string, any> | null = null;
+  if (order.boostSpecs && typeof order.boostSpecs === 'object') {
+    specsObj = order.boostSpecs;
+  } else if (order.boostSpecsJson && typeof order.boostSpecsJson === 'string') {
+    try {
+      specsObj = JSON.parse(order.boostSpecsJson);
+    } catch {
+      specsObj = null;
+    }
+  }
+  if (specsObj && typeof specsObj === 'object') {
+    const specEntries = Object.entries(specsObj)
+      .filter(([_, v]) => v !== undefined && v !== null && String(v).trim().length > 0)
+      .map(([k, v]) => `${k.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase())}: **${v}**`);
+    if (specEntries.length > 0) {
+      embed.addFields({
+        name: '📋 Service Specifications',
+        value: specEntries.slice(0, 10).join(' | ').slice(0, 1024),
+        inline: false,
+      });
+    }
   }
 
-  if (order.notes) {
-    embed.addFields({ name: '📝 Operational Notes', value: order.notes, inline: false });
-  }
-
+  // Part 1: Fixed Global Rules
+  const rulesToDisplay = (globalRules || DEFAULT_GLOBAL_CHANNEL_RULES).slice(0, 1024);
   embed.addFields({
-    name: '📌 Operational Guidelines',
-    value:
+    name: '🔒 Part 1: Fixed Global Rules',
+    value: rulesToDisplay,
+    inline: false,
+  });
+
+  // Part 2: Service-Specific Instructions
+  let serviceInstructions = '';
+  if (order.service?.tempChannelTemplate && order.service.tempChannelTemplate.trim().length > 0) {
+    serviceInstructions = interpolateServiceTemplate(order.service.tempChannelTemplate, order, activeAssignments);
+  } else {
+    serviceInstructions =
       '1. Coordinate with team members before initiating the in-game session.\n' +
       '2. Complete all required runs and record valid evidence screenshots.\n' +
       '3. Submit proofs via the Web Portal or the action buttons below.\n' +
-      '4. Sensitive banking, financial, or personal data must never be shared in chat.',
+      '4. Sensitive banking, financial, or personal data must never be shared in chat.';
+  }
+  embed.addFields({
+    name: '📌 Part 2: Service-Specific Instructions',
+    value: serviceInstructions.slice(0, 1024),
+    inline: false,
   });
+
+  if (order.notes) {
+    embed.addFields({ name: '📝 Operational Notes', value: String(order.notes).slice(0, 1024), inline: false });
+  }
 
   embed.setTimestamp();
   embed.setFooter({ text: 'G4X Community — Private Coordination System' });
@@ -724,13 +815,19 @@ export async function getOrCreateOrderExecutionChannel(
       throw dbErr;
     }
 
-    // 8. Post English Summary & Action Buttons
+    // 8. Post English Summary & Action Buttons (2-part structured rules)
     try {
-      const { embed, components } = buildExecutionChannelSummary(order, activeAssignments);
+      const globalRules = await getGlobalChannelRules();
+      const { embed, components } = buildExecutionChannelSummary(order, activeAssignments, globalRules);
       if (typeof newChannel.send === 'function') {
         const boosterPings = activeAssignments.map((a: any) => `<@${a.userId}>`).join(' ');
         const content = boosterPings ? `🔔 **Assigned Team Notification:** ${boosterPings}` : undefined;
-        await newChannel.send({ content, embeds: [embed], components });
+        const sentMessage = await newChannel.send({ content, embeds: [embed], components });
+        if (sentMessage && typeof sentMessage.pin === 'function') {
+          await sentMessage.pin().catch((err: any) =>
+            console.warn('[OrderExecutionChannel] Failed to pin initial summary embed:', err?.message)
+          );
+        }
       }
     } catch (err) {
       console.warn('[OrderExecutionChannel] Failed to post initial summary embed:', err);
