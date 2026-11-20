@@ -29,9 +29,9 @@ export const CancelRequestModal: React.FC<CancelRequestModalProps> = ({ order, o
 
     try {
       const res = await requestOrderCancellation(order.id, reason.trim());
-      onSuccess(res.status, res.message);
+      onSuccess(res?.status || 'pending_review', res?.message || 'Cancellation request submitted.');
     } catch (err: any) {
-      setError(err.message || 'Failed to submit cancellation request.');
+      setError(err?.message || (typeof err === 'string' ? err : 'Failed to submit cancellation request.'));
     } finally {
       setSubmitting(false);
     }

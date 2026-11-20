@@ -68,7 +68,7 @@ export const AdvertiserProfileHeader: React.FC<AdvertiserProfileHeaderProps> = (
             boxShadow: '0 0 15px rgba(124, 58, 237, 0.3)',
           }}
         >
-          {profile.displayName ? profile.displayName[0] : profile.username[0]}
+          {((profile?.displayName || profile?.username || 'A')[0]).toUpperCase()}
         </div>
 
         <div>
@@ -82,7 +82,7 @@ export const AdvertiserProfileHeader: React.FC<AdvertiserProfileHeaderProps> = (
                 letterSpacing: '-0.02em',
               }}
             >
-              {profile.displayName || profile.username}
+              {profile?.displayName || profile?.username || 'Partner'}
             </h1>
             <span
               style={{
@@ -91,7 +91,7 @@ export const AdvertiserProfileHeader: React.FC<AdvertiserProfileHeaderProps> = (
                 fontFamily: 'monospace',
               }}
             >
-              @{profile.username}
+              @{profile?.username || 'user'}
             </span>
 
             {profile.isApprovedAdvertiser ? (
@@ -181,12 +181,12 @@ export const AdvertiserProfileHeader: React.FC<AdvertiserProfileHeaderProps> = (
               }}
             >
               <span style={{ color: 'var(--accent-lime, #ccff00)' }}>⭐</span>
-              Rank: <strong style={{ color: '#fff' }}>{rank.rankLabel}</strong>
-              <span style={{ opacity: 0.75 }}>({rank.commissionPercent} Platform Fee)</span>
+              Rank: <strong style={{ color: '#fff' }}>{rank?.rankLabel || 'Bronze'}</strong>
+              <span style={{ opacity: 0.75 }}>({rank?.commissionPercent || '14.99%'} Platform Fee)</span>
             </div>
 
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted, #9490a6)' }}>
-              Discord ID: <code style={{ color: '#e2e8f0' }}>{profile.discordId}</code>
+              Discord ID: <code style={{ color: '#e2e8f0' }}>{profile?.discordId || '—'}</code>
             </span>
           </div>
         </div>
@@ -230,7 +230,7 @@ export const AdvertiserProfileHeader: React.FC<AdvertiserProfileHeaderProps> = (
               fontFamily: 'monospace',
             }}
           >
-            ${wallet.availableUsd}
+            ${wallet?.availableUsd ?? '0.00'}
           </div>
         </div>
 
@@ -262,7 +262,7 @@ export const AdvertiserProfileHeader: React.FC<AdvertiserProfileHeaderProps> = (
               fontFamily: 'monospace',
             }}
           >
-            ${wallet.reservedUsd}
+            ${wallet?.reservedUsd ?? '0.00'}
           </div>
         </div>
 

@@ -25,9 +25,9 @@ export const EditNoteModal: React.FC<EditNoteModalProps> = ({ order, onClose, on
 
     try {
       const res = await updateOrderNotes(order.id, notes);
-      onSuccess(res.notes);
+      onSuccess(res?.notes ?? notes);
     } catch (err: any) {
-      setError(err.message || 'Failed to update order notes.');
+      setError(err?.message || (typeof err === 'string' ? err : 'Failed to update order notes.'));
     } finally {
       setSubmitting(false);
     }

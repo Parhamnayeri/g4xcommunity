@@ -58,8 +58,8 @@ export async function apiRequest<T = any>(
     let errorDetail = `Request failed with status ${response.status}`;
     try {
       const errJson = await response.json();
-      if (errJson?.error) {
-        errorDetail = errJson.message || errJson.error;
+      if (errJson && typeof errJson === 'object') {
+        errorDetail = errJson.message || errJson.error || errorDetail;
       }
     } catch {
       // not a json response

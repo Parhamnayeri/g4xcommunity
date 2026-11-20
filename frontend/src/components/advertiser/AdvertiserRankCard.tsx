@@ -53,7 +53,7 @@ export const AdvertiserRankCard: React.FC<AdvertiserRankCardProps> = ({ rankData
             Current Rate:
           </span>{' '}
           <strong style={{ color: 'var(--accent-lime, #ccff00)', fontSize: '1rem', fontFamily: 'monospace' }}>
-            {rankData.commissionPercent}
+            {rankData?.commissionPercent || '14.99%'}
           </strong>
         </div>
       </div>
@@ -71,7 +71,7 @@ export const AdvertiserRankCard: React.FC<AdvertiserRankCardProps> = ({ rankData
             </tr>
           </thead>
           <tbody>
-            {rankData.rankHierarchy.map((item) => {
+            {(rankData?.rankHierarchy || []).map((item) => {
               const isCurrent = item.isCurrent;
               return (
                 <tr

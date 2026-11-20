@@ -59,10 +59,11 @@ export const WithdrawModal: React.FC<WithdrawModalProps> = ({
         payoutMethod,
         notes.trim() || undefined
       );
-      onSuccess(`Withdrawal of $${withdrawFloat.toFixed(2)} requested successfully (Ref: ${res.withdrawal.ref}).`);
+      const ref = res?.withdrawal?.ref || 'PENDING';
+      onSuccess(`Withdrawal of $${withdrawFloat.toFixed(2)} requested successfully (Ref: ${ref}).`);
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to submit withdrawal request.');
+      setError(err?.message || (typeof err === 'string' ? err : 'Failed to submit withdrawal request.'));
     } finally {
       setLoading(false);
     }

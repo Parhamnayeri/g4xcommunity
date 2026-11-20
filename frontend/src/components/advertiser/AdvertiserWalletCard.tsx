@@ -42,7 +42,7 @@ export const AdvertiserWalletCard: React.FC<AdvertiserWalletCardProps> = ({
           <span>💳</span> Advertiser Wallet Balances
         </h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          {wallet.isFrozen && (
+          {wallet?.isFrozen && (
             <span
               style={{
                 fontSize: '0.75rem',
@@ -73,7 +73,7 @@ export const AdvertiserWalletCard: React.FC<AdvertiserWalletCardProps> = ({
         </div>
       </div>
 
-      {wallet.isFrozen && (
+      {wallet?.isFrozen && (
         <div
           style={{
             backgroundColor: 'rgba(239, 68, 68, 0.12)',
@@ -130,10 +130,10 @@ export const AdvertiserWalletCard: React.FC<AdvertiserWalletCardProps> = ({
               fontFamily: 'monospace',
             }}
           >
-            ${wallet.availableUsd}
+            ${wallet?.availableUsd ?? '0.00'}
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #9490a6)', marginTop: '0.25rem' }}>
-            {wallet.canPlaceOrders
+            {wallet?.canPlaceOrders
               ? 'Ready to instantly fund orders'
               : 'Add funds to place boost orders'}
           </div>
@@ -167,7 +167,7 @@ export const AdvertiserWalletCard: React.FC<AdvertiserWalletCardProps> = ({
               fontFamily: 'monospace',
             }}
           >
-            ${wallet.reservedUsd}
+            ${wallet?.reservedUsd ?? '0.00'}
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #9490a6)', marginTop: '0.25rem' }}>
             Locked until boost completion
@@ -179,7 +179,7 @@ export const AdvertiserWalletCard: React.FC<AdvertiserWalletCardProps> = ({
           style={{
             backgroundColor: 'rgba(13, 11, 18, 0.7)',
             borderRadius: '12px',
-            border: wallet.frozenCents && wallet.frozenCents > 0
+            border: wallet?.frozenCents && wallet.frozenCents > 0
               ? '1px solid rgba(239, 68, 68, 0.35)'
               : '1px solid rgba(148, 144, 166, 0.2)',
             padding: '1.1rem',
@@ -200,14 +200,14 @@ export const AdvertiserWalletCard: React.FC<AdvertiserWalletCardProps> = ({
             style={{
               fontSize: '1.5rem',
               fontWeight: 700,
-              color: wallet.frozenCents && wallet.frozenCents > 0 ? '#f87171' : 'var(--text-muted, #9490a6)',
+              color: wallet?.frozenCents && wallet.frozenCents > 0 ? '#f87171' : 'var(--text-muted, #9490a6)',
               fontFamily: 'monospace',
             }}
           >
-            ${wallet.frozenUsd || '0.00'}
+            ${wallet?.frozenUsd || '0.00'}
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #9490a6)', marginTop: '0.25rem' }}>
-            {wallet.frozenCents && wallet.frozenCents > 0 ? 'Admin compliance hold' : 'No funds currently on hold'}
+            {wallet?.frozenCents && wallet.frozenCents > 0 ? 'Admin compliance hold' : 'No funds currently on hold'}
           </div>
         </div>
 
@@ -239,7 +239,7 @@ export const AdvertiserWalletCard: React.FC<AdvertiserWalletCardProps> = ({
               fontFamily: 'monospace',
             }}
           >
-            ${wallet.pendingEarningsUsd}
+            ${wallet?.pendingEarningsUsd ?? '0.00'}
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted, #9490a6)', marginTop: '0.25rem' }}>
             Awaiting 24h release clock

@@ -48,11 +48,11 @@ export const ActiveOrdersSection: React.FC<ActiveOrdersSectionProps> = ({
         search: search.trim() || undefined,
       });
 
-      setOrders(res.orders || []);
-      setTotalPages(res.pagination.totalPages || 1);
-      setTotalCount(res.pagination.totalCount || 0);
+      setOrders(res?.orders || []);
+      setTotalPages(res?.pagination?.totalPages || 1);
+      setTotalCount(res?.pagination?.totalCount || 0);
     } catch (err: any) {
-      setError(err.message || 'Failed to load active orders.');
+      setError(err?.message || (typeof err === 'string' ? err : 'Failed to load active orders.'));
     } finally {
       setLoading(false);
     }
@@ -72,7 +72,7 @@ export const ActiveOrdersSection: React.FC<ActiveOrdersSectionProps> = ({
         alert(res.error || 'Discord execution channel is not yet provisioned for this order.');
       }
     } catch (err: any) {
-      alert(err.message || 'Unable to open Discord channel.');
+      alert(err?.message || (typeof err === 'string' ? err : 'Unable to open Discord channel.'));
     } finally {
       setResolvingChannelId(null);
     }
@@ -280,8 +280,8 @@ export const ActiveOrdersSection: React.FC<ActiveOrdersSectionProps> = ({
                         ${o.grossAmountUsd}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        Fee: ${o.feeInfo.advertiserFeeUsd || '0.00'}{' '}
-                        <span style={{ opacity: 0.7 }}>({o.advertiser.commissionPercent})</span>
+                        Fee: ${o.feeInfo?.advertiserFeeUsd || '0.00'}{' '}
+                        <span style={{ opacity: 0.7 }}>({o.advertiser?.commissionPercent || '14.99%'})</span>
                       </div>
                     </td>
 
@@ -289,7 +289,7 @@ export const ActiveOrdersSection: React.FC<ActiveOrdersSectionProps> = ({
                     <td>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                         <span className={badgeClass}>
-                          {o.simplifiedStatus.label}
+                          {o.simplifiedStatus?.label || o.status}
                         </span>
                         {((o as any).changeRequests?.some((c: any) => c.status === 'PENDING') || (o as any).hasPendingChangeRequest) && (
                           <span

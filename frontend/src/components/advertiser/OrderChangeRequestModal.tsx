@@ -60,10 +60,10 @@ export const OrderChangeRequestModal: React.FC<OrderChangeRequestModalProps> = (
         proposedChanges: Object.keys(proposedChanges).length > 0 ? proposedChanges : undefined,
       });
 
-      onSuccess(res.message || `Change request for #${order.orderRef} submitted for staff approval.`);
+      onSuccess(res?.message || `Change request for #${order.orderRef} submitted for staff approval.`);
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to submit change request.');
+      setError(err?.message || (typeof err === 'string' ? err : 'Failed to submit change request.'));
     } finally {
       setLoading(false);
     }

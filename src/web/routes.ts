@@ -214,7 +214,7 @@ import { financialAccountRouter } from './financialAccountRoutes';
 import { financialReportingRouter } from './financialReportingRoutes';
 import { financialLedgerRouter } from './financialLedgerRoutes';
 import { financialAnalyticsRouter } from './financialAnalyticsRoutes';
-import { advertiserRouter } from './advertiserRoutes';
+import { advertiserRouter, ADVERTISER_COMMISSION_TIERS } from './advertiserRoutes';
 import { extractExternalOrderIdAndCleanNotes } from '../services/orderParsingUtils';
 
 export const router = Router();
@@ -2922,7 +2922,9 @@ router.get(
         where: { discordId: user.discordId },
         include: {
           userRoles: true,
+          wallet: true,
           walletV2: true,
+          payoutPreference: true,
         },
       });
 
@@ -3001,10 +3003,13 @@ router.get(
 
       // والت و موجودی‌های مالی
       const walletV2 = dbUser.walletV2;
-      const availableCents = walletV2?.availableCents ?? 0;
-      const reservedCents = walletV2?.reservedCents ?? 0;
+      const legacyWallet = dbUser.wallet;
+      const availableCents = walletV2?.availableCents ?? legacyWallet?.balanceUsd ?? 0;
+      const reservedCents = walletV2?.reservedCents ?? legacyWallet?.escrowUsd ?? 0;
       const pendingEarningsCents = walletV2?.pendingEarningsCents ?? 0;
       const paidCents = walletV2?.paidCents ?? 0;
+      const frozenCents = legacyWallet?.frozenBalance ?? walletV2?.frozenCents ?? 0;
+      const isFrozen = Boolean(legacyWallet?.isFrozen || walletV2?.isFrozen);
 
       // آمار و شمارنده‌های واقعی سفارشات ادورتایزر
       const activeStatuses = ['draft', 'payment_pending', 'open_presign', 'presign_closed', 'assigned', 'in_progress', 'disputed'];
@@ -3055,7 +3060,9 @@ router.get(
           commissionPercent: commissionPercent || '14.99%',
           rankHierarchy,
         },
+        tiers: ADVERTISER_COMMISSION_TIERS,
         wallet: {
+          availableBalance: Math.round(availableCents) / 100,
           availableCents,
           availableUsd: (availableCents / 100).toFixed(2),
           reservedCents,
@@ -3064,7 +3071,12 @@ router.get(
           pendingEarningsUsd: (pendingEarningsCents / 100).toFixed(2),
           paidCents,
           paidUsd: (paidCents / 100).toFixed(2),
-          canPlaceOrders: availableCents > 0,
+          frozenBalance: Math.round(frozenCents) / 100,
+          frozenCents,
+          frozenUsd: (frozenCents / 100).toFixed(2),
+          isFrozen,
+          payoutAddress: dbUser.payoutPreference?.cryptoAddress || dbUser.payoutPreference?.bankIban || null,
+          canPlaceOrders: availableCents > 0 && !isFrozen,
         },
         performance: {
           totalOrdersCreated: totalCreated,

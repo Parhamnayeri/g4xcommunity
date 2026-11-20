@@ -46,9 +46,11 @@ export const DepositCryptoModal: React.FC<DepositCryptoModalProps> = ({ isOpen, 
     try {
       const res = await createDepositIntent(parsedAmount, payCurrency);
       setDepositResult(res);
-      onSuccess(res.deposit);
+      if (res?.deposit || (res as any)?.depositIntent) {
+        onSuccess(res.deposit || (res as any).depositIntent);
+      }
     } catch (err: any) {
-      setError(err.message || 'Failed to create deposit intent.');
+      setError(err?.message || (typeof err === 'string' ? err : 'Failed to create deposit intent.'));
     } finally {
       setLoading(false);
     }
@@ -279,84 +281,94 @@ export const DepositCryptoModal: React.FC<DepositCryptoModalProps> = ({ isOpen, 
                 </button>
               </div>
             </form>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div
-                style={{
-                  backgroundColor: 'rgba(204, 255, 0, 0.1)',
-                  border: '1px solid rgba(204, 255, 0, 0.35)',
-                  borderRadius: '12px',
-                  padding: '1.25rem',
-                  textAlign: 'center',
-                }}
-              >
-                <span style={{ fontSize: '2rem', display: 'block', marginBottom: '0.5rem' }}>🎉</span>
-                <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--accent-lime, #ccff00)', fontSize: '1.1rem' }}>
-                  Deposit Invoice Ready!
-                </h4>
-                <p style={{ margin: 0, fontSize: '0.85rem', color: '#f4f4f6' }}>
-                  {depositResult.instructions.message}
-                </p>
-              </div>
+          ) : (() => {
+            const depositData = depositResult?.deposit || (depositResult as any)?.depositIntent;
+            const instructionsMsg =
+              depositResult?.instructions?.message ||
+              (typeof depositResult?.instructions === 'string' ? depositResult.instructions : null) ||
+              (depositData as any)?.instructions ||
+              (depositResult as any)?.message ||
+              'Deposit invoice generated. Please complete payment at the gateway.';
+            const invoiceUrl = depositData?.invoiceUrl || depositResult?.instructions?.invoiceUrl;
 
-              <div
-                style={{
-                  backgroundColor: 'rgba(13, 11, 18, 0.7)',
-                  borderRadius: '10px',
-                  border: '1px solid rgba(124, 58, 237, 0.25)',
-                  padding: '1rem',
-                  fontSize: '0.85rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.5rem',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#9490a6' }}>Deposit Reference:</span>
-                  <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#ffffff' }}>
-                    {depositResult.deposit.intentRef}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#9490a6' }}>Amount:</span>
-                  <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent-lime, #ccff00)' }}>
-                    ${Number(depositResult.deposit.amountUsd).toFixed(2)} USD
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#9490a6' }}>Pay Currency:</span>
-                  <span style={{ fontFamily: 'monospace', textTransform: 'uppercase', color: '#c4b5fd' }}>
-                    {depositResult.deposit.payCurrency}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: '#9490a6' }}>Status:</span>
-                  <span style={{ color: '#f59e0b', fontWeight: 700 }}>
-                    ⏳ Awaiting Payment Confirmation
-                  </span>
-                </div>
-              </div>
-
-              {depositResult.deposit.invoiceUrl && (
-                <a
-                  href={depositResult.deposit.invoiceUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                <div
                   style={{
-                    padding: '0.75rem',
-                    backgroundColor: 'var(--accent-lime, #ccff00)',
-                    color: '#0d0b12',
-                    borderRadius: '8px',
+                    backgroundColor: 'rgba(204, 255, 0, 0.1)',
+                    border: '1px solid rgba(204, 255, 0, 0.35)',
+                    borderRadius: '12px',
+                    padding: '1.25rem',
                     textAlign: 'center',
-                    fontWeight: 800,
-                    textDecoration: 'none',
-                    display: 'block',
-                    transition: 'all 0.2s ease',
                   }}
                 >
-                  Open NOWPayments Payment Portal ↗
-                </a>
-              )}
+                  <span style={{ fontSize: '2rem', display: 'block', marginBottom: '0.5rem' }}>🎉</span>
+                  <h4 style={{ margin: '0 0 0.5rem 0', color: 'var(--accent-lime, #ccff00)', fontSize: '1.1rem' }}>
+                    Deposit Invoice Ready!
+                  </h4>
+                  <p style={{ margin: 0, fontSize: '0.85rem', color: '#f4f4f6' }}>
+                    {instructionsMsg}
+                  </p>
+                </div>
+
+                <div
+                  style={{
+                    backgroundColor: 'rgba(13, 11, 18, 0.7)',
+                    borderRadius: '10px',
+                    border: '1px solid rgba(124, 58, 237, 0.25)',
+                    padding: '1rem',
+                    fontSize: '0.85rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.5rem',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#9490a6' }}>Deposit Reference:</span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#ffffff' }}>
+                      {depositData?.intentRef || '—'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#9490a6' }}>Amount:</span>
+                    <span style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--accent-lime, #ccff00)' }}>
+                      ${Number(depositData?.amountUsd ?? amountUsd).toFixed(2)} USD
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#9490a6' }}>Pay Currency:</span>
+                    <span style={{ fontFamily: 'monospace', textTransform: 'uppercase', color: '#c4b5fd' }}>
+                      {depositData?.payCurrency || payCurrency}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ color: '#9490a6' }}>Status:</span>
+                    <span style={{ color: '#f59e0b', fontWeight: 700 }}>
+                      ⏳ Awaiting Payment Confirmation
+                    </span>
+                  </div>
+                </div>
+
+                {invoiceUrl && (
+                  <a
+                    href={invoiceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      padding: '0.75rem',
+                      backgroundColor: 'var(--accent-lime, #ccff00)',
+                      color: '#0d0b12',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      fontWeight: 800,
+                      textDecoration: 'none',
+                      display: 'block',
+                      transition: 'all 0.2s ease',
+                    }}
+                  >
+                    Open NOWPayments Payment Portal ↗
+                  </a>
+                )}
 
               <button
                 onClick={handleClose}
@@ -373,7 +385,8 @@ export const DepositCryptoModal: React.FC<DepositCryptoModalProps> = ({ isOpen, 
                 Done
               </button>
             </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     </div>

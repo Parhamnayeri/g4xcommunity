@@ -6,45 +6,54 @@ interface AdvertiserMetricsProps {
 }
 
 export const AdvertiserMetrics: React.FC<AdvertiserMetricsProps> = ({ performance }) => {
+  const perf = performance || {
+    totalOrdersCreated: 0,
+    activeOrdersCount: 0,
+    completedOrdersCount: 0,
+    cancelledOrdersCount: 0,
+    totalGrossVolumeUsd: '0.00',
+    totalPlatformFeesPaidUsd: '0.00',
+  };
+
   const cards = [
     {
       title: 'Total Orders Created',
-      value: performance.totalOrdersCreated,
+      value: perf.totalOrdersCreated ?? 0,
       icon: '📦',
       color: 'var(--text-primary, #f4f4f6)',
       borderColor: 'rgba(124, 58, 237, 0.25)',
     },
     {
       title: 'Active Orders',
-      value: performance.activeOrdersCount,
+      value: perf.activeOrdersCount ?? 0,
       icon: '⚡',
       color: 'var(--accent-lime, #ccff00)',
       borderColor: 'rgba(204, 255, 0, 0.3)',
     },
     {
       title: 'Completed Orders',
-      value: performance.completedOrdersCount,
+      value: perf.completedOrdersCount ?? 0,
       icon: '✅',
       color: '#34d399',
       borderColor: 'rgba(52, 211, 153, 0.3)',
     },
     {
       title: 'Cancelled Orders',
-      value: performance.cancelledOrdersCount,
+      value: perf.cancelledOrdersCount ?? 0,
       icon: '❌',
       color: '#f87171',
       borderColor: 'rgba(248, 113, 113, 0.3)',
     },
     {
       title: 'Settled Boost Volume',
-      value: `$${performance.totalGrossVolumeUsd}`,
+      value: `$${perf.totalGrossVolumeUsd ?? '0.00'}`,
       icon: '📊',
       color: '#a78bfa',
       borderColor: 'rgba(167, 139, 250, 0.3)',
     },
     {
       title: 'Total G4X Fees Paid',
-      value: `$${performance.totalPlatformFeesPaidUsd}`,
+      value: `$${perf.totalPlatformFeesPaidUsd ?? '0.00'}`,
       icon: '🛡️',
       color: 'var(--text-muted, #9490a6)',
       borderColor: 'rgba(148, 144, 166, 0.25)',

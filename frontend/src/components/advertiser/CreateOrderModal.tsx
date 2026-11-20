@@ -193,7 +193,7 @@ export const CreateOrderModal: React.FC<CreateOrderModalProps> = ({
         notes: cleanNotes || undefined,
       });
 
-      onSuccess(res.order.orderRef);
+      onSuccess(res?.order?.orderRef || 'NEW');
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to place order.');
     } finally {

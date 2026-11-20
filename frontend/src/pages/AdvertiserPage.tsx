@@ -46,7 +46,7 @@ export const AdvertiserPage: React.FC = () => {
       const res = await fetchAdvertiserOverview();
       setData(res);
     } catch (err: any) {
-      setError(err.message || 'Failed to load Advertiser Portal.');
+      setError(err?.message || (typeof err === 'string' ? err : 'Failed to load Advertiser Portal.'));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -126,8 +126,8 @@ export const AdvertiserPage: React.FC = () => {
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <span>{notification.type === 'success' ? '✓' : 'ℹ️'}</span>
-            <span>{notification.message}</span>
+            <span>{notification?.type === 'success' ? '✓' : 'ℹ️'}</span>
+            <span>{notification?.message || ''}</span>
           </div>
           <button
             onClick={() => setNotification(null)}

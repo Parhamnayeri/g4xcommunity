@@ -42,11 +42,11 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
         endDate: endDate || undefined,
       });
 
-      setOrders(res.orders || []);
-      setTotalPages(res.pagination.totalPages || 1);
-      setTotalCount(res.pagination.totalCount || 0);
+      setOrders(res?.orders || []);
+      setTotalPages(res?.pagination?.totalPages || 1);
+      setTotalCount(res?.pagination?.totalCount || 0);
     } catch (err: any) {
-      setError(err.message || 'Failed to load order history.');
+      setError(err?.message || (typeof err === 'string' ? err : 'Failed to load order history.'));
     } finally {
       setLoading(false);
     }
@@ -267,10 +267,10 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
                     {/* Immutable Fee Snapshot */}
                     <td>
                       <div style={{ fontFamily: 'monospace', color: 'var(--primary-purple)', fontWeight: 600 }}>
-                        ${o.feeInfo.advertiserFeeUsd || '0.00'}
+                        ${o.feeInfo?.advertiserFeeUsd || '0.00'}
                       </div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        Tier: {o.advertiser.commissionPercent}
+                        Tier: {o.advertiser?.commissionPercent || '14.99%'}
                       </div>
                     </td>
 
@@ -286,7 +286,7 @@ export const OrderHistorySection: React.FC<OrderHistorySectionProps> = ({ refres
                         </span>
                       ) : (
                         <span className="badge badge-muted">
-                          {o.simplifiedStatus.label}
+                          {o.simplifiedStatus?.label || o.status}
                         </span>
                       )}
                     </td>

@@ -7,10 +7,10 @@ export async function fetchCurrentUser(): Promise<User | null> {
     const user = await apiRequest<User>('/api/me');
     return user;
   } catch (err: any) {
-    if (err.status === 401 || err.status === 403) {
+    if (err?.status === 401 || err?.status === 403) {
       return null;
     }
-    console.warn('[Auth] Failed to retrieve session user:', err.message);
+    console.warn('[Auth] Failed to retrieve session user:', err?.message || err);
     return null;
   }
 }

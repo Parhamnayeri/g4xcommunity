@@ -406,20 +406,33 @@ advertiserRouter.post(
         },
       });
 
+      const instructionsText = depositIntent.invoiceUrl
+        ? `Send exactly $${parsedAmount.toFixed(2)} worth of ${selectedCurrency} to ${depositIntent.invoiceUrl}`
+        : `NOWPayments deposit registered (${selectedCurrency}). When live gateway key is active, instant payment address is auto-generated.`;
+
+      const depositPayload = {
+        id: depositIntent.id,
+        intentRef: depositIntent.intentRef,
+        amountUsd: depositIntent.amountUsd,
+        payCurrency: depositIntent.payCurrency,
+        status: depositIntent.status,
+        invoiceUrl: depositIntent.invoiceUrl,
+        paymentId: depositIntent.paymentId,
+        instructions: instructionsText,
+      };
+
       res.json({
         success: true,
-        depositIntent: {
-          id: depositIntent.id,
-          intentRef: depositIntent.intentRef,
-          amountUsd: depositIntent.amountUsd,
-          payCurrency: depositIntent.payCurrency,
-          status: depositIntent.status,
+        deposit: depositPayload,
+        depositIntent: depositPayload,
+        instructions: {
+          message: instructionsText,
           invoiceUrl: depositIntent.invoiceUrl,
-          paymentId: depositIntent.paymentId,
-          instructions: depositIntent.invoiceUrl
-            ? `Send exactly $${parsedAmount.toFixed(2)} worth of ${selectedCurrency} to ${depositIntent.invoiceUrl}`
-            : `NOWPayments deposit registered (${selectedCurrency}). When live gateway key is active, instant payment address is auto-generated.`,
+          payCurrency: depositIntent.payCurrency,
+          amountUsd: parsedAmount,
+          provider: 'NOWPAYMENTS',
         },
+        message: instructionsText,
       });
     } catch (err: any) {
       console.error('[AdvertiserDepositIntent] Error:', err);
