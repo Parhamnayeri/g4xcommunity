@@ -29,6 +29,7 @@ import {
   adjustUserWalletBalance,
   freezeUserWallet,
   listAdminDepositInvoices,
+  syncAdminDepositInvoice,
   adminConfirmDepositInvoice,
   adminCancelDepositInvoice,
 } from '../services/adminWalletManagementService';
@@ -2179,8 +2180,36 @@ adminPortalRouter.get(
 );
 
 /**
+ * POST /api/admin/finance/deposits/:id/sync
+ * Syncs live status from NOWPayments API and auto-credits if finished.
+ */
+adminPortalRouter.post(
+  ['/api/admin/finance/deposits/:id/sync', '/admin/finance/deposits/:id/sync'],
+  requireAuth,
+  requireFinanceManageAccess,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const depositId = parseInt(req.params.id, 10);
+      if (isNaN(depositId)) {
+        res.status(400).json({ error: 'INVALID_ID', message: 'Valid deposit ID is required.' });
+        return;
+      }
+      const actorId = (req as AuthenticatedRequest).user?.discordId;
+      const result = await syncAdminDepositInvoice(depositId, actorId);
+      res.json(result);
+    } catch (err: any) {
+      console.error('[AdminFinanceDeposits] Sync error:', err);
+      res.status(400).json({
+        error: 'SYNC_FAILED',
+        message: err?.message || 'Failed to sync deposit invoice with NOWPayments.',
+      });
+    }
+  }
+);
+
+/**
  * POST /api/admin/finance/deposits/:id/confirm
- * Manually confirms a WAITING deposit invoice and credits the amount to the advertiser's wallet.
+ * Manually confirms a deposit invoice and credits the amount (or custom amount) to the advertiser's wallet.
  */
 adminPortalRouter.post(
   ['/api/admin/finance/deposits/:id/confirm', '/admin/finance/deposits/:id/confirm'],
@@ -2194,8 +2223,10 @@ adminPortalRouter.post(
         return;
       }
       const actorId = (req as AuthenticatedRequest).user?.discordId;
-      const { reason } = req.body || {};
-      const result = await adminConfirmDepositInvoice(depositId, actorId, reason);
+      const { reason, creditAmountUsd, amountUsd } = req.body || {};
+      const customAmount =
+        creditAmountUsd != null ? Number(creditAmountUsd) : (amountUsd != null ? Number(amountUsd) : undefined);
+      const result = await adminConfirmDepositInvoice(depositId, actorId, reason, customAmount);
       res.json(result);
     } catch (err: any) {
       console.error('[AdminFinanceDeposits] Confirm error:', err);

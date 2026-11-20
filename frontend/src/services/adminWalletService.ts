@@ -94,6 +94,36 @@ export async function freezeAdminWallet(
   );
 }
 
+export interface IpnHistoryEntry {
+  timestamp: string;
+  source: 'IPN' | 'API_SYNC' | 'MANUAL_ADMIN';
+  status: string;
+  actuallyPaid?: number;
+  payAmount?: number;
+  outcomeAmount?: number;
+  payCurrency?: string;
+  paymentId?: string;
+  invoiceId?: string;
+  note?: string;
+  raw?: Record<string, any>;
+}
+
+export interface GatewayHealth {
+  configured: boolean;
+  ipnSecretConfigured: boolean;
+  isSandbox: boolean;
+  baseUrl: string;
+  apiConnected?: boolean;
+  statusMessage?: string;
+}
+
+export interface DepositKpis {
+  totalConfirmedUsd: number;
+  pendingCount: number;
+  partiallyPaidCount: number;
+  failedOrExpiredCount: number;
+}
+
 export interface AdminDepositInvoice {
   id: number;
   intentRef: string;
@@ -105,15 +135,34 @@ export interface AdminDepositInvoice {
   payCurrency: string;
   paymentId: string | null;
   invoiceUrl: string | null;
-  status: 'WAITING' | 'CONFIRMED' | 'CANCELLED' | 'EXPIRED';
+  status: string; // WAITING | PROCESSING | PARTIALLY_PAID | CONFIRMED | FAILED | EXPIRED | CANCELLED
+  provider: string;
+  isSandbox: boolean;
+  invoiceId: string | null;
+  purchaseId: string | null;
+  payAddress: string | null;
+  priceAmount: number | null;
+  payAmount: number | null;
+  actuallyPaid: number | null;
+  outcomeAmount: number | null;
+  outcomeCurrency: string | null;
+  gatewayStatus: string;
+  ipnVerified: boolean;
+  lastIpnAt: string | null;
+  ipnHistory: IpnHistoryEntry[];
+  ipnHistoryJson: string | null;
+  creditedAt: string | null;
+  creditedLedgerId: string | null;
+  metadata: string | null;
   createdAt: string;
   updatedAt: string;
   confirmedAt: string | null;
-  provider: string;
 }
 
 export interface AdminDepositListResponse {
   success: boolean;
+  gatewayHealth?: GatewayHealth;
+  kpis?: DepositKpis;
   deposits: AdminDepositInvoice[];
 }
 
@@ -128,13 +177,22 @@ export async function fetchAdminDeposits(params?: {
   return apiRequest<AdminDepositListResponse>(`/api/admin/finance/deposits${qs}`);
 }
 
+export async function syncAdminDeposit(
+  id: number
+): Promise<{ success: boolean; message: string; deposit: AdminDepositInvoice; gatewayStatus: string; credited: boolean }> {
+  return apiRequest(`/api/admin/finance/deposits/${id}/sync`, {
+    method: 'POST',
+  });
+}
+
 export async function confirmAdminDeposit(
   id: number,
-  reason?: string
+  reason?: string,
+  creditAmountUsd?: number
 ): Promise<{ success: boolean; message: string; deposit: any; wallet?: any }> {
   return apiRequest(`/api/admin/finance/deposits/${id}/confirm`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ reason, creditAmountUsd }),
   });
 }
 
@@ -147,3 +205,4 @@ export async function cancelAdminDeposit(
     body: JSON.stringify({ reason }),
   });
 }
+

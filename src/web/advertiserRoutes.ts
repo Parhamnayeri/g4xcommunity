@@ -24,6 +24,7 @@ import {
 } from '../services/advertiserRankService';
 import { NowpaymentsClient } from '../services/payment/nowpaymentsClient';
 import { getNowpaymentsConfig } from '../services/payment/paymentTypes';
+import { getNowPaymentsService } from '../services/nowPaymentsService';
 import { extractExternalOrderIdAndCleanNotes } from '../services/orderParsingUtils';
 import { createAdvertiserBoostOrder } from '../services/orderLifecycleService';
 
@@ -375,37 +376,41 @@ advertiserRouter.post(
       const selectedCurrency = (payCurrency || 'USDTTRC20').trim().toUpperCase();
       const intentRef = `DEP_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-      // Create DepositIntent in database first
+      const nowPaymentsService = getNowPaymentsService();
+      const gatewayHealth = nowPaymentsService.getGatewayHealth();
+
+      // Create DepositIntent in database first with baseline telemetry
       let depositIntent = await prisma.depositIntent.create({
         data: {
           intentRef,
           userId: user.discordId,
           provider: 'NOWPAYMENTS',
+          isSandbox: gatewayHealth.isSandbox,
           amountUsd: parsedAmount,
+          priceAmount: parsedAmount,
           payCurrency: selectedCurrency,
           status: 'WAITING',
+          gatewayStatus: 'waiting',
           metadata: JSON.stringify({
+            isSandbox: gatewayHealth.isSandbox,
             createdAt: new Date().toISOString(),
           }),
         },
       });
 
       const publicUrl = (process.env.PUBLIC_URL || process.env.APP_URL || '').replace(/\/+$/, '') || 'https://g4xcommunity.com';
-      const nowpaymentsApiKey = (process.env.NOWPAYMENTS_API_KEY || '').trim();
 
       let paymentId: string | null = null;
       let invoiceUrl: string | null = null;
       let isConfigured = false;
 
-      if (nowpaymentsApiKey) {
+      if (gatewayHealth.configured) {
         try {
-          const client = new NowpaymentsClient(undefined, nowpaymentsApiKey);
-          const invoiceResult = await client.createInvoice({
-            priceAmount: parsedAmount,
-            priceCurrency: 'usd',
+          const invoiceResult = await nowPaymentsService.createInvoice({
+            amountUsd: parsedAmount,
             payCurrency: selectedCurrency.toLowerCase(),
             orderId: String(depositIntent.id),
-            orderDescription: `G4X Deposit #${depositIntent.id} ($${parsedAmount.toFixed(2)}) - ${user.username}`,
+            description: `G4X Deposit #${depositIntent.id} ($${parsedAmount.toFixed(2)}) - ${user.username}`,
             ipnCallbackUrl: `${publicUrl}/api/webhooks/nowpayments`,
             successUrl: `${publicUrl}/advertiser?deposit=success`,
             cancelUrl: `${publicUrl}/advertiser?deposit=cancelled`,
@@ -419,11 +424,16 @@ advertiserRouter.post(
             depositIntent = await prisma.depositIntent.update({
               where: { id: depositIntent.id },
               data: {
+                isSandbox: gatewayHealth.isSandbox,
+                invoiceId: String(invoiceResult.id || ''),
                 paymentId,
                 invoiceUrl,
+                priceAmount: parsedAmount,
+                gatewayStatus: 'waiting',
                 metadata: JSON.stringify({
                   nowpaymentsConfigured: true,
                   invoiceId: invoiceResult.id,
+                  isSandbox: gatewayHealth.isSandbox,
                   createdAt: new Date().toISOString(),
                 }),
               },

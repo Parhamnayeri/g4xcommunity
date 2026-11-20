@@ -24,6 +24,7 @@ import {
 } from '../services/payment/paymentReconciliationService';
 import { handleNowPaymentsIpn } from '../services/payment/nowpaymentsWebhook';
 import { getNowpaymentsConfig } from '../services/payment/paymentTypes';
+import { getNowPaymentsService } from '../services/nowPaymentsService';
 
 export const paymentRouter = Router();
 
@@ -34,17 +35,26 @@ paymentRouter.post('/webhooks/nowpayments', async (req: Request, res: Response):
     const signatureHeader = req.headers['x-nowpayments-sig'] as string;
     const payload = req.body;
 
-    if (!payload || !payload.payment_id) {
-      res.status(400).json({ error: 'INVALID_PAYLOAD: Missing payment_id' });
+    if (!payload || (!payload.payment_id && !payload.order_id && !payload.invoice_id)) {
+      res.status(400).json({ error: 'INVALID_PAYLOAD: Missing payment_id, invoice_id, or order_id' });
       return;
     }
 
+    // ۱. بررسی و پردازش درخواست‌های شارژ کیف‌پول ادورتایزر (DepositIntent)
+    const nowPaymentsService = getNowPaymentsService();
+    const depositResult = await nowPaymentsService.processDepositIpn(payload, signatureHeader);
+    if (depositResult) {
+      res.status(200).json(depositResult);
+      return;
+    }
+
+    // ۲. پردازش پرداخت‌های استاندارد سفارشات و صورتحساب‌های قدیمی (PaymentAttempt)
     const result = await handleNowPaymentsIpn(payload, signatureHeader);
     res.status(200).json(result);
   } catch (err: any) {
     console.error('[NOWPayments Webhook Error]:', err.message);
     if (err.message && err.message.includes('INVALID_IPN_SIGNATURE')) {
-      res.status(401).json({ error: 'INVALID_IPN_SIGNATURE' });
+      res.status(401).json({ error: 'INVALID_IPN_SIGNATURE', message: 'Webhook HMAC-SHA512 signature verification failed.' });
       return;
     }
     res.status(400).json({ error: err.message || 'Webhook processing failed' });

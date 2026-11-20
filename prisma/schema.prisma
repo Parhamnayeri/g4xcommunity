@@ -2147,24 +2147,41 @@ model OrderChangeRequest {
 
 // ─── ۶۱. درخواست‌های شارژ کیف‌پول کریپتو / NOWPayments (Crypto Deposit Intents) ─────────────
 model DepositIntent {
-  id             Int       @id @default(autoincrement())
-  intentRef      String    @unique @map("intent_ref")
-  userId         String    @map("user_id")
-  provider       String    @default("NOWPAYMENTS") @map("provider") // NOWPAYMENTS
-  amountUsd      Float     @map("amount_usd")
-  payCurrency    String    @map("pay_currency") // USDTTRC20 | USDTBSC | USDC | BTC | ETH
-  paymentId      String?   @unique @map("payment_id")
-  invoiceUrl     String?   @map("invoice_url")
-  status         String    @default("WAITING") @map("status") // WAITING | CONFIRMED | EXPIRED | CANCELLED
-  metadata       String?   @map("metadata")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
-  confirmedAt    DateTime? @map("confirmed_at")
+  id               Int       @id @default(autoincrement())
+  intentRef        String    @unique @map("intent_ref")
+  userId           String    @map("user_id")
+  provider         String    @default("NOWPAYMENTS") @map("provider") // NOWPAYMENTS
+  isSandbox        Boolean   @default(false) @map("is_sandbox")
+  invoiceId        String?   @map("invoice_id")
+  invoiceUrl       String?   @map("invoice_url")
+  paymentId        String?   @unique @map("payment_id")
+  purchaseId       String?   @map("purchase_id")
+  payAddress       String?   @map("pay_address")
+  payCurrency      String    @map("pay_currency") // USDTTRC20 | USDTBSC | USDC | BTC | ETH
+  amountUsd        Float     @map("amount_usd")
+  priceAmount      Float?    @map("price_amount")
+  payAmount        Float?    @map("pay_amount")
+  actuallyPaid     Float?    @map("actually_paid")
+  outcomeAmount    Float?    @map("outcome_amount")
+  outcomeCurrency  String?   @map("outcome_currency")
+  gatewayStatus    String    @default("waiting") @map("gateway_status") // waiting | confirming | confirmed | sending | partially_paid | finished | failed | refunded | expired
+  status           String    @default("WAITING") @map("status") // WAITING | PROCESSING | PARTIALLY_PAID | CONFIRMED | FAILED | EXPIRED | CANCELLED
+  ipnVerified      Boolean   @default(false) @map("ipn_verified")
+  lastIpnAt        DateTime? @map("last_ipn_at")
+  ipnHistoryJson   String?   @map("ipn_history_json")
+  creditedAt       DateTime? @map("credited_at")
+  creditedLedgerId String?   @map("credited_ledger_id")
+  metadata         String?   @map("metadata")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  confirmedAt      DateTime? @map("confirmed_at")
 
-  user           User      @relation("UserDepositIntents", fields: [userId], references: [discordId], onDelete: Cascade)
+  user             User      @relation("UserDepositIntents", fields: [userId], references: [discordId], onDelete: Cascade)
 
   @@index([userId])
   @@index([status])
+  @@index([gatewayStatus])
+  @@index([invoiceId])
   @@map("deposit_intents")
 }
 

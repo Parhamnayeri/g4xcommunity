@@ -539,7 +539,7 @@ export const FinancialManagementWorkspace: React.FC<Props> = ({ onNavigateTab: _
       >
         {[
           { key: 'wallets', label: 'User & Booster Wallets', icon: '👛' },
-          { key: 'deposits', label: 'Deposit Invoices (NOWPayments & Manual Top-Ups)', icon: '📥' },
+          { key: 'deposits', label: 'User Payments & NOWPayments Deposits', icon: '📥' },
           { key: 'platform', label: 'Platform Balances', icon: '🌐', count: platforms.length },
           { key: 'snapshots', label: 'Financial Snapshots', icon: '📸' },
           { key: 'analytics', label: 'Advanced Analytics & P&L', icon: '📈' },

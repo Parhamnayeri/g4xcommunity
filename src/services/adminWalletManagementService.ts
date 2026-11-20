@@ -9,6 +9,7 @@
  */
 
 import prisma from '../database/db';
+import { getNowPaymentsService } from './nowPaymentsService';
 
 export interface WalletListItem {
   discordId: string;
@@ -563,7 +564,7 @@ export async function freezeUserWallet(input: FreezeWalletInput) {
 }
 
 /**
- * Lists all advertiser deposit invoices for administrators with optional status filter and search.
+ * Lists all advertiser deposit invoices for administrators with optional status filter, search, KPIs, and gateway health.
  */
 export async function listAdminDepositInvoices(statusFilter?: string, searchQuery?: string) {
   const where: any = {};
@@ -575,217 +576,146 @@ export async function listAdminDepositInvoices(statusFilter?: string, searchQuer
     where.OR = [
       { intentRef: { contains: q } },
       { paymentId: { contains: q } },
+      { invoiceId: { contains: q } },
+      { payAddress: { contains: q } },
       { user: { username: { contains: q } } },
       { user: { displayName: { contains: q } } },
       { user: { discordId: { contains: q } } },
     ];
   }
 
-  const deposits = await prisma.depositIntent.findMany({
-    where,
-    include: {
-      user: {
-        select: {
-          discordId: true,
-          username: true,
-          displayName: true,
-          advertiserRank: true,
+  const [deposits, allDepositsForKpis] = await Promise.all([
+    prisma.depositIntent.findMany({
+      where,
+      include: {
+        user: {
+          select: {
+            discordId: true,
+            username: true,
+            displayName: true,
+            advertiserRank: true,
+          },
         },
       },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.depositIntent.findMany({
+      select: {
+        status: true,
+        gatewayStatus: true,
+        amountUsd: true,
+      },
+    }),
+  ]);
+
+  let totalConfirmedUsd = 0;
+  let pendingCount = 0;
+  let partiallyPaidCount = 0;
+  let failedOrExpiredCount = 0;
+
+  for (const d of allDepositsForKpis) {
+    if (d.status === 'CONFIRMED' || d.gatewayStatus === 'finished') {
+      totalConfirmedUsd += Number(d.amountUsd || 0);
+    } else if (
+      d.status === 'WAITING' ||
+      d.status === 'PROCESSING' ||
+      ['waiting', 'confirming', 'confirmed', 'sending'].includes(d.gatewayStatus)
+    ) {
+      pendingCount++;
+    } else if (d.status === 'PARTIALLY_PAID' || d.gatewayStatus === 'partially_paid') {
+      partiallyPaidCount++;
+    } else if (
+      ['FAILED', 'EXPIRED', 'CANCELLED'].includes(d.status) ||
+      ['failed', 'expired', 'refunded', 'cancelled'].includes(d.gatewayStatus)
+    ) {
+      failedOrExpiredCount++;
+    }
+  }
+
+  const nowPaymentsService = getNowPaymentsService();
+  const gatewayHealth = nowPaymentsService.getGatewayHealth();
 
   return {
-    deposits: deposits.map((d) => ({
-      id: d.id,
-      intentRef: d.intentRef,
-      userId: d.userId,
-      username: d.user?.username || 'Unknown',
-      displayName: d.user?.displayName || d.user?.username || 'Unknown',
-      advertiserRank: d.user?.advertiserRank || 'BRONZE',
-      amountUsd: d.amountUsd,
-      payCurrency: d.payCurrency,
-      paymentId: d.paymentId,
-      invoiceUrl: d.invoiceUrl,
-      status: d.status,
-      createdAt: d.createdAt,
-      updatedAt: d.updatedAt,
-      confirmedAt: d.confirmedAt,
-      provider: d.provider,
-    })),
+    gatewayHealth,
+    kpis: {
+      totalConfirmedUsd: parseFloat(totalConfirmedUsd.toFixed(2)),
+      pendingCount,
+      partiallyPaidCount,
+      failedOrExpiredCount,
+    },
+    deposits: deposits.map((d) => {
+      let ipnHistory: any[] = [];
+      try {
+        if (d.ipnHistoryJson) {
+          ipnHistory = JSON.parse(d.ipnHistoryJson);
+          if (!Array.isArray(ipnHistory)) ipnHistory = [];
+        }
+      } catch {
+        ipnHistory = [];
+      }
+
+      return {
+        id: d.id,
+        intentRef: d.intentRef,
+        userId: d.userId,
+        username: d.user?.username || 'Unknown',
+        displayName: d.user?.displayName || d.user?.username || 'Unknown',
+        advertiserRank: d.user?.advertiserRank || 'BRONZE',
+        amountUsd: d.amountUsd,
+        payCurrency: d.payCurrency,
+        paymentId: d.paymentId,
+        invoiceUrl: d.invoiceUrl,
+        status: d.status,
+        provider: d.provider,
+        isSandbox: Boolean(d.isSandbox),
+        invoiceId: d.invoiceId,
+        purchaseId: d.purchaseId,
+        payAddress: d.payAddress,
+        priceAmount: d.priceAmount,
+        payAmount: d.payAmount,
+        actuallyPaid: d.actuallyPaid,
+        outcomeAmount: d.outcomeAmount,
+        outcomeCurrency: d.outcomeCurrency,
+        gatewayStatus: d.gatewayStatus,
+        ipnVerified: Boolean(d.ipnVerified),
+        lastIpnAt: d.lastIpnAt,
+        ipnHistory,
+        ipnHistoryJson: d.ipnHistoryJson,
+        creditedAt: d.creditedAt,
+        creditedLedgerId: d.creditedLedgerId,
+        metadata: d.metadata,
+        createdAt: d.createdAt,
+        updatedAt: d.updatedAt,
+        confirmedAt: d.confirmedAt,
+      };
+    }),
   };
 }
 
 /**
- * Manually confirms a WAITING deposit invoice and credits the amount to the advertiser's wallet.
+ * Syncs a deposit invoice live with NOWPayments API and auto-credits if finished.
  */
-export async function adminConfirmDepositInvoice(depositId: number, actorId?: string, reason?: string) {
-  return await prisma.$transaction(async (tx) => {
-    const deposit = await tx.depositIntent.findUnique({
-      where: { id: depositId },
-      include: {
-        user: {
-          include: {
-            wallet: true,
-            walletV2: true,
-          },
-        },
-      },
-    });
+export async function syncAdminDepositInvoice(depositId: number, actorId?: string) {
+  const service = getNowPaymentsService();
+  return await service.syncDepositLiveStatus(depositId, actorId);
+}
 
-    if (!deposit) {
-      throw new Error(`DEPOSIT_NOT_FOUND: Deposit invoice #${depositId} not found`);
-    }
-
-    if (deposit.status === 'CONFIRMED') {
-      throw new Error(`ALREADY_CONFIRMED: Deposit invoice #${depositId} is already confirmed`);
-    }
-
-    if (deposit.status === 'CANCELLED') {
-      throw new Error(`ALREADY_CANCELLED: Deposit invoice #${depositId} has been cancelled`);
-    }
-
-    const discordId = deposit.userId;
-    const amountCents = Math.round(deposit.amountUsd * 100);
-
-    // Auto-create Wallet if missing
-    let wallet = deposit.user.wallet;
-    if (!wallet) {
-      wallet = await tx.wallet.create({
-        data: {
-          userId: discordId,
-          balanceUsd: 0,
-          escrowUsd: 0,
-          frozenBalance: 0,
-          isFrozen: false,
-        },
-      });
-    }
-
-    // Auto-create WalletV2 if missing
-    let walletV2 = deposit.user.walletV2;
-    if (!walletV2) {
-      walletV2 = await tx.walletV2.create({
-        data: {
-          userId: discordId,
-          availableCents: 0,
-          reservedCents: 0,
-          frozenCents: 0,
-          isFrozen: false,
-        },
-      });
-    }
-
-    const newBalanceUsd = wallet.balanceUsd + amountCents;
-    const newAvailableCents = walletV2.availableCents + amountCents;
-
-    // Update Wallet (v1)
-    await tx.wallet.update({
-      where: { userId: discordId },
-      data: { balanceUsd: newBalanceUsd },
-    });
-
-    // Update WalletV2
-    const updatedWalletV2 = await tx.walletV2.update({
-      where: { userId: discordId },
-      data: { availableCents: newAvailableCents },
-    });
-
-    // Immutable Ledger Transaction (v1)
-    const txRef = `TX_DEPOSIT_CONFIRMED_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-    await tx.ledgerTransaction.create({
-      data: {
-        transactionRef: txRef,
-        userId: discordId,
-        currency: 'USD',
-        amountMinor: amountCents,
-        entryType: 'credit',
-        status: 'posted',
-        createdBy: actorId ?? null,
-      },
-    });
-
-    // Immutable Ledger Entry (v2)
-    const entryRef = `L2_DEPOSIT_CONFIRMED_${Date.now()}_${Math.random().toString(36).substring(2, 7).toUpperCase()}`;
-    await tx.ledgerEntryV2.create({
-      data: {
-        entryRef,
-        accountType: 'USER_WALLET',
-        userId: discordId,
-        amountCents,
-        entryType: 'DEPOSIT',
-        direction: 'CREDIT',
-        balanceAfterAvailableCents: newAvailableCents,
-        balanceAfterReservedCents: walletV2.reservedCents,
-        description: `[DEPOSIT_CONFIRMED] NOWPayments Deposit Confirmed: $${deposit.amountUsd.toFixed(2)} (${deposit.payCurrency}) - Ref: ${deposit.intentRef}`,
-        metadata: JSON.stringify({
-          depositId: deposit.id,
-          intentRef: deposit.intentRef,
-          amountUsd: deposit.amountUsd,
-          payCurrency: deposit.payCurrency,
-          actorId,
-          reason: reason || 'Owner/Admin manual deposit confirmation',
-        }),
-        createdBy: actorId ?? null,
-      },
-    });
-
-    // Update DepositIntent
-    let existingMeta: any = {};
-    try {
-      if (deposit.metadata) existingMeta = JSON.parse(deposit.metadata);
-    } catch {}
-
-    const updatedDeposit = await tx.depositIntent.update({
-      where: { id: depositId },
-      data: {
-        status: 'CONFIRMED',
-        confirmedAt: new Date(),
-        metadata: JSON.stringify({
-          ...existingMeta,
-          confirmedBy: actorId ?? null,
-          confirmedAt: new Date().toISOString(),
-          manualConfirmation: true,
-          reason: reason || 'Manual confirmation by administrator',
-        }),
-      },
-    });
-
-    // Audit Log
-    await tx.auditLog.create({
-      data: {
-        actorId: actorId ?? null,
-        action: 'DEPOSIT_CONFIRMED',
-        entityType: 'DepositIntent',
-        entityId: String(deposit.id),
-        previousValues: JSON.stringify({
-          status: deposit.status,
-          amountUsd: deposit.amountUsd,
-        }),
-        newValues: JSON.stringify({
-          status: 'CONFIRMED',
-          amountUsd: deposit.amountUsd,
-          creditedWalletBalanceUsd: newBalanceUsd,
-          creditedWalletV2AvailableCents: newAvailableCents,
-          actorId,
-        }),
-        reason: reason || 'Owner/Admin manual deposit confirmation and wallet balance credit',
-        isSuccess: true,
-      },
-    });
-
-    return {
-      success: true,
-      message: `Deposit invoice #${deposit.id} ($${deposit.amountUsd.toFixed(2)}) confirmed and credited to ${deposit.user.username}'s wallet.`,
-      deposit: updatedDeposit,
-      wallet: {
-        discordId,
-        availableBalance: parseFloat((updatedWalletV2.availableCents / 100).toFixed(2)),
-        pendingEscrowBalance: parseFloat((updatedWalletV2.reservedCents / 100).toFixed(2)),
-      },
-    };
-  });
+/**
+ * Manually confirms a deposit invoice and atomically credits the amount (or custom amount) to the advertiser's wallet.
+ */
+export async function adminConfirmDepositInvoice(
+  depositId: number,
+  actorId?: string,
+  reason?: string,
+  customCreditAmountUsd?: number
+) {
+  const service = getNowPaymentsService();
+  return await service.creditDepositAtomic(
+    depositId,
+    customCreditAmountUsd,
+    actorId,
+    reason || 'Manual confirmation by administrator'
+  );
 }
 
 /**
