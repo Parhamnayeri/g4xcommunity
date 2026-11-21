@@ -470,3 +470,138 @@ export interface UpdateBuyOrderPayload {
   instructions?: string;
   expiresAt?: string | null;
 }
+
+// ─── Phase 4 Sell Offers & Trades Types ───────────────────────────────────────
+
+export type ExchangeSellOfferStatus =
+  | 'PENDING'
+  | 'ACCEPTED'
+  | 'REJECTED'
+  | 'WITHDRAWN'
+  | 'EXPIRED';
+
+export interface ExchangeSellOfferItem {
+  id: string;
+  offerCode: string;
+  buyOrderId: string;
+  sellerUserId: string;
+  sellerDiscordId: string;
+  currencyId: string;
+  regionId?: string | null;
+  offeredAmountBaseUnits: string;
+  deliveryMethodId: string;
+  estimatedDeliveryMinutes: number;
+  additionalInfo?: string | null;
+  status: ExchangeSellOfferStatus;
+  rejectionReason?: string | null;
+  respondedAt?: string | null;
+  createdAt: string;
+  seller?: {
+    discordId: string;
+    username: string;
+    displayName?: string | null;
+  };
+  deliveryMethod?: {
+    id: string;
+    name: string;
+    description?: string | null;
+  };
+  buyOrder?: any;
+  trade?: {
+    id: string;
+    tradeCode: string;
+    status: string;
+  } | null;
+}
+
+export type ExchangeTradeStatus =
+  | 'AWAITING_PAYMENT'
+  | 'PAYMENT_CONFIRMED'
+  | 'DELIVERY_IN_PROGRESS'
+  | 'PROOF_SUBMITTED'
+  | 'BUYER_CONFIRMED'
+  | 'AWAITING_FINAL_APPROVAL'
+  | 'COMPLETED'
+  | 'DISPUTED'
+  | 'CANCELLED';
+
+export interface ExchangeTradeEventItem {
+  id: string;
+  tradeId: string;
+  eventType: string;
+  actorUserId?: string | null;
+  actorDiscordId?: string | null;
+  actorRole?: string | null;
+  fromStatus?: string | null;
+  toStatus?: string | null;
+  note?: string | null;
+  createdAt: string;
+}
+
+export interface ExchangeTradeItem {
+  id: string;
+  tradeCode: string;
+  buyOrderId: string;
+  sellOfferId: string;
+  buyerUserId: string;
+  buyerDiscordId: string;
+  sellerUserId: string;
+  sellerDiscordId: string;
+  gameId: string;
+  currencyId: string;
+  regionId?: string | null;
+  deliveryMethodId: string;
+  quantityBaseUnits: string;
+  unitLabelSnapshot: string;
+  unitMultiplierSnapshot: string;
+  pricePerUnitCentsSnapshot: number;
+  grossValueCents: number;
+  feeRuleIdSnapshot?: string | null;
+  feeRuleVersionSnapshot: number;
+  feeRuleScopeSnapshot: string;
+  buyerCommissionBpsSnapshot: number;
+  sellerCommissionBpsSnapshot: number;
+  paymentProcessingModeSnapshot: string;
+  networkFeeModeSnapshot: string;
+  buyerFeeCents: number;
+  sellerFeeCents: number;
+  netSellerCents: number;
+  buyerTotalPayableCents: number;
+  status: ExchangeTradeStatus;
+  capacityReserved: boolean;
+  estimatedDeliveryMinutes?: number | null;
+  sellerNotes?: string | null;
+  buyerInstructionsSnapshot?: string | null;
+  cancelledByDiscordId?: string | null;
+  cancelReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  game?: { id: string; name: string; slug: string; iconUrl?: string | null };
+  currency?: { id: string; name: string; unitLabel: string; unitMultiplier: string; decimalPrecision?: number };
+  region?: { id: string; name: string; code: string } | null;
+  deliveryMethod?: { id: string; name: string; description?: string | null };
+  buyer?: { discordId: string; username: string; displayName?: string | null };
+  seller?: { discordId: string; username: string; displayName?: string | null };
+  buyOrder?: { id: string; orderCode: string; instructions?: string | null };
+  events?: ExchangeTradeEventItem[];
+}
+
+export interface SubmitSellOfferPayload {
+  offeredAmountBaseUnits: string;
+  deliveryMethodId: string;
+  estimatedDeliveryMinutes?: number;
+  additionalInfo?: string;
+}
+
+export interface SellOfferPreviewData {
+  pricing: TradePricingCalculation;
+  buyOrder: {
+    id: string;
+    orderCode: string;
+    unitLabelSnapshot: string;
+    unitMultiplierSnapshot: string;
+    pricePerUnitCents: number;
+    remainingCapacityBaseUnits: string;
+  };
+}
+

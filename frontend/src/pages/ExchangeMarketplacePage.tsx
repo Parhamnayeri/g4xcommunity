@@ -19,6 +19,7 @@
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import {
   ExchangeBuyOrderItem,
@@ -28,6 +29,8 @@ import {
   ExchangeRegionItem,
   ExchangeDeliveryMethodItem,
   CreateBuyOrderPayload,
+  ExchangeSellOfferItem,
+  ExchangeTradeItem,
 } from '../types/exchange';
 import {
   fetchPublicCatalog,
@@ -37,6 +40,9 @@ import {
   fetchMyBuyOrders,
   createBuyOrder,
   transitionBuyOrderStatus,
+  fetchMySellOffers,
+  fetchTrades,
+  withdrawSellOffer,
 } from '../services/exchangeMarketplace';
 import { OfferMarketplaceTable } from '../components/exchange/OfferMarketplaceTable';
 import { AdvertiserTradesTable } from '../components/exchange/AdvertiserTradesTable';
@@ -46,11 +52,18 @@ import { ExchangerOffer, GoldTrade, PaginationMeta } from '../types/exchange';
 import { fetchAdvertiserTrades } from '../services/exchange';
 
 export const ExchangeMarketplacePage: React.FC = () => {
+  const navigate = useNavigate();
   const { status } = useAuth();
   const isAuthenticated = status === 'authenticated';
 
   // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'marketplace' | 'my_orders' | 'legacy_gold'>('marketplace');
+  const [activeTab, setActiveTab] = useState<'marketplace' | 'my_orders' | 'my_offers' | 'my_trades' | 'legacy_gold'>('marketplace');
+
+  // Phase 4 State
+  const [myOffers, setMyOffers] = useState<ExchangeSellOfferItem[]>([]);
+  const [myOffersLoading, setMyOffersLoading] = useState(false);
+  const [myTrades, setMyTrades] = useState<ExchangeTradeItem[]>([]);
+  const [myTradesLoading, setMyTradesLoading] = useState(false);
 
   // Catalog State
   const [catalogGames, setCatalogGames] = useState<ExchangeGameItem[]>([]);
@@ -190,6 +203,46 @@ export const ExchangeMarketplacePage: React.FC = () => {
     }
   }, [isAuthenticated]);
 
+  const loadMyOffers = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      setMyOffersLoading(true);
+      const res = await fetchMySellOffers();
+      if (res && res.offers) {
+        setMyOffers(res.offers);
+      }
+    } catch (err: any) {
+      console.error('Failed to load my sell offers:', err);
+    } finally {
+      setMyOffersLoading(false);
+    }
+  }, [isAuthenticated]);
+
+  const loadMyTrades = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      setMyTradesLoading(true);
+      const res = await fetchTrades();
+      if (res && res.trades) {
+        setMyTrades(res.trades);
+      }
+    } catch (err: any) {
+      console.error('Failed to load my trades:', err);
+    } finally {
+      setMyTradesLoading(false);
+    }
+  }, [isAuthenticated]);
+
+  const handleWithdrawOffer = async (offerId: string) => {
+    if (!window.confirm('Are you sure you want to withdraw this sell offer?')) return;
+    try {
+      await withdrawSellOffer(offerId);
+      loadMyOffers();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to withdraw offer');
+    }
+  };
+
   useEffect(() => {
     loadCatalog();
   }, [loadCatalog]);
@@ -203,10 +256,14 @@ export const ExchangeMarketplacePage: React.FC = () => {
       loadMarketplaceOrders();
     } else if (activeTab === 'my_orders') {
       loadMyOrders();
+    } else if (activeTab === 'my_offers') {
+      loadMyOffers();
+    } else if (activeTab === 'my_trades') {
+      loadMyTrades();
     } else if (activeTab === 'legacy_gold') {
       loadLegacyTrades();
     }
-  }, [activeTab, loadMarketplaceOrders, loadMyOrders, loadLegacyTrades]);
+  }, [activeTab, loadMarketplaceOrders, loadMyOrders, loadMyOffers, loadMyTrades, loadLegacyTrades]);
 
   // Filtered Currencies based on selected game
   const availableCurrencies = useMemo(() => {
@@ -500,21 +557,55 @@ export const ExchangeMarketplacePage: React.FC = () => {
         </button>
 
         {isAuthenticated && (
-          <button
-            onClick={() => setActiveTab('my_orders')}
-            style={{
-              padding: '12px 20px',
-              background: 'none',
-              border: 'none',
-              borderBottom: activeTab === 'my_orders' ? '3px solid #FACC15' : '3px solid transparent',
-              color: activeTab === 'my_orders' ? '#FACC15' : '#9CA3AF',
-              fontWeight: activeTab === 'my_orders' ? 700 : 500,
-              cursor: 'pointer',
-              fontSize: '0.95rem',
-            }}
-          >
-            My Buy Orders
-          </button>
+          <>
+            <button
+              onClick={() => setActiveTab('my_orders')}
+              style={{
+                padding: '12px 20px',
+                background: 'none',
+                border: 'none',
+                borderBottom: activeTab === 'my_orders' ? '3px solid #FACC15' : '3px solid transparent',
+                color: activeTab === 'my_orders' ? '#FACC15' : '#9CA3AF',
+                fontWeight: activeTab === 'my_orders' ? 700 : 500,
+                cursor: 'pointer',
+                fontSize: '0.95rem',
+              }}
+            >
+              My Buy Orders
+            </button>
+
+            <button
+              onClick={() => setActiveTab('my_offers')}
+              style={{
+                padding: '12px 20px',
+                background: 'none',
+                border: 'none',
+                borderBottom: activeTab === 'my_offers' ? '3px solid #FACC15' : '3px solid transparent',
+                color: activeTab === 'my_offers' ? '#FACC15' : '#9CA3AF',
+                fontWeight: activeTab === 'my_offers' ? 700 : 500,
+                cursor: 'pointer',
+                fontSize: '0.95rem',
+              }}
+            >
+              My Sell Offers ({myOffers.length})
+            </button>
+
+            <button
+              onClick={() => setActiveTab('my_trades')}
+              style={{
+                padding: '12px 20px',
+                background: 'none',
+                border: 'none',
+                borderBottom: activeTab === 'my_trades' ? '3px solid #FACC15' : '3px solid transparent',
+                color: activeTab === 'my_trades' ? '#FACC15' : '#9CA3AF',
+                fontWeight: activeTab === 'my_trades' ? 700 : 500,
+                cursor: 'pointer',
+                fontSize: '0.95rem',
+              }}
+            >
+              My Trades ({myTrades.length})
+            </button>
+          </>
         )}
 
         <button
@@ -958,7 +1049,7 @@ export const ExchangeMarketplacePage: React.FC = () => {
                         </button>
 
                         <button
-                          onClick={() => setSelectedOrderDetails(order)}
+                          onClick={() => navigate(`/exchange/orders/${order.id}`)}
                           style={{
                             backgroundColor: '#FACC15',
                             color: '#09090B',
@@ -1219,6 +1310,268 @@ export const ExchangeMarketplacePage: React.FC = () => {
       )}
 
       {/* ─────────────────────────────────────────────────────────────────────────
+          TAB: MY SELL OFFERS
+          ───────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'my_offers' && (
+        <div style={{ backgroundColor: '#13151C', borderRadius: '12px', border: '1px solid #272A37', padding: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+            <div>
+              <h2 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#FFFFFF', margin: 0 }}>
+                My Submitted Sell Offers
+              </h2>
+              <p style={{ fontSize: '0.85rem', color: '#9CA3AF', margin: '4px 0 0 0' }}>
+                Track the status of your offers submitted to buy orders.
+              </p>
+            </div>
+            <button
+              onClick={loadMyOffers}
+              disabled={myOffersLoading}
+              style={{ padding: '6px 14px', backgroundColor: '#1E202B', color: '#D1D5DB', border: '1px solid #374151', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer' }}
+            >
+              {myOffersLoading ? 'Refreshing...' : '↻ Refresh'}
+            </button>
+          </div>
+
+          {myOffersLoading ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#FACC15' }}>Loading your sell offers...</div>
+          ) : myOffers.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#9CA3AF', backgroundColor: '#1E202B', borderRadius: '8px' }}>
+              You have not submitted any sell offers yet. Browse Marketplace Buy Orders to sell in-game currency or items.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {myOffers.map((offer) => {
+                const multBig = BigInt(offer.buyOrder?.currency?.unitMultiplier || '1');
+                const units = (BigInt(offer.offeredAmountBaseUnits) / multBig).toString();
+
+                return (
+                  <div
+                    key={offer.id}
+                    style={{
+                      backgroundColor: '#1E202B',
+                      borderRadius: '10px',
+                      padding: '16px',
+                      border: '1px solid #272A37',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: '16px',
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                        <span style={{ fontWeight: 800, color: '#FFFFFF', fontSize: '1rem' }}>
+                          {offer.offerCode}
+                        </span>
+                        <span
+                          style={{
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            backgroundColor:
+                              offer.status === 'PENDING'
+                                ? 'rgba(250, 204, 21, 0.15)'
+                                : offer.status === 'ACCEPTED'
+                                ? 'rgba(16, 185, 129, 0.15)'
+                                : 'rgba(239, 68, 68, 0.15)',
+                            color:
+                              offer.status === 'PENDING'
+                                ? '#FACC15'
+                                : offer.status === 'ACCEPTED'
+                                ? '#10B981'
+                                : '#EF4444',
+                          }}
+                        >
+                          {offer.status}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: '#D1D5DB' }}>
+                        Order: <Link to={`/exchange/orders/${offer.buyOrderId}`} style={{ color: '#FACC15', textDecoration: 'none', fontWeight: 600 }}>{offer.buyOrder?.orderCode || 'View Order'}</Link> • {offer.buyOrder?.game?.name || ''} ({offer.buyOrder?.currency?.name || ''})
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: '#9CA3AF', marginTop: '4px' }}>
+                        Delivery Method: {offer.deliveryMethod?.name || 'In-Game'} (~{offer.estimatedDeliveryMinutes}m) • Submitted: {new Date(offer.createdAt).toLocaleString()}
+                      </div>
+                      {offer.rejectionReason && (
+                        <div style={{ fontSize: '0.8rem', color: '#EF4444', marginTop: '4px' }}>
+                          Rejection Reason: {offer.rejectionReason}
+                        </div>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#10B981' }}>
+                          {units} {offer.buyOrder?.currency?.unitLabel || 'Units'}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#6B7280' }}>
+                          Offered Amount
+                        </div>
+                      </div>
+
+                      {offer.status === 'PENDING' ? (
+                        <button
+                          onClick={() => handleWithdrawOffer(offer.id)}
+                          style={{
+                            padding: '8px 14px',
+                            backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                            color: '#EF4444',
+                            border: '1px solid #EF4444',
+                            borderRadius: '6px',
+                            fontWeight: 600,
+                            fontSize: '0.85rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Withdraw
+                        </button>
+                      ) : offer.trade ? (
+                        <Link
+                          to={`/exchange/trades/${offer.trade.id}`}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#8B5CF6',
+                            color: '#FFFFFF',
+                            borderRadius: '6px',
+                            textDecoration: 'none',
+                            fontWeight: 700,
+                            fontSize: '0.85rem',
+                          }}
+                        >
+                          View Trade →
+                        </Link>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────────────
+          TAB: MY TRADES
+          ───────────────────────────────────────────────────────────────────────── */}
+      {activeTab === 'my_trades' && (
+        <div style={{ backgroundColor: '#13151C', borderRadius: '12px', border: '1px solid #272A37', padding: '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+            <div>
+              <h2 style={{ fontSize: '1.3rem', fontWeight: 800, color: '#FFFFFF', margin: 0 }}>
+                My Exchange Trades
+              </h2>
+              <p style={{ fontSize: '0.85rem', color: '#9CA3AF', margin: '4px 0 0 0' }}>
+                All active and completed trades where you are the buyer or seller.
+              </p>
+            </div>
+            <button
+              onClick={loadMyTrades}
+              disabled={myTradesLoading}
+              style={{ padding: '6px 14px', backgroundColor: '#1E202B', color: '#D1D5DB', border: '1px solid #374151', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer' }}
+            >
+              {myTradesLoading ? 'Refreshing...' : '↻ Refresh'}
+            </button>
+          </div>
+
+          {myTradesLoading ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#FACC15' }}>Loading your trades...</div>
+          ) : myTrades.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px', color: '#9CA3AF', backgroundColor: '#1E202B', borderRadius: '8px' }}>
+              No trades found. Accept an offer on your buy order or submit a sell offer to start trading.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {myTrades.map((t) => {
+                const multBig = BigInt(t.unitMultiplierSnapshot || '1');
+                const units = (BigInt(t.quantityBaseUnits) / multBig).toString();
+                const totalUsd = (t.grossValueCents / 100).toFixed(2);
+
+                return (
+                  <div
+                    key={t.id}
+                    style={{
+                      backgroundColor: '#1E202B',
+                      borderRadius: '10px',
+                      padding: '16px',
+                      border: '1px solid #272A37',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      flexWrap: 'wrap',
+                      gap: '16px',
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                        <span style={{ fontWeight: 800, color: '#FFFFFF', fontSize: '1rem' }}>
+                          {t.tradeCode}
+                        </span>
+                        <span
+                          style={{
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            backgroundColor:
+                              t.status === 'AWAITING_PAYMENT'
+                                ? 'rgba(250, 204, 21, 0.15)'
+                                : t.status === 'COMPLETED'
+                                ? 'rgba(16, 185, 129, 0.15)'
+                                : 'rgba(239, 68, 68, 0.15)',
+                            color:
+                              t.status === 'AWAITING_PAYMENT'
+                                ? '#FACC15'
+                                : t.status === 'COMPLETED'
+                                ? '#10B981'
+                                : '#EF4444',
+                          }}
+                        >
+                          {t.status}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.85rem', color: '#D1D5DB' }}>
+                        {t.game?.name} • {t.currency?.name} ({units} {t.unitLabelSnapshot}s)
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: '#6B7280', marginTop: '4px' }}>
+                        Order: {t.buyOrder?.orderCode || ''} • Created: {new Date(t.createdAt).toLocaleString()}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#10B981' }}>
+                          ${totalUsd}
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: '#6B7280' }}>
+                          Gross Total
+                        </div>
+                      </div>
+
+                      <Link
+                        to={`/exchange/trades/${t.id}`}
+                        style={{
+                          padding: '8px 16px',
+                          backgroundColor: '#FACC15',
+                          color: '#000000',
+                          borderRadius: '6px',
+                          textDecoration: 'none',
+                          fontWeight: 700,
+                          fontSize: '0.85rem',
+                        }}
+                      >
+                        Trade Details →
+                      </Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────────────────
           TAB 3: LEGACY WOW GOLD & P2P OFFERS
           ───────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'legacy_gold' && (
@@ -1411,6 +1764,25 @@ export const ExchangeMarketplacePage: React.FC = () => {
                 }}
               >
                 Close
+              </button>
+
+              <button
+                onClick={() => {
+                  const orderId = selectedOrderDetails.id;
+                  setSelectedOrderDetails(null);
+                  navigate(`/exchange/orders/${orderId}`);
+                }}
+                style={{
+                  backgroundColor: '#FACC15',
+                  color: '#09090B',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '9px 18px',
+                  cursor: 'pointer',
+                  fontWeight: 700,
+                }}
+              >
+                Open Order Page &amp; Sell →
               </button>
             </div>
           </div>

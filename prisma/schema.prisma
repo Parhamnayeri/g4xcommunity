@@ -103,6 +103,10 @@ model User {
   exchangeKyc                   ExchangeKycRequest?    @relation("UserExchangeKyc")
   exchangePermission            ExchangeUserPermission? @relation("UserExchangePermission")
   exchangeBuyOrders             ExchangeBuyOrder[]     @relation("BuyerExchangeOrders")
+  exchangeSellOffers           ExchangeSellOffer[]    @relation("SellerExchangeOffers")
+  exchangeTradesAsBuyer        ExchangeTrade[]        @relation("BuyerExchangeTrades")
+  exchangeTradesAsSeller       ExchangeTrade[]        @relation("SellerExchangeTrades")
+  exchangeTradeEvents          ExchangeTradeEvent[]   @relation("ActorExchangeTradeEvents")
 
   @@index([advertiserRank])
   @@map("users")
@@ -2204,6 +2208,7 @@ model ExchangeGame {
   feeRules     ExchangeFeeRule[]
   regions      ExchangeRegion[]
   buyOrders    ExchangeBuyOrder[]
+  trades       ExchangeTrade[]
 
   @@map("exchange_games")
 }
@@ -2221,6 +2226,8 @@ model ExchangeRegion {
 
   game         ExchangeGame? @relation(fields: [gameId], references: [id], onDelete: SetNull)
   buyOrders    ExchangeBuyOrder[]
+  sellOffers   ExchangeSellOffer[]
+  trades       ExchangeTrade[]
 
   @@index([gameId])
   @@map("exchange_regions")
@@ -2236,6 +2243,9 @@ model ExchangeDeliveryMethod {
   displayOrder Int      @default(0) @map("display_order")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
+
+  sellOffers   ExchangeSellOffer[]
+  trades       ExchangeTrade[]
 
   @@map("exchange_delivery_methods")
 }
@@ -2262,6 +2272,8 @@ model ExchangeCurrency {
   game                   ExchangeGame      @relation(fields: [gameId], references: [id], onDelete: Cascade)
   feeRules               ExchangeFeeRule[]
   buyOrders              ExchangeBuyOrder[]
+  sellOffers             ExchangeSellOffer[]
+  trades                 ExchangeTrade[]
 
   @@unique([gameId, slug])
   @@index([gameId])
@@ -2356,6 +2368,7 @@ model ExchangeBuyOrder {
   reservedCapacityBaseUnits     String            @default("0") @map("reserved_capacity_base_units")
   remainingCapacityBaseUnits    String            @map("remaining_capacity_base_units")
   filledCapacityBaseUnits       String            @default("0") @map("filled_capacity_base_units")
+  version                      Int               @default(0) @map("version")
   acceptedDeliveryMethodIdsJson String            @default("[]") @map("accepted_delivery_method_ids_json")
   instructions                 String?           @map("instructions")
   expiresAt                    DateTime?         @map("expires_at")
@@ -2367,6 +2380,8 @@ model ExchangeBuyOrder {
   game                         ExchangeGame      @relation(fields: [gameId], references: [id], onDelete: Cascade)
   currency                     ExchangeCurrency  @relation(fields: [currencyId], references: [id], onDelete: Cascade)
   region                       ExchangeRegion?   @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  sellOffers                   ExchangeSellOffer[]
+  trades                       ExchangeTrade[]
 
   @@index([buyerUserId])
   @@index([gameId])
@@ -2378,4 +2393,121 @@ model ExchangeBuyOrder {
   @@index([expiresAt])
   @@map("exchange_buy_orders")
 }
+
+// ─── ۷۰. اکسچنج: پیشنهادات فروش سلرها (Exchange Sell Offers) ──────────────────
+model ExchangeSellOffer {
+  id                       String                 @id @default(cuid())
+  offerCode                String                 @unique @map("offer_code")
+  buyOrderId               String                 @map("buy_order_id")
+  sellerUserId             String                 @map("seller_user_id")
+  sellerDiscordId          String                 @map("seller_discord_id")
+  currencyId               String                 @map("currency_id")
+  regionId                 String?                @map("region_id")
+  offeredAmountBaseUnits   String                 @map("offered_amount_base_units")
+  deliveryMethodId         String                 @map("delivery_method_id")
+  estimatedDeliveryMinutes Int                    @default(30) @map("estimated_delivery_minutes")
+  additionalInfo           String?                @map("additional_info")
+  status                   String                 @default("PENDING") @map("status") // PENDING | ACCEPTED | REJECTED | WITHDRAWN | EXPIRED
+  rejectionReason          String?                @map("rejection_reason")
+  respondedAt              DateTime?              @map("responded_at")
+  createdAt                DateTime               @default(now()) @map("created_at")
+  updatedAt                DateTime               @updatedAt @map("updated_at")
+
+  buyOrder                 ExchangeBuyOrder       @relation(fields: [buyOrderId], references: [id], onDelete: Cascade)
+  seller                   User                   @relation("SellerExchangeOffers", fields: [sellerUserId], references: [discordId], onDelete: Cascade)
+  currency                 ExchangeCurrency       @relation(fields: [currencyId], references: [id], onDelete: Cascade)
+  region                   ExchangeRegion?        @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  deliveryMethod           ExchangeDeliveryMethod @relation(fields: [deliveryMethodId], references: [id], onDelete: Restrict)
+  trade                    ExchangeTrade?
+
+  @@index([buyOrderId, status])
+  @@index([sellerDiscordId, status])
+  @@index([createdAt])
+  @@map("exchange_sell_offers")
+}
+
+// ─── ۷۱. اکسچنج: معاملات نهایی اکسچنج (Exchange Trades) ───────────────────────
+model ExchangeTrade {
+  id                            String                 @id @default(cuid())
+  tradeCode                     String                 @unique @map("trade_code")
+  buyOrderId                    String                 @map("buy_order_id")
+  sellOfferId                   String                 @unique @map("sell_offer_id")
+  buyerUserId                   String                 @map("buyer_user_id")
+  buyerDiscordId                String                 @map("buyer_discord_id")
+  sellerUserId                  String                 @map("seller_user_id")
+  sellerDiscordId               String                 @map("seller_discord_id")
+  gameId                        String                 @map("game_id")
+  currencyId                    String                 @map("currency_id")
+  regionId                      String?                @map("region_id")
+  deliveryMethodId              String                 @map("delivery_method_id")
+
+  // Immutable Pricing & Quantity Snapshot
+  quantityBaseUnits             String                 @map("quantity_base_units")
+  unitLabelSnapshot             String                 @default("Unit") @map("unit_label_snapshot")
+  unitMultiplierSnapshot        String                 @default("1") @map("unit_multiplier_snapshot")
+  pricePerUnitCentsSnapshot     Int                    @map("price_per_unit_cents_snapshot")
+  grossValueCents               Int                    @map("gross_value_cents")
+
+  // Immutable Fee Rule Snapshot (captured at Trade creation from resolveActiveExchangeFeeRule)
+  feeRuleIdSnapshot             String?                @map("fee_rule_id_snapshot")
+  feeRuleVersionSnapshot        Int                    @default(1) @map("fee_rule_version_snapshot")
+  feeRuleScopeSnapshot          String                 @default("GLOBAL") @map("fee_rule_scope_snapshot")
+  buyerCommissionBpsSnapshot    Int                    @default(100) @map("buyer_commission_bps_snapshot")
+  sellerCommissionBpsSnapshot   Int                    @default(200) @map("seller_commission_bps_snapshot")
+  paymentProcessingModeSnapshot String                 @default("ACTUAL_COST") @map("payment_processing_mode_snapshot")
+  networkFeeModeSnapshot        String                 @default("ACTUAL_COST") @map("network_fee_mode_snapshot")
+  buyerFeeCents                 Int                    @default(0) @map("buyer_fee_cents")
+  sellerFeeCents                Int                    @default(0) @map("seller_fee_cents")
+  netSellerCents                Int                    @map("net_seller_cents")
+  buyerTotalPayableCents        Int                    @map("buyer_total_payable_cents")
+
+  // Lifecycle & Reservation Tracking
+  status                        String                 @default("AWAITING_PAYMENT") @map("status") // AWAITING_PAYMENT | PAYMENT_CONFIRMED | DELIVERY_IN_PROGRESS | PROOF_SUBMITTED | BUYER_CONFIRMED | AWAITING_FINAL_APPROVAL | COMPLETED | DISPUTED | CANCELLED
+  capacityReserved              Boolean                @default(true) @map("capacity_reserved")
+  estimatedDeliveryMinutes      Int?                   @map("estimated_delivery_minutes")
+  sellerNotes                   String?                @map("seller_notes")
+  buyerInstructionsSnapshot     String?                @map("buyer_instructions_snapshot")
+  cancelledByDiscordId          String?                @map("cancelled_by_discord_id")
+  cancelReason                  String?                @map("cancel_reason")
+  createdAt                     DateTime               @default(now()) @map("created_at")
+  updatedAt                     DateTime               @updatedAt @map("updated_at")
+
+  buyOrder                      ExchangeBuyOrder       @relation(fields: [buyOrderId], references: [id], onDelete: Cascade)
+  sellOffer                     ExchangeSellOffer      @relation(fields: [sellOfferId], references: [id], onDelete: Cascade)
+  buyer                         User                   @relation("BuyerExchangeTrades", fields: [buyerUserId], references: [discordId], onDelete: Cascade)
+  seller                        User                   @relation("SellerExchangeTrades", fields: [sellerUserId], references: [discordId], onDelete: Cascade)
+  game                          ExchangeGame           @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  currency                      ExchangeCurrency       @relation(fields: [currencyId], references: [id], onDelete: Cascade)
+  region                        ExchangeRegion?        @relation(fields: [regionId], references: [id], onDelete: SetNull)
+  deliveryMethod                ExchangeDeliveryMethod @relation(fields: [deliveryMethodId], references: [id], onDelete: Restrict)
+  events                        ExchangeTradeEvent[]
+
+  @@index([buyerDiscordId, status])
+  @@index([sellerDiscordId, status])
+  @@index([buyOrderId, status])
+  @@index([createdAt])
+  @@map("exchange_trades")
+}
+
+// ─── ۷۲. اکسچنج: رویدادهای زمانی معامله (Exchange Trade Events) ───────────────
+model ExchangeTradeEvent {
+  id             String        @id @default(cuid())
+  tradeId        String        @map("trade_id")
+  eventType      String        @map("event_type") // OFFER_ACCEPTED | CAPACITY_RESERVED | STATUS_CHANGED | TRADE_CANCELLED | CAPACITY_RELEASED
+  actorUserId    String?       @map("actor_user_id")
+  actorDiscordId String?       @map("actor_discord_id")
+  actorRole      String?       @map("actor_role") // BUYER | SELLER | ADMIN | OWNER | SYSTEM
+  fromStatus     String?       @map("from_status")
+  toStatus       String?       @map("to_status")
+  note           String?       @map("note")
+  metadataJson   String?       @map("metadata_json")
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  trade          ExchangeTrade @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  actorUser      User?         @relation("ActorExchangeTradeEvents", fields: [actorUserId], references: [discordId], onDelete: SetNull)
+
+  @@index([tradeId, createdAt])
+  @@map("exchange_trade_events")
+}
+
 

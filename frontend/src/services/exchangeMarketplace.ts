@@ -16,6 +16,10 @@ import {
   ExchangeCurrencyItem,
   ExchangeRegionItem,
   ExchangeDeliveryMethodItem,
+  ExchangeSellOfferItem,
+  ExchangeTradeItem,
+  SubmitSellOfferPayload,
+  SellOfferPreviewData,
 } from '../types/exchange';
 
 export interface PublicCatalogResponse {
@@ -210,3 +214,134 @@ export async function transitionBuyOrderStatus(
     body: JSON.stringify({ action }),
   });
 }
+
+// ─── Phase 4: Sell Offers & Trades API ───────────────────────────────────────
+
+/**
+ * Previews pricing, fees, and net payout for an intended sell offer
+ */
+export async function previewSellOffer(
+  orderId: string,
+  offeredAmountBaseUnits: string
+): Promise<SellOfferPreviewData> {
+  const res = await apiRequest<{ success: boolean; preview: SellOfferPreviewData }>(
+    `/api/exchange/orders/${orderId}/offers/preview`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ offeredAmountBaseUnits }),
+    }
+  );
+  return res.preview;
+}
+
+/**
+ * Submits a new sell offer on a buy order
+ */
+export async function submitSellOffer(
+  orderId: string,
+  data: SubmitSellOfferPayload
+): Promise<{ success: boolean; message: string; offer: ExchangeSellOfferItem }> {
+  return await apiRequest(`/api/exchange/orders/${orderId}/offers`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/**
+ * Lists offers submitted on a buy order (Buyer/Staff/Owner only)
+ */
+export async function fetchOffersOnBuyOrder(
+  orderId: string
+): Promise<{ success: boolean; offers: ExchangeSellOfferItem[] }> {
+  return await apiRequest<{ success: boolean; offers: ExchangeSellOfferItem[] }>(
+    `/api/exchange/orders/${orderId}/offers`
+  );
+}
+
+/**
+ * Lists sell offers submitted by the current seller
+ */
+export async function fetchMySellOffers(): Promise<{
+  success: boolean;
+  offers: ExchangeSellOfferItem[];
+}> {
+  return await apiRequest<{ success: boolean; offers: ExchangeSellOfferItem[] }>(
+    '/api/exchange/my-sell-offers'
+  );
+}
+
+/**
+ * Buyer accepts a pending sell offer -> creates trade & reserves capacity
+ */
+export async function acceptSellOffer(
+  offerId: string
+): Promise<{ success: boolean; message: string; trade: ExchangeTradeItem }> {
+  return await apiRequest(`/api/exchange/offers/${offerId}/accept`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Buyer rejects a pending sell offer
+ */
+export async function rejectSellOffer(
+  offerId: string,
+  reason?: string
+): Promise<{ success: boolean; message: string; offer: ExchangeSellOfferItem }> {
+  return await apiRequest(`/api/exchange/offers/${offerId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+/**
+ * Seller withdraws their own pending sell offer
+ */
+export async function withdrawSellOffer(
+  offerId: string
+): Promise<{ success: boolean; message: string; offer: ExchangeSellOfferItem }> {
+  return await apiRequest(`/api/exchange/offers/${offerId}/withdraw`, {
+    method: 'POST',
+  });
+}
+
+/**
+ * Lists user's trades (as buyer or seller)
+ */
+export async function fetchTrades(params?: {
+  role?: 'buyer' | 'seller';
+  status?: string;
+}): Promise<{ success: boolean; trades: ExchangeTradeItem[] }> {
+  const query = new URLSearchParams();
+  if (params?.role) query.set('role', params.role);
+  if (params?.status && params.status !== 'ALL') query.set('status', params.status);
+  const queryString = query.toString() ? `?${query.toString()}` : '';
+  return await apiRequest<{ success: boolean; trades: ExchangeTradeItem[] }>(
+    `/api/exchange/trades${queryString}`
+  );
+}
+
+/**
+ * Fetches full trade details by ID or code
+ */
+export async function fetchTradeById(
+  tradeId: string
+): Promise<{ success: boolean; trade: ExchangeTradeItem }> {
+  return await apiRequest<{ success: boolean; trade: ExchangeTradeItem }>(
+    `/api/exchange/trades/${tradeId}`
+  );
+}
+
+/**
+ * Cancels an unpaid trade (AWAITING_PAYMENT) and releases capacity
+ */
+export async function cancelTrade(
+  tradeId: string,
+  reason?: string
+): Promise<{ success: boolean; message: string; trade: ExchangeTradeItem }> {
+  return await apiRequest(`/api/exchange/trades/${tradeId}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+

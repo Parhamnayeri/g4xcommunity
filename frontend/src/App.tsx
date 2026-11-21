@@ -11,6 +11,8 @@ import { WithdrawPage } from './pages/WithdrawPage';
 import { AdvertiserPage } from './pages/AdvertiserPage';
 import { WalletPage } from './pages/WalletPage';
 import { ExchangeMarketplacePage } from './pages/ExchangeMarketplacePage';
+import { ExchangeBuyOrderDetailPage } from './pages/ExchangeBuyOrderDetailPage';
+import { ExchangeTradeDetailPage } from './pages/ExchangeTradeDetailPage';
 import { ExchangerPage } from './pages/ExchangerPage';
 import { ApplicationsWorkspace, GamesWorkspace, ChannelsWorkspace } from './components/admin/NativeAdminModules';
 
@@ -50,6 +52,8 @@ export const App: React.FC = () => {
             <Route path="/settings" element={<RouteErrorBoundary routeName="Settings"><BoosterSettingsPage /></RouteErrorBoundary>} />
             <Route path="/advertiser" element={<RouteErrorBoundary routeName="Advertiser"><AdvertiserPage /></RouteErrorBoundary>} />
             <Route path="/exchange" element={<RouteErrorBoundary routeName="Exchange Marketplace"><ExchangeMarketplacePage /></RouteErrorBoundary>} />
+            <Route path="/exchange/orders/:id" element={<RouteErrorBoundary routeName="Exchange Order Details"><ExchangeBuyOrderDetailPage /></RouteErrorBoundary>} />
+            <Route path="/exchange/trades/:tradeId" element={<RouteErrorBoundary routeName="Exchange Trade Details"><ExchangeTradeDetailPage /></RouteErrorBoundary>} />
             <Route path="/exchanger" element={<RouteErrorBoundary routeName="Exchanger Portal"><ExchangerPage /></RouteErrorBoundary>} />
 
             {/* Operations Routes — Website Phase 7 */}
