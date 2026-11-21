@@ -2185,3 +2185,110 @@ model DepositIntent {
   @@map("deposit_intents")
 }
 
+// ─── ۶۲. اکسچنج: بازی‌های مبادله ارز و آیتم (Exchange Games) ─────────────────
+model ExchangeGame {
+  id           String             @id @default(cuid())
+  name         String
+  slug         String             @unique
+  iconUrl      String?            @map("icon_url")
+  description  String?
+  isActive     Boolean            @default(true) @map("is_active")
+  displayOrder Int                @default(0) @map("display_order")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+
+  currencies   ExchangeCurrency[]
+  feeRules     ExchangeFeeRule[]
+  regions      ExchangeRegion[]
+
+  @@map("exchange_games")
+}
+
+// ─── ۶۳. اکسچنج: ریجن‌ها و سرورها (Exchange Regions) ──────────────────────────
+model ExchangeRegion {
+  id           String        @id @default(cuid())
+  gameId       String?       @map("game_id")
+  name         String
+  code         String
+  isActive     Boolean       @default(true) @map("is_active")
+  displayOrder Int           @default(0) @map("display_order")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  game         ExchangeGame? @relation(fields: [gameId], references: [id], onDelete: SetNull)
+
+  @@index([gameId])
+  @@map("exchange_regions")
+}
+
+// ─── ۶۴. اکسچنج: روش‌های تحویل (Exchange Delivery Methods) ────────────────────
+model ExchangeDeliveryMethod {
+  id           String   @id @default(cuid())
+  name         String
+  code         String   @unique
+  description  String?
+  isActive     Boolean  @default(true) @map("is_active")
+  displayOrder Int      @default(0) @map("display_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("exchange_delivery_methods")
+}
+
+// ─── ۶۵. اکسچنج: واحدهای پولی / ارزی بازی‌ها (Exchange Currencies) ───────────
+model ExchangeCurrency {
+  id                     String            @id @default(cuid())
+  gameId                 String            @map("game_id")
+  name                   String
+  slug                   String
+  iconUrl                String?           @map("icon_url")
+  unitLabel              String            @default("Unit") @map("unit_label")
+  unitMultiplier         String            @default("1") @map("unit_multiplier") // base units per quoted trade unit, string to prevent overflow
+  decimalPrecision       Int               @default(0) @map("decimal_precision")
+  minTradeBaseUnits      String            @default("1") @map("min_trade_base_units")
+  maxTradeBaseUnits      String            @default("1000000000") @map("max_trade_base_units")
+  supportedRegionIdsJson String            @default("[]") @map("supported_region_ids_json")
+  deliveryMethodIdsJson  String            @default("[]") @map("delivery_method_ids_json")
+  isActive               Boolean           @default(true) @map("is_active")
+  displayOrder           Int               @default(0) @map("display_order")
+  createdAt              DateTime          @default(now()) @map("created_at")
+  updatedAt              DateTime          @updatedAt @map("updated_at")
+
+  game                   ExchangeGame      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  feeRules               ExchangeFeeRule[]
+
+  @@unique([gameId, slug])
+  @@index([gameId])
+  @@map("exchange_currencies")
+}
+
+// ─── ۶۶. اکسچنج: قوانین کارمزد نسخه‌دار (Exchange Fee Rules) ──────────────────
+model ExchangeFeeRule {
+  id                    String            @id @default(cuid())
+  scope                 String            @default("GLOBAL") @map("scope") // GLOBAL | GAME | CURRENCY
+  gameId                String?           @map("game_id")
+  currencyId            String?           @map("currency_id")
+  version               Int               @default(1) @map("version")
+  buyerCommissionBps    Int               @default(100) @map("buyer_commission_bps") // 100 = 1.00%
+  sellerCommissionBps   Int               @default(200) @map("seller_commission_bps") // 200 = 2.00%
+  paymentProcessingMode String            @default("ACTUAL_COST") @map("payment_processing_mode") // ACTUAL_COST | INCLUDED | NONE
+  networkFeeMode        String            @default("ACTUAL_COST") @map("network_fee_mode") // ACTUAL_COST | INCLUDED | NONE
+  minCommissionCents    Int?              @map("min_commission_cents") // e.g. 50 = $0.50
+  maxCommissionCents    Int?              @map("max_commission_cents") // e.g. 10000 = $100.00
+  isEnabled             Boolean           @default(true) @map("is_enabled")
+  effectiveFrom         DateTime          @default(now()) @map("effective_from")
+  createdByDiscordId    String            @map("created_by_discord_id")
+  reason                String?           @map("reason")
+  createdAt             DateTime          @default(now()) @map("created_at")
+  updatedAt             DateTime          @updatedAt @map("updated_at")
+
+  game                  ExchangeGame?     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  currency              ExchangeCurrency? @relation(fields: [currencyId], references: [id], onDelete: Cascade)
+
+  @@index([scope])
+  @@index([gameId])
+  @@index([currencyId])
+  @@index([effectiveFrom])
+  @@map("exchange_fee_rules")
+}
+

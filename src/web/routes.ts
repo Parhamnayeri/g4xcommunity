@@ -58,6 +58,7 @@ import { walletRouter } from './walletRoutes';
 import { operationsRouter } from './operationsRoutes';
 import { policyRouter } from './policyRoutes';
 import { discordCommandsRouter } from './discordCommandsRoutes';
+import { exchangeConfigRouter } from './exchangeConfigRoutes';
 import { getGlobalDiscordClient } from '../services/orderDiscordService';
 import {
   getOrderDiagnostics,
@@ -247,6 +248,7 @@ router.use('/', operationsRouter);
 router.use('/operations', operationsRouter);
 router.use('/', policyRouter);
 router.use('/', discordCommandsRouter);
+router.use('/', exchangeConfigRouter);
 
 // ─── کاتالوگ عمومی بازی‌ها و سرویس‌های فعال پلتفرم G4X ─────────────────────
 router.get('/public/games', async (_req: Request, res: Response): Promise<void> => {

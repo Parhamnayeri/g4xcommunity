@@ -1,3 +1,13 @@
+/**
+ * frontend/src/types/exchange.ts
+ *
+ * Types for G4X Exchange:
+ *  - Legacy P2P & Exchanger interfaces (ExchangerOffer, GoldTrade, etc.)
+ *  - Phase 1 Owner Configuration & Precision Pricing Engine types
+ */
+
+// ─── Legacy Exchanger & P2P Types (Maintained for Backward Compatibility) ───
+
 export interface ExchangerUserSummary {
   discordId: string;
   username: string;
@@ -135,7 +145,7 @@ export interface ExchangerStatusResponse {
     createdAt?: string;
     rejectionReason?: string | null;
     reviewNotes?: string | null;
-  } | null;
+  };
 }
 
 export interface ExchangerOverviewResponse {
@@ -175,4 +185,157 @@ export interface PaginationMeta {
   limit: number;
   total: number;
   totalPages: number;
+}
+
+// ─── Phase 1: Owner Exchange Configuration & Precision Pricing Engine Types ──
+
+export interface ExchangeGameItem {
+  id: string;
+  name: string;
+  slug: string;
+  iconUrl: string | null;
+  description: string | null;
+  isActive: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  currencies?: ExchangeCurrencyItem[];
+  _count?: {
+    currencies: number;
+    feeRules: number;
+    regions: number;
+  };
+}
+
+export interface ExchangeCurrencyItem {
+  id: string;
+  gameId: string;
+  name: string;
+  slug: string;
+  iconUrl: string | null;
+  unitLabel: string;
+  unitMultiplier: string;
+  decimalPrecision: number;
+  minTradeBaseUnits: string;
+  maxTradeBaseUnits: string;
+  supportedRegionIdsJson: string;
+  deliveryMethodIdsJson: string;
+  isActive: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  game?: {
+    id: string;
+    name: string;
+    slug: string;
+  };
+  _count?: {
+    feeRules: number;
+  };
+}
+
+export interface ExchangeRegionItem {
+  id: string;
+  gameId: string | null;
+  name: string;
+  code: string;
+  isActive: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+  game?: {
+    id: string;
+    name: string;
+  } | null;
+}
+
+export interface ExchangeDeliveryMethodItem {
+  id: string;
+  name: string;
+  code: string;
+  description: string | null;
+  isActive: boolean;
+  displayOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExchangeFeeRuleItem {
+  id: string;
+  scope: 'GLOBAL' | 'GAME' | 'CURRENCY';
+  gameId: string | null;
+  currencyId: string | null;
+  version: number;
+  buyerCommissionBps: number;
+  sellerCommissionBps: number;
+  paymentProcessingMode: string;
+  networkFeeMode: string;
+  minCommissionCents: number | null;
+  maxCommissionCents: number | null;
+  isEnabled: boolean;
+  effectiveFrom: string;
+  createdByDiscordId: string;
+  reason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  game?: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  currency?: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+}
+
+export interface TradePricingCalculation {
+  quantityBaseUnits: string;
+  unitMultiplier: string;
+  tradeUnits: string;
+  pricePerUnitCents: number;
+  pricePerUnitUsd: string;
+  grossCents: number;
+  grossUsd: string;
+  buyerCommissionBps: number;
+  buyerFeeCents: number;
+  buyerFeeUsd: string;
+  totalBuyerCents: number;
+  totalBuyerUsd: string;
+  sellerCommissionBps: number;
+  sellerFeeCents: number;
+  sellerFeeUsd: string;
+  netSellerCents: number;
+  netSellerUsd: string;
+  appliedFeeRuleId: string;
+  appliedFeeRuleVersion: number;
+  appliedFeeRuleScope: string;
+  paymentProcessingMode: string;
+  networkFeeMode: string;
+  cappedBuyerMin: boolean;
+  cappedBuyerMax: boolean;
+  cappedSellerMin: boolean;
+  cappedSellerMax: boolean;
+}
+
+export interface ExchangeAuditLogItem {
+  id: number;
+  actorId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  previousValues: string | null;
+  newValues: string | null;
+  reason: string | null;
+  createdAt: string;
+}
+
+export interface ExchangeOverviewStats {
+  gamesCount: number;
+  currenciesCount: number;
+  regionsCount: number;
+  deliveryMethodsCount: number;
+  feeRulesCount: number;
+  activeGlobalRule: ExchangeFeeRuleItem | null;
 }
