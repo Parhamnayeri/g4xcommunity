@@ -11,6 +11,10 @@ import {
   SubmitIrtDepositResponse,
   DepositHistoryResponse,
   LedgerHistoryResponse,
+  CryptoDepositIntentResponse,
+  SubmitWalletWithdrawalInput,
+  SubmitWalletWithdrawalResponse,
+  WalletWithdrawalHistoryResponse,
 } from '../types/wallet';
 
 /**
@@ -83,5 +87,56 @@ export async function fetchLedgerActivity(
 ): Promise<LedgerHistoryResponse> {
   return await apiRequest<LedgerHistoryResponse>(
     `/api/wallet/ledger?page=${page}&limit=${limit}`
+  );
+}
+
+/**
+ * Initiate a live NOWPayments cryptocurrency deposit intent
+ */
+export async function createWalletCryptoDepositIntent(
+  amountUsd: number,
+  payCurrency = 'USDTTRC20'
+): Promise<CryptoDepositIntentResponse> {
+  return await apiRequest<CryptoDepositIntentResponse>('/api/wallet/deposits/intent', {
+    method: 'POST',
+    body: JSON.stringify({ amountUsd, payCurrency }),
+  });
+}
+
+/**
+ * Cancel an unconfirmed NOWPayments deposit intent
+ */
+export async function cancelWalletDepositIntent(
+  depositId: number
+): Promise<{ success: boolean; message: string }> {
+  return await apiRequest<{ success: boolean; message: string }>(
+    `/api/wallet/deposits/intent/${depositId}/cancel`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Submit unified wallet withdrawal request
+ */
+export async function submitWalletWithdrawal(
+  payload: SubmitWalletWithdrawalInput
+): Promise<SubmitWalletWithdrawalResponse> {
+  return await apiRequest<SubmitWalletWithdrawalResponse>('/api/wallet/withdrawals', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Fetch user's withdrawal requests history
+ */
+export async function fetchWalletWithdrawalHistory(
+  page = 1,
+  limit = 10
+): Promise<WalletWithdrawalHistoryResponse> {
+  return await apiRequest<WalletWithdrawalHistoryResponse>(
+    `/api/wallet/withdrawals?page=${page}&limit=${limit}`
   );
 }

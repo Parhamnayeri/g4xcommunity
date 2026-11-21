@@ -8,6 +8,7 @@ interface WalletOverviewCardsProps {
   ratesAndPolicies: RatesAndPoliciesData;
   onRefresh?: () => void;
   isRefreshing?: boolean;
+  onOpenWithdraw?: () => void;
 }
 
 export const WalletOverviewCards: React.FC<WalletOverviewCardsProps> = ({
@@ -16,10 +17,11 @@ export const WalletOverviewCards: React.FC<WalletOverviewCardsProps> = ({
   ratesAndPolicies,
   onRefresh,
   isRefreshing,
+  onOpenWithdraw,
 }) => {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-      {/* Top Header with Title and Refresh Button */}
+      {/* Top Header with Title and Action Buttons */}
       <div
         style={{
           display: 'flex',
@@ -38,25 +40,47 @@ export const WalletOverviewCards: React.FC<WalletOverviewCardsProps> = ({
           </p>
         </div>
 
-        {onRefresh && (
-          <button
-            onClick={onRefresh}
-            disabled={isRefreshing}
-            className="btn btn-outline btn-sm"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
-          >
-            <span
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {onOpenWithdraw && (
+            <button
+              onClick={onOpenWithdraw}
+              disabled={wallet.isFrozen}
+              className="btn btn-primary btn-sm"
               style={{
-                display: 'inline-block',
-                transform: isRefreshing ? 'rotate(360deg)' : 'none',
-                transition: 'transform 0.5s ease',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                backgroundColor: 'var(--accent-lime, #ccff00)',
+                color: '#000',
+                fontWeight: 800,
+                border: 'none',
               }}
             >
-              ↻
-            </span>
-            {isRefreshing ? 'Syncing...' : 'Sync Balances'}
-          </button>
-        )}
+              <span>💸</span>
+              <span>Withdraw Funds</span>
+            </button>
+          )}
+
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              className="btn btn-outline btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+            >
+              <span
+                style={{
+                  display: 'inline-block',
+                  transform: isRefreshing ? 'rotate(360deg)' : 'none',
+                  transition: 'transform 0.5s ease',
+                }}
+              >
+                ↻
+              </span>
+              {isRefreshing ? 'Syncing...' : 'Sync Balances'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Primary Balance Metric Cards */}
@@ -80,12 +104,51 @@ export const WalletOverviewCards: React.FC<WalletOverviewCardsProps> = ({
           <div style={{ fontSize: '1.9rem', fontWeight: 900, color: 'var(--accent-lime)', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
             ${wallet.availableUsd}
           </div>
-          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.3, margin: 0 }}>
-            Spendable funds ready for order funding or withdrawal.
-          </p>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.3rem' }}>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.3, margin: 0 }}>
+              Spendable liquid funds.
+            </p>
+            {onOpenWithdraw && !wallet.isFrozen && parseFloat(wallet.availableUsd) > 0 && (
+              <button
+                onClick={onOpenWithdraw}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--accent-lime)',
+                  fontWeight: 700,
+                  fontSize: '0.75rem',
+                  cursor: 'pointer',
+                  padding: 0,
+                  textDecoration: 'underline',
+                }}
+              >
+                Withdraw &rarr;
+              </button>
+            )}
+          </div>
         </Card>
 
-        {/* 2. Reserved USD */}
+        {/* 2. Frozen / On Hold Card (Shown if account is frozen or has frozen balance) */}
+        {(wallet.isFrozen || (wallet.frozenUsd && parseFloat(wallet.frozenUsd) > 0)) && (
+          <Card highlight="none" style={{ padding: '1.25rem', borderColor: 'rgba(239, 68, 68, 0.4)', backgroundColor: 'rgba(239, 68, 68, 0.04)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
+              <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: '#f87171' }}>
+                Frozen / On Hold
+              </span>
+              <span className="badge badge-danger" style={{ fontSize: '0.65rem' }}>
+                {wallet.isFrozen ? 'Account Frozen' : 'On Hold'}
+              </span>
+            </div>
+            <div style={{ fontSize: '1.9rem', fontWeight: 900, color: '#ef4444', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
+              ${wallet.frozenUsd || '0.00'}
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.3, margin: 0 }}>
+              {wallet.isFrozen ? 'Administrative hold active. Withdrawals locked.' : 'Funds held under temporary review.'}
+            </p>
+          </Card>
+        )}
+
+        {/* 3. Reserved USD */}
         <Card highlight="purple" style={{ padding: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
             <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
@@ -103,7 +166,27 @@ export const WalletOverviewCards: React.FC<WalletOverviewCardsProps> = ({
           </p>
         </Card>
 
-        {/* 3. Pending Boost Earnings */}
+        {/* 4. In Active Booster Runs (for boosters) */}
+        {wallet.inActiveOrdersUsd && parseFloat(wallet.inActiveOrdersUsd) > 0 && (
+          <Card highlight="none" style={{ padding: '1.25rem', borderColor: 'rgba(56, 189, 248, 0.4)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
+              <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
+                In Active Runs
+              </span>
+              <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>
+                Order Escrow
+              </span>
+            </div>
+            <div style={{ fontSize: '1.9rem', fontWeight: 900, color: '#38bdf8', letterSpacing: '-0.02em', lineHeight: 1.1, marginBottom: '0.35rem' }}>
+              ${wallet.inActiveOrdersUsd}
+            </div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.3, margin: 0 }}>
+              Estimated payout across ongoing booster assignments.
+            </p>
+          </Card>
+        )}
+
+        {/* 5. Pending Boost Earnings */}
         <Card highlight="none" style={{ padding: '1.25rem', borderColor: 'rgba(56, 189, 248, 0.4)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
             <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>
@@ -121,7 +204,7 @@ export const WalletOverviewCards: React.FC<WalletOverviewCardsProps> = ({
           </p>
         </Card>
 
-        {/* 4. Confirmed Lifetime Earnings */}
+        {/* 6. Confirmed Lifetime Earnings */}
         <Card highlight="none" style={{ padding: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.4rem' }}>
             <span style={{ fontSize: '0.74rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>

@@ -148,22 +148,23 @@ export interface NowpaymentsPaymentDetails {
  * پیکربندی کنترل‌ها و سوئیچ‌های NOWPayments
  */
 export function getNowpaymentsConfig() {
-  const mode = (process.env.NOWPAYMENTS_MODE || 'disabled').toLowerCase();
-  const sandboxEnabled = process.env.NOWPAYMENTS_SANDBOX_ENABLED === 'true';
-  const liveCollectionEnabled = process.env.NOWPAYMENTS_LIVE_COLLECTION_ENABLED === 'true';
+  const mode = (process.env.NOWPAYMENTS_MODE || 'live').toLowerCase().trim();
+  const sandboxEnabled = String(process.env.NOWPAYMENTS_SANDBOX_ENABLED || '').trim().toLowerCase() === 'true';
+  const liveCollectionEnabled = String(process.env.NOWPAYMENTS_LIVE_COLLECTION_ENABLED || '').trim().toLowerCase() === 'true';
+  const liveCreditsEnabled = String(process.env.FINANCE_V2_LIVE_CREDITS_ENABLED || '').trim().toLowerCase() === 'true';
   const apiKey = (process.env.NOWPAYMENTS_API_KEY || '').trim();
   const ipnSecret = (process.env.NOWPAYMENTS_IPN_SECRET || '').trim();
   const ipnCallbackUrl = (process.env.NOWPAYMENTS_IPN_CALLBACK_URL || '').trim();
 
-  let baseUrl = 'https://api.sandbox.nowpayments.io/v1';
+  let baseUrl = 'https://api.nowpayments.io/v1';
   let isCollectionActive = false;
 
-  if (mode === 'sandbox' && sandboxEnabled) {
+  if (mode === 'sandbox' || sandboxEnabled) {
     baseUrl = 'https://api.sandbox.nowpayments.io/v1';
-    isCollectionActive = true;
-  } else if (mode === 'live' && liveCollectionEnabled) {
+    isCollectionActive = sandboxEnabled && Boolean(apiKey);
+  } else if (mode === 'live' || liveCollectionEnabled) {
     baseUrl = 'https://api.nowpayments.io/v1';
-    isCollectionActive = true;
+    isCollectionActive = liveCollectionEnabled && Boolean(apiKey);
   } else {
     isCollectionActive = false;
   }
@@ -172,6 +173,7 @@ export function getNowpaymentsConfig() {
     mode,
     sandboxEnabled,
     liveCollectionEnabled,
+    liveCreditsEnabled,
     isCollectionActive,
     apiKey,
     ipnSecret,

@@ -7,6 +7,9 @@ export interface WalletBalanceData {
   availableUsd: string;
   reservedCents: number;
   reservedUsd: string;
+  frozenCents?: number;
+  frozenUsd?: string;
+  isFrozen?: boolean;
   pendingEarningsCents: number;
   pendingEarningsUsd: string;
   confirmedEarningsCents: number;
@@ -19,6 +22,10 @@ export interface WalletBalanceData {
   totalHeldUsd: string;
   lifetimeEarnedCents: number;
   lifetimeEarnedUsd: string;
+  inActiveOrdersCents?: number;
+  inActiveOrdersUsd?: string;
+  payoutAddress?: string | null;
+  payoutMethod?: string | null;
   updatedAt: string;
 }
 
@@ -61,6 +68,8 @@ export interface WalletOverviewResponse {
     username: string;
     roles: string[];
     isOwner: boolean;
+    canDeposit?: boolean;
+    isBoosterOnly?: boolean;
   };
   wallet: WalletBalanceData;
   breakdown: WalletBreakdownData;
@@ -187,4 +196,67 @@ export interface LedgerHistoryResponse {
   limit: number;
   totalPages: number;
   error?: string;
+}
+
+export interface WalletWithdrawalRequest {
+  id: number;
+  withdrawalRef: string;
+  payoutMethod: string;
+  status: string;
+  requestedUsd: string;
+  netUsd: string;
+  destinationAddress: string;
+  externalTxHash?: string | null;
+  bankReceiptRef?: string | null;
+  rejectionReason?: string | null;
+  createdAt: string;
+}
+
+export interface WalletWithdrawalHistoryResponse {
+  success: boolean;
+  withdrawals: WalletWithdrawalRequest[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  error?: string;
+}
+
+export interface SubmitWalletWithdrawalInput {
+  amountUsd: number;
+  payoutMethod: 'USDT_BEP20' | 'USDT_TRC20' | 'IRT_BANK' | string;
+  payoutAddress: string;
+  notes?: string;
+}
+
+export interface SubmitWalletWithdrawalResponse {
+  success: boolean;
+  withdrawal?: {
+    id: number;
+    ref: string;
+    amountUsd: number;
+    payoutMethod: string;
+    destinationAddress: string;
+    status: string;
+    createdAt: string;
+  };
+  message?: string;
+  error?: string;
+}
+
+export interface CryptoDepositIntentResponse {
+  success: boolean;
+  configured: boolean;
+  invoiceUrl?: string;
+  deposit?: {
+    id: number;
+    intentRef: string;
+    amountUsd: number;
+    payCurrency: string;
+    status: string;
+    invoiceUrl?: string;
+    paymentId?: string;
+  };
+  error?: string;
+  message?: string;
 }

@@ -672,18 +672,23 @@ export class NowPaymentsService {
       include: { user: true },
     });
 
-    // If finished, trigger atomic credit
+    // If finished, check live credits flag before triggering atomic credit
     if (gatewayStatus === 'finished') {
-      const creditRes = await this.creditDepositAtomic(deposit.id, undefined, undefined, 'NOWPayments IPN auto-credit (finished)');
-      return {
-        success: true,
-        type: 'DEPOSIT_INTENT',
-        depositId: deposit.id,
-        gatewayStatus,
-        internalStatus: 'CONFIRMED',
-        credited: !creditRes.alreadyCredited,
-        deposit: creditRes.deposit,
-      };
+      const liveCreditsEnabled = String(process.env.FINANCE_V2_LIVE_CREDITS_ENABLED || '').trim().toLowerCase() === 'true';
+      if (liveCreditsEnabled) {
+        const creditRes = await this.creditDepositAtomic(deposit.id, undefined, undefined, 'NOWPayments IPN auto-credit (finished)');
+        return {
+          success: true,
+          type: 'DEPOSIT_INTENT',
+          depositId: deposit.id,
+          gatewayStatus,
+          internalStatus: 'CONFIRMED',
+          credited: !creditRes.alreadyCredited,
+          deposit: creditRes.deposit,
+        };
+      } else {
+        console.info(`[NOWPayments IPN] Payment ${deposit.id} finished, but FINANCE_V2_LIVE_CREDITS_ENABLED=false. Telemetry recorded without automatic wallet credit.`);
+      }
     }
 
     return {

@@ -45,12 +45,17 @@ export interface WalletOverviewData {
     username: string;
     roles: string[];
     isOwner: boolean;
+    canDeposit: boolean;
+    isBoosterOnly: boolean;
   };
   wallet: {
     availableCents: number;
     availableUsd: string;
     reservedCents: number;
     reservedUsd: string;
+    frozenCents: number;
+    frozenUsd: string;
+    isFrozen: boolean;
     pendingEarningsCents: number;
     pendingEarningsUsd: string;
     confirmedEarningsCents: number;
@@ -63,6 +68,10 @@ export interface WalletOverviewData {
     totalHeldUsd: string;
     lifetimeEarnedCents: number;
     lifetimeEarnedUsd: string;
+    inActiveOrdersCents: number;
+    inActiveOrdersUsd: string;
+    payoutAddress: string | null;
+    payoutMethod: string | null;
     updatedAt: Date;
   };
   breakdown: {
@@ -125,6 +134,9 @@ export async function getWalletOverview(user: AuthenticatedUser): Promise<Wallet
     feeConfig,
     ttlConfig,
     bankDetailsRaw,
+    legacyWallet,
+    latestWithdrawal,
+    activeAssignments,
   ] = await Promise.all([
     prisma.advertiserFundingRequest.findMany({
       where: {
@@ -160,12 +172,51 @@ export async function getWalletOverview(user: AuthenticatedUser): Promise<Wallet
     prisma.systemFinancialConfig.findUnique({ where: { key: 'incoming_irt_fee_rate' } }),
     prisma.systemFinancialConfig.findUnique({ where: { key: 'incoming_irt_quote_ttl_minutes' } }),
     getOfficialReceivingBankDetails(),
+    prisma.wallet.findUnique({ where: { userId } }),
+    prisma.boosterWithdrawalRequest.findFirst({
+      where: { boosterId: userId },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.orderAssignment.findMany({
+      where: {
+        userId,
+        status: { in: ['assigned', 'accepted'] },
+        order: {
+          status: { in: ['assigned', 'in_progress', 'waiting_for_confirm', 'pending_review'] },
+        },
+      },
+      include: {
+        order: {
+          include: {
+            boosterPayoutAllocations: { where: { boosterId: userId } },
+            assignments: { where: { status: 'assigned' } },
+          },
+        },
+      },
+    }),
   ]);
 
   const advertiserFundingDepositsCents = confirmedDepositsRaw.reduce((sum, d) => sum + d.targetUsdCents, 0);
   const orderEscrowReservedCents = activeOrdersRaw.reduce((sum, o) => sum + o.grossAmountMinor, 0);
   const withdrawalReservedCents = activeWithdrawalsRaw.reduce((sum, w) => sum + w.requestedUsdCents, 0);
   const externalUnsettledRevenueCents = 0; // Reserved for external integrations
+
+  // Calculate inActiveOrdersCents for boosters
+  let inActiveOrdersCents = 0;
+  for (const a of activeAssignments) {
+    const o = a.order;
+    const allocation = o.boosterPayoutAllocations[0];
+    if (allocation && allocation.allocatedMinor > 0) {
+      inActiveOrdersCents += allocation.allocatedMinor;
+    } else if (o.boosterPoolMinor > 0) {
+      const teamSize = Math.max(1, o.assignments.length);
+      inActiveOrdersCents += Math.floor(o.boosterPoolMinor / teamSize);
+    }
+  }
+  inActiveOrdersCents += walletSummary.pendingEarningsCents;
+
+  const isFrozen = Boolean(walletSummary.isFrozen || legacyWallet?.isFrozen);
+  const frozenCents = Math.max(walletSummary.frozenCents || 0, legacyWallet?.frozenBalance || 0);
 
   const adminUsdIrtRate = adminRateConfig?.value && !isNaN(Number(adminRateConfig.value)) && Number(adminRateConfig.value) > 0
     ? Number(adminRateConfig.value)
@@ -177,10 +228,11 @@ export async function getWalletOverview(user: AuthenticatedUser): Promise<Wallet
 
   const nowpaymentsConfig = getNowpaymentsConfig();
   const quoteTtlMinutes = ttlConfig?.value && !isNaN(Number(ttlConfig.value)) ? Number(ttlConfig.value) : 30;
-  const liveCreditsEnabled = process.env.FINANCE_V2_LIVE_CREDITS_ENABLED === 'true';
 
-  const userRoleKeys = (user.userRoles || []).map((r: { roleKey: string }) => r.roleKey);
+  const userRoleKeys = (user.userRoles || []).map((r: { roleKey: string }) => r.roleKey.toLowerCase());
   const isOwner = userRoleKeys.includes('owner') || (Boolean(process.env.OWNER_DISCORD_ID) && process.env.OWNER_DISCORD_ID === user.discordId);
+  const canDeposit = isOwner || userRoleKeys.some((r) => ['advertiser', 'admin', 'owner'].includes(r));
+  const isBoosterOnly = !canDeposit && userRoleKeys.some((r) => ['booster', 'pilot'].includes(r));
 
   // Check if bank details are actually configured by owner
   const isBankConfigured = Boolean(
@@ -197,12 +249,17 @@ export async function getWalletOverview(user: AuthenticatedUser): Promise<Wallet
       username: user.username,
       roles: userRoleKeys,
       isOwner,
+      canDeposit,
+      isBoosterOnly,
     },
     wallet: {
       availableCents: walletSummary.availableCents,
       availableUsd: (walletSummary.availableCents / 100).toFixed(2),
       reservedCents: walletSummary.reservedCents,
       reservedUsd: (walletSummary.reservedCents / 100).toFixed(2),
+      frozenCents,
+      frozenUsd: (frozenCents / 100).toFixed(2),
+      isFrozen,
       pendingEarningsCents: walletSummary.pendingEarningsCents,
       pendingEarningsUsd: (walletSummary.pendingEarningsCents / 100).toFixed(2),
       confirmedEarningsCents: walletSummary.confirmedEarningsCents,
@@ -213,8 +270,12 @@ export async function getWalletOverview(user: AuthenticatedUser): Promise<Wallet
       totalRefundedUsd: (walletSummary.refundedCents / 100).toFixed(2),
       totalHeldCents: walletSummary.totalHeldCents,
       totalHeldUsd: (walletSummary.totalHeldCents / 100).toFixed(2),
-      lifetimeEarnedCents: walletSummary.lifetimeEarnedCents,
-      lifetimeEarnedUsd: (walletSummary.lifetimeEarnedCents / 100).toFixed(2),
+      lifetimeEarnedCents: Math.max(walletSummary.lifetimeEarnedCents, walletSummary.confirmedEarningsCents + walletSummary.paidCents),
+      lifetimeEarnedUsd: (Math.max(walletSummary.lifetimeEarnedCents, walletSummary.confirmedEarningsCents + walletSummary.paidCents) / 100).toFixed(2),
+      inActiveOrdersCents,
+      inActiveOrdersUsd: (inActiveOrdersCents / 100).toFixed(2),
+      payoutAddress: latestWithdrawal?.destinationAddress || null,
+      payoutMethod: latestWithdrawal?.payoutMethod || null,
       updatedAt: walletSummary.updatedAt,
     },
     breakdown: {
@@ -235,8 +296,8 @@ export async function getWalletOverview(user: AuthenticatedUser): Promise<Wallet
       adminUsdIrtRate,
       incomingIrtFeeRate,
       isCryptoActive: nowpaymentsConfig.isCollectionActive,
-      cryptoLiveCollectionEnabled: nowpaymentsConfig.liveCollectionEnabled,
-      liveCreditsEnabled,
+      cryptoLiveCollectionEnabled: nowpaymentsConfig.liveCollectionEnabled && Boolean(process.env.NOWPAYMENTS_API_KEY),
+      liveCreditsEnabled: nowpaymentsConfig.liveCreditsEnabled,
       quoteTtlMinutes,
     },
     bankDetails: {
@@ -1004,7 +1065,7 @@ export async function getUserDepositHistory(userId: string, page = 1, limit = 10
   const safeLimit = Math.min(50, Math.max(1, limit));
   const offset = (safePage - 1) * safeLimit;
 
-  const [requestsRaw, total] = await Promise.all([
+  const [requestsRaw, intentsRaw] = await Promise.all([
     prisma.advertiserFundingRequest.findMany({
       where: { advertiserId: userId },
       include: {
@@ -1015,15 +1076,14 @@ export async function getUserDepositHistory(userId: string, page = 1, limit = 10
         },
       },
       orderBy: { createdAt: 'desc' },
-      skip: offset,
-      take: safeLimit,
     }),
-    prisma.advertiserFundingRequest.count({
-      where: { advertiserId: userId },
+    prisma.depositIntent.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
     }),
   ]);
 
-  const deposits = requestsRaw.map((r) => {
+  const irtDeposits = requestsRaw.map((r) => {
     const hasBackedLedgerCredit = r.status === 'CONFIRMED_CREDITED' && r.ledgerEntries.length > 0;
     const creditedAmountCents = hasBackedLedgerCredit ? r.targetUsdCents : 0;
 
@@ -1063,9 +1123,51 @@ export async function getUserDepositHistory(userId: string, page = 1, limit = 10
     };
   });
 
+  const cryptoDeposits = intentsRaw.map((d) => {
+    const isConfirmed = d.status === 'CONFIRMED';
+    const creditedAmountUsd = isConfirmed ? d.amountUsd.toFixed(2) : '0.00';
+    let reviewOutcome = 'Waiting for Payment';
+    if (isConfirmed) {
+      reviewOutcome = 'Confirmed & Credited via NOWPayments';
+    } else if (d.status === 'CANCELLED') {
+      reviewOutcome = 'Cancelled by User';
+    } else if (d.status === 'EXPIRED') {
+      reviewOutcome = 'Expired';
+    } else if (d.gatewayStatus === 'confirming') {
+      reviewOutcome = 'Blockchain Confirming';
+    }
+
+    return {
+      id: d.id,
+      fundingRef: d.intentRef,
+      fundingMethod: d.payCurrency ? `CRYPTO_${d.payCurrency}` : 'CRYPTO_NOWPAYMENTS',
+      submittedAmount: d.payAmount ? `${d.payAmount} ${d.payCurrency || 'USDT'}` : `$${d.amountUsd.toFixed(2)} USD`,
+      submittedCurrency: d.payCurrency || 'USD',
+      exchangeRate: null,
+      expectedUsdCents: Math.round(d.amountUsd * 100),
+      expectedUsd: d.amountUsd.toFixed(2),
+      verifiedAmountUsd: d.actuallyPaid ? `${d.actuallyPaid}` : null,
+      creditedAmountUsd,
+      hasBackedCredit: isConfirmed && Boolean(d.creditedAt),
+      date: d.createdAt,
+      status: isConfirmed ? 'CONFIRMED_CREDITED' : (d.status === 'WAITING' ? 'PENDING_ADMIN_VERIFICATION' : d.status),
+      reviewOutcome,
+      evidenceRef: d.paymentId || d.invoiceId || null,
+      payerIdentifier: d.payAddress || null,
+      receiptFileKey: null,
+      receiptUrl: d.invoiceUrl || null,
+      verifiedAt: d.confirmedAt,
+      creditedAt: d.creditedAt,
+    };
+  });
+
+  const allDeposits = [...irtDeposits, ...cryptoDeposits].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  const total = allDeposits.length;
+  const paginated = allDeposits.slice(offset, offset + safeLimit);
+
   return {
     success: true,
-    deposits,
+    deposits: paginated,
     total,
     page: safePage,
     limit: safeLimit,

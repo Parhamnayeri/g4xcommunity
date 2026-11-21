@@ -25,6 +25,8 @@ export interface WalletV2Summary {
   userId: string;
   availableCents: number;
   reservedCents: number;
+  frozenCents: number;
+  isFrozen: boolean;
   pendingEarningsCents: number;
   confirmedEarningsCents: number;
   paidCents: number;
@@ -252,6 +254,8 @@ export async function getWalletV2Summary(userId: string): Promise<WalletV2Summar
     userId: wallet.userId,
     availableCents: wallet.availableCents,
     reservedCents: wallet.reservedCents,
+    frozenCents: wallet.frozenCents || 0,
+    isFrozen: Boolean(wallet.isFrozen),
     pendingEarningsCents: wallet.pendingEarningsCents,
     confirmedEarningsCents: wallet.confirmedEarningsCents,
     paidCents: wallet.paidCents,

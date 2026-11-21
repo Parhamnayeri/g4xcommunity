@@ -43,6 +43,13 @@ function requireAdvertiserOrStaff(req: Request, res: Response, next: NextFunctio
   const isStaffOrAdmin = roles.some((r) => ['owner', 'manager', 'admin', 'staff'].includes(r));
 
   if (!isAdvertiser && !isStaffOrAdmin) {
+    if (roles.includes('booster') || roles.includes('pilot')) {
+      res.status(403).json({
+        error: 'DEPOSIT_LOCKED_FOR_BOOSTER',
+        message: 'Wallet deposits are locked for Booster accounts. Booster balances are credited automatically from completed orders and bonuses.',
+      });
+      return;
+    }
     res.status(403).json({
       error: 'Forbidden',
       message: 'Access restricted to approved Advertisers or Management',
