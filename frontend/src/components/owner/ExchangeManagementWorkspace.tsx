@@ -21,6 +21,7 @@ import {
   TradePricingCalculation,
   ExchangeAuditLogItem,
   ExchangeOverviewStats,
+  ExchangeKycRequestItem,
 } from '../../types/exchange';
 import {
   fetchExchangeOverview,
@@ -43,8 +44,13 @@ import {
   fetchExchangeAuditLogs,
   bootstrapExchangeDefaults,
 } from '../../services/exchangeConfig';
+import {
+  fetchAdminKycRequests,
+  reviewAdminKycRequest,
+  setAdminExchangerRole,
+} from '../../services/exchangeMarketplace';
 
-type SubTab = 'games' | 'currencies' | 'regions_delivery' | 'fee_rules' | 'audit';
+type SubTab = 'games' | 'currencies' | 'regions_delivery' | 'fee_rules' | 'kyc' | 'audit';
 
 export const ExchangeManagementWorkspace: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('fee_rules');
@@ -88,12 +94,70 @@ export const ExchangeManagementWorkspace: React.FC = () => {
   const [simResult, setSimResult] = useState<TradePricingCalculation | null>(null);
   const [simLoading, setSimLoading] = useState<boolean>(false);
 
+  // Exchanger KYC & Roles state
+  const [kycRequests, setKycRequests] = useState<ExchangeKycRequestItem[]>([]);
+  const [kycLoading, setKycLoading] = useState<boolean>(false);
+  const [kycStatusFilter, setKycStatusFilter] = useState<string>('ALL');
+  const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+  const [targetDiscordId, setTargetDiscordId] = useState<string>('');
+  const [roleReason, setRoleReason] = useState<string>('');
+
   // Audit log expanded rows
   const [expandedLogIds, setExpandedLogIds] = useState<Record<number, boolean>>({});
 
   const showNotification = (type: 'success' | 'error', message: string) => {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), 5000);
+  };
+
+  const loadKyc = useCallback(async () => {
+    setKycLoading(true);
+    try {
+      const res = await fetchAdminKycRequests({
+        status: kycStatusFilter !== 'ALL' ? kycStatusFilter : undefined,
+      });
+      setKycRequests(res.items || []);
+    } catch (err: any) {
+      showNotification('error', err.message || 'Failed to load KYC requests');
+    } finally {
+      setKycLoading(false);
+    }
+  }, [kycStatusFilter]);
+
+  const handleKycReview = async (
+    requestId: string,
+    action: 'APPROVE' | 'REJECT' | 'REQUEST_INFO' | 'SUSPEND' | 'EXPIRE'
+  ) => {
+    setActionLoading(true);
+    try {
+      const notes = reviewNotes[requestId];
+      await reviewAdminKycRequest(requestId, { action, notes });
+      showNotification('success', `KYC request updated via ${action}`);
+      await loadKyc();
+    } catch (err: any) {
+      showNotification('error', err.message || `Failed to review KYC as ${action}`);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRoleToggle = async (grant: boolean) => {
+    if (!targetDiscordId.trim()) {
+      showNotification('error', 'Please enter a target Discord ID');
+      return;
+    }
+    setActionLoading(true);
+    try {
+      await setAdminExchangerRole(targetDiscordId.trim(), { grant, reason: roleReason.trim() || undefined });
+      showNotification('success', grant ? 'Exchanger role granted' : 'Exchanger role revoked');
+      setTargetDiscordId('');
+      setRoleReason('');
+      await loadKyc();
+    } catch (err: any) {
+      showNotification('error', err.message || 'Failed to toggle exchanger role');
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const loadAllData = useCallback(async () => {
@@ -136,6 +200,12 @@ export const ExchangeManagementWorkspace: React.FC = () => {
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
+
+  useEffect(() => {
+    if (activeSubTab === 'kyc') {
+      loadKyc();
+    }
+  }, [activeSubTab, loadKyc]);
 
   // Live Simulator auto-refresh on changes
   const runSimulation = useCallback(async () => {
@@ -435,6 +505,7 @@ export const ExchangeManagementWorkspace: React.FC = () => {
           { key: 'games', label: 'Games Catalog', icon: '🎮' },
           { key: 'currencies', label: 'Currencies & Units', icon: '🪙' },
           { key: 'regions_delivery', label: 'Regions & Delivery', icon: '🌍' },
+          { key: 'kyc', label: 'Exchanger KYC & Roles', icon: '🛡️' },
           { key: 'audit', label: 'Config Audit Logs', icon: '📜' },
         ].map((tab) => (
           <button
@@ -1530,6 +1601,349 @@ export const ExchangeManagementWorkspace: React.FC = () => {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB 5: EXCHANGER KYC APPLICATIONS & ROLE MANAGEMENT                   */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {activeSubTab === 'kyc' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Quick Direct Role Management Card */}
+          <div
+            style={{
+              backgroundColor: '#13151C',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              borderRadius: '10px',
+              padding: '1.25rem',
+            }}
+          >
+            <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#EDEDED', marginBottom: '0.25rem' }}>
+              ⚡ Direct Exchanger Role Assignment
+            </div>
+            <p style={{ fontSize: '0.8rem', color: '#A1A1AA', margin: '0 0 1rem 0' }}>
+              Immediately grant or revoke the 'exchanger' system role and buy order authorization for any user.
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: '0.75rem', alignItems: 'center' }}>
+              <input
+                type="text"
+                placeholder="Target User Discord ID..."
+                value={targetDiscordId}
+                onChange={(e) => setTargetDiscordId(e.target.value)}
+                style={{
+                  backgroundColor: '#1E293B',
+                  color: '#EDEDED',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  padding: '0.55rem 0.75rem',
+                  fontSize: '0.85rem',
+                }}
+              />
+              <input
+                type="text"
+                placeholder="Reason / Audit justification (optional)..."
+                value={roleReason}
+                onChange={(e) => setRoleReason(e.target.value)}
+                style={{
+                  backgroundColor: '#1E293B',
+                  color: '#EDEDED',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  padding: '0.55rem 0.75rem',
+                  fontSize: '0.85rem',
+                }}
+              />
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={() => handleRoleToggle(true)}
+                style={{
+                  backgroundColor: '#10B981',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '0.55rem 1rem',
+                  fontWeight: 600,
+                  fontSize: '0.85rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Grant Role
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading}
+                onClick={() => handleRoleToggle(false)}
+                style={{
+                  backgroundColor: '#EF4444',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '0.55rem 1rem',
+                  fontWeight: 600,
+                  fontSize: '0.85rem',
+                  cursor: 'pointer',
+                }}
+              >
+                Revoke Role
+              </button>
+            </div>
+          </div>
+
+          {/* KYC Requests List with Status Filters */}
+          <div
+            style={{
+              backgroundColor: '#13151C',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              borderRadius: '10px',
+              padding: '1.25rem',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: '1rem',
+                marginBottom: '1rem',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: '1rem', fontWeight: 700, color: '#EDEDED' }}>
+                  🛡️ Exchanger KYC Verification Requests
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#A1A1AA', marginTop: '0.2rem' }}>
+                  Review trader credentials and approve purchasing permissions
+                </div>
+              </div>
+
+              {/* Status Filters */}
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                {['ALL', 'PENDING_REVIEW', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'SUSPENDED'].map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setKycStatusFilter(st)}
+                    style={{
+                      padding: '0.35rem 0.75rem',
+                      borderRadius: '6px',
+                      fontSize: '0.78rem',
+                      fontWeight: 600,
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      backgroundColor: kycStatusFilter === st ? '#FACC15' : '#1E293B',
+                      color: kycStatusFilter === st ? '#09090B' : '#A1A1AA',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {st}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Table */}
+            {kycLoading ? (
+              <div style={{ textAlign: 'center', padding: '2rem', color: '#A1A1AA' }}>
+                Loading KYC requests...
+              </div>
+            ) : kycRequests.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '2.5rem', color: '#71717A' }}>
+                No KYC requests found for filter: {kycStatusFilter}
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)', textAlign: 'left' }}>
+                      <th style={{ padding: '0.65rem 0.75rem', color: '#A1A1AA', fontWeight: 600 }}>APPLICANT</th>
+                      <th style={{ padding: '0.65rem 0.75rem', color: '#A1A1AA', fontWeight: 600 }}>SUBMITTED</th>
+                      <th style={{ padding: '0.65rem 0.75rem', color: '#A1A1AA', fontWeight: 600 }}>STATUS</th>
+                      <th style={{ padding: '0.65rem 0.75rem', color: '#A1A1AA', fontWeight: 600 }}>NOTES / REASON</th>
+                      <th style={{ padding: '0.65rem 0.75rem', color: '#A1A1AA', fontWeight: 600 }}>REVIEW ACTIONS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {kycRequests.map((req) => (
+                      <tr
+                        key={req.id}
+                        style={{
+                          borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
+                        }}
+                      >
+                        <td style={{ padding: '0.75rem' }}>
+                          <div style={{ fontWeight: 600, color: '#EDEDED' }}>
+                            {req.user?.displayName || req.user?.username || req.userId}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#71717A', fontFamily: 'monospace' }}>
+                            {req.userId}
+                          </div>
+                          {req.user?.roles && (
+                            <div style={{ display: 'flex', gap: '4px', marginTop: '4px' }}>
+                              {req.user.roles.map((r) => (
+                                <span
+                                  key={r}
+                                  style={{
+                                    fontSize: '0.65rem',
+                                    padding: '1px 5px',
+                                    borderRadius: '3px',
+                                    backgroundColor: r === 'exchanger' ? 'rgba(250, 204, 21, 0.2)' : 'rgba(255, 255, 255, 0.08)',
+                                    color: r === 'exchanger' ? '#FACC15' : '#A1A1AA',
+                                  }}
+                                >
+                                  {r}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+
+                        <td style={{ padding: '0.75rem', color: '#A1A1AA', fontSize: '0.8rem' }}>
+                          {req.submittedAt ? new Date(req.submittedAt).toLocaleDateString() : 'N/A'}
+                        </td>
+
+                        <td style={{ padding: '0.75rem' }}>
+                          <span
+                            style={{
+                              padding: '2px 8px',
+                              borderRadius: '4px',
+                              fontSize: '0.75rem',
+                              fontWeight: 700,
+                              backgroundColor:
+                                req.status === 'APPROVED'
+                                  ? 'rgba(16, 185, 129, 0.15)'
+                                  : req.status === 'PENDING_REVIEW' || req.status === 'UNDER_REVIEW'
+                                  ? 'rgba(250, 204, 21, 0.15)'
+                                  : 'rgba(239, 68, 68, 0.15)',
+                              color:
+                                req.status === 'APPROVED'
+                                  ? '#10B981'
+                                  : req.status === 'PENDING_REVIEW' || req.status === 'UNDER_REVIEW'
+                                  ? '#FACC15'
+                                  : '#EF4444',
+                            }}
+                          >
+                            {req.status}
+                          </span>
+                        </td>
+
+                        <td style={{ padding: '0.75rem', maxWidth: '280px' }}>
+                          <div style={{ fontSize: '0.8rem', color: '#D4D4D8', lineHeight: 1.4 }}>
+                            {req.notes || 'No notes provided'}
+                          </div>
+                          {req.adminReviewNotes && (
+                            <div style={{ fontSize: '0.75rem', color: '#F87171', marginTop: '4px' }}>
+                              Admin Note: {req.adminReviewNotes}
+                            </div>
+                          )}
+                        </td>
+
+                        <td style={{ padding: '0.75rem' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                            <input
+                              type="text"
+                              placeholder="Review notes..."
+                              value={reviewNotes[req.id] || ''}
+                              onChange={(e) =>
+                                setReviewNotes((prev) => ({ ...prev, [req.id]: e.target.value }))
+                              }
+                              style={{
+                                backgroundColor: '#1E293B',
+                                color: '#EDEDED',
+                                border: '1px solid rgba(255, 255, 255, 0.1)',
+                                borderRadius: '4px',
+                                padding: '4px 8px',
+                                fontSize: '0.75rem',
+                              }}
+                            />
+                            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                              {req.status !== 'APPROVED' && (
+                                <button
+                                  type="button"
+                                  disabled={actionLoading}
+                                  onClick={() => handleKycReview(req.id, 'APPROVE')}
+                                  style={{
+                                    backgroundColor: '#10B981',
+                                    color: '#FFFFFF',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    padding: '3px 8px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Approve
+                                </button>
+                              )}
+                              {req.status !== 'REJECTED' && (
+                                <button
+                                  type="button"
+                                  disabled={actionLoading}
+                                  onClick={() => handleKycReview(req.id, 'REJECT')}
+                                  style={{
+                                    backgroundColor: '#EF4444',
+                                    color: '#FFFFFF',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    padding: '3px 8px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Reject
+                                </button>
+                              )}
+                              {req.status !== 'REQUIRES_ADDITIONAL_INFO' && (
+                                <button
+                                  type="button"
+                                  disabled={actionLoading}
+                                  onClick={() => handleKycReview(req.id, 'REQUEST_INFO')}
+                                  style={{
+                                    backgroundColor: '#F59E0B',
+                                    color: '#09090B',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    padding: '3px 8px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Need Info
+                                </button>
+                              )}
+                              {req.status !== 'SUSPENDED' && (
+                                <button
+                                  type="button"
+                                  disabled={actionLoading}
+                                  onClick={() => handleKycReview(req.id, 'SUSPEND')}
+                                  style={{
+                                    backgroundColor: '#DC2626',
+                                    color: '#FFFFFF',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    padding: '3px 8px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Suspend
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

@@ -79,6 +79,17 @@ export const Header: React.FC = () => {
             Join Team
           </a>
           <Link
+            to="/exchange"
+            style={{
+              fontSize: '0.92rem',
+              fontWeight: 600,
+              color: isNavActive('/exchange') ? 'var(--accent-lime)' : 'var(--text-muted)',
+              transition: 'color var(--transition-fast)',
+            }}
+          >
+            Exchange
+          </Link>
+          <Link
             to="/rules"
             style={{
               fontSize: '0.92rem',

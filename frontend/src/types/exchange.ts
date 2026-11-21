@@ -339,3 +339,134 @@ export interface ExchangeOverviewStats {
   feeRulesCount: number;
   activeGlobalRule: ExchangeFeeRuleItem | null;
 }
+
+// ─── Phase 2 & 3: KYC Verification, Marketplace Listings & Buy Orders ───────
+
+export type ExchangeKycStatus =
+  | 'NOT_SUBMITTED'
+  | 'PENDING_REVIEW'
+  | 'UNDER_REVIEW'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'REQUIRES_ADDITIONAL_INFO'
+  | 'EXPIRED'
+  | 'SUSPENDED';
+
+export interface ExchangeKycRequestItem {
+  id: string;
+  userId: string;
+  status: ExchangeKycStatus;
+  documentsMetaJson: string | null;
+  notes: string | null;
+  adminReviewNotes: string | null;
+  reviewedByDiscordId: string | null;
+  submittedAt: string | null;
+  reviewedAt: string | null;
+  approvedAt: string | null;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user?: {
+    discordId: string;
+    username: string;
+    displayName: string;
+    roles: string[];
+    createdAt: string;
+  } | null;
+}
+
+export interface ExchangeEligibilityResponse {
+  userId: string;
+  hasExchangerRole: boolean;
+  kycStatus: ExchangeKycStatus;
+  kycExpiresAt: string | null;
+  isSuspended: boolean;
+  canCreateBuyOrder: boolean;
+  canSubmitSellOffer: boolean;
+  activeRoles: string[];
+  blockingReasons: string[];
+}
+
+export type ExchangeBuyOrderStatus =
+  | 'DRAFT'
+  | 'ACTIVE'
+  | 'PARTIALLY_FILLED'
+  | 'FULLY_RESERVED'
+  | 'COMPLETED'
+  | 'PAUSED'
+  | 'CANCELLED'
+  | 'EXPIRED';
+
+export interface ExchangeBuyOrderItem {
+  id: string;
+  orderCode: string;
+  game: {
+    id: string;
+    name: string;
+    slug: string;
+    iconUrl: string | null;
+  };
+  currency: {
+    id: string;
+    name: string;
+    slug: string;
+    iconUrl: string | null;
+    unitLabel: string;
+    unitMultiplier: string;
+    decimalPrecision: number;
+  };
+  region: {
+    id: string;
+    name: string;
+    code: string;
+  } | null;
+  pricePerUnitCents: number;
+  pricePerUnitUsd: string;
+  unitLabelSnapshot: string;
+  unitMultiplierSnapshot: string;
+  minTradeBaseUnits: string;
+  maxTradeBaseUnits: string;
+  totalCapacityBaseUnits: string;
+  reservedCapacityBaseUnits: string;
+  remainingCapacityBaseUnits: string;
+  filledCapacityBaseUnits: string;
+  acceptedDeliveryMethodIds: string[];
+  instructions: string | null;
+  expiresAt: string | null;
+  status: ExchangeBuyOrderStatus;
+  createdAt: string;
+  isMine?: boolean;
+  pricingPreview?: TradePricingCalculation | null;
+  buyer: {
+    discordId: string;
+    username: string;
+    displayName: string;
+    reputationScore: number;
+    completedTradesCount: number;
+    memberSince: string;
+  };
+}
+
+export interface CreateBuyOrderPayload {
+  gameId: string;
+  currencyId: string;
+  regionId?: string | null;
+  pricePerUnitCents: number;
+  minTradeBaseUnits: string;
+  maxTradeBaseUnits: string;
+  totalCapacityBaseUnits: string;
+  acceptedDeliveryMethodIds: string[];
+  instructions?: string;
+  expiresAt?: string | null;
+  publishImmediately?: boolean;
+}
+
+export interface UpdateBuyOrderPayload {
+  pricePerUnitCents?: number;
+  minTradeBaseUnits?: string;
+  maxTradeBaseUnits?: string;
+  totalCapacityBaseUnits?: string;
+  acceptedDeliveryMethodIds?: string[];
+  instructions?: string;
+  expiresAt?: string | null;
+}
