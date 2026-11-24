@@ -25,6 +25,14 @@ import {
   TradeCheckoutSummaryResponse,
   ExchangeDiscordRoomItem,
   ExchangeDiscordConfig,
+  ExchangeProofItem,
+  ExchangeSettlementItem,
+  ExchangeDisputeItem,
+  ExchangeNotificationItem,
+  ExchangeOperationsOverviewKpis,
+  ExchangeApprovalQueueItem,
+  DisputeCategory,
+  DisputeResolutionOutcome,
 } from '../types/exchange';
 
 export interface PublicCatalogResponse {
@@ -470,7 +478,7 @@ export async function adminApproveBankPayment(
  */
 export async function adminRejectBankPayment(
   paymentId: string,
-  reason: string
+  reason?: string
 ): Promise<{ success: boolean; message: string; payment: ExchangePaymentItem }> {
   return await apiRequest(
     `/api/admin/exchange/payments/${paymentId}/reject-bank`,
@@ -479,6 +487,20 @@ export async function adminRejectBankPayment(
       body: JSON.stringify({ reason }),
     }
   );
+}
+
+/**
+ * Admin: reviews bank transfer payment (approve or reject)
+ */
+export async function adminReviewExchangePayment(
+  paymentId: string,
+  options: { action: 'CONFIRM' | 'REJECT'; notes?: string }
+): Promise<{ success: boolean; message: string }> {
+  if (options.action === 'CONFIRM') {
+    return await adminApproveBankPayment(paymentId, options.notes);
+  } else {
+    return await adminRejectBankPayment(paymentId, options.notes);
+  }
 }
 
 /**
@@ -576,5 +598,267 @@ export async function updateExchangeDiscordConfig(data: {
     }
   );
 }
+
+// ─── Phase 7: Proofs, Confirmation, Disputes, Notifications & Admin Operations ───
+
+export async function submitExchangeProof(
+  tradeId: string,
+  data: {
+    proofType?: 'DELIVERY_PROOF' | 'ADDITIONAL_PROOF' | 'DISPUTE_EVIDENCE';
+    fileUrl?: string;
+    evidenceLinks?: string[];
+    inGameDetails?: string;
+    note?: string;
+  }
+): Promise<{ success: boolean; proof: ExchangeProofItem }> {
+  return await apiRequest(`/api/exchange/trades/${tradeId}/proofs`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getExchangeProofs(
+  tradeId: string
+): Promise<{ success: boolean; proofs: ExchangeProofItem[] }> {
+  return await apiRequest<{ success: boolean; proofs: ExchangeProofItem[] }>(
+    `/api/exchange/trades/${tradeId}/proofs`
+  );
+}
+
+export async function confirmExchangeDelivery(
+  tradeId: string,
+  note?: string
+): Promise<{ success: boolean; trade: ExchangeTradeItem; message: string }> {
+  return await apiRequest(`/api/exchange/trades/${tradeId}/confirm-delivery`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}
+
+export async function openExchangeDispute(
+  tradeId: string,
+  data: {
+    category: DisputeCategory;
+    description: string;
+    evidenceLinks?: string[];
+  }
+): Promise<{ success: boolean; dispute: ExchangeDisputeItem }> {
+  return await apiRequest(`/api/exchange/trades/${tradeId}/disputes`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getTradeDispute(
+  tradeId: string
+): Promise<{ success: boolean; dispute: ExchangeDisputeItem | null }> {
+  return await apiRequest<{ success: boolean; dispute: ExchangeDisputeItem | null }>(
+    `/api/exchange/trades/${tradeId}/dispute`
+  );
+}
+
+export async function getTradeSettlement(
+  tradeId: string
+): Promise<{ success: boolean; settlement: ExchangeSettlementItem | null }> {
+  return await apiRequest<{ success: boolean; settlement: ExchangeSettlementItem | null }>(
+    `/api/exchange/trades/${tradeId}/settlement`
+  );
+}
+
+export async function getExchangeNotifications(): Promise<{
+  success: boolean;
+  notifications: ExchangeNotificationItem[];
+  unreadCount: number;
+}> {
+  return await apiRequest<{
+    success: boolean;
+    notifications: ExchangeNotificationItem[];
+    unreadCount: number;
+  }>(`/api/exchange/notifications`);
+}
+
+export async function markNotificationRead(
+  notificationId: string
+): Promise<{ success: boolean; notification: ExchangeNotificationItem }> {
+  return await apiRequest(`/api/exchange/notifications/${notificationId}/read`, {
+    method: 'PATCH',
+  });
+}
+
+export async function markAllNotificationsRead(): Promise<{ success: boolean; message: string }> {
+  return await apiRequest(`/api/exchange/notifications/mark-all-read`, {
+    method: 'POST',
+  });
+}
+
+// Admin Operations Workspace Services
+
+export async function getExchangeAdminOverview(): Promise<{
+  success: boolean;
+  kpis: ExchangeOperationsOverviewKpis;
+  recentSettlements: ExchangeSettlementItem[];
+}> {
+  return await apiRequest<{
+    success: boolean;
+    kpis: ExchangeOperationsOverviewKpis;
+    recentSettlements: ExchangeSettlementItem[];
+  }>(`/api/admin/exchange/overview`);
+}
+
+export async function getExchangeApprovalQueue(): Promise<{
+  success: boolean;
+  queue: ExchangeApprovalQueueItem[];
+}> {
+  return await apiRequest<{ success: boolean; queue: ExchangeApprovalQueueItem[] }>(
+    `/api/admin/exchange/approval-queue`
+  );
+}
+
+export async function approveExchangeTrade(
+  tradeId: string,
+  note?: string
+): Promise<{ success: boolean; settlement: ExchangeSettlementItem; trade: ExchangeTradeItem; message: string }> {
+  return await apiRequest(`/api/admin/exchange/trades/${tradeId}/approve`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}
+
+export async function rejectExchangeTrade(
+  tradeId: string,
+  reason: string
+): Promise<{ success: boolean; trade: ExchangeTradeItem; message: string }> {
+  return await apiRequest(`/api/admin/exchange/trades/${tradeId}/reject`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function requestAdditionalExchangeProof(
+  tradeId: string,
+  reason: string
+): Promise<{ success: boolean; trade: ExchangeTradeItem }> {
+  return await apiRequest(`/api/admin/exchange/trades/${tradeId}/request-proof`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function addTradeInternalNote(
+  tradeId: string,
+  note: string
+): Promise<{ success: boolean; trade: ExchangeTradeItem }> {
+  return await apiRequest(`/api/admin/exchange/trades/${tradeId}/internal-note`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  });
+}
+
+export async function getExchangeAdminTrades(params?: {
+  page?: number;
+  limit?: number;
+  status?: string;
+  gameId?: string;
+  search?: string;
+}): Promise<{
+  success: boolean;
+  trades: any[];
+  total: number;
+  page: number;
+  totalPages: number;
+}> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.status && params.status !== 'ALL') query.set('status', params.status);
+  if (params?.gameId && params.gameId !== 'ALL') query.set('gameId', params.gameId);
+  if (params?.search) query.set('search', params.search);
+  const qStr = query.toString() ? `?${query.toString()}` : '';
+  return await apiRequest(`/api/admin/exchange/trades${qStr}`);
+}
+
+export async function getExchangeAdminDisputes(params?: {
+  page?: number;
+  limit?: number;
+  status?: string;
+  category?: string;
+}): Promise<{
+  success: boolean;
+  disputes: ExchangeDisputeItem[];
+  total: number;
+  page: number;
+  totalPages: number;
+}> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.status && params.status !== 'ALL') query.set('status', params.status);
+  if (params?.category && params.category !== 'ALL') query.set('category', params.category);
+  const qStr = query.toString() ? `?${query.toString()}` : '';
+  return await apiRequest(`/api/admin/exchange/disputes${qStr}`);
+}
+
+export async function getExchangeAdminDisputeById(
+  disputeId: string
+): Promise<{ success: boolean; dispute: ExchangeDisputeItem }> {
+  return await apiRequest(`/api/admin/exchange/disputes/${disputeId}`);
+}
+
+export async function resolveExchangeDispute(
+  disputeId: string,
+  data: {
+    outcome: DisputeResolutionOutcome;
+    buyerRefundCents?: number;
+    sellerPayoutCents?: number;
+    note: string;
+  }
+): Promise<{ success: boolean; dispute: ExchangeDisputeItem; message: string }> {
+  return await apiRequest(`/api/admin/exchange/disputes/${disputeId}/resolve`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getExchangeAdminSettlements(params?: {
+  page?: number;
+  limit?: number;
+}): Promise<{
+  success: boolean;
+  settlements: ExchangeSettlementItem[];
+  total: number;
+  page: number;
+  totalPages: number;
+}> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.limit) query.set('limit', String(params.limit));
+  const qStr = query.toString() ? `?${query.toString()}` : '';
+  return await apiRequest(`/api/admin/exchange/settlements${qStr}`);
+}
+
+export async function getExchangeAdminExchangers(): Promise<{
+  success: boolean;
+  exchangers: any[];
+}> {
+  return await apiRequest(`/api/admin/exchange/exchangers`);
+}
+
+export async function getExchangeAdminAuditLogs(params?: {
+  page?: number;
+  limit?: number;
+}): Promise<{
+  success: boolean;
+  logs: any[];
+  total: number;
+  page: number;
+  totalPages: number;
+}> {
+  const query = new URLSearchParams();
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.limit) query.set('limit', String(params.limit));
+  const qStr = query.toString() ? `?${query.toString()}` : '';
+  return await apiRequest(`/api/admin/exchange/audit-logs${qStr}`);
+}
+
 
 

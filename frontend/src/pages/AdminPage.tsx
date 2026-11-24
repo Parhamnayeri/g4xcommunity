@@ -11,6 +11,7 @@ import {
   ChannelsWorkspace,
 } from '../components/admin/NativeAdminModules';
 import { KycManagementPage } from './KycManagementPage';
+import { ExchangeOperationsWorkspace } from '../components/admin/ExchangeOperationsWorkspace';
 import {
   AdminOverviewResponse,
   AdminDepositItem,
@@ -932,91 +933,7 @@ export const AdminPage: React.FC<{ defaultTab?: AdminTab }> = ({ defaultTab = 'o
       {/* TAB 5: MARKETPLACE & EXCHANGE OVERSIGHT                                       */}
       {/* ───────────────────────────────────────────────────────────────────────────── */}
       {activeTab === 'exchange' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          {/* Exchanger Active Offers */}
-          <div className="card-surface" style={{ padding: '1.75rem' }}>
-            <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem' }}>Exchanger Active Fee Offers</h2>
-            {exchangeLoading ? (
-              <LoadingState message="Loading exchange offers..." />
-            ) : offers.length === 0 ? (
-              <div className="empty-state-box">
-                <div className="empty-state-icon">🪙</div>
-                <p style={{ color: 'var(--text-muted)', margin: 0 }}>No fee offers registered.</p>
-              </div>
-            ) : (
-              <div className="table-scroll">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Offer Ref</th>
-                      <th>Exchanger</th>
-                      <th>Service Type</th>
-                      <th>Commission</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {offers.map((o) => (
-                      <tr key={o.id}>
-                        <td style={{ fontFamily: 'monospace' }}>{o.offerRef}</td>
-                        <td style={{ fontWeight: 600 }}>{o.exchanger}</td>
-                        <td>{o.serviceType}</td>
-                        <td style={{ color: 'var(--accent-lime)', fontWeight: 700 }}>{o.commissionFormatted}</td>
-                        <td>
-                          <span className="badge badge-green">{o.status}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Gold Trades Oversight */}
-          <div className="card-surface" style={{ padding: '1.75rem' }}>
-            <h2 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem' }}>Gold Trades Activity</h2>
-            {exchangeLoading ? (
-              <LoadingState message="Loading gold trades..." />
-            ) : trades.length === 0 ? (
-              <div className="empty-state-box">
-                <div className="empty-state-icon">🤝</div>
-                <p style={{ color: 'var(--text-muted)', margin: 0 }}>No gold trades executed yet.</p>
-              </div>
-            ) : (
-              <div className="table-scroll">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>Trade Ref</th>
-                      <th>Seller (Adv)</th>
-                      <th>Buyer (Exchanger)</th>
-                      <th>Gold Quantity</th>
-                      <th>Valuation</th>
-                      <th>Method</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {trades.map((t) => (
-                      <tr key={t.id}>
-                        <td style={{ fontFamily: 'monospace' }}>{t.tradeRef}</td>
-                        <td style={{ fontWeight: 600 }}>{t.seller}</td>
-                        <td style={{ fontWeight: 600 }}>{t.buyer}</td>
-                        <td>{t.goldQuantity.toLocaleString()} Gold</td>
-                        <td style={{ color: 'var(--accent-lime)', fontWeight: 700 }}>{t.valuationFormatted}</td>
-                        <td>{t.settlementMethod}</td>
-                        <td>
-                          <span className="badge badge-purple">{t.tradeStatus}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
+        <ExchangeOperationsWorkspace />
       )}
 
       {/* ───────────────────────────────────────────────────────────────────────────── */}

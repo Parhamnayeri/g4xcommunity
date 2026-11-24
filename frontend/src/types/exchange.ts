@@ -786,4 +786,143 @@ export interface ExchangeDiscordConfig {
   exchangeAlertChannelId: string;
 }
 
+// ─── Phase 7: Delivery Proofs, Settlements, Disputes & Notifications ─────────
+
+export interface ExchangeProofItem {
+  id: string;
+  tradeId: string;
+  submittedByUserId: string;
+  submittedByDiscordId: string;
+  submitterRole: 'SELLER' | 'BUYER' | 'ADMIN' | 'OWNER';
+  proofType: 'DELIVERY_PROOF' | 'ADDITIONAL_PROOF' | 'DISPUTE_EVIDENCE';
+  fileUrl?: string | null;
+  evidenceLinksJson: string;
+  inGameDetails?: string | null;
+  note?: string | null;
+  reviewStatus: 'PENDING' | 'ACCEPTED' | 'ADDITIONAL_REQUIRED' | 'REJECTED';
+  reviewedByDiscordId?: string | null;
+  reviewNote?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExchangeSettlementItem {
+  id: string;
+  settlementCode: string;
+  tradeId: string;
+  escrowId: string;
+  buyerUserId: string;
+  sellerUserId: string;
+  settlementType: 'STANDARD_RELEASE' | 'DISPUTE_RELEASE' | 'PARTIAL_SETTLEMENT';
+  grossValueCents: number;
+  buyerCommissionCents: number;
+  sellerCommissionCents: number;
+  g4xTotalRevenueCents: number;
+  sellerNetPayoutCents: number;
+  buyerRefundCents: number;
+  buyerEscrowDebitLedgerId?: string | null;
+  sellerCreditLedgerId?: string | null;
+  buyerRefundLedgerId?: string | null;
+  approvedByDiscordId: string;
+  approvalNote?: string | null;
+  settledAt: string;
+  createdAt: string;
+  trade?: any;
+}
+
+export type DisputeCategory =
+  | 'BUYER_NOT_RECEIVED'
+  | 'SELLER_CLAIMS_DELIVERED'
+  | 'PARTIAL_DELIVERY'
+  | 'INCORRECT_AMOUNT'
+  | 'WRONG_REGION'
+  | 'PAYMENT_ISSUE'
+  | 'SUSPECTED_FRAUD'
+  | 'OTHER';
+
+export type DisputeResolutionOutcome =
+  | 'RELEASE_TO_SELLER'
+  | 'FULL_REFUND_TO_BUYER'
+  | 'PARTIAL_REFUND'
+  | 'REQUEST_ADDITIONAL_PROOF'
+  | 'CANCEL_TRADE';
+
+export interface ExchangeDisputeItem {
+  id: string;
+  disputeCode: string;
+  tradeId: string;
+  openedByUserId: string;
+  openedByDiscordId: string;
+  openedByRole: string;
+  category: DisputeCategory;
+  description: string;
+  status: 'OPEN' | 'UNDER_REVIEW' | 'AWAITING_PROOF' | 'RESOLVED' | 'CLOSED';
+  resolutionOutcome?: DisputeResolutionOutcome | null;
+  resolutionBuyerRefundCents?: number | null;
+  resolutionSellerPayoutCents?: number | null;
+  resolutionNote?: string | null;
+  resolvedByDiscordId?: string | null;
+  resolvedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  trade?: any;
+  openedByUser?: {
+    discordId: string;
+    username: string;
+  };
+}
+
+export interface ExchangeNotificationItem {
+  id: string;
+  recipientDiscordId?: string | null;
+  recipientRole?: string | null;
+  tradeId?: string | null;
+  type: string;
+  title: string;
+  message: string;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export interface ExchangeOperationsOverviewKpis {
+  totalCompletedTradesVolumeCents: number;
+  totalPlatformRevenueCents: number;
+  activeEscrowReservedCents: number;
+  disputedEscrowFrozenCents: number;
+  awaitingFinalApprovalCount: number;
+  activeDisputesCount: number;
+  pendingKycRequestsCount: number;
+  activeTradesCount: number;
+  totalCompletedTradesCount: number;
+}
+
+export interface ExchangeApprovalQueueItem {
+  id: string;
+  tradeCode: string;
+  status: string;
+  quantityBaseUnits: string;
+  unitLabelSnapshot: string;
+  unitMultiplierSnapshot: string;
+  pricePerUnitCentsSnapshot: number;
+  grossValueCents: number;
+  buyerFeeCents: number;
+  sellerFeeCents: number;
+  netSellerCents: number;
+  buyerTotalPayableCents: number;
+  buyerUserId: string;
+  buyerDiscordId: string;
+  sellerUserId: string;
+  sellerDiscordId: string;
+  buyerConfirmedAt?: string | null;
+  createdAt: string;
+  game?: { id: string; displayName: string };
+  currency?: { id: string; displayName: string };
+  deliveryMethod?: { id: string; name: string };
+  escrow?: ExchangeEscrowItem | null;
+  proofs?: ExchangeProofItem[];
+  buyer?: { discordId: string; username: string; displayName?: string | null };
+  seller?: { discordId: string; username: string; displayName?: string | null };
+}
+
+
 

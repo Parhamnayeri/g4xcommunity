@@ -16,6 +16,10 @@ import { useAuth } from '../hooks/useAuth';
 import {
   ExchangeTradeItem,
   TradeCheckoutSummaryResponse,
+  ExchangeProofItem,
+  ExchangeSettlementItem,
+  ExchangeDisputeItem,
+  DisputeCategory,
 } from '../types/exchange';
 import {
   fetchTradeById,
@@ -27,6 +31,12 @@ import {
   submitBankReceipt,
   ensureDiscordRoom,
   archiveDiscordRoom,
+  submitExchangeProof,
+  getExchangeProofs,
+  confirmExchangeDelivery,
+  openExchangeDispute,
+  getTradeDispute,
+  getTradeSettlement,
 } from '../services/exchangeMarketplace';
 
 export const ExchangeTradeDetailPage: React.FC = () => {
@@ -68,6 +78,46 @@ export const ExchangeTradeDetailPage: React.FC = () => {
   const [activeBankPaymentId, setActiveBankPaymentId] = useState<string | null>(null);
   const [copiedCard, setCopiedCard] = useState(false);
 
+  // Phase 7: Proofs, Confirmation, Disputes & Settlement
+  const [proofs, setProofs] = useState<ExchangeProofItem[]>([]);
+  const [showProofModal, setShowProofModal] = useState(false);
+  const [proofFileUrl, setProofFileUrl] = useState('');
+  const [proofInGameDetails, setProofInGameDetails] = useState('');
+  const [proofNote, setProofNote] = useState('');
+  const [submittingProof, setSubmittingProof] = useState(false);
+
+  // Buyer confirmation modal
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [confirmNote, setConfirmNote] = useState('');
+  const [confirmingDelivery, setConfirmingDelivery] = useState(false);
+
+  // Dispute modal
+  const [showDisputeModal, setShowDisputeModal] = useState(false);
+  const [disputeCategory, setDisputeCategory] = useState<DisputeCategory>('BUYER_NOT_RECEIVED');
+  const [disputeDescription, setDisputeDescription] = useState('');
+  const [disputeEvidence, setDisputeEvidence] = useState('');
+  const [submittingDispute, setSubmittingDispute] = useState(false);
+  const [tradeDispute, setTradeDispute] = useState<ExchangeDisputeItem | null>(null);
+
+  // Settlement
+  const [settlement, setSettlement] = useState<ExchangeSettlementItem | null>(null);
+
+  const loadProofsAndSettlement = useCallback(async () => {
+    if (!tradeId) return;
+    try {
+      const [proofsRes, disputeRes, settlementRes] = await Promise.all([
+        getExchangeProofs(tradeId).catch(() => null),
+        getTradeDispute(tradeId).catch(() => null),
+        getTradeSettlement(tradeId).catch(() => null),
+      ]);
+      if (proofsRes && proofsRes.success) setProofs(proofsRes.proofs);
+      if (disputeRes && disputeRes.success) setTradeDispute(disputeRes.dispute);
+      if (settlementRes && settlementRes.success) setSettlement(settlementRes.settlement);
+    } catch (err: any) {
+      console.warn('Failed to load proofs/dispute/settlement:', err?.message);
+    }
+  }, [tradeId]);
+
   const loadTradeData = useCallback(async () => {
     if (!tradeId) return;
     try {
@@ -100,7 +150,6 @@ export const ExchangeTradeDetailPage: React.FC = () => {
         }
       }
     } catch (err: any) {
-      // Checkout might fail if not buyer or not awaiting payment
       console.warn('Checkout summary not available:', err?.message);
     } finally {
       setLoadingCheckout(false);
@@ -109,13 +158,90 @@ export const ExchangeTradeDetailPage: React.FC = () => {
 
   useEffect(() => {
     loadTradeData();
-  }, [loadTradeData]);
+    loadProofsAndSettlement();
+  }, [loadTradeData, loadProofsAndSettlement]);
 
   useEffect(() => {
     if (trade && trade.status === 'AWAITING_PAYMENT' && currentUserId && trade.buyerUserId === currentUserId) {
       loadCheckout();
     }
   }, [trade, currentUserId, loadCheckout]);
+
+  const handleSubmitProof = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tradeId) return;
+    try {
+      setSubmittingProof(true);
+      const res = await submitExchangeProof(tradeId, {
+        fileUrl: proofFileUrl.trim() || undefined,
+        inGameDetails: proofInGameDetails.trim() || undefined,
+        note: proofNote.trim() || undefined,
+      });
+      if (res.success) {
+        setActionFeedback({ type: 'success', message: 'Delivery proof uploaded successfully!' });
+        setShowProofModal(false);
+        setProofFileUrl('');
+        setProofInGameDetails('');
+        setProofNote('');
+        loadTradeData();
+        loadProofsAndSettlement();
+      }
+    } catch (err: any) {
+      setActionFeedback({ type: 'error', message: err?.message || 'Failed to upload proof.' });
+    } finally {
+      setSubmittingProof(false);
+    }
+  };
+
+  const handleConfirmDelivery = async () => {
+    if (!tradeId) return;
+    try {
+      setConfirmingDelivery(true);
+      const res = await confirmExchangeDelivery(tradeId, confirmNote.trim() || undefined);
+      if (res.success) {
+        setActionFeedback({
+          type: 'success',
+          message: 'Delivery confirmed! Trade has been sent to Staff for Final Review & Payout.',
+        });
+        setShowConfirmModal(false);
+        loadTradeData();
+        loadProofsAndSettlement();
+      }
+    } catch (err: any) {
+      setActionFeedback({ type: 'error', message: err?.message || 'Failed to confirm delivery.' });
+    } finally {
+      setConfirmingDelivery(false);
+    }
+  };
+
+  const handleSubmitDispute = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tradeId) return;
+    try {
+      setSubmittingDispute(true);
+      const links = disputeEvidence.trim() ? [disputeEvidence.trim()] : [];
+      const res = await openExchangeDispute(tradeId, {
+        category: disputeCategory,
+        description: disputeDescription.trim(),
+        evidenceLinks: links,
+      });
+      if (res.success) {
+        setActionFeedback({
+          type: 'success',
+          message: `Dispute ${res.dispute.disputeCode} opened. Escrow funds frozen pending Staff investigation.`,
+        });
+        setShowDisputeModal(false);
+        setDisputeDescription('');
+        setDisputeEvidence('');
+        loadTradeData();
+        loadProofsAndSettlement();
+      }
+    } catch (err: any) {
+      setActionFeedback({ type: 'error', message: err?.message || 'Failed to open dispute.' });
+    } finally {
+      setSubmittingDispute(false);
+    }
+  };
 
   const handleCancelTrade = async () => {
     if (!trade) return;
@@ -364,6 +490,10 @@ export const ExchangeTradeDetailPage: React.FC = () => {
         return { label: 'Delivery in Progress', color: '#3B82F6', bg: 'rgba(59, 130, 246, 0.15)', border: '#3B82F6' };
       case 'PROOF_SUBMITTED':
         return { label: 'Proof Submitted', color: '#8B5CF6', bg: 'rgba(139, 92, 246, 0.15)', border: '#8B5CF6' };
+      case 'AWAITING_FINAL_APPROVAL':
+        return { label: 'Awaiting Final Review & Payout', color: '#38BDF8', bg: 'rgba(56, 189, 248, 0.15)', border: '#38BDF8' };
+      case 'ADDITIONAL_PROOF_REQUESTED':
+        return { label: 'Additional Proof Requested', color: '#F97316', bg: 'rgba(249, 115, 22, 0.15)', border: '#F97316' };
       case 'BUYER_CONFIRMED':
         return { label: 'Buyer Confirmed Delivery', color: '#10B981', bg: 'rgba(16, 185, 129, 0.15)', border: '#10B981' };
       case 'COMPLETED':
@@ -410,7 +540,67 @@ export const ExchangeTradeDetailPage: React.FC = () => {
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            {/* Phase 7: Participant Action Buttons */}
+            {trade.status !== 'AWAITING_PAYMENT' && trade.status !== 'CANCELLED' && trade.status !== 'COMPLETED' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowProofModal(true)}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: '#8B5CF6',
+                    color: '#FFFFFF',
+                    borderRadius: '8px',
+                    border: 'none',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  📸 Upload Proof
+                </button>
+
+                {isBuyer && ['PROOF_SUBMITTED', 'DELIVERY_IN_PROGRESS', 'ADDITIONAL_PROOF_REQUESTED'].includes(trade.status) && (
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmModal(true)}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: '#10B981',
+                      color: '#000000',
+                      borderRadius: '8px',
+                      border: 'none',
+                      fontSize: '0.85rem',
+                      fontWeight: 800,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ✅ Confirm Delivery
+                  </button>
+                )}
+
+                {trade.status !== 'DISPUTED' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDisputeModal(true)}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: 'rgba(249, 115, 22, 0.15)',
+                      color: '#F97316',
+                      borderRadius: '8px',
+                      border: '1px solid #F97316',
+                      fontSize: '0.85rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ⚠️ Report Dispute
+                  </button>
+                )}
+              </>
+            )}
+
             <Link
               to={`/exchange/orders/${trade.buyOrderId}`}
               style={{
@@ -492,6 +682,177 @@ export const ExchangeTradeDetailPage: React.FC = () => {
             <div style={{ textAlign: 'right', minWidth: '160px' }}>
               <div style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>ESCROW STATUS</div>
               <div style={{ fontSize: '1.1rem', fontWeight: 800, color: '#10B981' }}>RESERVED</div>
+            </div>
+          </div>
+        )}
+
+        {/* Phase 7: COMPLETED SETTLEMENT CARD */}
+        {trade.status === 'COMPLETED' && settlement && (
+          <div
+            style={{
+              backgroundColor: 'rgba(16, 185, 129, 0.1)',
+              border: '1px solid #10B981',
+              borderRadius: '12px',
+              padding: '24px',
+              marginBottom: '28px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '2rem' }}>🎉</span>
+                <div>
+                  <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#10B981', margin: 0 }}>
+                    Trade Finalized & Settled Successfully
+                  </h3>
+                  <div style={{ fontSize: '0.85rem', color: '#9CA3AF', marginTop: '2px' }}>
+                    Settlement Code: <strong style={{ color: '#FFFFFF' }}>{settlement.settlementCode}</strong> • Settled on {new Date(settlement.settledAt).toLocaleString()}
+                  </div>
+                </div>
+              </div>
+              <span
+                style={{
+                  padding: '4px 12px',
+                  borderRadius: '6px',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  backgroundColor: '#10B981',
+                  color: '#000000',
+                }}
+              >
+                {settlement.settlementType}
+              </span>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', backgroundColor: '#13151C', padding: '16px', borderRadius: '10px' }}>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>SELLER NET PAYOUT</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#10B981' }}>
+                  ${(settlement.sellerNetPayoutCents / 100).toFixed(2)} USD
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>GROSS TRADE VALUE</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#FFFFFF' }}>
+                  ${(settlement.grossValueCents / 100).toFixed(2)} USD
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>G4X PLATFORM REVENUE</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#FACC15' }}>
+                  ${(settlement.g4xTotalRevenueCents / 100).toFixed(2)} USD
+                </div>
+              </div>
+              {settlement.buyerRefundCents > 0 && (
+                <div>
+                  <div style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>BUYER REFUND</div>
+                  <div style={{ fontSize: '1.3rem', fontWeight: 800, color: '#38BDF8' }}>
+                    ${(settlement.buyerRefundCents / 100).toFixed(2)} USD
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {settlement.approvalNote && (
+              <div style={{ marginTop: '12px', fontSize: '0.85rem', color: '#D1D5DB' }}>
+                <strong>Staff Note:</strong> {settlement.approvalNote}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Phase 7: AWAITING FINAL APPROVAL BANNER */}
+        {trade.status === 'AWAITING_FINAL_APPROVAL' && (
+          <div
+            style={{
+              backgroundColor: 'rgba(56, 189, 248, 0.1)',
+              border: '1px solid #38BDF8',
+              borderRadius: '12px',
+              padding: '20px 24px',
+              marginBottom: '28px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ fontSize: '2.5rem' }}>⏳</div>
+            <div style={{ flex: 1, minWidth: '260px' }}>
+              <div style={{ color: '#38BDF8', fontWeight: 800, fontSize: '1.1rem', marginBottom: '4px' }}>
+                Delivery Confirmed by Buyer — Queued for Final Review & Payout
+              </div>
+              <div style={{ color: '#D1D5DB', fontSize: '0.85rem', lineHeight: '1.4' }}>
+                Buyer confirmed receipt of goods. This trade is currently in the G4X Admin/Owner Review Queue for final verification. Once approved, the Seller’s net payout of <strong>${netSellerUsd} USD</strong> will be released immediately to their central wallet balance.
+              </div>
+            </div>
+            <span style={{ fontSize: '0.8rem', color: '#38BDF8', fontWeight: 700, backgroundColor: 'rgba(56, 189, 248, 0.2)', padding: '6px 12px', borderRadius: '6px' }}>
+              REVIEW IN PROGRESS
+            </span>
+          </div>
+        )}
+
+        {/* Phase 7: ACTIVE DISPUTE BANNER */}
+        {(trade.status === 'DISPUTED' || tradeDispute) && (
+          <div
+            style={{
+              backgroundColor: 'rgba(239, 68, 68, 0.12)',
+              border: '1px solid #EF4444',
+              borderRadius: '12px',
+              padding: '20px 24px',
+              marginBottom: '28px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span style={{ fontSize: '2rem' }}>🚨</span>
+                <div>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: '#EF4444', margin: 0 }}>
+                    Formal Dispute Active {tradeDispute ? `(${tradeDispute.disputeCode})` : ''}
+                  </h3>
+                  <div style={{ fontSize: '0.85rem', color: '#FCA5A5' }}>
+                    Category: <strong>{tradeDispute?.category || 'TRADE_DISPUTE'}</strong> • Status: <strong>{tradeDispute?.status || 'UNDER_REVIEW'}</strong>
+                  </div>
+                </div>
+              </div>
+              <span style={{ padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 700, backgroundColor: '#EF4444', color: '#FFFFFF' }}>
+                ESCROW FROZEN
+              </span>
+            </div>
+            {tradeDispute?.description && (
+              <div style={{ backgroundColor: '#13151C', padding: '12px', borderRadius: '8px', fontSize: '0.85rem', color: '#D1D5DB' }}>
+                <strong>Issue Description:</strong> {tradeDispute.description}
+              </div>
+            )}
+            {tradeDispute?.resolutionOutcome && (
+              <div style={{ marginTop: '10px', fontSize: '0.85rem', color: '#10B981' }}>
+                <strong>Resolution:</strong> {tradeDispute.resolutionOutcome} {tradeDispute.resolutionNote ? `— ${tradeDispute.resolutionNote}` : ''}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Phase 7: ADDITIONAL PROOF REQUESTED BANNER */}
+        {trade.status === 'ADDITIONAL_PROOF_REQUESTED' && (
+          <div
+            style={{
+              backgroundColor: 'rgba(249, 115, 22, 0.12)',
+              border: '1px solid #F97316',
+              borderRadius: '12px',
+              padding: '20px 24px',
+              marginBottom: '28px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ fontSize: '2.5rem' }}>⚠️</div>
+            <div style={{ flex: 1, minWidth: '260px' }}>
+              <div style={{ color: '#F97316', fontWeight: 800, fontSize: '1.1rem', marginBottom: '4px' }}>
+                Additional Delivery Evidence Requested
+              </div>
+              <div style={{ color: '#D1D5DB', fontSize: '0.85rem', lineHeight: '1.4' }}>
+                G4X Staff has requested additional delivery proof before approving payout. Please click <strong>Upload Proof</strong> above to attach full-screen screenshots or trade receipts.
+              </div>
             </div>
           </div>
         )}
@@ -1168,6 +1529,138 @@ export const ExchangeTradeDetailPage: React.FC = () => {
           </div>
         )}
 
+        {/* Phase 7: DELIVERY PROOFS & VERIFICATION GALLERY */}
+        {trade.status !== 'AWAITING_PAYMENT' && (
+          <div
+            style={{
+              backgroundColor: '#13151C',
+              borderRadius: '14px',
+              border: '1px solid #27272A',
+              padding: '24px',
+              marginBottom: '32px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', marginBottom: '20px' }}>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#FFFFFF', margin: 0 }}>
+                  📸 Delivery Proofs & Evidence ({proofs.length})
+                </h3>
+                <div style={{ fontSize: '0.85rem', color: '#9CA3AF', marginTop: '2px' }}>
+                  Cryptographically timestamped evidence submitted by participants and verified by G4X Escrow.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowProofModal(true)}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: '#8B5CF6',
+                  color: '#FFFFFF',
+                  borderRadius: '8px',
+                  border: 'none',
+                  fontSize: '0.85rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                + Upload Evidence
+              </button>
+            </div>
+
+            {proofs.length === 0 ? (
+              <div style={{ backgroundColor: '#1E202B', borderRadius: '10px', padding: '24px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.9rem' }}>
+                No delivery proofs uploaded yet. Seller can attach screenshots of the in-game trade window or chat confirmation.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+                {proofs.map((proof) => (
+                  <div
+                    key={proof.id}
+                    style={{
+                      backgroundColor: '#1E202B',
+                      borderRadius: '10px',
+                      border: '1px solid #374151',
+                      padding: '16px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span
+                        style={{
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          backgroundColor: proof.submitterRole === 'SELLER' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(139, 92, 246, 0.2)',
+                          color: proof.submitterRole === 'SELLER' ? '#10B981' : '#8B5CF6',
+                        }}
+                      >
+                        {proof.submitterRole}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', color: '#6B7280' }}>
+                        {new Date(proof.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+
+                    {proof.inGameDetails && (
+                      <div style={{ fontSize: '0.85rem', color: '#FACC15' }}>
+                        <strong>In-Game Details:</strong> {proof.inGameDetails}
+                      </div>
+                    )}
+
+                    {proof.note && (
+                      <div style={{ fontSize: '0.85rem', color: '#D1D5DB' }}>
+                        {proof.note}
+                      </div>
+                    )}
+
+                    {proof.fileUrl && (
+                      <div style={{ marginTop: '4px' }}>
+                        <a
+                          href={proof.fileUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            color: '#38BDF8',
+                            fontSize: '0.85rem',
+                            fontWeight: 600,
+                            textDecoration: 'none',
+                          }}
+                        >
+                          <span>🔍 View Full Attachment / Screenshot</span>
+                          <span>↗</span>
+                        </a>
+                      </div>
+                    )}
+
+                    <div style={{ borderTop: '1px solid #2D303E', paddingTop: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
+                      <span style={{ color: '#9CA3AF' }}>Status:</span>
+                      <span
+                        style={{
+                          fontWeight: 700,
+                          color:
+                            proof.reviewStatus === 'ACCEPTED'
+                              ? '#10B981'
+                              : proof.reviewStatus === 'REJECTED'
+                              ? '#EF4444'
+                              : '#FACC15',
+                        }}
+                      >
+                        {proof.reviewStatus}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Main Grid */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '24px', marginBottom: '32px' }}>
 
@@ -1403,6 +1896,411 @@ export const ExchangeTradeDetailPage: React.FC = () => {
           </div>
 
         </div>
+
+        {/* Phase 7: MODAL 1 — UPLOAD DELIVERY PROOF */}
+        {showProofModal && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.75)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1000,
+              padding: '16px',
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: '#13151C',
+                borderRadius: '14px',
+                border: '1px solid #374151',
+                padding: '24px',
+                width: '100%',
+                maxWidth: '520px',
+                boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#FFFFFF', margin: 0 }}>
+                  📸 Upload Delivery Evidence
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowProofModal(false)}
+                  style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '1.4rem', cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleSubmitProof}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: '#D1D5DB', marginBottom: '6px' }}>
+                    Evidence Screenshot or Document URL *
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://... (Imgur, Discord CDN, or direct image link)"
+                    value={proofFileUrl}
+                    onChange={(e) => setProofFileUrl(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      backgroundColor: '#1E202B',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      color: '#FFFFFF',
+                      fontSize: '0.9rem',
+                    }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: '#D1D5DB', marginBottom: '6px' }}>
+                    In-Game Character / Trade Details
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Character name, timestamp, or realm details"
+                    value={proofInGameDetails}
+                    onChange={(e) => setProofInGameDetails(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      backgroundColor: '#1E202B',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      color: '#FFFFFF',
+                      fontSize: '0.9rem',
+                    }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: '#D1D5DB', marginBottom: '6px' }}>
+                    Additional Notes
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder="Describe how the delivery was executed..."
+                    value={proofNote}
+                    onChange={(e) => setProofNote(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      backgroundColor: '#1E202B',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      color: '#FFFFFF',
+                      fontSize: '0.9rem',
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowProofModal(false)}
+                    style={{
+                      padding: '10px 18px',
+                      backgroundColor: '#1E202B',
+                      color: '#D1D5DB',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingProof}
+                    style={{
+                      padding: '10px 20px',
+                      backgroundColor: '#8B5CF6',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontWeight: 700,
+                      cursor: submittingProof ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {submittingProof ? 'Uploading...' : 'Submit Evidence'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Phase 7: MODAL 2 — CONFIRM IN-GAME DELIVERY */}
+        {showConfirmModal && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.75)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1000,
+              padding: '16px',
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: '#13151C',
+                borderRadius: '14px',
+                border: '1px solid #10B981',
+                padding: '24px',
+                width: '100%',
+                maxWidth: '520px',
+                boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#10B981', margin: 0 }}>
+                  ✅ Confirm Delivery Receipt
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmModal(false)}
+                  style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '1.4rem', cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ backgroundColor: '#1E202B', borderRadius: '10px', padding: '16px', marginBottom: '18px', fontSize: '0.9rem', color: '#D1D5DB', lineHeight: '1.5' }}>
+                Please confirm that you have logged into your game and successfully received the agreed{' '}
+                <strong style={{ color: '#FACC15' }}>{tradeUnits} {trade.currency?.name}</strong>.
+                <br /><br />
+                <span style={{ color: '#9CA3AF', fontSize: '0.8rem' }}>
+                  ℹ️ Note: Confirming delivery queues the trade into the Admin Final Review queue. Funds are released after administrative verification.
+                </span>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ display: 'block', fontSize: '0.85rem', color: '#D1D5DB', marginBottom: '6px' }}>
+                  Optional Confirmation Note:
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Received in-game at 14:30 from character X"
+                  value={confirmNote}
+                  onChange={(e) => setConfirmNote(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    backgroundColor: '#1E202B',
+                    border: '1px solid #374151',
+                    borderRadius: '8px',
+                    color: '#FFFFFF',
+                    fontSize: '0.9rem',
+                  }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmModal(false)}
+                  style={{
+                    padding: '10px 18px',
+                    backgroundColor: '#1E202B',
+                    color: '#D1D5DB',
+                    border: '1px solid #374151',
+                    borderRadius: '8px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Not Yet
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmDelivery}
+                  disabled={confirmingDelivery}
+                  style={{
+                    padding: '10px 22px',
+                    backgroundColor: '#10B981',
+                    color: '#000000',
+                    border: 'none',
+                    borderRadius: '8px',
+                    fontWeight: 800,
+                    cursor: confirmingDelivery ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {confirmingDelivery ? 'Confirming...' : 'Yes, I Received Goods'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Phase 7: MODAL 3 — OPEN FORMAL DISPUTE */}
+        {showDisputeModal && (
+          <div
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.75)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1000,
+              padding: '16px',
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: '#13151C',
+                borderRadius: '14px',
+                border: '1px solid #EF4444',
+                padding: '24px',
+                width: '100%',
+                maxWidth: '540px',
+                boxShadow: '0 20px 40px rgba(0,0,0,0.6)',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: '#EF4444', margin: 0 }}>
+                  🚨 Report Issue & Open Dispute
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowDisputeModal(false)}
+                  style={{ background: 'none', border: 'none', color: '#9CA3AF', fontSize: '1.4rem', cursor: 'pointer' }}
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', border: '1px solid #EF4444', borderRadius: '8px', padding: '12px', marginBottom: '16px', fontSize: '0.85rem', color: '#FCA5A5' }}>
+                ⚠️ <strong>Important:</strong> Opening a dispute immediately freezes trade escrow funds (<code style={{ color: '#FFFFFF' }}>FROZEN_DISPUTE</code>). G4X staff will review logs, chat history, and submitted evidence before making a binding decision.
+              </div>
+
+              <form onSubmit={handleSubmitDispute}>
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: '#D1D5DB', marginBottom: '6px' }}>
+                    Dispute Reason Category *
+                  </label>
+                  <select
+                    value={disputeCategory}
+                    onChange={(e) => setDisputeCategory(e.target.value as DisputeCategory)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      backgroundColor: '#1E202B',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      color: '#FFFFFF',
+                      fontSize: '0.9rem',
+                    }}
+                  >
+                    <option value="BUYER_NOT_RECEIVED">Buyer: Goods Not Received</option>
+                    <option value="SELLER_CLAIMS_DELIVERED">Seller: Buyer Not Acknowledging Delivery</option>
+                    <option value="PARTIAL_DELIVERY">Partial Delivery / Incomplete Amount</option>
+                    <option value="INCORRECT_AMOUNT">Incorrect Quantity or Multiplier</option>
+                    <option value="WRONG_REGION">Wrong Character, Realm, or Region</option>
+                    <option value="PAYMENT_ISSUE">Payment / Escrow Discrepancy</option>
+                    <option value="SUSPECTED_FRAUD">Suspected Fraud or Impersonation</option>
+                    <option value="OTHER">Other Issue</option>
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: '14px' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: '#D1D5DB', marginBottom: '6px' }}>
+                    Detailed Explanation *
+                  </label>
+                  <textarea
+                    rows={4}
+                    required
+                    placeholder="Provide a clear, factual explanation of what occurred..."
+                    value={disputeDescription}
+                    onChange={(e) => setDisputeDescription(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      backgroundColor: '#1E202B',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      color: '#FFFFFF',
+                      fontSize: '0.9rem',
+                    }}
+                  />
+                </div>
+
+                <div style={{ marginBottom: '20px' }}>
+                  <label style={{ display: 'block', fontSize: '0.85rem', color: '#D1D5DB', marginBottom: '6px' }}>
+                    Evidence Links (Optional)
+                  </label>
+                  <input
+                    type="url"
+                    placeholder="https://... (screenshot / video link)"
+                    value={disputeEvidence}
+                    onChange={(e) => setDisputeEvidence(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      backgroundColor: '#1E202B',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      color: '#FFFFFF',
+                      fontSize: '0.9rem',
+                    }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowDisputeModal(false)}
+                    style={{
+                      padding: '10px 18px',
+                      backgroundColor: '#1E202B',
+                      color: '#D1D5DB',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submittingDispute}
+                    style={{
+                      padding: '10px 22px',
+                      backgroundColor: '#EF4444',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontWeight: 800,
+                      cursor: submittingDispute ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {submittingDispute ? 'Opening Dispute...' : 'Submit & Freeze Trade'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>

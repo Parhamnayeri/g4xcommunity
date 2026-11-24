@@ -110,6 +110,8 @@ model User {
   exchangePayments             ExchangePayment[]      @relation("BuyerExchangePayments")
   buyerExchangeEscrows         ExchangeEscrow[]       @relation("BuyerExchangeEscrow")
   sellerExchangeEscrows        ExchangeEscrow[]       @relation("SellerExchangeEscrow")
+  exchangeProofsSubmitted      ExchangeProof[]        @relation("SubmittedExchangeProofs")
+  exchangeDisputesOpened       ExchangeDispute[]      @relation("OpenedExchangeDisputes")
 
   @@index([advertiserRank])
   @@map("users")
@@ -2473,6 +2475,10 @@ model ExchangeTrade {
   buyerInstructionsSnapshot     String?                @map("buyer_instructions_snapshot")
   cancelledByDiscordId          String?                @map("cancelled_by_discord_id")
   cancelReason                  String?                @map("cancel_reason")
+  buyerConfirmedAt              DateTime?              @map("buyer_confirmed_at")
+  finalApprovedAt               DateTime?              @map("final_approved_at")
+  completedAt                   DateTime?              @map("completed_at")
+  internalAdminNotes            String?                @map("internal_admin_notes")
   createdAt                     DateTime               @default(now()) @map("created_at")
   updatedAt                     DateTime               @updatedAt @map("updated_at")
 
@@ -2488,6 +2494,9 @@ model ExchangeTrade {
   payments                      ExchangePayment[]
   escrow                        ExchangeEscrow?
   discordRoom                   ExchangeDiscordRoom?
+  proofs                        ExchangeProof[]
+  settlement                    ExchangeSettlement?
+  disputes                      ExchangeDispute[]
 
   @@index([buyerDiscordId, status])
   @@index([sellerDiscordId, status])
@@ -2600,6 +2609,7 @@ model ExchangeEscrow {
   payment               ExchangePayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   buyer                 User            @relation("BuyerExchangeEscrow", fields: [buyerUserId], references: [discordId], onDelete: Cascade)
   seller                User            @relation("SellerExchangeEscrow", fields: [sellerUserId], references: [discordId], onDelete: Cascade)
+  settlement            ExchangeSettlement?
 
   @@index([status])
   @@index([buyerUserId, status])
@@ -2633,4 +2643,105 @@ model ExchangeDiscordRoom {
   @@index([buyerDiscordId])
   @@index([sellerDiscordId])
   @@map("exchange_discord_rooms")
+}
+
+// ─── ۷۶. اکسچنج: مدارک تحویل و شواهد معامله (Exchange Proofs) ─────────────────
+model ExchangeProof {
+  id                   String        @id @default(cuid())
+  tradeId              String        @map("trade_id")
+  submittedByUserId    String        @map("submitted_by_user_id")
+  submittedByDiscordId String        @map("submitted_by_discord_id")
+  submitterRole        String        @map("submitter_role") // SELLER | BUYER | ADMIN | OWNER
+  proofType            String        @default("DELIVERY_PROOF") @map("proof_type") // DELIVERY_PROOF | ADDITIONAL_PROOF | DISPUTE_EVIDENCE
+  fileUrl              String?       @map("file_url")
+  evidenceLinksJson    String        @default("[]") @map("evidence_links_json")
+  inGameDetails        String?       @map("in_game_details")
+  note                 String?       @map("note")
+  reviewStatus         String        @default("PENDING") @map("review_status") // PENDING | ACCEPTED | ADDITIONAL_REQUIRED | REJECTED
+  reviewedByDiscordId  String?       @map("reviewed_by_discord_id")
+  reviewNote           String?       @map("review_note")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+
+  trade                ExchangeTrade @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  submittedByUser      User          @relation("SubmittedExchangeProofs", fields: [submittedByUserId], references: [discordId], onDelete: Cascade)
+
+  @@index([tradeId, createdAt])
+  @@map("exchange_proofs")
+}
+
+// ─── ۷۷. اکسچنج: تسویه حساب نهایی معامله (Exchange Settlements) ────────────────
+model ExchangeSettlement {
+  id                       String         @id @default(cuid())
+  settlementCode           String         @unique @map("settlement_code")
+  tradeId                  String         @unique @map("trade_id")
+  escrowId                 String         @unique @map("escrow_id")
+  buyerUserId              String         @map("buyer_user_id")
+  sellerUserId             String         @map("seller_user_id")
+  settlementType           String         @default("STANDARD_RELEASE") @map("settlement_type") // STANDARD_RELEASE | DISPUTE_RELEASE | PARTIAL_SETTLEMENT
+  grossValueCents          Int            @map("gross_value_cents")
+  buyerCommissionCents     Int            @map("buyer_commission_cents")
+  sellerCommissionCents    Int            @map("seller_commission_cents")
+  g4xTotalRevenueCents     Int            @map("g4x_total_revenue_cents")
+  sellerNetPayoutCents     Int            @map("seller_net_payout_cents")
+  buyerRefundCents         Int            @default(0) @map("buyer_refund_cents")
+  buyerEscrowDebitLedgerId String?        @map("buyer_escrow_debit_ledger_id")
+  sellerCreditLedgerId     String?        @map("seller_credit_ledger_id")
+  buyerRefundLedgerId      String?        @map("buyer_refund_ledger_id")
+  approvedByDiscordId      String         @map("approved_by_discord_id")
+  approvalNote             String?        @map("approval_note")
+  settledAt                DateTime       @default(now()) @map("settled_at")
+  createdAt                DateTime       @default(now()) @map("created_at")
+
+  trade                    ExchangeTrade  @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  escrow                   ExchangeEscrow @relation(fields: [escrowId], references: [id], onDelete: Cascade)
+
+  @@index([sellerUserId, settledAt])
+  @@index([buyerUserId, settledAt])
+  @@map("exchange_settlements")
+}
+
+// ─── ۷۸. اکسچنج: اختلافات و شکایات معامله (Exchange Disputes) ───────────────────
+model ExchangeDispute {
+  id                          String        @id @default(cuid())
+  disputeCode                 String        @unique @map("dispute_code")
+  tradeId                     String        @map("trade_id")
+  openedByUserId              String        @map("opened_by_user_id")
+  openedByDiscordId           String        @map("opened_by_discord_id")
+  openedByRole                String        @map("opened_by_role") // BUYER | SELLER | ADMIN | OWNER
+  category                    String        @map("category") // BUYER_NOT_RECEIVED | SELLER_CLAIMS_DELIVERED | PARTIAL_DELIVERY | INCORRECT_AMOUNT | WRONG_REGION | PAYMENT_ISSUE | SUSPECTED_FRAUD | OTHER
+  description                 String        @map("description")
+  status                      String        @default("OPEN") @map("status") // OPEN | UNDER_REVIEW | AWAITING_PROOF | RESOLVED | CLOSED
+  resolutionOutcome           String?       @map("resolution_outcome") // RELEASE_TO_SELLER | FULL_REFUND_TO_BUYER | PARTIAL_REFUND | REQUEST_ADDITIONAL_PROOF | CANCEL_TRADE
+  resolutionBuyerRefundCents  Int?          @map("resolution_buyer_refund_cents")
+  resolutionSellerPayoutCents Int?          @map("resolution_seller_payout_cents")
+  resolutionNote              String?       @map("resolution_note")
+  resolvedByDiscordId         String?       @map("resolved_by_discord_id")
+  resolvedAt                  DateTime?     @map("resolved_at")
+  createdAt                   DateTime      @default(now()) @map("created_at")
+  updatedAt                   DateTime      @updatedAt @map("updated_at")
+
+  trade                       ExchangeTrade @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  openedByUser                User          @relation("OpenedExchangeDisputes", fields: [openedByUserId], references: [discordId], onDelete: Cascade)
+
+  @@index([tradeId, status])
+  @@index([status, createdAt])
+  @@map("exchange_disputes")
+}
+
+// ─── ۷۹. اکسچنج: اعلان‌های اکسچنج (Exchange Notifications) ────────────────────
+model ExchangeNotification {
+  id                  String    @id @default(cuid())
+  recipientDiscordId  String?   @map("recipient_discord_id")
+  recipientRole       String?   @map("recipient_role") // BUYER | SELLER | ADMIN_TEAM
+  tradeId             String?   @map("trade_id")
+  type                String    @map("type") // PROOF_SUBMITTED | AWAITING_FINAL_APPROVAL | ADDITIONAL_PROOF_REQUESTED | TRADE_COMPLETED | DISPUTE_OPENED | DISPUTE_RESOLVED
+  title               String    @map("title")
+  message             String    @map("message")
+  isRead              Boolean   @default(false) @map("is_read")
+  createdAt           DateTime  @default(now()) @map("created_at")
+
+  @@index([recipientDiscordId, isRead])
+  @@index([recipientRole, isRead])
+  @@map("exchange_notifications")
 }

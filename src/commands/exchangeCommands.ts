@@ -24,6 +24,14 @@ import {
 import { logExchangeAudit } from '../services/exchangeConfigService';
 import { getSystemSetting } from '../services/systemSettingService';
 import { getGlobalDiscordClient } from '../services/orderDiscordService';
+import {
+  submitExchangeProof,
+  confirmExchangeDeliveryByBuyer,
+} from '../services/exchangeSettlementService';
+import {
+  openExchangeDispute,
+} from '../services/exchangeDisputeService';
+
 
 /**
  * Sends an alert message to the configured exchange alert channel (if any).
@@ -157,25 +165,28 @@ export async function handleExchangeCommand(message: Message, args: string[]): P
       if (attachments.length > 0) {
         const attachmentUrls = attachments.map((a) => a.url);
 
+        await submitExchangeProof({
+          tradeId: trade.id,
+          submittedByUserId: isSeller ? trade.sellerUserId : isBuyer ? trade.buyerUserId : message.author.id,
+          submittedByDiscordId: message.author.id,
+          submitterRole: isSeller ? 'SELLER' : isBuyer ? 'BUYER' : 'ADMIN',
+          fileUrl: attachmentUrls[0],
+          evidenceLinks: attachmentUrls,
+          note: `Shared ${attachments.length} proof attachment(s) in Discord.`,
+        });
+
         await prisma.exchangeTradeEvent.create({
           data: {
             tradeId: trade.id,
             eventType: 'PROOF_SHARED_IN_DISCORD',
             actorDiscordId: message.author.id,
-            actorRole: isSeller ? 'SELLER' : isBuyer ? 'BUYER' : 'STAFF',
+            actorRole: isSeller ? 'SELLER' : isBuyer ? 'BUYER' : 'ADMIN',
             fromStatus: trade.status,
-            toStatus: trade.status === 'DELIVERY_IN_PROGRESS' ? 'PROOF_SUBMITTED' : trade.status,
-            note: `Shared ${attachments.length} proof attachment(s) in Discord.`,
-            metadataJson: JSON.stringify({ attachmentUrls }),
+            toStatus: trade.status,
+            note: `Shared ${attachments.length} proof attachment(s) in Discord: ${attachmentUrls[0]}`,
+            metadataJson: JSON.stringify({ urls: attachmentUrls }),
           },
         });
-
-        if (trade.status === 'DELIVERY_IN_PROGRESS') {
-          await prisma.exchangeTrade.update({
-            where: { id: trade.id },
-            data: { status: 'PROOF_SUBMITTED' },
-          });
-        }
 
         await message.reply(
           `✅ **Proof Received!** ${attachments.length} attachment(s) logged in the Trade Audit Timeline.\n` +
@@ -209,77 +220,22 @@ export async function handleExchangeCommand(message: Message, args: string[]): P
         return;
       }
 
-      if (['COMPLETED', 'CANCELLED', 'DISPUTED'].includes(trade.status)) {
-        await message.reply(`❌ Cannot confirm trade in status '${trade.status}'.`);
-        return;
+      try {
+        await confirmExchangeDeliveryByBuyer({
+          tradeId: trade.id,
+          buyerUserId: trade.buyerUserId,
+          buyerDiscordId: message.author.id,
+          note: 'Buyer confirmed receipt via Discord G4!exchange confirm.',
+        });
+
+        await message.reply(
+          '✅ **Delivery Confirmed by Buyer!**\n' +
+          'The trade is now placed in the **Admin/Owner Final Review Queue** for payout settlement.\n' +
+          'Funds remain safely protected in Escrow until final administrative sign-off.'
+        );
+      } catch (err: any) {
+        await message.reply(`❌ ${err.message}`);
       }
-
-      if (!trade.escrow || trade.escrow.status !== 'RESERVED') {
-        await message.reply('❌ Cannot confirm trade: Escrow is not in active RESERVED status.');
-        return;
-      }
-
-      // Transition to AWAITING_FINAL_APPROVAL (Strict Rule: Zero wallet mutation by bot!)
-      await prisma.$transaction(async (tx) => {
-        await tx.exchangeTrade.update({
-          where: { id: trade.id },
-          data: { status: 'AWAITING_FINAL_APPROVAL' },
-        });
-
-        await tx.exchangeTradeEvent.create({
-          data: {
-            tradeId: trade.id,
-            eventType: 'BUYER_CONFIRMED',
-            actorDiscordId: message.author.id,
-            actorRole: 'BUYER',
-            fromStatus: trade.status,
-            toStatus: 'AWAITING_FINAL_APPROVAL',
-            note: 'Buyer confirmed receipt of goods via Discord command.',
-          },
-        });
-
-        await tx.exchangeTradeEvent.create({
-          data: {
-            tradeId: trade.id,
-            eventType: 'AWAITING_FINAL_APPROVAL',
-            actorDiscordId: message.author.id,
-            actorRole: 'SYSTEM',
-            fromStatus: trade.status,
-            toStatus: 'AWAITING_FINAL_APPROVAL',
-            note: 'Trade placed in Admin Final Approval queue.',
-          },
-        });
-      });
-
-      await logExchangeAudit({
-        actorId: message.author.id,
-        action: 'BUYER_CONFIRMED_DELIVERY',
-        entityType: 'ExchangeTrade',
-        entityId: trade.id,
-        previousValues: { status: trade.status },
-        newValues: { status: 'AWAITING_FINAL_APPROVAL' },
-        reason: 'Buyer confirmed receipt in Discord channel.',
-      });
-
-      await message.reply(
-        '✅ **Delivery Confirmed by Buyer!**\n' +
-        'The trade is now placed in the **Admin/Owner Final Review Queue** for payout settlement.\n' +
-        'Funds remain safely protected in Escrow until final administrative sign-off.'
-      );
-
-      // Alert channel notification
-      const alertEmbed = new EmbedBuilder()
-        .setColor(0x4caf50)
-        .setTitle(`🔔 Trade Ready for Final Approval — ${trade.tradeCode}`)
-        .setDescription(
-          `Buyer <@${trade.buyerDiscordId}> confirmed delivery for Trade **${trade.tradeCode}**.\n` +
-          `• **Seller:** <@${trade.sellerDiscordId}>\n` +
-          `• **Payout Amount:** **$${(trade.netSellerCents / 100).toFixed(2)}**\n\n` +
-          `🔗 **[Review & Settle on Web Admin Portal](${publicUrl}/exchange/trades/${trade.id})**`
-        )
-        .setTimestamp();
-
-      await sendExchangeAlert(alertEmbed);
       break;
     }
 
@@ -290,68 +246,26 @@ export async function handleExchangeCommand(message: Message, args: string[]): P
         return;
       }
 
-      if (['COMPLETED', 'CANCELLED'].includes(trade.status)) {
-        await message.reply(`❌ Cannot dispute a trade that is already '${trade.status}'.`);
-        return;
-      }
-
       const reason = args.slice(1).join(' ').trim() || 'Dispute opened by participant in Discord';
 
-      await prisma.$transaction(async (tx) => {
-        await tx.exchangeTrade.update({
-          where: { id: trade.id },
-          data: { status: 'DISPUTED' },
+      try {
+        await openExchangeDispute({
+          tradeId: trade.id,
+          openedByUserId: isBuyer ? trade.buyerUserId : isSeller ? trade.sellerUserId : message.author.id,
+          openedByDiscordId: message.author.id,
+          openedByRole: isBuyer ? 'BUYER' : isSeller ? 'SELLER' : 'ADMIN',
+          category: 'OTHER',
+          description: reason,
         });
 
-        if (trade.escrow) {
-          await tx.exchangeEscrow.update({
-            where: { id: trade.escrow.id },
-            data: {
-              status: 'FROZEN_DISPUTE',
-              resolutionNote: reason,
-            },
-          });
-        }
-
-        await tx.exchangeTradeEvent.create({
-          data: {
-            tradeId: trade.id,
-            eventType: 'DISPUTE_OPENED',
-            actorDiscordId: message.author.id,
-            actorRole: isBuyer ? 'BUYER' : isSeller ? 'SELLER' : 'STAFF',
-            fromStatus: trade.status,
-            toStatus: 'DISPUTED',
-            note: reason,
-          },
+        const disputeEmbed = buildTradeDisputeEmbed(trade, reason, message.author.id, publicUrl);
+        await message.reply({
+          content: '🚨 **Dispute Opened!**\nEscrow funds have been frozen (`FROZEN_DISPUTE`). G4X Staff have been alerted to review evidence.',
+          embeds: [disputeEmbed],
         });
-      });
-
-      await logExchangeAudit({
-        actorId: message.author.id,
-        action: 'TRADE_DISPUTED',
-        entityType: 'ExchangeTrade',
-        entityId: trade.id,
-        previousValues: { status: trade.status, escrowStatus: trade.escrow?.status },
-        newValues: { status: 'DISPUTED', escrowStatus: 'FROZEN_DISPUTE' },
-        reason,
-      });
-
-      const disputeEmbed = buildTradeDisputeEmbed(trade, reason, message.author.id, publicUrl);
-      await message.reply({ embeds: [disputeEmbed] });
-
-      // Alert channel notification
-      const alertEmbed = new EmbedBuilder()
-        .setColor(0xd32f2f)
-        .setTitle(`🚨 [DISPUTE ALERT] Trade ${trade.tradeCode}`)
-        .setDescription(
-          `Trade **${trade.tradeCode}** was disputed by <@${message.author.id}>.\n` +
-          `• **Reason:** ${reason}\n` +
-          `• **Escrow Status:** FROZEN_DISPUTE\n\n` +
-          `🔗 **[Intervene on Web Admin Portal](${publicUrl}/exchange/trades/${trade.id})**`
-        )
-        .setTimestamp();
-
-      await sendExchangeAlert(alertEmbed);
+      } catch (err: any) {
+        await message.reply(`❌ ${err.message}`);
+      }
       break;
     }
 
