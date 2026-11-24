@@ -123,6 +123,18 @@ export const DashboardLayout: React.FC = () => {
             Exchange
           </Link>
           <Link
+            to="/exchange/dashboard"
+            style={{
+              padding: '0.4rem 0.8rem',
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              color: location.pathname.startsWith('/exchange/dashboard') || location.pathname.startsWith('/exchange/transactions') ? 'var(--accent-lime)' : 'var(--text-muted)',
+              borderBottom: location.pathname.startsWith('/exchange/dashboard') || location.pathname.startsWith('/exchange/transactions') ? '2px solid var(--accent-lime)' : 'none',
+            }}
+          >
+            📊 Exchange Dashboard
+          </Link>
+          <Link
             to="/exchanger"
             style={{
               padding: '0.4rem 0.8rem',

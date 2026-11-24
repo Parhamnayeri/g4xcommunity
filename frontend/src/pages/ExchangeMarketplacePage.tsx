@@ -623,6 +623,26 @@ export const ExchangeMarketplacePage: React.FC = () => {
         >
           Legacy WoW Gold &amp; P2P Offers
         </button>
+
+        <Link
+          to="/exchange/dashboard"
+          style={{
+            marginLeft: 'auto',
+            padding: '8px 16px',
+            backgroundColor: '#3B82F6',
+            color: '#FFFFFF',
+            borderRadius: '6px',
+            fontWeight: 700,
+            fontSize: '0.85rem',
+            textDecoration: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            alignSelf: 'center',
+          }}
+        >
+          📊 Unified Dashboard &amp; Dossiers →
+        </Link>
       </div>
 
       {/* ─────────────────────────────────────────────────────────────────────────

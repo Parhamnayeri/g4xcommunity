@@ -924,5 +924,244 @@ export interface ExchangeApprovalQueueItem {
   seller?: { discordId: string; username: string; displayName?: string | null };
 }
 
+// ─── Phase 8: Reputation & User Dashboard Types ───────────────────────────────
+
+export interface UserReputationSummary {
+  userId: string;
+  role: 'BUYER' | 'SELLER';
+  score: number;
+  rating: number;
+  tier: 'New Trader' | 'Verified' | 'Trusted' | 'Elite';
+  tierColor: string;
+  totalTradesCount: number;
+  completedTradesCount: number;
+  cancelledTradesCount: number;
+  disputesLostCount: number;
+  completionRatePercent: number;
+  avgConfirmationMinutes: number | null;
+  avgDeliveryMinutes: number | null;
+}
+
+export interface BuyerDashboardData {
+  success: boolean;
+  summary: {
+    activeBuyOrdersCount: number;
+    activeTradesCount: number;
+    completedTradesCount: number;
+    pendingPaymentsCount: number;
+    pendingApprovalsCount: number;
+    cancelledOrdersCount: number;
+    totalSpentCents: number;
+    totalSpentUsd: string;
+    wallet: {
+      balanceUsdCents: number;
+      balanceUsdFormatted: string;
+      availableBalanceCents: number;
+      availableBalanceFormatted: string;
+      reservedBalanceCents: number;
+      reservedBalanceFormatted: string;
+      frozenBalanceCents: number;
+      isFrozen: boolean;
+    };
+    reputation: UserReputationSummary;
+    badge: {
+      isExchanger: boolean;
+      kycStatus: string;
+      canCreateBuyOrder: boolean;
+    };
+  };
+  tabs: {
+    myBuyOrders: any[];
+    activeTrades: any[];
+    completedTrades: any[];
+    pendingPayments: any[];
+    pendingApprovals: (any & { waitingMinutes: number })[];
+    cancelledOrders: {
+      cancelledBuyOrders: any[];
+      cancelledTrades: any[];
+    };
+    tradeHistory: any[];
+  };
+}
+
+export interface SellerVolumeItem {
+  gameName: string;
+  currencyName: string;
+  unitLabel: string;
+  totalBaseUnits: string;
+  formattedVolume: string;
+}
+
+export interface SellerDashboardData {
+  success: boolean;
+  summary: {
+    totalEarningsCents: number;
+    totalEarningsUsd: string;
+    pendingEarningsCents: number;
+    pendingEarningsUsd: string;
+    activeTradesCount: number;
+    completedTradesCount: number;
+    totalOffersCount: number;
+    pendingOffersCount: number;
+    totalCurrencySold: SellerVolumeItem[];
+    wallet: {
+      balanceUsdCents: number;
+      balanceUsdFormatted: string;
+      availableBalanceCents: number;
+      availableBalanceFormatted: string;
+      reservedBalanceCents: number;
+      reservedBalanceFormatted: string;
+      frozenBalanceCents: number;
+      isFrozen: boolean;
+    };
+    reputation: UserReputationSummary;
+  };
+  tabs: {
+    mySellOffers: any[];
+    activeTrades: any[];
+    completedTrades: any[];
+  };
+}
+
+export interface ExchangeTransactionDetailsItem {
+  tradeId: string;
+  tradeCode: string;
+  orderId: string;
+  orderCode: string;
+  buyer: {
+    discordId: string;
+    username: string;
+    displayName: string;
+    memberSince: string;
+    reputation: UserReputationSummary;
+  };
+  seller: {
+    discordId: string;
+    username: string;
+    displayName: string;
+    memberSince: string;
+    reputation: UserReputationSummary;
+  };
+  game: {
+    id: string;
+    name: string;
+    slug: string;
+    iconUrl?: string | null;
+  };
+  currency: {
+    id: string;
+    name: string;
+    slug?: string;
+    unitLabel: string;
+    unitMultiplier: string;
+  };
+  region?: {
+    id: string;
+    name: string;
+    code: string;
+  } | null;
+  quantity: {
+    quantityBaseUnits: string;
+    unitLabel: string;
+    unitMultiplier: string;
+    formattedDisplay: string;
+  };
+  unitPriceCents: number;
+  unitPriceUsd: string;
+  grossValueCents: number;
+  grossValueUsd: string;
+  buyerFeeCents: number;
+  buyerFeeUsd: string;
+  buyerCommissionBpsSnapshot: number;
+  sellerFeeCents: number;
+  sellerFeeUsd: string;
+  sellerCommissionBpsSnapshot: number;
+  netSellerCents: number;
+  netSellerUsd: string;
+  buyerTotalPayableCents: number;
+  buyerTotalPayableUsd: string;
+  paymentMethod: string;
+  paymentStatus: {
+    method: string;
+    status: string;
+    paymentCode?: string | null;
+    confirmedAt?: string | null;
+    gatewayStatus?: string | null;
+    totalPayableCents: number;
+  };
+  deliveryStatus: {
+    tradeStatus: string;
+    deliveryMethod?: { id: string; name: string } | null;
+    estimatedDeliveryMinutes?: number | null;
+    discordRoom?: {
+      channelId: string;
+      channelName: string;
+      channelUrl?: string | null;
+      status: string;
+      isArchived: boolean;
+    } | null;
+  };
+  proofs: Array<{
+    id: string;
+    submitterRole: string;
+    proofType: string;
+    fileUrl?: string | null;
+    evidenceLinks: string[];
+    inGameDetails?: string | null;
+    note?: string | null;
+    reviewStatus: string;
+    createdAt: string;
+  }>;
+  approvalStatus: {
+    tradeStatus: string;
+    buyerConfirmedAt?: string | null;
+    finalApprovedAt?: string | null;
+    completedAt?: string | null;
+    waitingMinutes?: number | null;
+    isAwaitingFinalApproval: boolean;
+    dispute?: {
+      disputeCode: string;
+      status: string;
+      category: string;
+      description: string;
+      outcome?: string | null;
+      resolvedAt?: string | null;
+    } | null;
+  };
+  settlementDetails?: {
+    settlementCode: string;
+    settlementType: string;
+    sellerNetPayoutCents: number;
+    sellerNetPayoutUsd: string;
+    buyerRefundCents: number;
+    buyerRefundUsd: string;
+    g4xTotalRevenueCents?: number;
+    g4xTotalRevenueUsd?: string;
+    buyerEscrowDebitLedgerId?: string | null;
+    sellerCreditLedgerId?: string | null;
+    buyerRefundLedgerId?: string | null;
+    settledAt: string;
+  } | null;
+  timeline: Array<{
+    id: string;
+    eventType: string;
+    actorRole: string;
+    actorDiscordId?: string | null;
+    fromStatus?: string | null;
+    toStatus?: string | null;
+    note?: string | null;
+    metadata: Record<string, any>;
+    createdAt: string;
+  }>;
+  viewerContext: {
+    isBuyer: boolean;
+    isSeller: boolean;
+    isStaff: boolean;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+
 
 

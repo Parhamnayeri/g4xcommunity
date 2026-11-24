@@ -31,6 +31,10 @@ import {
   resolveActiveExchangeFeeRule,
   logExchangeAudit,
 } from '../services/exchangeConfigService';
+import {
+  getBatchBuyerReputations,
+  getBuyerReputation,
+} from '../services/exchangeReputationService';
 
 export const exchangeMarketplaceRouter = Router();
 
@@ -301,6 +305,7 @@ exchangeMarketplaceRouter.get(
         minAmountBaseUnits,
         maxAmountBaseUnits,
         minAvailableCapacity,
+        minBuyerReputation,
         sort = 'price_desc',
         page = '1',
         limit = '20',
@@ -389,7 +394,11 @@ exchangeMarketplaceRouter.get(
         prisma.exchangeBuyOrder.count({ where }),
       ]);
 
-      // Post-filter deliveryMethodId and quantity/capacity bounds if specified
+      // Batch compute live Buyer Reputations
+      const buyerUserIds = rawOrders.map((o) => o.buyerUserId);
+      const buyerReputations = await getBatchBuyerReputations(buyerUserIds);
+
+      // Post-filter deliveryMethodId, quantity/capacity bounds, and minBuyerReputation if specified
       let filtered = rawOrders;
 
       if (deliveryMethodId && typeof deliveryMethodId === 'string') {
@@ -424,6 +433,17 @@ exchangeMarketplaceRouter.get(
         } catch {}
       }
 
+      if (minBuyerReputation && typeof minBuyerReputation === 'string') {
+        const minVal = parseFloat(minBuyerReputation);
+        if (!isNaN(minVal)) {
+          const targetScore = minVal <= 5.0 ? minVal * 20 : minVal;
+          filtered = filtered.filter((o) => {
+            const rep = buyerReputations.get(o.buyerUserId);
+            return (rep?.score ?? 100) >= targetScore;
+          });
+        }
+      }
+
       // Sanitize output (ZERO PII: no phone, telegram, whatsapp, internal notes, documents)
       const sanitizedOrders = filtered.map((order) => {
         let acceptedDeliveryMethods: string[] = [];
@@ -432,6 +452,8 @@ exchangeMarketplaceRouter.get(
         } catch {
           acceptedDeliveryMethods = [];
         }
+
+        const rep = buyerReputations.get(order.buyerUserId);
 
         return {
           id: order.id,
@@ -467,8 +489,12 @@ exchangeMarketplaceRouter.get(
             discordId: order.buyer.discordId,
             username: order.buyer.username,
             displayName: order.buyer.displayName || order.buyer.username,
-            reputationScore: 100, // Safe default profile metric
-            completedTradesCount: 0,
+            reputationScore: rep?.score ?? 100,
+            reputationRating: rep?.rating ?? 5.0,
+            reputationTier: rep?.tier ?? 'New Trader',
+            reputationTierColor: rep?.tierColor ?? '#9CA3AF',
+            completionRatePercent: rep?.completionRatePercent ?? 100,
+            completedTradesCount: rep?.completedTradesCount ?? 0,
             memberSince: order.buyer.createdAt,
           },
         };
@@ -564,6 +590,8 @@ exchangeMarketplaceRouter.get(
         console.warn('Could not calculate pricing preview for order:', calcErr);
       }
 
+      const buyerRep = await getBuyerReputation(order.buyerUserId);
+
       res.json({
         id: order.id,
         orderCode: order.orderCode,
@@ -599,8 +627,12 @@ exchangeMarketplaceRouter.get(
           discordId: order.buyer.discordId,
           username: order.buyer.username,
           displayName: order.buyer.displayName || order.buyer.username,
-          reputationScore: 100,
-          completedTradesCount: 0,
+          reputationScore: buyerRep.score,
+          reputationRating: buyerRep.rating,
+          reputationTier: buyerRep.tier,
+          reputationTierColor: buyerRep.tierColor,
+          completionRatePercent: buyerRep.completionRatePercent,
+          completedTradesCount: buyerRep.completedTradesCount,
           memberSince: order.buyer.createdAt,
         },
       });

@@ -33,6 +33,9 @@ import {
   ExchangeApprovalQueueItem,
   DisputeCategory,
   DisputeResolutionOutcome,
+  BuyerDashboardData,
+  SellerDashboardData,
+  ExchangeTransactionDetailsItem,
 } from '../types/exchange';
 
 export interface PublicCatalogResponse {
@@ -859,6 +862,32 @@ export async function getExchangeAdminAuditLogs(params?: {
   const qStr = query.toString() ? `?${query.toString()}` : '';
   return await apiRequest(`/api/admin/exchange/audit-logs${qStr}`);
 }
+
+// ─── Phase 8: User Dashboard & Transaction Details API Clients ────────────────
+
+/**
+ * Fetches comprehensive Buyer dashboard data, live reputation, and categorized lists
+ */
+export async function getExchangeBuyerDashboard(): Promise<BuyerDashboardData> {
+  return await apiRequest('/api/exchange/dashboard/buyer');
+}
+
+/**
+ * Fetches comprehensive Seller dashboard data, live reputation, currency volume, and categorized lists
+ */
+export async function getExchangeSellerDashboard(): Promise<SellerDashboardData> {
+  return await apiRequest('/api/exchange/dashboard/seller');
+}
+
+/**
+ * Fetches independent transaction details for a trade (all 16 PRD §12 fields)
+ */
+export async function getExchangeTransactionDetails(
+  tradeId: string
+): Promise<{ success: boolean; transaction: ExchangeTransactionDetailsItem }> {
+  return await apiRequest(`/api/exchange/transactions/${tradeId}`);
+}
+
 
 
 

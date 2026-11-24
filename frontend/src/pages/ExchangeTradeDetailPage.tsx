@@ -517,9 +517,15 @@ export const ExchangeTradeDetailPage: React.FC = () => {
         {/* Back Link & Header */}
         <div style={{ marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <Link to="/exchange" style={{ color: '#9CA3AF', textDecoration: 'none', fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-              <span>←</span> Back to Exchange Marketplace
-            </Link>
+            <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '8px' }}>
+              <Link to="/exchange" style={{ color: '#9CA3AF', textDecoration: 'none', fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                <span>←</span> Marketplace
+              </Link>
+              <span style={{ color: '#4B5563' }}>•</span>
+              <Link to="/exchange/dashboard" style={{ color: '#3B82F6', textDecoration: 'none', fontSize: '0.9rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                📊 Exchange Dashboard
+              </Link>
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
               <h1 style={{ fontSize: '1.8rem', fontWeight: 800, color: '#FFFFFF', margin: 0 }}>
                 Trade {trade.tradeCode}
@@ -541,6 +547,24 @@ export const ExchangeTradeDetailPage: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            <Link
+              to={`/exchange/transactions/${trade.id}`}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#27272A',
+                border: '1px solid #3F3F46',
+                color: '#F4F4F5',
+                borderRadius: '8px',
+                textDecoration: 'none',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              📄 Transaction Dossier
+            </Link>
             {/* Phase 7: Participant Action Buttons */}
             {trade.status !== 'AWAITING_PAYMENT' && trade.status !== 'CANCELLED' && trade.status !== 'COMPLETED' && (
               <>
