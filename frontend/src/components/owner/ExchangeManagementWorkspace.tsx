@@ -22,6 +22,7 @@ import {
   ExchangeAuditLogItem,
   ExchangeOverviewStats,
   ExchangeKycRequestItem,
+  ExchangePaymentItem,
 } from '../../types/exchange';
 import {
   fetchExchangeOverview,
@@ -48,9 +49,14 @@ import {
   fetchAdminKycRequests,
   reviewAdminKycRequest,
   setAdminExchangerRole,
+  adminFetchExchangePayments,
+  adminApproveBankPayment,
+  adminRejectBankPayment,
+  adminSyncNowPayments,
+  adminCancelRefundTrade,
 } from '../../services/exchangeMarketplace';
 
-type SubTab = 'games' | 'currencies' | 'regions_delivery' | 'fee_rules' | 'kyc' | 'audit';
+type SubTab = 'games' | 'currencies' | 'regions_delivery' | 'fee_rules' | 'kyc' | 'payments' | 'audit';
 
 export const ExchangeManagementWorkspace: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('fee_rules');
@@ -197,6 +203,85 @@ export const ExchangeManagementWorkspace: React.FC = () => {
     }
   }, [simGameId]);
 
+  // Payments & Escrow Hub state
+  const [payments, setPayments] = useState<ExchangePaymentItem[]>([]);
+  const [paymentsLoading, setPaymentsLoading] = useState<boolean>(false);
+  const [paymentsFilter, setPaymentsFilter] = useState<string>('ALL');
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState<string>('ALL');
+
+  const loadPayments = useCallback(async () => {
+    setPaymentsLoading(true);
+    try {
+      const res = await adminFetchExchangePayments({
+        status: paymentsFilter !== 'ALL' ? paymentsFilter : undefined,
+        method: paymentMethodFilter !== 'ALL' ? paymentMethodFilter : undefined,
+      });
+      setPayments(res.payments || []);
+    } catch (err: any) {
+      showNotification('error', err.message || 'Failed to load exchange payments');
+    } finally {
+      setPaymentsLoading(false);
+    }
+  }, [paymentsFilter, paymentMethodFilter]);
+
+  const handleApproveBankPaymentAction = async (paymentId: string) => {
+    const note = window.prompt('Optional approval review note:');
+    if (note === null) return;
+    setActionLoading(true);
+    try {
+      await adminApproveBankPayment(paymentId, note || undefined);
+      showNotification('success', 'Bank transfer payment approved and escrow funded successfully.');
+      await loadPayments();
+    } catch (err: any) {
+      showNotification('error', err.message || 'Failed to approve bank payment.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRejectBankPaymentAction = async (paymentId: string) => {
+    const reason = window.prompt('Enter rejection reason for buyer:');
+    if (!reason || !reason.trim()) return;
+    setActionLoading(true);
+    try {
+      await adminRejectBankPayment(paymentId, reason.trim());
+      showNotification('success', 'Bank transfer payment rejected.');
+      await loadPayments();
+    } catch (err: any) {
+      showNotification('error', err.message || 'Failed to reject bank payment.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleSyncNowPaymentsAction = async (paymentId: string) => {
+    setActionLoading(true);
+    try {
+      const res = await adminSyncNowPayments(paymentId);
+      showNotification('success', `NOWPayments status synced. Live status: ${res.status}`);
+      await loadPayments();
+    } catch (err: any) {
+      showNotification('error', err.message || 'Failed to sync with NOWPayments.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleCancelRefundTradeAction = async (tradeId: string) => {
+    const reason = window.prompt('Enter reason for administrative cancellation & refund:');
+    if (reason === null) return;
+    setActionLoading(true);
+    try {
+      await adminCancelRefundTrade(tradeId, reason || undefined);
+      showNotification('success', 'Trade cancelled and funds refunded back to buyer wallet successfully.');
+      await loadPayments();
+    } catch (err: any) {
+      showNotification('error', err.message || 'Failed to cancel and refund trade.');
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
@@ -205,7 +290,10 @@ export const ExchangeManagementWorkspace: React.FC = () => {
     if (activeSubTab === 'kyc') {
       loadKyc();
     }
-  }, [activeSubTab, loadKyc]);
+    if (activeSubTab === 'payments') {
+      loadPayments();
+    }
+  }, [activeSubTab, loadKyc, loadPayments]);
 
   // Live Simulator auto-refresh on changes
   const runSimulation = useCallback(async () => {
@@ -506,6 +594,7 @@ export const ExchangeManagementWorkspace: React.FC = () => {
           { key: 'currencies', label: 'Currencies & Units', icon: '🪙' },
           { key: 'regions_delivery', label: 'Regions & Delivery', icon: '🌍' },
           { key: 'kyc', label: 'Exchanger KYC & Roles', icon: '🛡️' },
+          { key: 'payments', label: 'Payments & Escrow Hub', icon: '💳' },
           { key: 'audit', label: 'Config Audit Logs', icon: '📜' },
         ].map((tab) => (
           <button
@@ -1939,6 +2028,333 @@ export const ExchangeManagementWorkspace: React.FC = () => {
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB 6: PAYMENTS & ESCROW HUB (Phase 5)                                */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {activeSubTab === 'payments' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Metrics Row */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
+            <div style={{ backgroundColor: '#13151C', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '10px', padding: '1.25rem' }}>
+              <div style={{ fontSize: '0.8rem', color: '#A1A1AA', textTransform: 'uppercase', fontWeight: 600 }}>Total Payments</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#EDEDED', marginTop: '0.25rem' }}>{payments.length}</div>
+            </div>
+            <div style={{ backgroundColor: '#13151C', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '10px', padding: '1.25rem' }}>
+              <div style={{ fontSize: '0.8rem', color: '#F59E0B', textTransform: 'uppercase', fontWeight: 600 }}>Pending Bank Review</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#F59E0B', marginTop: '0.25rem' }}>
+                {payments.filter((p) => p.status === 'PENDING_REVIEW').length}
+              </div>
+            </div>
+            <div style={{ backgroundColor: '#13151C', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '10px', padding: '1.25rem' }}>
+              <div style={{ fontSize: '0.8rem', color: '#10B981', textTransform: 'uppercase', fontWeight: 600 }}>Confirmed in Escrow</div>
+              <div style={{ fontSize: '1.8rem', fontWeight: 800, color: '#10B981', marginTop: '0.25rem' }}>
+                {payments.filter((p) => p.status === 'CONFIRMED').length}
+              </div>
+            </div>
+          </div>
+
+          {/* Filter Bar */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', backgroundColor: '#13151C', padding: '1rem', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.08)' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {['ALL', 'PENDING_REVIEW', 'CONFIRMED', 'FAILED'].map((st) => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setPaymentsFilter(st)}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '6px',
+                    border: paymentsFilter === st ? '1px solid #FACC15' : '1px solid rgba(255, 255, 255, 0.1)',
+                    backgroundColor: paymentsFilter === st ? 'rgba(250, 204, 21, 0.15)' : '#1E293B',
+                    color: paymentsFilter === st ? '#FACC15' : '#D1D5DB',
+                    fontSize: '0.8rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {st === 'ALL' ? 'All Statuses' : st.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <select
+                value={paymentMethodFilter}
+                onChange={(e) => setPaymentMethodFilter(e.target.value)}
+                style={{
+                  backgroundColor: '#1E293B',
+                  color: '#EDEDED',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  borderRadius: '6px',
+                  padding: '6px 12px',
+                  fontSize: '0.8rem',
+                }}
+              >
+                <option value="ALL">All Methods</option>
+                <option value="WALLET">Wallet (🪙)</option>
+                <option value="NOWPAYMENTS">NOWPayments (⚡)</option>
+                <option value="BANK_TRANSFER">Bank Transfer (💳)</option>
+              </select>
+
+              <button
+                type="button"
+                onClick={loadPayments}
+                disabled={paymentsLoading}
+                style={{
+                  padding: '6px 14px',
+                  backgroundColor: '#374151',
+                  color: '#EDEDED',
+                  borderRadius: '6px',
+                  border: 'none',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {paymentsLoading ? 'Refreshing...' : '↻ Refresh'}
+              </button>
+            </div>
+          </div>
+
+          {/* Payments Table */}
+          <div style={{ backgroundColor: '#13151C', border: '1px solid rgba(255, 255, 255, 0.08)', borderRadius: '10px', overflow: 'hidden' }}>
+            {paymentsLoading ? (
+              <div style={{ padding: '2rem', textAlign: 'center', color: '#A1A1AA' }}>Loading payments...</div>
+            ) : payments.length === 0 ? (
+              <div style={{ padding: '2.5rem', textAlign: 'center', color: '#A1A1AA' }}>No exchange payments matching filter.</div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.08)', backgroundColor: '#181A24', color: '#A1A1AA' }}>
+                      <th style={{ padding: '0.75rem 1rem' }}>Payment Code</th>
+                      <th style={{ padding: '0.75rem 1rem' }}>Trade</th>
+                      <th style={{ padding: '0.75rem 1rem' }}>Buyer</th>
+                      <th style={{ padding: '0.75rem 1rem' }}>Method</th>
+                      <th style={{ padding: '0.75rem 1rem' }}>Amount Due</th>
+                      <th style={{ padding: '0.75rem 1rem' }}>Status</th>
+                      <th style={{ padding: '0.75rem 1rem' }}>Details / Verification</th>
+                      <th style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payments.map((p) => {
+                      const isPendingReview = p.status === 'PENDING_REVIEW';
+                      const isConfirmed = p.status === 'CONFIRMED';
+                      return (
+                        <tr key={p.id} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
+                          <td style={{ padding: '0.75rem 1rem', fontWeight: 700, color: '#EDEDED' }}>
+                            <div>{p.paymentCode}</div>
+                            <div style={{ fontSize: '0.7rem', color: '#71717A' }}>
+                              {new Date(p.createdAt).toLocaleDateString()} {new Date(p.createdAt).toLocaleTimeString()}
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '0.75rem 1rem' }}>
+                            <a
+                              href={`/exchange/trades/${p.tradeId}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              style={{ color: '#FACC15', textDecoration: 'none', fontWeight: 600 }}
+                            >
+                              {p.trade?.tradeCode || p.tradeId} ↗
+                            </a>
+                            <div style={{ fontSize: '0.7rem', color: '#A1A1AA' }}>
+                              {p.trade?.game?.name || ''}
+                            </div>
+                          </td>
+
+                          <td style={{ padding: '0.75rem 1rem', color: '#EDEDED' }}>
+                            <div style={{ fontWeight: 600 }}>{p.buyer?.displayName || p.buyer?.username || p.buyerDiscordId}</div>
+                            <div style={{ fontSize: '0.7rem', color: '#71717A' }}>{p.buyerDiscordId}</div>
+                          </td>
+
+                          <td style={{ padding: '0.75rem 1rem' }}>
+                            <span
+                              style={{
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                                backgroundColor:
+                                  p.method === 'WALLET'
+                                    ? 'rgba(250, 204, 21, 0.15)'
+                                    : p.method === 'NOWPAYMENTS'
+                                    ? 'rgba(59, 130, 246, 0.15)'
+                                    : 'rgba(16, 185, 129, 0.15)',
+                                color:
+                                  p.method === 'WALLET'
+                                    ? '#FACC15'
+                                    : p.method === 'NOWPAYMENTS'
+                                    ? '#60A5FA'
+                                    : '#34D399',
+                              }}
+                            >
+                              {p.method}
+                            </span>
+                          </td>
+
+                          <td style={{ padding: '0.75rem 1rem', fontWeight: 800, color: '#EDEDED' }}>
+                            ${(p.totalPayableCents / 100).toFixed(2)} USD
+                          </td>
+
+                          <td style={{ padding: '0.75rem 1rem' }}>
+                            <span
+                              style={{
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                fontSize: '0.75rem',
+                                fontWeight: 700,
+                                backgroundColor: isPendingReview
+                                  ? 'rgba(245, 158, 11, 0.15)'
+                                  : isConfirmed
+                                  ? 'rgba(16, 185, 129, 0.15)'
+                                  : 'rgba(239, 68, 68, 0.15)',
+                                color: isPendingReview
+                                  ? '#F59E0B'
+                                  : isConfirmed
+                                  ? '#10B981'
+                                  : '#EF4444',
+                              }}
+                            >
+                              {p.status}
+                            </span>
+                          </td>
+
+                          <td style={{ padding: '0.75rem 1rem', fontSize: '0.8rem', color: '#A1A1AA' }}>
+                            {p.method === 'BANK_TRANSFER' && (
+                              <div>
+                                {p.bankReference && <div>Ref: <strong style={{ color: '#EDEDED' }}>{p.bankReference}</strong></div>}
+                                {p.receiptUrl && (
+                                  <a
+                                    href={p.receiptUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{ color: '#60A5FA', textDecoration: 'underline', display: 'inline-block', marginTop: '2px' }}
+                                  >
+                                    View Receipt Proof ↗
+                                  </a>
+                                )}
+                                {p.senderNote && <div style={{ color: '#D1D5DB', fontSize: '0.75rem' }}>Note: {p.senderNote}</div>}
+                              </div>
+                            )}
+
+                            {p.method === 'NOWPAYMENTS' && (
+                              <div>
+                                <div>Gateway: <strong style={{ color: '#EDEDED' }}>{p.gatewayStatus || 'waiting'}</strong></div>
+                                {p.invoiceUrl && (
+                                  <a
+                                    href={p.invoiceUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{ color: '#60A5FA', textDecoration: 'underline' }}
+                                  >
+                                    Invoice ↗
+                                  </a>
+                                )}
+                              </div>
+                            )}
+
+                            {p.method === 'WALLET' && (
+                              <div style={{ fontSize: '0.75rem', color: '#10B981' }}>
+                                Central Ledger Escrow Lock
+                              </div>
+                            )}
+                          </td>
+
+                          <td style={{ padding: '0.75rem 1rem', textAlign: 'right' }}>
+                            <div style={{ display: 'inline-flex', gap: '6px', alignItems: 'center' }}>
+                              {p.method === 'BANK_TRANSFER' && isPendingReview && (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={actionLoading}
+                                    onClick={() => handleApproveBankPaymentAction(p.id)}
+                                    style={{
+                                      backgroundColor: '#10B981',
+                                      color: '#000000',
+                                      border: 'none',
+                                      borderRadius: '4px',
+                                      padding: '4px 10px',
+                                      fontSize: '0.75rem',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    Approve & Fund
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={actionLoading}
+                                    onClick={() => handleRejectBankPaymentAction(p.id)}
+                                    style={{
+                                      backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                                      color: '#EF4444',
+                                      border: '1px solid #EF4444',
+                                      borderRadius: '4px',
+                                      padding: '4px 8px',
+                                      fontSize: '0.75rem',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    Reject
+                                  </button>
+                                </>
+                              )}
+
+                              {p.method === 'NOWPAYMENTS' && !isConfirmed && (
+                                <button
+                                  type="button"
+                                  disabled={actionLoading}
+                                  onClick={() => handleSyncNowPaymentsAction(p.id)}
+                                  style={{
+                                    backgroundColor: '#2563EB',
+                                    color: '#FFFFFF',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    padding: '4px 10px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Sync
+                                </button>
+                              )}
+
+                              {isConfirmed && p.escrow && p.escrow.status === 'RESERVED' && (
+                                <button
+                                  type="button"
+                                  disabled={actionLoading}
+                                  onClick={() => handleCancelRefundTradeAction(p.tradeId)}
+                                  style={{
+                                    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                                    color: '#EF4444',
+                                    border: '1px solid #EF4444',
+                                    borderRadius: '4px',
+                                    padding: '4px 8px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  Refund Trade
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

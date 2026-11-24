@@ -85,6 +85,8 @@ export interface WalletOverviewData {
     orderEscrowReservedUsd: string;
     withdrawalReservedCents: number;
     withdrawalReservedUsd: string;
+    exchangeEscrowReservedCents: number;
+    exchangeEscrowReservedUsd: string;
     externalUnsettledRevenueCents: number;
     externalUnsettledRevenueUsd: string;
   };
@@ -137,6 +139,7 @@ export async function getWalletOverview(user: AuthenticatedUser): Promise<Wallet
     legacyWallet,
     latestWithdrawal,
     activeAssignments,
+    activeExchangeEscrowsRaw,
   ] = await Promise.all([
     prisma.advertiserFundingRequest.findMany({
       where: {
@@ -194,11 +197,16 @@ export async function getWalletOverview(user: AuthenticatedUser): Promise<Wallet
         },
       },
     }),
+    prisma.exchangeEscrow.findMany({
+      where: { buyerUserId: userId, status: 'RESERVED' },
+      select: { reservedAmountCents: true },
+    }),
   ]);
 
   const advertiserFundingDepositsCents = confirmedDepositsRaw.reduce((sum, d) => sum + d.targetUsdCents, 0);
   const orderEscrowReservedCents = activeOrdersRaw.reduce((sum, o) => sum + o.grossAmountMinor, 0);
   const withdrawalReservedCents = activeWithdrawalsRaw.reduce((sum, w) => sum + w.requestedUsdCents, 0);
+  const exchangeEscrowReservedCents = activeExchangeEscrowsRaw.reduce((sum, e) => sum + e.reservedAmountCents, 0);
   const externalUnsettledRevenueCents = 0; // Reserved for external integrations
 
   // Calculate inActiveOrdersCents for boosters
@@ -289,6 +297,8 @@ export async function getWalletOverview(user: AuthenticatedUser): Promise<Wallet
       orderEscrowReservedUsd: (orderEscrowReservedCents / 100).toFixed(2),
       withdrawalReservedCents,
       withdrawalReservedUsd: (withdrawalReservedCents / 100).toFixed(2),
+      exchangeEscrowReservedCents,
+      exchangeEscrowReservedUsd: (exchangeEscrowReservedCents / 100).toFixed(2),
       externalUnsettledRevenueCents,
       externalUnsettledRevenueUsd: (externalUnsettledRevenueCents / 100).toFixed(2),
     },

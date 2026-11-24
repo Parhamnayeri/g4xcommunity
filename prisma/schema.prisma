@@ -107,6 +107,9 @@ model User {
   exchangeTradesAsBuyer        ExchangeTrade[]        @relation("BuyerExchangeTrades")
   exchangeTradesAsSeller       ExchangeTrade[]        @relation("SellerExchangeTrades")
   exchangeTradeEvents          ExchangeTradeEvent[]   @relation("ActorExchangeTradeEvents")
+  exchangePayments             ExchangePayment[]      @relation("BuyerExchangePayments")
+  buyerExchangeEscrows         ExchangeEscrow[]       @relation("BuyerExchangeEscrow")
+  sellerExchangeEscrows        ExchangeEscrow[]       @relation("SellerExchangeEscrow")
 
   @@index([advertiserRank])
   @@map("users")
@@ -283,6 +286,7 @@ model Wallet {
   balanceIrt           Int      @default(0) @map("balance_irt")
   escrowIrt            Int      @default(0) @map("escrow_irt")
   frozenBalance        Int      @default(0) @map("frozen_balance")
+  reservedBalance      Int      @default(0) @map("reserved_balance")
   isFrozen             Boolean  @default(false) @map("is_frozen")
   customCommissionRate Float?   @map("custom_commission_rate")
   updatedAt            DateTime @updatedAt @map("updated_at")
@@ -2481,6 +2485,8 @@ model ExchangeTrade {
   region                        ExchangeRegion?        @relation(fields: [regionId], references: [id], onDelete: SetNull)
   deliveryMethod                ExchangeDeliveryMethod @relation(fields: [deliveryMethodId], references: [id], onDelete: Restrict)
   events                        ExchangeTradeEvent[]
+  payments                      ExchangePayment[]
+  escrow                        ExchangeEscrow?
 
   @@index([buyerDiscordId, status])
   @@index([sellerDiscordId, status])
@@ -2508,6 +2514,96 @@ model ExchangeTradeEvent {
 
   @@index([tradeId, createdAt])
   @@map("exchange_trade_events")
+}
+
+// ─── ۷۳. اکسچنج: پرداخت‌های معامله (Exchange Payments) ─────────────────────────
+model ExchangePayment {
+  id                        String          @id @default(cuid())
+  paymentCode               String          @unique @map("payment_code")
+  tradeId                   String          @map("trade_id")
+  buyerUserId               String          @map("buyer_user_id")
+  buyerDiscordId            String          @map("buyer_discord_id")
+  method                    String          @map("method") // WALLET | NOWPAYMENTS | BANK_TRANSFER
+  baseAmountCents           Int             @map("base_amount_cents")
+  buyerFeeCents             Int             @map("buyer_fee_cents")
+  paymentProcessingFeeCents Int             @default(0) @map("payment_processing_fee_cents")
+  networkFeeCents           Int             @default(0) @map("network_fee_cents")
+  totalPayableCents         Int             @map("total_payable_cents")
+  status                    String          @default("INITIATED") @map("status") // INITIATED | PENDING_REVIEW | CONFIRMED | FAILED | CANCELLED | EXPIRED | REFUNDED
+  confirmedAt               DateTime?       @map("confirmed_at")
+  confirmedByDiscordId      String?         @map("confirmed_by_discord_id")
+
+  // NOWPayments Integration Fields
+  providerOrderId           String?         @unique @map("provider_order_id")
+  invoiceId                 String?         @map("invoice_id")
+  invoiceUrl                String?         @map("invoice_url")
+  providerPaymentId         String?         @map("provider_payment_id")
+  payAddress                String?         @map("pay_address")
+  payCurrency               String?         @map("pay_currency")
+  payAmount                 String?         @map("pay_amount")
+  actuallyPaid              String?         @map("actually_paid")
+  outcomeAmount             String?         @map("outcome_amount")
+  outcomeCurrency           String?         @map("outcome_currency")
+  gatewayStatus             String?         @map("gateway_status")
+  ipnVerified               Boolean         @default(false) @map("ipn_verified")
+  ipnHistoryJson            String?         @map("ipn_history_json")
+
+  // Bank Transfer (کارت به کارت) Fields
+  bankReference             String?         @map("bank_reference")
+  receiptUrl                String?         @map("receipt_url")
+  senderNote                String?         @map("sender_note")
+  reviewedByDiscordId       String?         @map("reviewed_by_discord_id")
+  reviewNote                String?         @map("review_note")
+  reviewedAt                DateTime?       @map("reviewed_at")
+
+  // Central Ledger Reference
+  ledgerTransactionId       String?         @map("ledger_transaction_id")
+  createdAt                 DateTime        @default(now()) @map("created_at")
+  updatedAt                 DateTime        @updatedAt @map("updated_at")
+
+  trade                     ExchangeTrade   @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  buyer                     User            @relation("BuyerExchangePayments", fields: [buyerUserId], references: [discordId], onDelete: Cascade)
+  escrow                    ExchangeEscrow?
+
+  @@index([tradeId, status])
+  @@index([buyerDiscordId, status])
+  @@index([method, status])
+  @@map("exchange_payments")
+}
+
+// ─── ۷۴. اکسچنج: اسکرو و توقیف وجه معامله (Exchange Escrow) ────────────────────
+model ExchangeEscrow {
+  id                    String          @id @default(cuid())
+  tradeId               String          @unique @map("trade_id")
+  paymentId             String          @unique @map("payment_id")
+  buyerUserId           String          @map("buyer_user_id")
+  sellerUserId          String          @map("seller_user_id")
+  fundingSource         String          @map("funding_source") // WALLET | NOWPAYMENTS | BANK_TRANSFER
+  reservedAmountCents   Int             @map("reserved_amount_cents")
+  tradeGrossCents       Int             @map("trade_gross_cents")
+  buyerFeeCents         Int             @map("buyer_fee_cents")
+  sellerFeeCents        Int             @map("seller_fee_cents")
+  netSellerCents        Int             @map("net_seller_cents")
+  status                String          @default("RESERVED") @map("status") // RESERVED | RELEASED | REFUNDED | DISPUTED_HOLD
+  reservedAt            DateTime        @default(now()) @map("reserved_at")
+  releasedAt            DateTime?       @map("released_at")
+  refundedAt            DateTime?       @map("refunded_at")
+  refundedAmountCents   Int             @default(0) @map("refunded_amount_cents")
+  reserveLedgerId       String?         @map("reserve_ledger_id")
+  resolutionLedgerId    String?         @map("resolution_ledger_id")
+  resolutionNote        String?         @map("resolution_note")
+  createdAt             DateTime        @default(now()) @map("created_at")
+  updatedAt             DateTime        @updatedAt @map("updated_at")
+
+  trade                 ExchangeTrade   @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  payment               ExchangePayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  buyer                 User            @relation("BuyerExchangeEscrow", fields: [buyerUserId], references: [discordId], onDelete: Cascade)
+  seller                User            @relation("SellerExchangeEscrow", fields: [sellerUserId], references: [discordId], onDelete: Cascade)
+
+  @@index([status])
+  @@index([buyerUserId, status])
+  @@index([sellerUserId, status])
+  @@map("exchange_escrow")
 }
 
 

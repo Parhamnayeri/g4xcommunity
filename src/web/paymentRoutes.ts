@@ -25,6 +25,7 @@ import {
 import { handleNowPaymentsIpn } from '../services/payment/nowpaymentsWebhook';
 import { getNowpaymentsConfig } from '../services/payment/paymentTypes';
 import { getNowPaymentsService } from '../services/nowPaymentsService';
+import { handleExchangeNowPaymentsIpn } from '../services/exchangePaymentService';
 
 export const paymentRouter = Router();
 
@@ -37,6 +38,14 @@ paymentRouter.post('/webhooks/nowpayments', async (req: Request, res: Response):
 
     if (!payload || (!payload.payment_id && !payload.order_id && !payload.invoice_id)) {
       res.status(400).json({ error: 'INVALID_PAYLOAD: Missing payment_id, invoice_id, or order_id' });
+      return;
+    }
+
+    // ۰. پردازش اختصاصی پرداخت‌های اکسچنج (Exchange Payment IPN)
+    const orderId = String(payload.order_id || '');
+    if (orderId.startsWith('EXTPAY_')) {
+      const exchangeResult = await handleExchangeNowPaymentsIpn(payload, signatureHeader);
+      res.status(200).json(exchangeResult);
       return;
     }
 

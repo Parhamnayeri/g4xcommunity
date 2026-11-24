@@ -605,3 +605,157 @@ export interface SellOfferPreviewData {
   };
 }
 
+export type ExchangePaymentMethod = 'WALLET' | 'NOWPAYMENTS' | 'BANK_TRANSFER';
+export type ExchangePaymentStatus =
+  | 'INITIATED'
+  | 'PENDING_REVIEW'
+  | 'CONFIRMED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'EXPIRED'
+  | 'REFUNDED';
+export type ExchangeEscrowStatus = 'RESERVED' | 'RELEASED' | 'REFUNDED' | 'DISPUTED_HOLD';
+
+export interface ExchangePaymentItem {
+  id: string;
+  paymentCode: string;
+  tradeId: string;
+  buyerUserId: string;
+  buyerDiscordId: string;
+  method: ExchangePaymentMethod;
+  baseAmountCents: number;
+  buyerFeeCents: number;
+  paymentProcessingFeeCents: number;
+  networkFeeCents: number;
+  totalPayableCents: number;
+  status: ExchangePaymentStatus;
+  confirmedAt?: string | null;
+  confirmedByDiscordId?: string | null;
+  providerOrderId?: string | null;
+  invoiceId?: string | null;
+  invoiceUrl?: string | null;
+  providerPaymentId?: string | null;
+  payAddress?: string | null;
+  payCurrency?: string | null;
+  payAmount?: string | null;
+  actuallyPaid?: string | null;
+  outcomeAmount?: string | null;
+  outcomeCurrency?: string | null;
+  gatewayStatus?: string | null;
+  ipnVerified: boolean;
+  bankReference?: string | null;
+  receiptUrl?: string | null;
+  senderNote?: string | null;
+  reviewedByDiscordId?: string | null;
+  reviewNote?: string | null;
+  reviewedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  trade?: ExchangeTradeItem;
+  buyer?: { discordId: string; username: string; displayName?: string | null };
+  escrow?: ExchangeEscrowItem | null;
+}
+
+export interface ExchangeEscrowItem {
+  id: string;
+  tradeId: string;
+  paymentId: string;
+  buyerUserId: string;
+  sellerUserId: string;
+  fundingSource: ExchangePaymentMethod;
+  reservedAmountCents: number;
+  tradeGrossCents: number;
+  buyerFeeCents: number;
+  sellerFeeCents: number;
+  netSellerCents: number;
+  status: ExchangeEscrowStatus;
+  reservedAt: string;
+  releasedAt?: string | null;
+  refundedAt?: string | null;
+  refundedAmountCents: number;
+  resolutionNote?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TradeCheckoutSummaryResponse {
+  success: boolean;
+  trade: {
+    id: string;
+    tradeCode: string;
+    status: string;
+    quantityBaseUnits: string;
+    unitLabelSnapshot: string;
+    unitMultiplierSnapshot: string;
+    pricePerUnitCentsSnapshot: number;
+    pricePerUnitUsd: string;
+    buyerTotalPayableCents: number;
+    buyerTotalPayableUsd: string;
+    grossValueCents: number;
+    grossValueUsd: string;
+    buyerFeeCents: number;
+    buyerFeeUsd: string;
+    sellerFeeCents: number;
+    netSellerCents: number;
+    netSellerUsd: string;
+    buyerUserId: string;
+    sellerUserId: string;
+    gameDisplayName: string;
+    currencyDisplayName: string;
+    deliveryMethodName: string;
+  };
+  pricingBreakdown: {
+    baseAmountCents: number;
+    baseAmountUsd: string;
+    buyerFeeCents: number;
+    buyerFeeUsd: string;
+    paymentProcessingFeeCents: number;
+    paymentProcessingFeeUsd: string;
+    networkFeeCents: number;
+    networkFeeUsd: string;
+    totalPayableCents: number;
+    totalPayableUsd: string;
+  };
+  wallet: {
+    balanceUsdCents: number;
+    balanceUsd: string;
+    reservedCents: number;
+    reservedUsd: string;
+    frozenCents: number;
+    isFrozen: boolean;
+    availableCents: number;
+    availableUsd: string;
+    hasSufficientBalance: boolean;
+    insufficientReason: string | null;
+  };
+  gateways: {
+    wallet: {
+      enabled: boolean;
+      available: boolean;
+      canPay: boolean;
+    };
+    nowpayments: {
+      enabled: boolean;
+      configured: boolean;
+      isSandbox: boolean;
+    };
+    bankTransfer: {
+      enabled: boolean;
+      bankDetails: {
+        bankName: string;
+        cardNumber: string;
+        accountHolder: string;
+        iban?: string;
+      };
+      note: string;
+      irtQuote?: {
+        totalIrtAmount: number;
+        adminUsdIrtRate: number;
+      };
+    };
+  };
+  activePayment: ExchangePaymentItem | null;
+  escrow: ExchangeEscrowItem | null;
+}
+
+

@@ -40,6 +40,8 @@ export interface WalletBreakdownData {
   orderEscrowReservedUsd: string;
   withdrawalReservedCents: number;
   withdrawalReservedUsd: string;
+  exchangeEscrowReservedCents?: number;
+  exchangeEscrowReservedUsd?: string;
   externalUnsettledRevenueCents: number;
   externalUnsettledRevenueUsd: string;
 }

@@ -298,6 +298,18 @@ export const WalletOverviewCards: React.FC<WalletOverviewCardsProps> = ({
 
           <div>
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
+              Exchange Escrow Holds
+            </div>
+            <div style={{ fontSize: '1.1rem', fontWeight: 700, color: '#10B981', marginTop: '0.2rem' }}>
+              ${breakdown.exchangeEscrowReservedUsd || '0.00'}
+            </div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+              Secured in P2P trade escrow
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
               External Unsettled Revenue
             </div>
             <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-muted)', marginTop: '0.2rem' }}>

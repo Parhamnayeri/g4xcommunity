@@ -20,6 +20,9 @@ import {
   ExchangeTradeItem,
   SubmitSellOfferPayload,
   SellOfferPreviewData,
+  ExchangePaymentItem,
+  ExchangeEscrowItem,
+  TradeCheckoutSummaryResponse,
 } from '../types/exchange';
 
 export interface PublicCatalogResponse {
@@ -344,4 +347,166 @@ export async function cancelTrade(
     body: JSON.stringify({ reason }),
   });
 }
+
+// ─── Phase 5: Payment Engine, Escrow & Checkout API ──────────────────────────
+
+/**
+ * Fetches trade checkout calculation preview, live wallet balances, and available gateways
+ */
+export async function fetchTradeCheckoutSummary(
+  tradeId: string
+): Promise<TradeCheckoutSummaryResponse> {
+  return await apiRequest<TradeCheckoutSummaryResponse>(
+    `/api/exchange/trades/${tradeId}/checkout`
+  );
+}
+
+/**
+ * Pays trade using buyer's central G4X wallet balance (immediate escrow lock)
+ */
+export async function payTradeWithWallet(
+  tradeId: string
+): Promise<{ success: boolean; message: string; payment: ExchangePaymentItem; escrow: ExchangeEscrowItem; trade: ExchangeTradeItem }> {
+  return await apiRequest(
+    `/api/exchange/trades/${tradeId}/pay/wallet`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Initiates hosted crypto payment via NOWPayments
+ */
+export async function payTradeWithNowPayments(
+  tradeId: string,
+  payCurrency?: string
+): Promise<{ success: boolean; message: string; payment: ExchangePaymentItem; invoiceUrl: string }> {
+  return await apiRequest(
+    `/api/exchange/trades/${tradeId}/pay/nowpayments`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ payCurrency }),
+    }
+  );
+}
+
+/**
+ * Initiates Bank Transfer / کارت به کارت checkout
+ */
+export async function initiateBankTransfer(
+  tradeId: string
+): Promise<{ success: boolean; message: string; payment: ExchangePaymentItem; bankDetails: any; instructions: string }> {
+  return await apiRequest(
+    `/api/exchange/trades/${tradeId}/pay/bank-transfer`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Submits bank payment receipt proof and reference (moves to PENDING_REVIEW)
+ */
+export async function submitBankReceipt(
+  paymentId: string,
+  data: {
+    bankReference?: string;
+    receiptUrl: string;
+    senderNote?: string;
+  }
+): Promise<{ success: boolean; message: string; payment: ExchangePaymentItem }> {
+  return await apiRequest(
+    `/api/exchange/payments/${paymentId}/bank-receipt`,
+    {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+/**
+ * Admin: lists exchange payments with optional filters
+ */
+export async function adminFetchExchangePayments(params?: {
+  tradeId?: string;
+  status?: string;
+  method?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<{ success: boolean; payments: ExchangePaymentItem[]; totalCount: number }> {
+  const query = new URLSearchParams();
+  if (params?.tradeId) query.set('tradeId', params.tradeId);
+  if (params?.status && params.status !== 'ALL') query.set('status', params.status);
+  if (params?.method && params.method !== 'ALL') query.set('method', params.method);
+  if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.offset) query.set('offset', String(params.offset));
+  const queryString = query.toString() ? `?${query.toString()}` : '';
+  return await apiRequest<{ success: boolean; payments: ExchangePaymentItem[]; totalCount: number }>(
+    `/api/admin/exchange/payments${queryString}`
+  );
+}
+
+/**
+ * Admin: approves bank transfer payment, funds escrow, and confirms trade
+ */
+export async function adminApproveBankPayment(
+  paymentId: string,
+  reviewNote?: string
+): Promise<{ success: boolean; message: string; payment: ExchangePaymentItem; escrow: ExchangeEscrowItem; trade: ExchangeTradeItem }> {
+  return await apiRequest(
+    `/api/admin/exchange/payments/${paymentId}/approve-bank`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reviewNote }),
+    }
+  );
+}
+
+/**
+ * Admin: rejects bank transfer payment
+ */
+export async function adminRejectBankPayment(
+  paymentId: string,
+  reason: string
+): Promise<{ success: boolean; message: string; payment: ExchangePaymentItem }> {
+  return await apiRequest(
+    `/api/admin/exchange/payments/${paymentId}/reject-bank`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }
+  );
+}
+
+/**
+ * Admin: forces live status synchronization with NOWPayments API
+ */
+export async function adminSyncNowPayments(
+  paymentId: string
+): Promise<{ success: boolean; status: string; payment: ExchangePaymentItem }> {
+  return await apiRequest(
+    `/api/admin/exchange/payments/${paymentId}/sync-nowpayments`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Admin: cancels a trade and refunds funds back to the buyer
+ */
+export async function adminCancelRefundTrade(
+  tradeId: string,
+  reason?: string
+): Promise<{ success: boolean; message: string; trade: ExchangeTradeItem }> {
+  return await apiRequest(
+    `/api/admin/exchange/trades/${tradeId}/cancel-refund`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }
+  );
+}
+
 
