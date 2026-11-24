@@ -935,6 +935,7 @@ export async function listTrades(params: {
           displayName: true,
         },
       },
+      discordRoom: true,
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -976,6 +977,7 @@ export async function getTradeById(
       events: {
         orderBy: { createdAt: 'asc' },
       },
+      discordRoom: true,
     },
   });
 

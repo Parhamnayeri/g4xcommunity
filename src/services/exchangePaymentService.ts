@@ -82,9 +82,9 @@ export async function assertTradeEscrowFunded(tradeId: string, tx: any = prisma)
     );
   }
 
-  if (!trade.escrow || trade.escrow.status !== 'RESERVED') {
+  if (!trade.escrow || (trade.escrow.status !== 'RESERVED' && trade.escrow.status !== 'FROZEN_DISPUTE')) {
     throw new TradeValidationError(
-      'TRADE_ESCROW_NOT_FUNDED: No active RESERVED escrow record found for this trade.',
+      'TRADE_ESCROW_NOT_FUNDED: No active RESERVED or FROZEN_DISPUTE escrow record found for this trade.',
       400
     );
   }
@@ -176,6 +176,7 @@ export interface TradeCheckoutSummary {
   };
   activePayment: ExchangePayment | null;
   escrow: ExchangeEscrow | null;
+  discordRoom?: any | null;
 }
 
 /**
@@ -198,6 +199,7 @@ export async function getTradeCheckoutSummary(
         orderBy: { createdAt: 'desc' },
       },
       escrow: true,
+      discordRoom: true,
     },
   });
 
@@ -351,6 +353,7 @@ export async function getTradeCheckoutSummary(
     },
     activePayment,
     escrow: trade.escrow,
+    discordRoom: trade.discordRoom || null,
   };
 }
 
@@ -533,6 +536,14 @@ export async function payTradeWithWallet(
     });
   } catch (err) {
     console.error('[ExchangePayment] Audit logging warning:', err);
+  }
+
+  // Automatic Phase 6 Hook: Ensure private Discord room for trade
+  try {
+    const { ensureExchangeDiscordRoom } = await import('./exchangeDiscordService');
+    await ensureExchangeDiscordRoom(result.trade.id, buyerUserId);
+  } catch (err: any) {
+    console.warn(`[ExchangePayment] Discord room auto-creation deferred for trade ${result.trade.id}:`, err.message || err);
   }
 
   return result;
@@ -785,6 +796,14 @@ export async function handleExchangeNowPaymentsIpn(
       },
       { timeout: 15000, maxWait: 10000 }
     );
+
+    // Automatic Phase 6 Hook: Ensure private Discord room for trade
+    try {
+      const { ensureExchangeDiscordRoom } = await import('./exchangeDiscordService');
+      await ensureExchangeDiscordRoom(payment.tradeId, 'SYSTEM_NOWPAYMENTS_IPN');
+    } catch (err: any) {
+      console.warn(`[ExchangePayment] Discord room auto-creation deferred for trade ${payment.tradeId}:`, err.message || err);
+    }
 
     return { ok: true, message: 'Payment confirmed and escrow funded', paymentId: payment.id };
   } else if (gatewayStatus === 'partially_paid') {
@@ -1099,6 +1118,14 @@ export async function approveBankTransferPayment(
     console.error('[ExchangePayment] Audit logging warning:', err);
   }
 
+  // Automatic Phase 6 Hook: Ensure private Discord room for trade
+  try {
+    const { ensureExchangeDiscordRoom } = await import('./exchangeDiscordService');
+    await ensureExchangeDiscordRoom(result.trade.id, adminDiscordId);
+  } catch (err: any) {
+    console.warn(`[ExchangePayment] Discord room auto-creation deferred for trade ${result.trade.id}:`, err.message || err);
+  }
+
   return result;
 }
 
@@ -1247,8 +1274,8 @@ export async function cancelExchangeTradeWithEscrowCheck(params: {
     return cancelUnpaidTrade({ tradeId, actorUserId, actorRoles, reason });
   }
 
-  // Case 2: Paid Trade with Secured Escrow (PAYMENT_CONFIRMED)
-  if (trade.status === 'PAYMENT_CONFIRMED') {
+  // Case 2: Paid Trade with Secured Escrow (PAYMENT_CONFIRMED or DELIVERY_IN_PROGRESS)
+  if (trade.status === 'PAYMENT_CONFIRMED' || trade.status === 'DELIVERY_IN_PROGRESS') {
     if (!isStaffOrOwner) {
       throw new TradeValidationError(
         'Unauthorized: Only Admin or Owner can cancel and refund a trade with secured escrow.',
@@ -1384,7 +1411,7 @@ export async function cancelExchangeTradeWithEscrowCheck(params: {
             actorUserId: isStaffOrOwner ? null : actorUserId,
             actorDiscordId: actorUserId,
             actorRole: 'ADMIN',
-            fromStatus: 'PAYMENT_CONFIRMED',
+            fromStatus: trade.status,
             toStatus: 'CANCELLED',
             note: `Trade cancelled & escrow refunded ($${(refundAmountCents / 100).toFixed(2)} USD). Reason: ${reason || 'Admin cancellation'}`,
             metadataJson: JSON.stringify({
@@ -1407,7 +1434,7 @@ export async function cancelExchangeTradeWithEscrowCheck(params: {
         action: 'EXCHANGE_TRADE_CANCEL_AND_REFUND',
         entityType: 'EXCHANGE_TRADE',
         entityId: trade.id,
-        previousValues: { status: 'PAYMENT_CONFIRMED' },
+        previousValues: { status: trade.status },
         newValues: { status: 'CANCELLED', refundAmountCents },
       });
     } catch (err) {

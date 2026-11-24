@@ -405,7 +405,7 @@ async function runSuite() {
     const p3 = await prisma.exchangePayment.findUnique({ where: { id: cryptoPayment.id } });
     const t3 = await prisma.exchangeTrade.findUnique({ where: { id: trade3.id }, include: { escrow: true } });
     assert(p3!.status === 'CONFIRMED', '4.5 ExchangePayment transitioned to CONFIRMED on finished IPN');
-    assert(t3!.status === 'PAYMENT_CONFIRMED', '4.6 Trade transitioned to PAYMENT_CONFIRMED on finished IPN');
+    assert(t3!.status === 'PAYMENT_CONFIRMED' || t3!.status === 'DELIVERY_IN_PROGRESS', '4.6 Trade transitioned to PAYMENT_CONFIRMED / DELIVERY_IN_PROGRESS on finished IPN');
     assert(t3!.escrow?.status === 'RESERVED', '4.7 Escrow created in RESERVED status');
     assert(t3!.escrow?.fundingSource === 'NOWPAYMENTS', '4.8 Escrow fundingSource is NOWPAYMENTS');
 

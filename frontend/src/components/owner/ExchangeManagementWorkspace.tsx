@@ -23,6 +23,7 @@ import {
   ExchangeOverviewStats,
   ExchangeKycRequestItem,
   ExchangePaymentItem,
+  ExchangeDiscordConfig,
 } from '../../types/exchange';
 import {
   fetchExchangeOverview,
@@ -54,9 +55,11 @@ import {
   adminRejectBankPayment,
   adminSyncNowPayments,
   adminCancelRefundTrade,
+  getExchangeDiscordConfig,
+  updateExchangeDiscordConfig,
 } from '../../services/exchangeMarketplace';
 
-type SubTab = 'games' | 'currencies' | 'regions_delivery' | 'fee_rules' | 'kyc' | 'payments' | 'audit';
+type SubTab = 'games' | 'currencies' | 'regions_delivery' | 'fee_rules' | 'kyc' | 'payments' | 'discord' | 'audit';
 
 export const ExchangeManagementWorkspace: React.FC = () => {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('fee_rules');
@@ -282,6 +285,59 @@ export const ExchangeManagementWorkspace: React.FC = () => {
     }
   };
 
+  // Phase 6: Discord Portal & Alerts Config
+  const [discordConfig, setDiscordConfig] = useState<ExchangeDiscordConfig | null>(null);
+  const [discordConfigLoading, setDiscordConfigLoading] = useState<boolean>(false);
+  const [discordSaving, setDiscordSaving] = useState<boolean>(false);
+  const [discordForm, setDiscordForm] = useState({
+    exchangeCategoryId: '',
+    exchangeArchiveCategoryId: '',
+    exchangeAlertChannelId: '',
+    reason: '',
+  });
+
+  const loadDiscordConfig = useCallback(async () => {
+    setDiscordConfigLoading(true);
+    try {
+      const res = await getExchangeDiscordConfig();
+      if (res && res.config) {
+        setDiscordConfig(res.config);
+        setDiscordForm({
+          exchangeCategoryId: res.config.exchangeCategoryId || '',
+          exchangeArchiveCategoryId: res.config.exchangeArchiveCategoryId || '',
+          exchangeAlertChannelId: res.config.exchangeAlertChannelId || '',
+          reason: '',
+        });
+      }
+    } catch (err: any) {
+      showNotification('error', err.message || 'Failed to load Discord settings');
+    } finally {
+      setDiscordConfigLoading(false);
+    }
+  }, []);
+
+  const handleSaveDiscordConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDiscordSaving(true);
+    try {
+      const res = await updateExchangeDiscordConfig({
+        exchangeCategoryId: discordForm.exchangeCategoryId.trim(),
+        exchangeArchiveCategoryId: discordForm.exchangeArchiveCategoryId.trim(),
+        exchangeAlertChannelId: discordForm.exchangeAlertChannelId.trim(),
+        reason: discordForm.reason.trim() || undefined,
+      });
+      showNotification('success', res.message || 'Discord configuration updated successfully.');
+      if (res.config) {
+        setDiscordConfig(res.config);
+      }
+      await loadAllData();
+    } catch (err: any) {
+      showNotification('error', err.message || 'Failed to update Discord configuration.');
+    } finally {
+      setDiscordSaving(false);
+    }
+  };
+
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
@@ -293,7 +349,10 @@ export const ExchangeManagementWorkspace: React.FC = () => {
     if (activeSubTab === 'payments') {
       loadPayments();
     }
-  }, [activeSubTab, loadKyc, loadPayments]);
+    if (activeSubTab === 'discord') {
+      loadDiscordConfig();
+    }
+  }, [activeSubTab, loadKyc, loadPayments, loadDiscordConfig]);
 
   // Live Simulator auto-refresh on changes
   const runSimulation = useCallback(async () => {
@@ -595,6 +654,7 @@ export const ExchangeManagementWorkspace: React.FC = () => {
           { key: 'regions_delivery', label: 'Regions & Delivery', icon: '🌍' },
           { key: 'kyc', label: 'Exchanger KYC & Roles', icon: '🛡️' },
           { key: 'payments', label: 'Payments & Escrow Hub', icon: '💳' },
+          { key: 'discord', label: 'Discord Portal & Alerts', icon: '💬' },
           { key: 'audit', label: 'Config Audit Logs', icon: '📜' },
         ].map((tab) => (
           <button
@@ -2359,6 +2419,289 @@ export const ExchangeManagementWorkspace: React.FC = () => {
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {/* SUB-TAB 7: DISCORD PORTAL & ALERTS (Phase 6)                              */}
+      {/* ───────────────────────────────────────────────────────────────────────── */}
+      {activeSubTab === 'discord' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Header Info */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ fontSize: '1.25rem' }}>💬</span>
+                <h2 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0, color: '#FFFFFF' }}>
+                  Discord Exchange Portal & Bot Alerts Configuration
+                </h2>
+              </div>
+              {discordConfig && (
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.75rem', color: '#10B981', backgroundColor: 'rgba(16, 185, 129, 0.15)', padding: '2px 8px', borderRadius: '4px' }}>
+                    Active Cat: {discordConfig.exchangeCategoryId ? 'Custom' : 'Default'}
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: '#38BDF8', backgroundColor: 'rgba(56, 189, 248, 0.15)', padding: '2px 8px', borderRadius: '4px' }}>
+                    Archive Cat: {discordConfig.exchangeArchiveCategoryId ? 'Custom' : 'Default'}
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: '#FACC15', backgroundColor: 'rgba(250, 204, 21, 0.15)', padding: '2px 8px', borderRadius: '4px' }}>
+                    Alerts: {discordConfig.exchangeAlertChannelId ? 'Custom' : 'Default'}
+                  </span>
+                </div>
+              )}
+            </div>
+            <p style={{ margin: '0.35rem 0 0 0', fontSize: '0.85rem', color: '#A1A1AA' }}>
+              Configure Discord channel categories for active & archived trade rooms, and designate the staff alerts channel. All mutations require Owner role and write an immutable Audit Log.
+            </p>
+          </div>
+
+          {/* Form Card */}
+          <div
+            style={{
+              backgroundColor: '#13151C',
+              border: '1px solid rgba(88, 101, 242, 0.3)',
+              borderRadius: '12px',
+              padding: '1.5rem',
+              boxShadow: '0 4px 20px rgba(0, 0, 0, 0.3)',
+            }}
+          >
+            {discordConfigLoading ? (
+              <div style={{ color: '#FACC15', padding: '1.5rem', textAlign: 'center', fontSize: '0.9rem' }}>
+                ⏳ Loading Discord configuration...
+              </div>
+            ) : (
+              <form onSubmit={handleSaveDiscordConfig} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1.25rem' }}>
+                  {/* Field 1: Active Category ID */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#EDEDED', marginBottom: '0.4rem' }}>
+                      Active Trades Category ID (Discord Snowflake)
+                    </label>
+                    <input
+                      type="text"
+                      value={discordForm.exchangeCategoryId}
+                      onChange={(e) => setDiscordForm({ ...discordForm, exchangeCategoryId: e.target.value })}
+                      placeholder="e.g. 1199999999999999999"
+                      style={{
+                        width: '100%',
+                        padding: '0.65rem 0.85rem',
+                        backgroundColor: '#1E202B',
+                        border: '1px solid #374151',
+                        borderRadius: '8px',
+                        color: '#FFFFFF',
+                        fontSize: '0.9rem',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                    <div style={{ fontSize: '0.75rem', color: '#9CA3AF', marginTop: '0.35rem' }}>
+                      Category where private trade channels (<code>exchange-&lt;trade-code&gt;</code>) are auto-created upon payment & escrow reservation.
+                    </div>
+                  </div>
+
+                  {/* Field 2: Archive Category ID */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#EDEDED', marginBottom: '0.4rem' }}>
+                      Archived Trades Category ID (Discord Snowflake)
+                    </label>
+                    <input
+                      type="text"
+                      value={discordForm.exchangeArchiveCategoryId}
+                      onChange={(e) => setDiscordForm({ ...discordForm, exchangeArchiveCategoryId: e.target.value })}
+                      placeholder="e.g. 1199999999999999998"
+                      style={{
+                        width: '100%',
+                        padding: '0.65rem 0.85rem',
+                        backgroundColor: '#1E202B',
+                        border: '1px solid #374151',
+                        borderRadius: '8px',
+                        color: '#FFFFFF',
+                        fontSize: '0.9rem',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                    <div style={{ fontSize: '0.75rem', color: '#9CA3AF', marginTop: '0.35rem' }}>
+                      Category where completed or cancelled trade rooms are moved, renamed (<code>archived-exchange-&lt;trade-code&gt;</code>), and locked. Channels are NEVER deleted.
+                    </div>
+                  </div>
+
+                  {/* Field 3: Alert Channel ID */}
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#EDEDED', marginBottom: '0.4rem' }}>
+                      Staff Alert Channel ID (Discord Snowflake)
+                    </label>
+                    <input
+                      type="text"
+                      value={discordForm.exchangeAlertChannelId}
+                      onChange={(e) => setDiscordForm({ ...discordForm, exchangeAlertChannelId: e.target.value })}
+                      placeholder="e.g. 1199999999999999997"
+                      style={{
+                        width: '100%',
+                        padding: '0.65rem 0.85rem',
+                        backgroundColor: '#1E202B',
+                        border: '1px solid #374151',
+                        borderRadius: '8px',
+                        color: '#FFFFFF',
+                        fontSize: '0.9rem',
+                        boxSizing: 'border-box',
+                      }}
+                    />
+                    <div style={{ fontSize: '0.75rem', color: '#9CA3AF', marginTop: '0.35rem' }}>
+                      Channel where bot alerts are broadcast for new funded trades, disputes (<code>FROZEN_DISPUTE</code>), and buyer delivery confirmations awaiting final approval.
+                    </div>
+                  </div>
+                </div>
+
+                {/* Field 4: Audit Reason */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 600, color: '#EDEDED', marginBottom: '0.4rem' }}>
+                    Reason for Configuration Change (Mandatory for AuditLog)
+                  </label>
+                  <input
+                    type="text"
+                    value={discordForm.reason}
+                    onChange={(e) => setDiscordForm({ ...discordForm, reason: e.target.value })}
+                    placeholder="e.g. Updating categories for server restructuring"
+                    style={{
+                      width: '100%',
+                      padding: '0.65rem 0.85rem',
+                      backgroundColor: '#1E202B',
+                      border: '1px solid #374151',
+                      borderRadius: '8px',
+                      color: '#FFFFFF',
+                      fontSize: '0.9rem',
+                      boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+
+                {/* Submit Button */}
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.5rem' }}>
+                  <button
+                    type="submit"
+                    disabled={discordSaving}
+                    style={{
+                      padding: '0.65rem 1.75rem',
+                      backgroundColor: '#5865F2',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontWeight: 700,
+                      fontSize: '0.9rem',
+                      cursor: discordSaving ? 'not-allowed' : 'pointer',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      boxShadow: '0 4px 12px rgba(88, 101, 242, 0.3)',
+                    }}
+                  >
+                    <span>{discordSaving ? 'Saving Settings...' : 'Save Discord Settings'}</span>
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+
+          {/* Security & Architectural Guarantees Card */}
+          <div
+            style={{
+              backgroundColor: '#13151C',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              borderRadius: '12px',
+              padding: '1.5rem',
+            }}
+          >
+            <h3 style={{ fontSize: '1rem', fontWeight: 700, color: '#EDEDED', marginBottom: '1rem', margin: 0 }}>
+              🛡️ Exchange Discord Architecture & Guardrails
+            </h3>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem', marginTop: '1rem' }}>
+              <div style={{ backgroundColor: '#1E202B', borderRadius: '8px', padding: '1rem', borderLeft: '3px solid #10B981' }}>
+                <div style={{ fontWeight: 700, color: '#10B981', fontSize: '0.85rem', marginBottom: '0.35rem' }}>
+                  1. No Payment = No Discord Channel
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#D1D5DB', lineHeight: '1.4' }}>
+                  Trade channels are strictly prohibited from creation until payment is fully confirmed and escrow is secured in <code>RESERVED</code> status.
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#1E202B', borderRadius: '8px', padding: '1rem', borderLeft: '3px solid #EF4444' }}>
+                <div style={{ fontWeight: 700, color: '#EF4444', fontSize: '0.85rem', marginBottom: '0.35rem' }}>
+                  2. Zero Direct Bot Wallet Mutation
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#D1D5DB', lineHeight: '1.4' }}>
+                  The Discord bot cannot modify wallet balances, release escrow, or execute payouts. Payouts require Admin/Owner execution on the Web Admin Panel.
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#1E202B', borderRadius: '8px', padding: '1rem', borderLeft: '3px solid #FACC15' }}>
+                <div style={{ fontWeight: 700, color: '#FACC15', fontSize: '0.85rem', marginBottom: '0.35rem' }}>
+                  3. Archive Only (NEVER Delete)
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#D1D5DB', lineHeight: '1.4' }}>
+                  When trades terminate (completed or cancelled), the room is moved to the archive category and send permissions are locked. <code>channel.delete()</code> is strictly forbidden.
+                </div>
+              </div>
+
+              <div style={{ backgroundColor: '#1E202B', borderRadius: '8px', padding: '1rem', borderLeft: '3px solid #8B5CF6' }}>
+                <div style={{ fontWeight: 700, color: '#8B5CF6', fontSize: '0.85rem', marginBottom: '0.35rem' }}>
+                  4. Zero Buyer KYC / PII Leakage
+                </div>
+                <div style={{ fontSize: '0.8rem', color: '#D1D5DB', lineHeight: '1.4' }}>
+                  Buyer personal/KYC information (legal names, identity documents, phone, address) is completely excluded from all Discord channel messages and embeds.
+                </div>
+              </div>
+            </div>
+
+            {/* Command Cheat Sheet Table */}
+            <div style={{ marginTop: '1.5rem' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#EDEDED', marginBottom: '0.5rem' }}>
+                Bot Command Reference (<code>G4!exchange &lt;subcommand&gt;</code>)
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid #374151', textAlign: 'left', color: '#9CA3AF' }}>
+                      <th style={{ padding: '0.5rem' }}>Command</th>
+                      <th style={{ padding: '0.5rem' }}>Permitted Actors</th>
+                      <th style={{ padding: '0.5rem' }}>Behavior</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '0.5rem', color: '#FACC15', fontWeight: 600 }}>G4!exchange info</td>
+                      <td style={{ padding: '0.5rem', color: '#9CA3AF' }}>Buyer, Seller, Staff, Owner</td>
+                      <td style={{ padding: '0.5rem', color: '#D1D5DB' }}>Live trade status embed with item, quantities, prices & participant tags.</td>
+                    </tr>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '0.5rem', color: '#8B5CF6', fontWeight: 600 }}>G4!exchange proof</td>
+                      <td style={{ padding: '0.5rem', color: '#9CA3AF' }}>Seller, Buyer</td>
+                      <td style={{ padding: '0.5rem', color: '#D1D5DB' }}>Shows delivery proof guidelines; logs any attached images into trade audit timeline.</td>
+                    </tr>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '0.5rem', color: '#10B981', fontWeight: 600 }}>G4!exchange confirm</td>
+                      <td style={{ padding: '0.5rem', color: '#9CA3AF' }}>Buyer Only</td>
+                      <td style={{ padding: '0.5rem', color: '#D1D5DB' }}>Buyer confirms delivery; transitions to AWAITING_FINAL_APPROVAL. Zero escrow release.</td>
+                    </tr>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '0.5rem', color: '#EF4444', fontWeight: 600 }}>G4!exchange dispute [reason]</td>
+                      <td style={{ padding: '0.5rem', color: '#9CA3AF' }}>Buyer, Seller</td>
+                      <td style={{ padding: '0.5rem', color: '#D1D5DB' }}>Freezes escrow to FROZEN_DISPUTE, transitions trade to DISPUTED & alerts staff.</td>
+                    </tr>
+                    <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                      <td style={{ padding: '0.5rem', color: '#38BDF8', fontWeight: 600 }}>G4!exchange done</td>
+                      <td style={{ padding: '0.5rem', color: '#9CA3AF' }}>Staff, Admin, Owner</td>
+                      <td style={{ padding: '0.5rem', color: '#D1D5DB' }}>Transitions to AWAITING_FINAL_APPROVAL and directs to Web Panel for payout.</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: '0.5rem', color: '#A1A1AA', fontWeight: 600 }}>G4!exchange close</td>
+                      <td style={{ padding: '0.5rem', color: '#9CA3AF' }}>Staff, Admin, Owner</td>
+                      <td style={{ padding: '0.5rem', color: '#D1D5DB' }}>Locks channel, moves to Archive category, logs ARCHIVED. NEVER deletes channel.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       )}

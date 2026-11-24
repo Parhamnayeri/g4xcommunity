@@ -23,6 +23,12 @@ import {
   TradeValidationError,
 } from '../services/exchangeTradeService';
 import { ExchangeAuthError } from '../services/exchangeAuthService';
+import {
+  ensureExchangeDiscordRoom,
+  archiveExchangeDiscordRoom,
+  getExchangeDiscordConfig,
+  updateExchangeDiscordConfig,
+} from '../services/exchangeDiscordService';
 
 export const exchangeTradeRouter = Router();
 
@@ -413,3 +419,155 @@ exchangeTradeRouter.post(
     }
   }
 );
+
+/**
+ * POST /api/admin/exchange/trades/:tradeId/discord-room/ensure
+ * Admin manually creates or retries the Discord private trade channel if trade is funded.
+ */
+exchangeTradeRouter.post(
+  '/api/admin/exchange/trades/:tradeId/discord-room/ensure',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const roles = getUserRoles(user);
+      const isStaffOrOwner =
+        roles.includes('admin') || roles.includes('owner') || roles.includes('staff');
+
+      if (!isStaffOrOwner) {
+        res.status(403).json({ error: 'Forbidden', message: 'Admin or Staff access required.' });
+        return;
+      }
+
+      const { tradeId } = req.params;
+      const room = await ensureExchangeDiscordRoom(tradeId, user.discordId);
+
+      res.json({
+        success: true,
+        message: 'Discord trade room ensured successfully.',
+        discordRoom: room,
+      });
+    } catch (error: any) {
+      if (error instanceof TradeValidationError) {
+        res.status(error.statusCode).json({ error: error.name, message: error.message });
+        return;
+      }
+      console.error('[ExchangeDiscord] Ensure room error:', error);
+      res.status(500).json({ error: 'Discord Room Error', message: error.message });
+    }
+  }
+);
+
+/**
+ * POST /api/admin/exchange/trades/:tradeId/discord-room/archive
+ * Admin archives a completed/cancelled Discord room from the Web interface.
+ */
+exchangeTradeRouter.post(
+  '/api/admin/exchange/trades/:tradeId/discord-room/archive',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const roles = getUserRoles(user);
+      const isStaffOrOwner =
+        roles.includes('admin') || roles.includes('owner') || roles.includes('staff');
+
+      if (!isStaffOrOwner) {
+        res.status(403).json({ error: 'Forbidden', message: 'Admin or Staff access required.' });
+        return;
+      }
+
+      const { tradeId } = req.params;
+      const { reason = 'Archived via Web Admin action' } = req.body;
+
+      const room = await archiveExchangeDiscordRoom(tradeId, user.discordId, String(reason));
+
+      res.json({
+        success: true,
+        message: 'Discord trade room archived successfully.',
+        discordRoom: room,
+      });
+    } catch (error: any) {
+      if (error instanceof TradeValidationError) {
+        res.status(error.statusCode).json({ error: error.name, message: error.message });
+        return;
+      }
+      console.error('[ExchangeDiscord] Archive room error:', error);
+      res.status(500).json({ error: 'Discord Room Archive Error', message: error.message });
+    }
+  }
+);
+
+/**
+ * GET /api/exchange/config/discord
+ * Fetches current Discord Category & Alert Channel configurations.
+ */
+exchangeTradeRouter.get(
+  '/api/exchange/config/discord',
+  requireAuth,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const roles = getUserRoles(user);
+      const isStaffOrOwner =
+        roles.includes('admin') || roles.includes('owner') || roles.includes('staff');
+
+      if (!isStaffOrOwner) {
+        res.status(403).json({ error: 'Forbidden', message: 'Admin or Staff access required.' });
+        return;
+      }
+
+      const config = await getExchangeDiscordConfig();
+      res.json({
+        success: true,
+        config,
+      });
+    } catch (error: any) {
+      console.error('[ExchangeDiscord] Get config error:', error);
+      res.status(500).json({ error: 'Config Error', message: error.message });
+    }
+  }
+);
+
+/**
+ * PUT /api/exchange/config/discord
+ * Updates Discord Category & Alert Channel configurations (Owner Only).
+ */
+exchangeTradeRouter.put(
+  '/api/exchange/config/discord',
+  requireAuth,
+  requireCsrf,
+  async (req: Request, res: Response): Promise<void> => {
+    try {
+      const user = (req as AuthenticatedRequest).user;
+      const roles = getUserRoles(user);
+
+      if (!roles.includes('owner')) {
+        res.status(403).json({ error: 'Forbidden', message: 'Only the server Owner can modify Discord settings.' });
+        return;
+      }
+
+      const { exchangeCategoryId, exchangeArchiveCategoryId, exchangeAlertChannelId, reason } = req.body;
+
+      const updated = await updateExchangeDiscordConfig({
+        exchangeCategoryId,
+        exchangeArchiveCategoryId,
+        exchangeAlertChannelId,
+        actorId: user.discordId,
+        reason: reason ? String(reason) : undefined,
+      });
+
+      res.json({
+        success: true,
+        message: 'Discord settings updated successfully.',
+        config: updated,
+      });
+    } catch (error: any) {
+      console.error('[ExchangeDiscord] Update config error:', error);
+      res.status(500).json({ error: 'Config Update Error', message: error.message });
+    }
+  }
+);
+

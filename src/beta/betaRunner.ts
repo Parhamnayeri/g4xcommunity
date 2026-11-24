@@ -178,6 +178,9 @@ export class BetaLifecycleManager {
             } else if (command === 'proof') {
               const { handleDiscordProofMessageUpload } = await import('../services/discordProofSubmissionService');
               await handleDiscordProofMessageUpload(message, rawArgs);
+            } else if (command === 'exchange') {
+              const { handleExchangeCommand } = await import('../commands/exchangeCommands');
+              await handleExchangeCommand(message, rawArgs);
             }
           },
           onPermittedInteraction: async (interaction: Interaction) => {

@@ -2487,6 +2487,7 @@ model ExchangeTrade {
   events                        ExchangeTradeEvent[]
   payments                      ExchangePayment[]
   escrow                        ExchangeEscrow?
+  discordRoom                   ExchangeDiscordRoom?
 
   @@index([buyerDiscordId, status])
   @@index([sellerDiscordId, status])
@@ -2606,4 +2607,30 @@ model ExchangeEscrow {
   @@map("exchange_escrow")
 }
 
+// ─── ۷۵. اکسچنج: اتاق‌های دیسکورد معامله (Exchange Discord Rooms) ─────────────────
+model ExchangeDiscordRoom {
+  id                  String         @id @default(cuid())
+  tradeId             String         @unique @map("trade_id")
+  guildId             String         @map("guild_id")
+  channelId           String         @unique @map("channel_id")
+  channelName         String         @map("channel_name")
+  channelUrl          String         @map("channel_url")
+  categoryId          String?        @map("category_id")
+  archiveCategoryId   String?        @map("archive_category_id")
+  welcomeMessageId    String?        @map("welcome_message_id")
+  status              String         @default("ACTIVE") @map("status") // ACTIVE | LOCKED | ARCHIVED
+  buyerDiscordId      String         @map("buyer_discord_id")
+  sellerDiscordId     String         @map("seller_discord_id")
+  archivedByDiscordId String?        @map("archived_by_discord_id")
+  archivedAt          DateTime?      @map("archived_at")
+  archiveReason       String?        @map("archive_reason")
+  createdAt           DateTime       @default(now()) @map("created_at")
+  updatedAt           DateTime       @updatedAt @map("updated_at")
 
+  trade               ExchangeTrade  @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([buyerDiscordId])
+  @@index([sellerDiscordId])
+  @@map("exchange_discord_rooms")
+}

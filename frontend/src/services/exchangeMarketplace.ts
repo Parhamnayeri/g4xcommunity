@@ -23,6 +23,8 @@ import {
   ExchangePaymentItem,
   ExchangeEscrowItem,
   TradeCheckoutSummaryResponse,
+  ExchangeDiscordRoomItem,
+  ExchangeDiscordConfig,
 } from '../types/exchange';
 
 export interface PublicCatalogResponse {
@@ -505,6 +507,72 @@ export async function adminCancelRefundTrade(
     {
       method: 'POST',
       body: JSON.stringify({ reason }),
+    }
+  );
+}
+
+// ─── Phase 6: Discord Trade Rooms & Settings API ────────────────────────────
+
+/**
+ * Admin/Staff: manually ensures or retries creating the private Discord trade channel
+ */
+export async function ensureDiscordRoom(
+  tradeId: string
+): Promise<{ success: boolean; message: string; discordRoom: ExchangeDiscordRoomItem }> {
+  return await apiRequest(
+    `/api/admin/exchange/trades/${tradeId}/discord-room/ensure`,
+    {
+      method: 'POST',
+    }
+  );
+}
+
+/**
+ * Admin/Staff: archives a completed or cancelled Discord trade room
+ */
+export async function archiveDiscordRoom(
+  tradeId: string,
+  reason?: string
+): Promise<{ success: boolean; message: string; discordRoom: ExchangeDiscordRoomItem }> {
+  return await apiRequest(
+    `/api/admin/exchange/trades/${tradeId}/discord-room/archive`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }
+  );
+}
+
+/**
+ * Staff/Owner: retrieves current Discord Portal Category & Alert Channel settings
+ */
+export async function getExchangeDiscordConfig(): Promise<{
+  success: boolean;
+  config: ExchangeDiscordConfig;
+}> {
+  return await apiRequest<{ success: boolean; config: ExchangeDiscordConfig }>(
+    `/api/exchange/config/discord`
+  );
+}
+
+/**
+ * Owner: updates Discord Portal Category & Alert Channel settings
+ */
+export async function updateExchangeDiscordConfig(data: {
+  exchangeCategoryId?: string;
+  exchangeArchiveCategoryId?: string;
+  exchangeAlertChannelId?: string;
+  reason?: string;
+}): Promise<{
+  success: boolean;
+  message: string;
+  config: ExchangeDiscordConfig;
+}> {
+  return await apiRequest(
+    `/api/exchange/config/discord`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(data),
     }
   );
 }

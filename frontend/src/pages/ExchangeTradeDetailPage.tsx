@@ -25,19 +25,26 @@ import {
   payTradeWithNowPayments,
   initiateBankTransfer,
   submitBankReceipt,
+  ensureDiscordRoom,
+  archiveDiscordRoom,
 } from '../services/exchangeMarketplace';
 
 export const ExchangeTradeDetailPage: React.FC = () => {
   const { tradeId } = useParams<{ tradeId: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, hasRole } = useAuth();
   const currentUserId = user?.discordId;
+  const isStaff = hasRole('owner', 'manager', 'admin', 'staff', 'moderator');
 
   const [trade, setTrade] = useState<ExchangeTradeItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Phase 6: Discord Room State
+  const [ensuringRoom, setEnsuringRoom] = useState(false);
+  const [archivingRoom, setArchivingRoom] = useState(false);
 
   // Phase 5: Checkout State
   const [checkout, setCheckout] = useState<TradeCheckoutSummaryResponse | null>(null);
@@ -249,6 +256,62 @@ export const ExchangeTradeDetailPage: React.FC = () => {
     navigator.clipboard.writeText(text);
     setCopiedCard(true);
     setTimeout(() => setCopiedCard(false), 2000);
+  };
+
+  // Phase 6: Discord Room Handlers
+  const handleEnsureDiscordRoom = async () => {
+    if (!trade) return;
+    try {
+      setEnsuringRoom(true);
+      setActionFeedback(null);
+      const res = await ensureDiscordRoom(trade.id);
+      setActionFeedback({
+        type: 'success',
+        message: res.message || 'Discord trade room connected successfully!',
+      });
+      if (res.discordRoom) {
+        setTrade((prev) => (prev ? { ...prev, discordRoom: res.discordRoom } : prev));
+      }
+      loadTradeData();
+    } catch (err: any) {
+      setActionFeedback({
+        type: 'error',
+        message: err?.message || 'Failed to create or access Discord trade room.',
+      });
+    } finally {
+      setEnsuringRoom(false);
+    }
+  };
+
+  const handleArchiveDiscordRoom = async () => {
+    if (!trade) return;
+    if (
+      !window.confirm(
+        'Are you sure you want to archive this Discord trade room? The channel will be locked and moved to the archive category.'
+      )
+    ) {
+      return;
+    }
+    try {
+      setArchivingRoom(true);
+      setActionFeedback(null);
+      const res = await archiveDiscordRoom(trade.id, 'Archived by staff from Trade Details');
+      setActionFeedback({
+        type: 'success',
+        message: res.message || 'Discord room archived successfully.',
+      });
+      if (res.discordRoom) {
+        setTrade((prev) => (prev ? { ...prev, discordRoom: res.discordRoom } : prev));
+      }
+      loadTradeData();
+    } catch (err: any) {
+      setActionFeedback({
+        type: 'error',
+        message: err?.message || 'Failed to archive Discord trade room.',
+      });
+    } finally {
+      setArchivingRoom(false);
+    }
   };
 
   if (loading) {
@@ -865,6 +928,241 @@ export const ExchangeTradeDetailPage: React.FC = () => {
                     </div>
                   </form>
                 )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Phase 6: DISCORD TRADE ROOM PANEL */}
+        {trade.status !== 'AWAITING_PAYMENT' && (
+          <div
+            style={{
+              backgroundColor: '#13151C',
+              borderRadius: '14px',
+              border: '1px solid #5865F2',
+              padding: '24px',
+              marginBottom: '32px',
+              boxShadow: '0 8px 24px rgba(88, 101, 242, 0.12)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                marginBottom: '16px',
+                flexWrap: 'wrap',
+                gap: '12px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '1.8rem' }}>💬</span>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#FFFFFF', margin: 0 }}>
+                      Discord Trade Room
+                    </h2>
+                    {trade.discordRoom && (
+                      <span
+                        style={{
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          padding: '3px 8px',
+                          borderRadius: '9999px',
+                          backgroundColor:
+                            trade.discordRoom.status === 'ACTIVE'
+                              ? 'rgba(16, 185, 129, 0.18)'
+                              : 'rgba(156, 163, 175, 0.18)',
+                          color: trade.discordRoom.status === 'ACTIVE' ? '#10B981' : '#9CA3AF',
+                          border: `1px solid ${
+                            trade.discordRoom.status === 'ACTIVE' ? '#10B981' : '#4B5563'
+                          }`,
+                        }}
+                      >
+                        {trade.discordRoom.status === 'ACTIVE' ? '● LIVE ROOM' : 'ARCHIVED'}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.82rem', color: '#9CA3AF', marginTop: '2px' }}>
+                    {trade.discordRoom
+                      ? `Channel: #${trade.discordRoom.channelName}`
+                      : 'Dedicated private Discord coordination channel between Buyer, Seller & Staff'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                {trade.discordRoom?.channelUrl && trade.discordRoom.status === 'ACTIVE' && (
+                  <a
+                    href={trade.discordRoom.channelUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      backgroundColor: '#5865F2',
+                      color: '#FFFFFF',
+                      padding: '10px 20px',
+                      borderRadius: '8px',
+                      textDecoration: 'none',
+                      fontWeight: 700,
+                      fontSize: '0.9rem',
+                      boxShadow: '0 4px 12px rgba(88, 101, 242, 0.3)',
+                    }}
+                  >
+                    <span>Open Discord Room</span>
+                    <span>↗</span>
+                  </a>
+                )}
+
+                {trade.discordRoom?.channelUrl && trade.discordRoom.status === 'ARCHIVED' && (
+                  <a
+                    href={trade.discordRoom.channelUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      backgroundColor: '#27272A',
+                      color: '#9CA3AF',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      textDecoration: 'none',
+                      fontWeight: 600,
+                      fontSize: '0.85rem',
+                      border: '1px solid #3F3F46',
+                    }}
+                  >
+                    <span>Open Preserved Channel</span>
+                    <span>↗</span>
+                  </a>
+                )}
+
+                {/* Staff Archive Button */}
+                {isStaff &&
+                  trade.discordRoom &&
+                  trade.discordRoom.status === 'ACTIVE' &&
+                  ['COMPLETED', 'CANCELLED'].includes(trade.status) && (
+                    <button
+                      type="button"
+                      onClick={handleArchiveDiscordRoom}
+                      disabled={archivingRoom}
+                      style={{
+                        padding: '8px 16px',
+                        backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                        color: '#EF4444',
+                        border: '1px solid #EF4444',
+                        borderRadius: '8px',
+                        fontWeight: 600,
+                        fontSize: '0.85rem',
+                        cursor: archivingRoom ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {archivingRoom ? 'Archiving...' : 'Archive Discord Room'}
+                    </button>
+                  )}
+
+                {/* Staff Ensure/Retry Button if room missing on funded trade */}
+                {isStaff && !trade.discordRoom && (
+                  <button
+                    type="button"
+                    onClick={handleEnsureDiscordRoom}
+                    disabled={ensuringRoom}
+                    style={{
+                      padding: '8px 16px',
+                      backgroundColor: '#5865F2',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '8px',
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: ensuringRoom ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    {ensuringRoom ? 'Creating Room...' : 'Create / Retry Discord Room'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Room Details & Command Cheat Sheet */}
+            {trade.discordRoom?.status === 'ACTIVE' ? (
+              <div
+                style={{
+                  backgroundColor: '#1E202B',
+                  borderRadius: '10px',
+                  padding: '16px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                }}
+              >
+                <div style={{ fontSize: '0.85rem', color: '#D1D5DB' }}>
+                  Use the private channel to communicate with your counterparty in real time. All trade interactions are logged securely.
+                </div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                    gap: '10px',
+                    fontSize: '0.8rem',
+                    paddingTop: '8px',
+                    borderTop: '1px solid #2D303E',
+                  }}
+                >
+                  <div style={{ color: '#9CA3AF' }}>
+                    <code style={{ color: '#FACC15', backgroundColor: '#13151C', padding: '2px 6px', borderRadius: '4px' }}>
+                      G4!exchange info
+                    </code>{' '}
+                    — View live trade status
+                  </div>
+                  <div style={{ color: '#9CA3AF' }}>
+                    <code style={{ color: '#8B5CF6', backgroundColor: '#13151C', padding: '2px 6px', borderRadius: '4px' }}>
+                      G4!exchange proof
+                    </code>{' '}
+                    — Attach delivery proof screenshot
+                  </div>
+                  <div style={{ color: '#9CA3AF' }}>
+                    <code style={{ color: '#10B981', backgroundColor: '#13151C', padding: '2px 6px', borderRadius: '4px' }}>
+                      G4!exchange confirm
+                    </code>{' '}
+                    — Buyer confirms receipt
+                  </div>
+                  <div style={{ color: '#9CA3AF' }}>
+                    <code style={{ color: '#EF4444', backgroundColor: '#13151C', padding: '2px 6px', borderRadius: '4px' }}>
+                      G4!exchange dispute
+                    </code>{' '}
+                    — Freeze trade & alert staff
+                  </div>
+                </div>
+              </div>
+            ) : trade.discordRoom?.status === 'ARCHIVED' ? (
+              <div
+                style={{
+                  backgroundColor: '#1E202B',
+                  borderRadius: '10px',
+                  padding: '14px 18px',
+                  fontSize: '0.85rem',
+                  color: '#9CA3AF',
+                }}
+              >
+                🔒 This room was archived on {new Date(trade.discordRoom.archivedAt || trade.discordRoom.updatedAt).toLocaleString()}
+                {trade.discordRoom.archiveReason ? ` (${trade.discordRoom.archiveReason})` : ''}. Messages are read-only for audit preservation.
+              </div>
+            ) : (
+              <div
+                style={{
+                  backgroundColor: '#1E202B',
+                  borderRadius: '10px',
+                  padding: '14px 18px',
+                  fontSize: '0.85rem',
+                  color: '#9CA3AF',
+                }}
+              >
+                💬 Discord room creation in progress or pending bot connection. Once active, both parties receive private channel access.
               </div>
             )}
           </div>

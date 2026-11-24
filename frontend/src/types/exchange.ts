@@ -584,6 +584,7 @@ export interface ExchangeTradeItem {
   seller?: { discordId: string; username: string; displayName?: string | null };
   buyOrder?: { id: string; orderCode: string; instructions?: string | null };
   events?: ExchangeTradeEventItem[];
+  discordRoom?: ExchangeDiscordRoomItem | null;
 }
 
 export interface SubmitSellOfferPayload {
@@ -756,6 +757,33 @@ export interface TradeCheckoutSummaryResponse {
   };
   activePayment: ExchangePaymentItem | null;
   escrow: ExchangeEscrowItem | null;
+  discordRoom?: ExchangeDiscordRoomItem | null;
+}
+
+export interface ExchangeDiscordRoomItem {
+  id: string;
+  tradeId: string;
+  guildId: string;
+  channelId: string;
+  channelName: string;
+  channelUrl: string;
+  categoryId?: string | null;
+  archiveCategoryId?: string | null;
+  welcomeMessageId?: string | null;
+  status: 'ACTIVE' | 'LOCKED' | 'ARCHIVED';
+  buyerDiscordId: string;
+  sellerDiscordId: string;
+  archivedByDiscordId?: string | null;
+  archivedAt?: string | null;
+  archiveReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExchangeDiscordConfig {
+  exchangeCategoryId: string;
+  exchangeArchiveCategoryId: string;
+  exchangeAlertChannelId: string;
 }
 
 
