@@ -253,6 +253,16 @@ router.use('/', operationsRouter);
 router.use('/operations', operationsRouter);
 router.use('/', policyRouter);
 router.use('/', discordCommandsRouter);
+// ─── روت‌های پلتفرم اکسچنج (Exchange Engine Phases 1-8) ────────────────────
+// هنگامی که این روتر تحت app.use('/api', router) مونت می‌شود، Express پیشوند /api را حذف می‌کند
+// و req.url با /exchange شروع می‌شود. میدل‌ویر زیر مسیر را به /api/exchange بازنویسی می‌کند
+// تا با تعاریف درون روترهای اکسچنج دقیقاً مطابقت پیدا کند.
+router.use((req, _res, next) => {
+  if (req.url.startsWith('/exchange')) {
+    req.url = '/api' + req.url;
+  }
+  next();
+});
 router.use('/', exchangeConfigRouter);
 router.use('/', exchangeMarketplaceRouter);
 router.use('/', exchangeTradeRouter);

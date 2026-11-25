@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { fetchPublicData } from '../services/auth';
@@ -134,6 +135,20 @@ export const LandingPage: React.FC = () => {
                 Book a Boost
               </Button>
             </a>
+            <Link to="/exchange" style={{ textDecoration: 'none' }}>
+              <Button
+                size="lg"
+                style={{
+                  backgroundColor: '#FACC15',
+                  color: '#0D0B12',
+                  fontWeight: 800,
+                  boxShadow: '0 0 20px rgba(250, 204, 21, 0.35)',
+                  border: '1px solid #EAB308',
+                }}
+              >
+                🪙 Currency Exchange
+              </Button>
+            </Link>
             <a href={discordUrl} style={{ textDecoration: 'none' }}>
               <Button variant="purple" size="lg">
                 Join Our Discord
