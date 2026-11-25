@@ -378,6 +378,7 @@ export interface ExchangeKycRequestItem {
 export interface ExchangeEligibilityResponse {
   userId: string;
   hasExchangerRole: boolean;
+  hasPrivilegedBuyerRole?: boolean;
   kycStatus: ExchangeKycStatus;
   kycExpiresAt: string | null;
   isSuspended: boolean;
@@ -966,6 +967,7 @@ export interface BuyerDashboardData {
     reputation: UserReputationSummary;
     badge: {
       isExchanger: boolean;
+      hasPrivilegedBuyerRole?: boolean;
       kycStatus: string;
       canCreateBuyOrder: boolean;
     };

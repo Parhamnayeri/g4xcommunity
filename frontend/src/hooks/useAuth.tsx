@@ -31,7 +31,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const hasRole = useCallback((...roles: string[]): boolean => {
     if (!user || !user.roles) return false;
-    return roles.some((role) => user.roles.includes(role));
+    const normalizedRoles = user.roles.map((r) => String(r).toLowerCase());
+    return roles.some((role) => normalizedRoles.includes(role.toLowerCase()));
   }, [user]);
 
   const hasPermission = useCallback((...perms: string[]): boolean => {

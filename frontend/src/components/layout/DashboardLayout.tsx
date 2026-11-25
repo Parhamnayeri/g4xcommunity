@@ -135,18 +135,6 @@ export const DashboardLayout: React.FC = () => {
             📊 Exchange Dashboard
           </Link>
           <Link
-            to="/exchanger"
-            style={{
-              padding: '0.4rem 0.8rem',
-              fontSize: '0.85rem',
-              fontWeight: 600,
-              color: location.pathname === '/exchanger' ? 'var(--accent-lime)' : 'var(--text-muted)',
-              borderBottom: location.pathname === '/exchanger' ? '2px solid var(--accent-lime)' : 'none',
-            }}
-          >
-            Exchanger Portal
-          </Link>
-          <Link
             to="/profile"
             style={{
               padding: '0.4rem 0.8rem',
@@ -170,7 +158,7 @@ export const DashboardLayout: React.FC = () => {
           >
             Booster Hub
           </Link>
-          {hasRole('advertiser', 'admin', 'owner', 'staff', 'manager') && (
+          {hasRole('advertiser', 'admin', 'owner', 'staff', 'manager', 'management') && (
             <Link
               to="/advertiser"
               style={{
@@ -184,7 +172,7 @@ export const DashboardLayout: React.FC = () => {
               📢 Advertiser Portal
             </Link>
           )}
-          {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner') && (
+          {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'management', 'admin', 'owner') && (
             <Link
               to="/discord-commands"
               style={{
@@ -198,7 +186,7 @@ export const DashboardLayout: React.FC = () => {
               Discord Commands
             </Link>
           )}
-          {hasRole('staff', 'manager', 'admin', 'owner') && (
+          {hasRole('staff', 'manager', 'management', 'admin', 'owner') && (
             <Link
               to="/staff"
               style={{
@@ -212,7 +200,7 @@ export const DashboardLayout: React.FC = () => {
               Staff Portal
             </Link>
           )}
-          {hasRole('manager', 'admin', 'owner') && (
+          {hasRole('manager', 'management', 'admin', 'owner') && (
             <>
               <Link
                 to="/management"
@@ -240,7 +228,7 @@ export const DashboardLayout: React.FC = () => {
               </Link>
             </>
           )}
-          {hasRole('admin', 'manager', 'owner') && (
+          {hasRole('admin', 'manager', 'management', 'owner') && (
             <Link
               to="/admin"
               style={{

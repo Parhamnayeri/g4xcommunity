@@ -172,16 +172,28 @@ export const ExchangeManagementWorkspace: React.FC = () => {
   const loadAllData = useCallback(async () => {
     setLoading(true);
     try {
-      const [ovData, gamesData, currenciesData, regionsData, deliveryData, feeData, auditData] =
-        await Promise.all([
-          fetchExchangeOverview().catch(() => null),
-          fetchExchangeGames().catch(() => []),
-          fetchExchangeCurrencies().catch(() => []),
-          fetchExchangeRegions().catch(() => []),
-          fetchExchangeDeliveryMethods().catch(() => []),
-          fetchExchangeFeeRules().catch(() => []),
-          fetchExchangeAuditLogs(50).catch(() => []),
-        ]);
+      const results = await Promise.allSettled([
+        fetchExchangeOverview(),
+        fetchExchangeGames(),
+        fetchExchangeCurrencies(),
+        fetchExchangeRegions(),
+        fetchExchangeDeliveryMethods(),
+        fetchExchangeFeeRules(),
+        fetchExchangeAuditLogs(50),
+      ]);
+
+      const firstError = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+      if (firstError) {
+        showNotification('error', firstError.reason?.message || 'Failed to load some exchange configurations');
+      }
+
+      const ovData = results[0].status === 'fulfilled' ? results[0].value : null;
+      const gamesData = results[1].status === 'fulfilled' ? results[1].value : [];
+      const currenciesData = results[2].status === 'fulfilled' ? results[2].value : [];
+      const regionsData = results[3].status === 'fulfilled' ? results[3].value : [];
+      const deliveryData = results[4].status === 'fulfilled' ? results[4].value : [];
+      const feeData = results[5].status === 'fulfilled' ? results[5].value : [];
+      const auditData = results[6].status === 'fulfilled' ? results[6].value : [];
 
       setOverview(ovData);
       setGames(gamesData);

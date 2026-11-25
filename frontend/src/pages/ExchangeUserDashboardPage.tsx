@@ -370,11 +370,19 @@ export const ExchangeUserDashboardPage: React.FC = () => {
                     fontWeight: 700,
                     padding: '0.15rem 0.45rem',
                     borderRadius: '4px',
-                    backgroundColor: buyerData.summary.badge.isExchanger ? 'rgba(16, 185, 129, 0.15)' : 'rgba(156, 163, 175, 0.15)',
-                    color: buyerData.summary.badge.isExchanger ? '#10B981' : '#9CA3AF',
+                    backgroundColor: buyerData.summary.badge.isExchanger || buyerData.summary.badge.hasPrivilegedBuyerRole
+                      ? 'rgba(16, 185, 129, 0.15)'
+                      : 'rgba(156, 163, 175, 0.15)',
+                    color: buyerData.summary.badge.isExchanger || buyerData.summary.badge.hasPrivilegedBuyerRole
+                      ? '#10B981'
+                      : '#9CA3AF',
                   }}
                 >
-                  {buyerData.summary.badge.isExchanger ? 'VERIFIED EXCHANGER' : 'STANDARD BUYER'}
+                  {buyerData.summary.badge.isExchanger
+                    ? 'VERIFIED EXCHANGER'
+                    : buyerData.summary.badge.hasPrivilegedBuyerRole
+                      ? 'STAFF / MGMT BUYER'
+                      : 'STANDARD BUYER'}
                 </span>
               </div>
               <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '0.4rem' }}>

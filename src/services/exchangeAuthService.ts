@@ -26,9 +26,18 @@ export type ExchangeKycStatus =
   | 'EXPIRED'
   | 'SUSPENDED';
 
+export const PRIVILEGED_EXCHANGE_BUYER_ROLES = new Set([
+  'staff',
+  'management',
+  'manager',
+  'admin',
+  'owner',
+]);
+
 export interface ExchangeEligibility {
   userId: string;
   hasExchangerRole: boolean;
+  hasPrivilegedBuyerRole: boolean;
   kycStatus: ExchangeKycStatus;
   kycExpiresAt: Date | null;
   isSuspended: boolean;
@@ -53,6 +62,8 @@ export class ExchangeAuthError extends Error {
 /**
  * Evaluates the full Exchange eligibility for a user.
  * Bridges existing 'exchanger' role holders automatically so they are never locked out.
+ * Allows staff, management, manager, admin, and owner roles to buy game currency
+ * independently of having the 'exchanger' role or exchanger KYC.
  */
 export async function getExchangeEligibility(userId: string): Promise<ExchangeEligibility> {
   const blockingReasons: string[] = [];
@@ -70,6 +81,7 @@ export async function getExchangeEligibility(userId: string): Promise<ExchangeEl
     return {
       userId,
       hasExchangerRole: false,
+      hasPrivilegedBuyerRole: false,
       kycStatus: 'NOT_SUBMITTED',
       kycExpiresAt: null,
       isSuspended: false,
@@ -81,7 +93,10 @@ export async function getExchangeEligibility(userId: string): Promise<ExchangeEl
   }
 
   const activeRoles = (user.userRoles || []).map((r) => r.roleKey.toLowerCase());
+  const isOwnerByEnv = Boolean(process.env.OWNER_DISCORD_ID) && process.env.OWNER_DISCORD_ID === user.discordId;
   const hasExchangerRole = activeRoles.includes('exchanger');
+  const hasPrivilegedBuyerRole =
+    isOwnerByEnv || activeRoles.some((r) => PRIVILEGED_EXCHANGE_BUYER_ROLES.has(r));
 
   // Check suspension status
   const isSuspended = Boolean(user.exchangePermission?.isSuspended);
@@ -125,8 +140,8 @@ export async function getExchangeEligibility(userId: string): Promise<ExchangeEl
 
   // 1. Seller Eligibility Rule:
   // User ONLY needs at least one active G4X role. NO separate KYC or 'exchanger' role required to sell.
-  let canSubmitSellOffer = activeRoles.length > 0 && !isSuspended;
-  if (activeRoles.length === 0) {
+  const canSubmitSellOffer = (activeRoles.length > 0 || isOwnerByEnv) && !isSuspended;
+  if (activeRoles.length === 0 && !isOwnerByEnv) {
     blockingReasons.push('User must have at least one active G4X role (e.g. booster, advertiser, exchanger, staff) to sell.');
   }
   if (isSuspended) {
@@ -134,22 +149,25 @@ export async function getExchangeEligibility(userId: string): Promise<ExchangeEl
   }
 
   // 2. Buyer Eligibility Rule:
-  // Requires active 'exchanger' role AND APPROVED non-expired non-suspended KYC.
+  // Staff, management, manager, admin, and owner roles can buy game currency independently
+  // of 'exchanger' role and exchanger KYC. Standard members require active 'exchanger' role AND APPROVED KYC.
   let canCreateBuyOrder = true;
 
-  if (!hasExchangerRole) {
-    canCreateBuyOrder = false;
-    blockingReasons.push('Exchanger role is required to create buy orders.');
-  }
+  if (!hasPrivilegedBuyerRole) {
+    if (!hasExchangerRole) {
+      canCreateBuyOrder = false;
+      blockingReasons.push('Exchanger role (or Staff/Management/Admin/Owner access) is required to create buy orders.');
+    }
 
-  if (kycStatus !== 'APPROVED') {
-    canCreateBuyOrder = false;
-    blockingReasons.push(`Exchanger KYC verification is ${kycStatus}. Approved KYC is required to create buy orders.`);
-  }
+    if (kycStatus !== 'APPROVED') {
+      canCreateBuyOrder = false;
+      blockingReasons.push(`Exchanger KYC verification is ${kycStatus}. Approved KYC is required to create buy orders.`);
+    }
 
-  if (isKycExpired) {
-    canCreateBuyOrder = false;
-    blockingReasons.push('Exchanger KYC verification has expired.');
+    if (isKycExpired) {
+      canCreateBuyOrder = false;
+      blockingReasons.push('Exchanger KYC verification has expired.');
+    }
   }
 
   if (isSuspended) {
@@ -159,11 +177,13 @@ export async function getExchangeEligibility(userId: string): Promise<ExchangeEl
   // If explicitly disabled in permissions table
   if (user.exchangePermission && !user.exchangePermission.canCreateBuyOrder) {
     canCreateBuyOrder = false;
+    blockingReasons.push('Buy order permissions have been restricted for this account.');
   }
 
   return {
     userId,
     hasExchangerRole,
+    hasPrivilegedBuyerRole,
     kycStatus,
     kycExpiresAt,
     isSuspended,
@@ -182,7 +202,7 @@ export async function assertEligibleExchangeBuyer(userId: string): Promise<Excha
   const eligibility = await getExchangeEligibility(userId);
   if (!eligibility.canCreateBuyOrder) {
     throw new ExchangeAuthError(
-      'Access Denied: Only approved Exchangers with valid KYC may create Exchange Buy Orders.',
+      'Access Denied: Only approved Exchangers with valid KYC or Staff/Management/Admin/Owner roles may create Exchange Buy Orders.',
       403,
       eligibility.blockingReasons
     );

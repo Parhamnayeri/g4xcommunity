@@ -21,6 +21,7 @@ import {
   getSellerReputation,
   UserReputationSummary,
 } from '../services/exchangeReputationService';
+import { getExchangeEligibility } from '../services/exchangeAuthService';
 
 export const exchangeDashboardRouter = Router();
 
@@ -31,6 +32,7 @@ function isStaffOrOwner(user: any): boolean {
     roleKeys.includes('owner') ||
     roleKeys.includes('admin') ||
     roleKeys.includes('manager') ||
+    roleKeys.includes('management') ||
     roleKeys.includes('staff') ||
     (Boolean(process.env.OWNER_DISCORD_ID) && process.env.OWNER_DISCORD_ID === user.discordId)
   );
@@ -89,16 +91,13 @@ exchangeDashboardRouter.get(
       const isFrozen = wallet?.isFrozen || false;
 
       // 2. Buyer Reputation & Eligibility live compute
-      const [buyerRep, kycRequest, userPermission] = await Promise.all([
+      const [buyerRep, eligibility] = await Promise.all([
         getBuyerReputation(userId),
-        prisma.exchangeKycRequest.findUnique({ where: { userId } }),
-        prisma.exchangeUserPermission.findUnique({ where: { userId } }),
+        getExchangeEligibility(userId),
       ]);
 
-      const isExchanger = (user.userRoles || []).some(
-        (r: any) => r.roleKey.toLowerCase() === 'exchanger'
-      );
-      const kycStatus = kycRequest?.status || 'NONE';
+      const isExchanger = eligibility.hasExchangerRole;
+      const kycStatus = eligibility.kycStatus || 'NONE';
 
       // 3. Fetch all Buy Orders for this Buyer
       const myBuyOrders = await prisma.exchangeBuyOrder.findMany({
@@ -211,8 +210,9 @@ exchangeDashboardRouter.get(
           reputation: buyerRep,
           badge: {
             isExchanger,
+            hasPrivilegedBuyerRole: eligibility.hasPrivilegedBuyerRole,
             kycStatus,
-            canCreateBuyOrder: userPermission?.canCreateBuyOrder ?? isExchanger,
+            canCreateBuyOrder: eligibility.canCreateBuyOrder,
           },
         },
         tabs: {

@@ -245,7 +245,45 @@ export const Header: React.FC = () => {
                     Portal Overview
                   </Link>
 
-                  {hasRole('advertiser', 'admin', 'owner', 'staff', 'manager') && (
+                  <Link
+                    to="/exchange"
+                    onClick={() => setUserDropdownOpen(false)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.6rem 0.75rem',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.85rem',
+                      color: '#FACC15',
+                      transition: 'background 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                  >
+                    💱 Exchange
+                  </Link>
+
+                  <Link
+                    to="/exchange/dashboard"
+                    onClick={() => setUserDropdownOpen(false)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      padding: '0.6rem 0.75rem',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.85rem',
+                      color: '#38BDF8',
+                      transition: 'background 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-surface-hover)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                  >
+                    📊 Exchange Dashboard
+                  </Link>
+
+                  {hasRole('advertiser', 'admin', 'owner', 'staff', 'manager', 'management') && (
                     <Link
                       to="/advertiser"
                       onClick={() => setUserDropdownOpen(false)}
@@ -266,7 +304,7 @@ export const Header: React.FC = () => {
                     </Link>
                   )}
 
-                  {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner') && (
+                  {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'management', 'admin', 'owner') && (
                     <Link
                       to="/discord-commands"
                       onClick={() => setUserDropdownOpen(false)}
@@ -392,6 +430,22 @@ export const Header: React.FC = () => {
             Join the Team
           </a>
           <Link
+            to="/exchange"
+            onClick={() => setMenuOpen(false)}
+            style={{ fontSize: '1rem', fontWeight: 600, color: '#FACC15' }}
+          >
+            💱 Exchange
+          </Link>
+          {user && (
+            <Link
+              to="/exchange/dashboard"
+              onClick={() => setMenuOpen(false)}
+              style={{ fontSize: '1rem', fontWeight: 600, color: '#38BDF8' }}
+            >
+              📊 Exchange Dashboard
+            </Link>
+          )}
+          <Link
             to="/rules"
             onClick={() => setMenuOpen(false)}
             style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)' }}
@@ -405,7 +459,7 @@ export const Header: React.FC = () => {
           >
             Privacy Policy
           </Link>
-          {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'admin', 'owner') && (
+          {hasRole('advertiser', 'exchanger', 'staff', 'manager', 'management', 'admin', 'owner') && (
             <Link
               to="/discord-commands"
               onClick={() => setMenuOpen(false)}

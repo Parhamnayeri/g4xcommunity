@@ -44,20 +44,15 @@ import {
   fetchTrades,
   withdrawSellOffer,
 } from '../services/exchangeMarketplace';
-import { OfferMarketplaceTable } from '../components/exchange/OfferMarketplaceTable';
-import { AdvertiserTradesTable } from '../components/exchange/AdvertiserTradesTable';
-import { SellGoldModal } from '../components/exchange/SellGoldModal';
-import { P2pFundingModal } from '../components/exchange/P2pFundingModal';
-import { ExchangerOffer, GoldTrade, PaginationMeta } from '../types/exchange';
-import { fetchAdvertiserTrades } from '../services/exchange';
 
 export const ExchangeMarketplacePage: React.FC = () => {
   const navigate = useNavigate();
-  const { status } = useAuth();
+  const { status, hasRole } = useAuth();
   const isAuthenticated = status === 'authenticated';
+  const hasPrivilegedBuyerRole = hasRole('staff', 'management', 'manager', 'admin', 'owner');
 
   // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'marketplace' | 'my_orders' | 'my_offers' | 'my_trades' | 'legacy_gold'>('marketplace');
+  const [activeTab, setActiveTab] = useState<'marketplace' | 'my_orders' | 'my_offers' | 'my_trades'>('marketplace');
 
   // Phase 4 State
   const [myOffers, setMyOffers] = useState<ExchangeSellOfferItem[]>([]);
@@ -101,13 +96,6 @@ export const ExchangeMarketplacePage: React.FC = () => {
   const [kycNotes, setKycNotes] = useState('');
   const [kycSubmitting, setKycSubmitting] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  // Legacy tab state
-  const [legacyTrades, setLegacyTrades] = useState<GoldTrade[]>([]);
-  const [legacyPagination, setLegacyPagination] = useState<PaginationMeta>({ page: 1, limit: 10, total: 0, totalPages: 0 });
-  const [legacyLoading, setLegacyLoading] = useState(false);
-  const [selectedOfferForGold, setSelectedOfferForGold] = useState<ExchangerOffer | null>(null);
-  const [selectedOfferForP2p, setSelectedOfferForP2p] = useState<ExchangerOffer | null>(null);
 
   // ───────────────────────────────────────────────────────────────────────────
   // Data Loaders
@@ -189,20 +177,6 @@ export const ExchangeMarketplacePage: React.FC = () => {
     }
   }, [isAuthenticated, myOrdersStatusFilter]);
 
-  const loadLegacyTrades = useCallback(async () => {
-    if (!isAuthenticated) return;
-    setLegacyLoading(true);
-    try {
-      const res = await fetchAdvertiserTrades({ page: 1, limit: 10, sortOrder: 'desc' });
-      setLegacyTrades(Array.isArray(res?.trades) ? res.trades : []);
-      setLegacyPagination(res?.pagination || { page: 1, limit: 10, total: 0, totalPages: 1 });
-    } catch (err) {
-      console.error('Failed to load legacy trades:', err);
-    } finally {
-      setLegacyLoading(false);
-    }
-  }, [isAuthenticated]);
-
   const loadMyOffers = useCallback(async () => {
     if (!isAuthenticated) return;
     try {
@@ -260,10 +234,8 @@ export const ExchangeMarketplacePage: React.FC = () => {
       loadMyOffers();
     } else if (activeTab === 'my_trades') {
       loadMyTrades();
-    } else if (activeTab === 'legacy_gold') {
-      loadLegacyTrades();
     }
-  }, [activeTab, loadMarketplaceOrders, loadMyOrders, loadMyOffers, loadMyTrades, loadLegacyTrades]);
+  }, [activeTab, loadMarketplaceOrders, loadMyOrders, loadMyOffers, loadMyTrades]);
 
   // Filtered Currencies based on selected game
   const availableCurrencies = useMemo(() => {
@@ -391,7 +363,7 @@ export const ExchangeMarketplacePage: React.FC = () => {
 
           {/* Action Button */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
-            {eligibility?.canCreateBuyOrder ? (
+            {eligibility?.canCreateBuyOrder || (hasPrivilegedBuyerRole && !eligibility?.isSuspended) ? (
               <button
                 onClick={() => setIsCreateModalOpen(true)}
                 style={{
@@ -410,7 +382,7 @@ export const ExchangeMarketplacePage: React.FC = () => {
                   transition: 'all 0.15s ease-in-out',
                 }}
               >
-                <span style={{ fontSize: '1.2rem', lineHeight: 1 }}>+</span> Create Buy Order
+                <span style={{ fontSize: '1.2rem', lineHeight: 1 }}>+</span> Buy Game Currency (Create Order)
               </button>
             ) : (
               <button
@@ -434,9 +406,11 @@ export const ExchangeMarketplacePage: React.FC = () => {
               </button>
             )}
             <span style={{ fontSize: '0.75rem', color: '#6B7280' }}>
-              {eligibility?.canCreateBuyOrder
-                ? 'Active Exchanger account ready to place orders'
-                : 'Exchangers require approved KYC to place buy orders'}
+              {eligibility?.canCreateBuyOrder || (hasPrivilegedBuyerRole && !eligibility?.isSuspended)
+                ? (eligibility?.hasPrivilegedBuyerRole || hasPrivilegedBuyerRole) && !eligibility?.hasExchangerRole
+                  ? 'Staff / Management / Admin / Owner account — Buy Game Currency enabled'
+                  : 'Active Exchanger account ready to place buy orders'
+                : 'Exchangers require approved KYC (or Staff/Management/Admin/Owner role) to buy currency'}
             </span>
           </div>
         </div>
@@ -458,7 +432,7 @@ export const ExchangeMarketplacePage: React.FC = () => {
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ color: '#9CA3AF' }}>Exchanger Status:</span>
+                <span style={{ color: '#9CA3AF' }}>Buyer Access:</span>
                 {eligibility.kycStatus === 'APPROVED' ? (
                   <span
                     style={{
@@ -471,6 +445,19 @@ export const ExchangeMarketplacePage: React.FC = () => {
                     }}
                   >
                     ✓ Verified Exchanger
+                  </span>
+                ) : eligibility.hasPrivilegedBuyerRole || hasPrivilegedBuyerRole ? (
+                  <span
+                    style={{
+                      backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                      color: '#10B981',
+                      padding: '3px 10px',
+                      borderRadius: '999px',
+                      fontWeight: 600,
+                      border: '1px solid rgba(16, 185, 129, 0.3)',
+                    }}
+                  >
+                    ✓ Staff / Management Buyer
                   </span>
                 ) : eligibility.kycStatus === 'PENDING_REVIEW' || eligibility.kycStatus === 'UNDER_REVIEW' ? (
                   <span
@@ -607,22 +594,6 @@ export const ExchangeMarketplacePage: React.FC = () => {
             </button>
           </>
         )}
-
-        <button
-          onClick={() => setActiveTab('legacy_gold')}
-          style={{
-            padding: '12px 20px',
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'legacy_gold' ? '3px solid #FACC15' : '3px solid transparent',
-            color: activeTab === 'legacy_gold' ? '#FACC15' : '#9CA3AF',
-            fontWeight: activeTab === 'legacy_gold' ? 700 : 500,
-            cursor: 'pointer',
-            fontSize: '0.95rem',
-          }}
-        >
-          Legacy WoW Gold &amp; P2P Offers
-        </button>
 
         <Link
           to="/exchange/dashboard"
@@ -1592,34 +1563,6 @@ export const ExchangeMarketplacePage: React.FC = () => {
       )}
 
       {/* ─────────────────────────────────────────────────────────────────────────
-          TAB 3: LEGACY WOW GOLD & P2P OFFERS
-          ───────────────────────────────────────────────────────────────────────── */}
-      {activeTab === 'legacy_gold' && (
-        <div>
-          <div style={{ marginBottom: '20px' }}>
-            <OfferMarketplaceTable
-              onSelectForSell={(offer) => setSelectedOfferForGold(offer)}
-              onSelectForP2p={(offer) => setSelectedOfferForP2p(offer)}
-            />
-          </div>
-
-          {isAuthenticated && (
-            <div style={{ marginTop: '30px' }}>
-              <h3 style={{ fontSize: '1.2rem', marginBottom: '14px', color: '#FFFFFF' }}>My Trade History</h3>
-              <AdvertiserTradesTable
-                trades={legacyTrades}
-                pagination={legacyPagination}
-                loading={legacyLoading}
-                onPageChange={() => loadLegacyTrades()}
-                onFilterChange={() => loadLegacyTrades()}
-                onRefresh={() => loadLegacyTrades()}
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ─────────────────────────────────────────────────────────────────────────
           ORDER DETAILS MODAL (WITH PRICING CALCULATOR PREVIEW)
           ───────────────────────────────────────────────────────────────────────── */}
       {selectedOrderDetails && (
@@ -1935,28 +1878,6 @@ export const ExchangeMarketplacePage: React.FC = () => {
             </form>
           </div>
         </div>
-      )}
-
-      {/* Legacy modals */}
-      {selectedOfferForGold && (
-        <SellGoldModal
-          initialOffer={selectedOfferForGold}
-          onClose={() => setSelectedOfferForGold(null)}
-          onTradeCreated={() => {
-            setSelectedOfferForGold(null);
-            loadLegacyTrades();
-          }}
-        />
-      )}
-      {selectedOfferForP2p && (
-        <P2pFundingModal
-          initialOffer={selectedOfferForP2p}
-          onClose={() => setSelectedOfferForP2p(null)}
-          onFundingCreated={() => {
-            setSelectedOfferForP2p(null);
-            loadLegacyTrades();
-          }}
-        />
       )}
     </div>
   );

@@ -16,7 +16,10 @@
  * 12. Full Audit Logging for KYC reviews and Order mutations
  */
 
+import express from 'express';
+import http from 'http';
 import prisma from '../database/db';
+import { router as apiRouter } from '../web/routes';
 import {
   getExchangeEligibility,
   assertEligibleExchangeBuyer,
@@ -483,6 +486,70 @@ async function runSuite() {
     const hasRoleAction = auditLogs.some((l) => l.action.startsWith('EXCHANGE_ROLE_'));
     assert(hasKycAction, 'AuditLog records KYC submissions/reviews');
     assert(hasRoleAction, 'AuditLog records Exchanger role assignments');
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // TEST 12: Privileged Buyer Roles & /api/* Route Prefix Normalization
+    // ─────────────────────────────────────────────────────────────────────────
+    console.log('\n--- TEST 12: Privileged Buyer Roles & Route Normalization ---');
+
+    const privilegedRoles = ['staff', 'management', 'manager', 'admin', 'owner'];
+    for (const rKey of privilegedRoles) {
+      const pUid = `test_priv_${rKey}_${Date.now()}`;
+      testIds.push(pUid);
+      await prisma.role.upsert({
+        where: { roleKey: rKey },
+        create: { roleKey: rKey, name: rKey.toUpperCase() },
+        update: {},
+      });
+      await prisma.user.create({
+        data: {
+          discordId: pUid,
+          username: `TestPriv_${rKey}`,
+          isActive: true,
+          userRoles: { create: [{ roleKey: rKey }] },
+        },
+      });
+      const elig = await getExchangeEligibility(pUid);
+      assert(elig.hasExchangerRole === false, `${rKey} does NOT have exchanger role`);
+      assert(elig.hasPrivilegedBuyerRole === true, `${rKey} recognized as privileged buyer`);
+      assert(elig.canCreateBuyOrder === true, `${rKey} can buy game currency without exchanger role/KYC`);
+      await assertEligibleExchangeBuyer(pUid);
+    }
+
+    // Verify Express app.use('/api', apiRouter) mounts /api/exchange/*, /api/owner/exchange/*, /api/admin/exchange/* cleanly
+    const testApp = express();
+    testApp.use(express.json());
+    testApp.use('/api', apiRouter);
+    testApp.use('/api', (_req, res) => {
+      res.status(404).json({ error: 'NOT_FOUND' });
+    });
+
+    const testServer = await new Promise<http.Server>((resolve) => {
+      const s = testApp.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    const port = (testServer.address() as any).port;
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    try {
+      const catalogRes = await fetch(`${baseUrl}/api/exchange/catalog`);
+      const catalogJson: any = await catalogRes.json();
+      assert(catalogRes.status === 200 && catalogJson?.success === true, '/api/exchange/catalog resolves with 200 OK');
+
+      const ordersRes = await fetch(`${baseUrl}/api/exchange/orders`);
+      const ordersJson: any = await ordersRes.json();
+      assert(ordersRes.status === 200 && Array.isArray(ordersJson?.orders), '/api/exchange/orders resolves with 200 OK');
+
+      const ownerOvRes = await fetch(`${baseUrl}/api/owner/exchange/overview`);
+      assert(ownerOvRes.status === 401, `/api/owner/exchange/overview hits auth guard (401), not 404 (got ${ownerOvRes.status})`);
+
+      const ownerGamesRes = await fetch(`${baseUrl}/api/owner/exchange/games`);
+      assert(ownerGamesRes.status === 401, `/api/owner/exchange/games hits auth guard (401), not 404 (got ${ownerGamesRes.status})`);
+
+      const adminOvRes = await fetch(`${baseUrl}/api/admin/exchange/overview`);
+      assert(adminOvRes.status === 401, `/api/admin/exchange/overview hits auth guard (401), not 404 (got ${adminOvRes.status})`);
+    } finally {
+      await new Promise<void>((resolve) => testServer.close(() => resolve()));
+    }
 
     // Cleanup test artifacts
     await prisma.exchangeBuyOrder.deleteMany({

@@ -60,6 +60,7 @@ export function requireOwnerOrStaff(req: Request, res: Response, next: NextFunct
     roleKeys.includes('owner') ||
     roleKeys.includes('admin') ||
     roleKeys.includes('manager') ||
+    roleKeys.includes('management') ||
     roleKeys.includes('staff') ||
     (Boolean(process.env.OWNER_DISCORD_ID) && process.env.OWNER_DISCORD_ID === user.discordId);
 

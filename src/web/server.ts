@@ -101,11 +101,11 @@ function sendReactEntry(_req: express.Request, res: express.Response): void {
 // Explicit JSON clients retain the old aliases and all their authorization checks.
 const reactPages = [
   '/', '/rules', '/privacy', '/discord-commands', '/dashboard', '/wallet', '/withdraw', '/profile', '/profile/kyc',
-  '/booster/settings', '/settings', '/advertiser', '/exchange', '/exchanger',
+  '/booster/settings', '/settings', '/advertiser', '/exchange', '/exchange/dashboard', '/exchanger',
   '/orders', '/staff', '/management', '/management/orders', '/management/kyc',
   '/admin', '/management/applications', '/admin/applications', '/admin/games',
   '/admin/discord', '/admin/orders', '/owner', '/owner/orders', '/owner/finance',
-  '/owner/games', '/owner/discord', '/owner/users', '/owner/website',
+  '/owner/games', '/owner/discord', '/owner/users', '/owner/website', '/owner/exchange',
 ];
 app.get(reactPages, (req, res, next) => {
   if (!req.accepts('html')) return next();

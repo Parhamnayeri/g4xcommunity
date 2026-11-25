@@ -255,20 +255,35 @@ router.use('/', policyRouter);
 router.use('/', discordCommandsRouter);
 // ─── روت‌های پلتفرم اکسچنج (Exchange Engine Phases 1-8) ────────────────────
 // هنگامی که این روتر تحت app.use('/api', router) مونت می‌شود، Express پیشوند /api را حذف می‌کند
-// و req.url با /exchange شروع می‌شود. میدل‌ویر زیر مسیر را به /api/exchange بازنویسی می‌کند
-// تا با تعاریف درون روترهای اکسچنج دقیقاً مطابقت پیدا کند.
-router.use((req, _res, next) => {
-  if (req.url.startsWith('/exchange')) {
-    req.url = '/api' + req.url;
+// و req.url با /exchange، /owner/exchange یا /admin/exchange شروع می‌شود.
+// میدل‌ویر محدودشده زیر مسیر را به /api/... بازنویسی می‌کند و در صورت عدم تطابق آن را بازیابی می‌کند.
+const exchangeBridgeRouter = Router();
+exchangeBridgeRouter.use((req, _res, next) => {
+  const origUrl = req.url;
+  if (
+    origUrl.startsWith('/exchange') ||
+    origUrl.startsWith('/owner/exchange') ||
+    origUrl.startsWith('/admin/exchange')
+  ) {
+    (req as any)._origExchangeUrl = origUrl;
+    req.url = '/api' + origUrl;
   }
   next();
 });
-router.use('/', exchangeConfigRouter);
-router.use('/', exchangeMarketplaceRouter);
-router.use('/', exchangeTradeRouter);
-router.use('/', exchangePaymentRouter);
-router.use('/', exchangeOperationsRouter);
-router.use('/', exchangeDashboardRouter);
+exchangeBridgeRouter.use('/', exchangeConfigRouter);
+exchangeBridgeRouter.use('/', exchangeMarketplaceRouter);
+exchangeBridgeRouter.use('/', exchangeTradeRouter);
+exchangeBridgeRouter.use('/', exchangePaymentRouter);
+exchangeBridgeRouter.use('/', exchangeOperationsRouter);
+exchangeBridgeRouter.use('/', exchangeDashboardRouter);
+exchangeBridgeRouter.use((req, _res, next) => {
+  if ((req as any)._origExchangeUrl) {
+    req.url = (req as any)._origExchangeUrl;
+    delete (req as any)._origExchangeUrl;
+  }
+  next();
+});
+router.use('/', exchangeBridgeRouter);
 
 // ─── کاتالوگ عمومی بازی‌ها و سرویس‌های فعال پلتفرم G4X ─────────────────────
 router.get('/public/games', async (_req: Request, res: Response): Promise<void> => {

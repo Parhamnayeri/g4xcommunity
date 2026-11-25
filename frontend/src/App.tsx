@@ -15,7 +15,6 @@ import { ExchangeBuyOrderDetailPage } from './pages/ExchangeBuyOrderDetailPage';
 import { ExchangeTradeDetailPage } from './pages/ExchangeTradeDetailPage';
 import { ExchangeUserDashboardPage } from './pages/ExchangeUserDashboardPage';
 import { ExchangeTransactionDetailsPage } from './pages/ExchangeTransactionDetailsPage';
-import { ExchangerPage } from './pages/ExchangerPage';
 import { ApplicationsWorkspace, GamesWorkspace, ChannelsWorkspace } from './components/admin/NativeAdminModules';
 
 import { StaffPage } from './pages/StaffPage';
@@ -58,7 +57,10 @@ export const App: React.FC = () => {
             <Route path="/exchange/orders/:id" element={<RouteErrorBoundary routeName="Exchange Order Details"><ExchangeBuyOrderDetailPage /></RouteErrorBoundary>} />
             <Route path="/exchange/trades/:tradeId" element={<RouteErrorBoundary routeName="Exchange Trade Details"><ExchangeTradeDetailPage /></RouteErrorBoundary>} />
             <Route path="/exchange/transactions/:tradeId" element={<RouteErrorBoundary routeName="Exchange Transaction Details"><ExchangeTransactionDetailsPage /></RouteErrorBoundary>} />
-            <Route path="/exchanger" element={<RouteErrorBoundary routeName="Exchanger Portal"><ExchangerPage /></RouteErrorBoundary>} />
+            <Route path="/exchanger" element={<Navigate to="/exchange" replace />} />
+            <Route path="/exchanger-portal" element={<Navigate to="/exchange" replace />} />
+            <Route path="/exchange-portal" element={<Navigate to="/exchange" replace />} />
+            <Route path="/gold-exchange" element={<Navigate to="/exchange" replace />} />
 
             {/* Operations Routes — Website Phase 7 */}
             <Route path="/orders" element={<RouteErrorBoundary routeName="Order Management"><ManagementPage defaultTab="orders" /></RouteErrorBoundary>} />
@@ -78,6 +80,7 @@ export const App: React.FC = () => {
 
             {/* Owner Executive Portal — Website Phase 8 */}
             <Route path="/owner" element={<RouteErrorBoundary routeName="Owner Portal"><OwnerPage /></RouteErrorBoundary>} />
+            <Route path="/owner/exchange" element={<RouteErrorBoundary routeName="Exchange Management"><OwnerPage defaultTab="exchange" /></RouteErrorBoundary>} />
             <Route path="/owner/orders" element={<RouteErrorBoundary routeName="Owner Orders"><OwnerPage defaultTab="orders" /></RouteErrorBoundary>} />
             <Route path="/owner/finance" element={<RouteErrorBoundary routeName="Owner Finance"><OwnerPage defaultTab="finance" /></RouteErrorBoundary>} />
             <Route path="/owner/games" element={<RouteErrorBoundary routeName="Game Registry"><OwnerPage defaultTab="games" /></RouteErrorBoundary>} />

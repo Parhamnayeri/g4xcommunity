@@ -413,14 +413,15 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
       <div
         style={{
           display: 'flex',
+          flexWrap: 'wrap',
           gap: '0.5rem',
-          overflowX: 'auto',
           borderBottom: '1px solid var(--border-subtle)',
-          paddingBottom: '0.5rem',
+          paddingBottom: '0.75rem',
         }}
       >
         {[
           { key: 'overview', label: 'Executive Overview', icon: '🏛️' },
+          { key: 'exchange', label: 'Exchange Management (Games & Currencies)', icon: '💱' },
           { key: 'finance', label: 'Financial Management', icon: '💰' },
           { key: 'orders', label: 'Order Workspace', icon: '📦' },
           { key: 'users', label: 'User Management', icon: '👥' },
@@ -431,7 +432,6 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
           { key: 'games', label: 'Games & Services', icon: '🎮' },
           { key: 'discord', label: 'Discord Channels', icon: '💬' },
           { key: 'rules', label: 'Rules & Policies', icon: '⚖️' },
-          { key: 'exchange', label: 'Exchange Management', icon: '💱' },
           { key: 'config', label: 'Financial Configuration', icon: '⚙️' },
           { key: 'ledgers', label: 'Wallets & Ledgers', icon: '📈' },
           { key: 'gates', label: 'Feature Gates Status', icon: '🔒' },
@@ -446,9 +446,9 @@ export const OwnerPage: React.FC<{ defaultTab?: OwnerTab }> = ({ defaultTab = 'o
             style={{
               padding: '0.55rem 1rem',
               borderRadius: 'var(--radius-sm)',
-              border: 'none',
+              border: t.key === 'exchange' ? '1px solid rgba(250, 204, 21, 0.35)' : 'none',
               backgroundColor: activeTab === t.key ? 'var(--bg-surface-hover)' : 'transparent',
-              color: activeTab === t.key ? 'var(--accent-lime)' : 'var(--text-muted)',
+              color: activeTab === t.key ? 'var(--accent-lime)' : t.key === 'exchange' ? '#FACC15' : 'var(--text-muted)',
               fontWeight: 600,
               fontSize: '0.85rem',
               cursor: 'pointer',
